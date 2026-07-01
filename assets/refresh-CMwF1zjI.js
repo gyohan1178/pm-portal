@@ -1,0 +1,1 @@
+function r(e){["purchase","shortage","shortageMonthly","reqbom","inventory","pendingPOs","cpo","allpo","forecastShortage","inboundHistory","outboundHistory","picking"].forEach(o=>e.invalidateQueries({queryKey:[o]}))}export{r};
