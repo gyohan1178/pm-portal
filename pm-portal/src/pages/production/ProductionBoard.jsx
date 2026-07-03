@@ -2,53 +2,48 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { isMainPn } from './mainPns'
+import { bdMinus } from '../../lib/bizdays'
 
-// 🖥 생산 전광판 — 현장 대형 화면용 (다크 · 품번 그룹 · 전장완료일 기준 · 5분 자동갱신 · F11)
+// 🖥 AXCELIS PD 생산 전광판 — 밀도형
+//  · 전장 완료예정일 기준 D-day (납품일 − 품질MD)
+//  · 표시범위: 전장완료 오늘~+RANGE_DAYS + 지연 전부
+//  · 양산 먼저 / 초도 뒤로 · 5분 자동갱신 · 조회 전용
+const RANGE_DAYS = 30            // 표시 범위 (여기 숫자만 바꾸면 조정)
 const dayMs = 86400000
+
 const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 'false')
 const md = (d) => d ? String(d).slice(5, 10).replace('-', '/') : ''
-const dd = (d) => { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
+function dd(d) { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
 
-// 역산 (생산관리와 동일): 납품 -2영업일 = 품질요청, -품질MD = 전장완료예정
-const QC_LEAD_BD = 2
-function bdMinus(dateStr, n) {
-  if (!dateStr) return null
-  const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00'); if (isNaN(d)) return null
-  let left = Math.max(0, Math.round(n))
-  while (left > 0) { d.setDate(d.getDate() - 1); const w = d.getDay(); if (w !== 0 && w !== 6) left-- }
-  return d.toISOString().slice(0, 10)
-}
-function elecDue(r, qcMd) {
-  if (r.elec_done) return String(r.elec_done).slice(0, 10)
-  const q = bdMinus(r.req_date, QC_LEAD_BD)
-  return bdMinus(q, Math.max(1, Math.ceil(Number(qcMd) || 2)))
-}
+// 역산 (ProductionPDBox와 동일 규칙 · 품질MD·조립MD + 영업일)
+const calcElec = (r, qcMd) => r.elec_done || bdMinus(r.req_date, Math.max(1, Math.ceil(Number(qcMd) || 2)))
+const calcStart = (r, qcMd, asmMd) => { const e = calcElec(r, qcMd); return e ? bdMinus(e, Math.max(1, Math.ceil(Number(asmMd) || 1))) : null }
 
-function stepIdx(r) {
-  if (truthy(r.quality_recv)) return 5
-  if (truthy(r.elec_recv)) return 4
-  if (truthy(r.harness_recv) || truthy(r.part_issue)) return 3
-  if (truthy(r.machine_recv)) return 2
-  if (r.status === 'PO접수') return 0
-  return 1
+// 진행바 4칸 (가공 → 하네스 → 전장 → 품질)
+function steps(r) {
+  return [truthy(r.machine_recv), truthy(r.harness_recv), truthy(r.part_issue), truthy(r.elec_recv) || truthy(r.quality_recv)]
 }
-const STEP_LABEL = ['미불출', '대기', '가공입고', '전장조립', '품질', '출하대기']
-const STEP_COLOR = ['text-slate-500', 'text-slate-400', 'text-amber-400', 'text-violet-300', 'text-rose-300', 'text-emerald-300']
+function stepLabel(r) {
+  if (truthy(r.quality_recv)) return { t: '출하대기', c: '#6ee7b7' }
+  if (truthy(r.elec_recv)) return { t: '품질', c: '#fda4af' }
+  if (truthy(r.harness_recv) || truthy(r.part_issue)) return { t: '전장', c: '#c4b5fd' }
+  if (truthy(r.machine_recv)) return { t: '가공', c: '#fbbf24' }
+  return { t: '미불출', c: '#64748b' }
+}
 
 async function fetchBoard() {
   const today = new Date().toISOString().slice(0, 10)
-  const [{ data }, { count: shippedToday }, { data: items }] = await Promise.all([
+  const [{ data: prod }, { data: items }, { count: shippedToday }] = await Promise.all([
     supabase.from('production')
-      .select('id,pn,hogi,name,status,req_date,arrival_date,machine_recv,harness_recv,part_issue,elec_done,elec_recv,quality_recv,missing_parts')
+      .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts')
       .eq('customer_code', 'AX').neq('status', '완료'),
-    supabase.from('production').select('id', { count: 'exact', head: true })
-      .eq('customer_code', 'AX').eq('shipped_date', today),
-    supabase.from('items').select('std_code,qc_md_days').like('std_code', 'AX-11%'),
+    supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%'),
+    supabase.from('production').select('id', { count: 'exact', head: true }).eq('customer_code', 'AX').eq('shipped_date', today),
   ])
-  const qcMap = Object.fromEntries((items || []).map(i => [String(i.std_code).replace('AX-', ''), i.qc_md_days]))
-  const rows = (data || []).filter(r => isMainPn(r.pn))
+  const meta = Object.fromEntries((items || []).map(i => [String(i.std_code).replace('AX-', ''), { md: i.md_days, qc: i.qc_md_days, proto: i.is_prototype }]))
+  const rows = prod || []
+  rows._meta = meta
   rows._shippedToday = shippedToday || 0
-  rows._qcMap = qcMap
   return rows
 }
 
@@ -59,97 +54,124 @@ export default function ProductionBoard() {
     queryKey: ['prodBoard'], queryFn: fetchBoard,
     refetchInterval: 5 * 60 * 1000, refetchIntervalInBackground: true,
   })
+  const meta = rows._meta || {}
 
-  const d = useMemo(() => {
-    const qcMap = rows._qcMap || {}
-    const enriched = rows.map(r => {
-      const due = elecDue(r, qcMap[r.pn])
-      return { ...r, _elecDue: due, _dday: dd(due), _step: stepIdx(r) }
+  const view = useMemo(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    const main = rows.filter(r => isMainPn(r.pn) && r.req_date)
+    const enriched = main.map(r => {
+      const m = meta[r.pn] || {}
+      const elec = calcElec(r, m.qc)
+      const start = calcStart(r, m.qc, m.md)
+      const arr = r.arrival_date ? String(r.arrival_date).slice(0, 10) : null
+      const beforeParts = arr && !truthy(r.machine_recv) && start && start < arr
+      const overdueStart = start && start < today && !truthy(r.part_issue)
+      const mchLate = arr && !truthy(r.machine_recv) && arr < today
+      return { ...r, _elec: elec, _d: dd(elec), _proto: !!m.proto, beforeParts, overdueStart, mchLate }
     })
-    const groupMap = {}
-    enriched.forEach(r => { (groupMap[r.pn] ??= { pn: r.pn, name: r.name, rows: [] }).rows.push(r) })
-    const groups = Object.values(groupMap).sort((a, b) => a.pn.localeCompare(b.pn))
-    groups.forEach(g => {
-      g.rows.sort((a, b) => String(a._elecDue || '9999').localeCompare(String(b._elecDue || '9999')))
-      g.lateCnt = g.rows.filter(r => r._dday != null && r._dday < 0).length
-      g.riskCnt = g.rows.filter(r => r._step === 0 && r._dday != null && r._dday <= 7).length
-    })
-    const lateTotal = enriched.filter(r => r._dday != null && r._dday < 0).length
-    const riskTotal = enriched.filter(r => r._step === 0 && r._dday != null && r._dday <= 7).length
-    const mchLate = enriched.filter(r => r.arrival_date && !truthy(r.machine_recv) && dd(r.arrival_date) < 0).length
-    const missing = enriched.filter(r => Array.isArray(r.missing_parts) && r.missing_parts.length > 0).length
+    const shown = enriched.filter(r => r._d != null && (r._d < 0 || r._d <= RANGE_DAYS))
+    const groups = {}
+    shown.forEach(r => { (groups[r.pn] ??= { pn: r.pn, name: r.name, proto: r._proto, rows: [] }).rows.push(r) })
+    const arr = Object.values(groups)
+    arr.forEach(g => g.rows.sort((a, b) => String(a._elec).localeCompare(String(b._elec))))
+    arr.sort((a, b) => (a.proto - b.proto) || String(a.pn).localeCompare(String(b.pn)))
+
+    const late = enriched.filter(r => r._d < 0)
+    const bp = enriched.filter(r => r.beforeParts)
+    const os = enriched.filter(r => r.overdueStart)
+    const mch = enriched.filter(r => r.mchLate)
+    const wkLoad = enriched.filter(r => r._d >= 0 && r._d <= 7).length
     const byStatus = {}
-    enriched.forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1 })
-    return { groups, lateTotal, riskTotal, mchLate, missing, byStatus, total: enriched.length }
-  }, [rows])
+    rows.filter(r => r.pn).forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1 })
+    return { groups: arr, late, bp, os, mch, wkLoad, byStatus, total: rows.filter(r => r.pn).length }
+  }, [rows, meta])
+
+  const ddCls = (n) => n == null ? '#64748b' : n < 0 ? '#f87171' : n <= 2 ? '#fb923c' : n <= 7 ? '#fde047' : '#64748b'
+  const ddText = (n) => n == null ? '-' : n < 0 ? `D+${-n}` : n === 0 ? '오늘' : `D-${n}`
+
+  const massGroups = view.groups.filter(g => !g.proto)
+  const protoGroups = view.groups.filter(g => g.proto)
+
+  const Card = ({ g }) => (
+    <div style={{ borderRadius: 10, border: `1px solid ${g.rows.some(r => r._d < 0) ? 'rgba(239,68,68,.4)' : '#334155'}`, background: g.rows.some(r => r._d < 0) ? 'rgba(239,68,68,.06)' : '#0f172a', padding: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #1e293b', paddingBottom: 5, marginBottom: 5 }}>
+        <div>
+          <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 900, color: '#fff', lineHeight: 1 }}>{g.pn}</div>
+          <div style={{ fontSize: 9, color: '#64748b', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
+        </div>
+        <div style={{ fontSize: 9, color: '#64748b', textAlign: 'right' }}>
+          {g.rows.length}대{g.rows.some(r => r._d < 0) && <div style={{ color: '#f87171', fontWeight: 800 }}>지연 {g.rows.filter(r => r._d < 0).length}</div>}
+        </div>
+      </div>
+      {g.rows.slice(0, 6).map((r, i) => {
+        const sl = stepLabel(r); const st = steps(r)
+        return (
+          <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 4px', borderRadius: 4, background: i === 0 ? '#1e293b' : 'transparent', fontSize: 11 }}>
+            <span style={{ fontFamily: 'monospace', fontWeight: 900, color: '#a5b4fc', width: 28 }}>{r.hogi}</span>
+            <span style={{ fontWeight: 700, width: 44, fontSize: 10, color: sl.c }}>{sl.t}</span>
+            <div style={{ flex: 1, display: 'flex', gap: 2, minWidth: 0 }}>
+              {st.map((on, j) => <i key={j} style={{ height: 5, flex: 1, borderRadius: 2, background: on ? (j === 3 ? '#34d399' : '#a78bfa') : '#334155', display: 'block' }} />)}
+            </div>
+            {(r.beforeParts || r.overdueStart) && <span title={r.beforeParts ? '부품 도착 전 착수 필요' : '착수일 지남·미불출'} style={{ fontSize: 9, fontWeight: 800, color: '#fda4af' }}>🔩</span>}
+            {Array.isArray(r.missing_parts) && r.missing_parts.length > 0 && <span style={{ fontSize: 8, fontWeight: 800, color: '#fb7185' }}>결품{r.missing_parts.length}</span>}
+            <span style={{ fontFamily: 'monospace', fontSize: 10, color: '#94a3b8', width: 34, textAlign: 'right' }}>{md(r._elec)}</span>
+            <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: 11, width: 38, textAlign: 'right', color: ddCls(r._d) }}>{ddText(r._d)}</span>
+          </div>
+        )
+      })}
+      {g.rows.length > 6 && <div style={{ fontSize: 9, color: '#475569', paddingTop: 2 }}>외 {g.rows.length - 6}대…</div>}
+    </div>
+  )
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 px-5 py-4 select-none">
-      <div className="flex items-center justify-between border-b-2 border-slate-700 pb-2.5 mb-3">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-black text-white">🏭 PD BOX 생산 현황</h1>
-          <span className="text-xs text-slate-500">주요 {d.total}대 · 오늘 출하 <b className="text-emerald-400">{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
+    <div style={{ minHeight: '100vh', background: '#020617', color: '#cbd5e1', padding: 16, userSelect: 'none', fontFamily: "'Malgun Gothic',sans-serif" }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #334155', paddingBottom: 10, marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 900, color: '#fff', letterSpacing: 1, padding: '2px 10px', border: '2px solid #475569', borderRadius: 6 }}>AXCELIS</span>
+          <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>PD PRODUCTION STATUS</h1>
+          <span style={{ fontSize: 11, color: '#64748b' }}>진행 {view.total}대 · 오늘출하 <b style={{ color: '#6ee7b7' }}>{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
         </div>
-        <div className="font-mono text-xl font-bold text-white tabular-nums">
-          {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}
+        <div style={{ fontFamily: 'monospace', fontSize: 19, fontWeight: 800, color: '#fff' }}>
+          {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
         </div>
       </div>
 
-      <div className="flex gap-2 mb-3 flex-wrap text-sm font-bold">
-        {d.lateTotal > 0 && <span className="px-3 py-1 rounded-lg bg-red-500/15 border border-red-500/40 text-red-300 animate-pulse">🚨 전장 지연 {d.lateTotal}대</span>}
-        {d.riskTotal > 0 && <span className="px-3 py-1 rounded-lg bg-orange-500/15 border border-orange-500/40 text-orange-300">⚠ 미불출·임박 {d.riskTotal}대</span>}
-        {d.mchLate > 0 && <span className="px-3 py-1 rounded-lg bg-amber-500/15 border border-amber-500/40 text-amber-300">⚙ 가공물 지연 {d.mchLate}건</span>}
-        {d.missing > 0 && <span className="px-3 py-1 rounded-lg bg-rose-500/15 border border-rose-500/40 text-rose-300">📦 결품 {d.missing}대</span>}
-        <span className="ml-auto text-slate-500 text-xs self-center"><b className="text-slate-400">전장 완료예정일 기준</b> · 🟥지남 🟧임박 🟨이번주</span>
+      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, fontSize: 12, fontWeight: 800, alignItems: 'center' }}>
+        {view.late.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(239,68,68,.14)', border: '1px solid rgba(239,68,68,.45)', color: '#fca5a5' }}>🚨 전장 지연 {view.late.length}대</span>}
+        {view.os.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(249,115,22,.14)', border: '1px solid rgba(249,115,22,.4)', color: '#fdba74' }}>⏱ 착수일 지남·미불출 {view.os.length}대</span>}
+        {view.bp.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(244,63,94,.14)', border: '1px solid rgba(244,63,94,.4)', color: '#fda4af' }}>🔩 부품 도착 전 착수 {view.bp.length}대</span>}
+        {view.mch.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}>⚙ 가공물 지연 {view.mch.length}건</span>}
+        <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.3)', color: '#c4b5fd' }}>⚡ 이번주 전장 {view.wkLoad}대</span>
+        <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>전장 완료예정일 기준 · 🟥지남 🟧임박 🟨이번주 · 진행바: 가공·하네스·전장·품질</span>
       </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-2.5">
-        {d.groups.map(g => (
-          <div key={g.pn} className={`rounded-xl border p-2.5 ${g.lateCnt > 0 ? 'bg-red-500/5 border-red-500/40' : g.riskCnt > 0 ? 'bg-orange-500/5 border-orange-500/30' : 'bg-slate-900 border-slate-700'}`}>
-            <div className="flex items-center justify-between mb-1.5 pb-1.5 border-b border-slate-700/60">
-              <div className="min-w-0">
-                <div className="font-mono text-lg font-black text-white leading-none">{g.pn}</div>
-                <div className="text-[10px] text-slate-500 truncate">{g.name}</div>
-              </div>
-              <div className="text-right shrink-0 ml-2">
-                <div className="text-[10px] text-slate-500">{g.rows.length}대</div>
-                {g.lateCnt > 0 && <div className="text-[10px] font-black text-red-400">지연 {g.lateCnt}</div>}
-                {g.lateCnt === 0 && g.riskCnt > 0 && <div className="text-[10px] font-black text-orange-400">미불출 {g.riskCnt}</div>}
-              </div>
-            </div>
-            <div className="space-y-1">
-              {g.rows.slice(0, 6).map((r, i) => {
-                const n = r._dday
-                const ddCls = n == null ? 'text-slate-500' : n < 0 ? 'text-red-400' : n <= 3 ? 'text-orange-400' : n <= 7 ? 'text-yellow-300' : 'text-slate-400'
-                const hi = i === 0 && (n == null || n <= 7)
-                return (
-                  <div key={r.id} className={`flex items-center gap-1.5 rounded px-1.5 py-1 ${hi ? 'bg-slate-800' : ''}`}>
-                    <span className="font-mono text-sm font-black text-indigo-300 w-8 shrink-0">{r.hogi}</span>
-                    <span className={`text-[11px] font-bold w-14 shrink-0 ${STEP_COLOR[r._step]}`}>{STEP_LABEL[r._step]}</span>
-                    <div className="flex-1 flex gap-0.5 min-w-0">
-                      {[2, 3, 4, 5].map(s => <div key={s} className={`h-1.5 flex-1 rounded-sm ${r._step >= s ? (r._step >= 5 ? 'bg-emerald-400' : 'bg-violet-400') : 'bg-slate-700'}`} />)}
-                    </div>
-                    {Array.isArray(r.missing_parts) && r.missing_parts.length > 0 && <span className="text-[9px] font-bold text-rose-400 shrink-0">결{r.missing_parts.length}</span>}
-                    <span className="font-mono text-[11px] text-slate-400 w-10 text-right shrink-0">{md(r._elecDue)}</span>
-                    <span className={`font-mono text-xs font-black w-11 text-right shrink-0 ${ddCls}`}>{n == null ? '-' : n < 0 ? `D+${-n}` : n === 0 ? '오늘' : `D-${n}`}</span>
-                  </div>
-                )
-              })}
-              {g.rows.length > 6 && <div className="text-[10px] text-slate-500 text-center pt-0.5">외 {g.rows.length - 6}대…</div>}
-            </div>
+      {massGroups.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#7dd3fc', margin: '4px 0 6px' }}>🔵 양산품</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+            {massGroups.map(g => <Card key={g.pn} g={g} />)}
           </div>
-        ))}
-      </div>
+        </>
+      )}
+      {protoGroups.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 800, color: '#fbbf24', margin: '12px 0 6px' }}>🟡 초도품 · 신규</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8 }}>
+            {protoGroups.map(g => <Card key={g.pn} g={g} />)}
+          </div>
+        </>
+      )}
+      {view.groups.length === 0 && <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>표시할 호기가 없습니다 (전장완료 예정 {RANGE_DAYS}일 이내)</div>}
 
-      <div className="flex gap-2 mt-3">
+      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
         {['PO접수', '자재발주', '제작중', '품질검수', '납품대기'].map(st => (
-          <div key={st} className="flex-1 rounded-lg bg-slate-900 border border-slate-700 py-2 text-center">
-            <span className="text-2xl font-black text-white tabular-nums">{d.byStatus[st] || 0}</span>
-            <span className="block text-[10px] font-bold text-slate-400">{st}</span>
+          <div key={st} style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 8, padding: 7, textAlign: 'center' }}>
+            <b style={{ display: 'block', fontSize: 20, fontWeight: 900, color: '#fff' }}>{view.byStatus[st] || 0}</b>
+            <span style={{ fontSize: 9, color: '#94a3b8', fontWeight: 700 }}>{st === 'PO접수' ? '미불출(PO접수)' : st}</span>
           </div>
         ))}
       </div>
-      <p className="text-center text-slate-600 text-[10px] mt-2">전장 완료예정일 기준 · F11 전체화면 · 조회 전용 · 5분 자동갱신</p>
+      <div style={{ textAlign: 'center', fontSize: 10, color: '#334155', marginTop: 8 }}>F11 전체화면 · 조회 전용 · 5분 자동갱신</div>
     </div>
   )
 }

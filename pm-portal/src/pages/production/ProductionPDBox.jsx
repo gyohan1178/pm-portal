@@ -1,5 +1,6 @@
 import { useState, useMemo, useRef } from 'react'
 import { isMainPn, MAIN_PNS } from './mainPns'
+import { bdMinus } from '../../lib/bizdays'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -17,23 +18,12 @@ function ddayCls(n) { if (n == null) return 'text-slate-300'; if (n < 0) return 
 function md(d) { return d ? String(d).slice(5, 10) : '' }
 function truthy(v) { return v === true || (typeof v === 'string' && v.trim() && v !== 'false') }
 
-// ── 역산 상수 (영업일) — 필요시 여기만 조정 ──
-const QC_LEAD_BD = 2  // 납품 전 품질 '완료요청' 여유
-const QC_DUR_BD  = 2  // 품질 검사 기간 → 전장 완료예정 = 품질요청 - 이 값
+// ── 역산: 납품일 − 품질MD(영업일) = 전장완료예정 − 조립MD = 전장시작 ──
+// 영업일 계산은 lib/bizdays (주말+한국공휴일 제외)
+function calcQuality(r) { return r.req_date }                              // 품질 완료요청 = 납품일
+function calcElec(r, qcMd) { return r.elec_done || bdMinus(r.req_date, Math.max(1, Math.ceil(Number(qcMd) || 2))) }  // 전장완료 = 납품 − 품질MD
+function calcElecStart(r, qcMd, asmMd) { const e = calcElec(r, qcMd); return e ? bdMinus(e, Math.max(1, Math.ceil(Number(asmMd) || 1))) : null } // 전장시작 = 전장완료 − 조립MD
 
-// 영업일 빼기 (주말 제외)
-function bdMinus(dateStr, n) {
-  if (!dateStr) return null
-  const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00')
-  if (isNaN(d)) return null
-  let left = Math.max(0, Math.round(n))
-  while (left > 0) { d.setDate(d.getDate() - 1); const w = d.getDay(); if (w !== 0 && w !== 6) left-- }
-  return d.toISOString().slice(0, 10)
-}
-// 역산: 품질 완료요청일 / 전장 완료예정일 / 전장 시작일(부하용)
-function calcQuality(r) { return bdMinus(r.req_date, QC_LEAD_BD) }
-function calcElec(r, qcMd) { return r.elec_done || bdMinus(calcQuality(r), Math.max(1, Math.ceil(Number(qcMd) || QC_DUR_BD))) }
-function calcElecStart(r, qcMd, asmMd) { return bdMinus(calcElec(r, qcMd), Math.max(1, Math.ceil(Number(asmMd) || 1))) }
 // 주차 키 (해당 주 월요일)
 function weekKey(dateStr) {
   if (!dateStr) return null
@@ -106,8 +96,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const { data: mdMap = {} } = useQuery({
     queryKey: ['pdboxMd'],
     queryFn: async () => {
-      const { data } = await supabase.from('items').select('std_code,md_days,qc_md_days').like('std_code', 'AX-11%')
-      return Object.fromEntries((data || []).map(i => [String(i.std_code).replace('AX-', ''), { md: i.md_days, qc: i.qc_md_days }]))
+      const { data } = await supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%')
+      return Object.fromEntries((data || []).map(i => [String(i.std_code).replace('AX-', ''), { md: i.md_days, qc: i.qc_md_days, proto: i.is_prototype }]))
     },
   })
   const mdSaveMut = useMutation({
@@ -117,6 +107,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     },
     onSuccess: () => { qc.invalidateQueries(['pdboxMd']); toastSuccess('MD 저장됨') },
     onError: (e) => toastError('MD 저장 오류: ' + e.message),
+  })
+  const protoMut = useMutation({
+    mutationFn: async ({ pn, val }) => {
+      const { error } = await supabase.from('items').update({ is_prototype: val }).eq('std_code', 'AX-' + pn)
+      if (error) throw error
+    },
+    onSuccess: () => { qc.invalidateQueries(['pdboxMd']); qc.invalidateQueries(['prodBoard']) },
+    onError: (e) => toastError('구분 저장 오류: ' + e.message),
   })
 
   // 완료상태 토글 (모달과 분리 — 완료 보존 버그 방지)
@@ -253,6 +251,21 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     rows.filter(r => r.status !== '완료' && r.arrival_date && !truthy(r.machine_recv) && String(r.arrival_date).slice(0,10) < today).map(r => r.id)
   ), [rows])
 
+  // ①-A 부품 도착 전 착수 필요: 전장 시작예정 < 가공물 입고예정 (부품이 착수 시점까지 못 옴)
+  // ①-B 미불출인데 착수일 지남: 전장 시작예정 < 오늘 & 아직 전장 불출 안 됨
+  const startWarnIds = useMemo(() => {
+    const beforeParts = new Set(), overdueStart = new Set()
+    rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
+      const m = mdMap[r.pn] || {}
+      const start = calcElecStart(r, m.qc, m.md)
+      if (!start) return
+      const arr = r.arrival_date ? String(r.arrival_date).slice(0,10) : null
+      if (arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
+      if (start < today && !truthy(r.part_issue)) overdueStart.add(r.id)
+    })
+    return { beforeParts, overdueStart }
+  }, [rows, mdMap, today])
+
   // ③ 납품 KPI (완료 + 실납품일 있는 호기 기준, 최근 90일)
   const shipKpi = useMemo(() => {
     const cut = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)
@@ -334,6 +347,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         {mchLateIds.size > 0 && mainTab === 'main' && (
           <button onClick={() => { setSearch(''); setView('list') }} title="가공물 입고예정일이 지났는데 미입고"
             className="px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs font-bold animate-pulse">⚙ 입고지연 {mchLateIds.size}건</button>
+        )}
+        {startWarnIds.beforeParts.size > 0 && mainTab === 'main' && (
+          <span className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold" title="전장 착수 시점까지 가공물이 못 들어옴">🔩 부품 도착 전 착수 {startWarnIds.beforeParts.size}건</span>
+        )}
+        {startWarnIds.overdueStart.size > 0 && mainTab === 'main' && (
+          <span className="px-2.5 py-1 rounded-lg bg-orange-50 border border-orange-200 text-orange-600 text-xs font-bold" title="전장 시작 예정일이 지났는데 아직 불출 안 됨">⏱ 착수일 지남·미불출 {startWarnIds.overdueStart.size}건</span>
         )}
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
       </div>
@@ -456,6 +475,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     <th className="px-3 py-2 text-center font-bold">다음 납품</th>
                     <th className="px-3 py-2 text-center font-bold">조립 MD</th>
                     <th className="px-3 py-2 text-center font-bold">품질 MD</th>
+                    <th className="px-3 py-2 text-center font-bold">구분</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -490,6 +510,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                           <input type="number" step="0.5" min="0" defaultValue={mdMap[m.pn]?.qc ?? ''} placeholder="—" title="품질 검사 공수 (MD) — 전장 완료예정 역산에 사용"
                             onBlur={e => { const v = e.target.value; if (String(mdMap[m.pn]?.qc ?? '') !== v) mdSaveMut.mutate({ pn: m.pn, field: 'qc_md_days', val: v }) }}
                             className="w-14 px-1 py-0.5 text-center text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-rose-300" />
+                        ) : <span className="text-slate-200">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
+                        {m.main ? (
+                          <button onClick={() => protoMut.mutate({ pn: m.pn, val: !mdMap[m.pn]?.proto })}
+                            title="전광판 배치: 양산=앞, 초도=뒤"
+                            className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${mdMap[m.pn]?.proto ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-sky-50 border-sky-300 text-sky-700'}`}>
+                            {mdMap[m.pn]?.proto ? '🟡 초도' : '🔵 양산'}
+                          </button>
                         ) : <span className="text-slate-200">—</span>}
                       </td>
                     </tr>
