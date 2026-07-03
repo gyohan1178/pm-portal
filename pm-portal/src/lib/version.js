@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.3.0'
+export const APP_VERSION = 'v3.3.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.3.1',
+    date: '2026-07-03',
+    changes: [
+      '권한 분리 보안 강화 — 조회는 로그인 전원, 데이터 수정(발주·단가·생산·불출 등)은 editor·admin만 (RLS). viewer 계정은 유출돼도 읽기 전용',
+      '열람 전용 계정(viewer) 지원 — 상단에 🔒 열람 전용 배지 표시',
+    ]
+  },
   {
     version: 'v3.3.0',
     date: '2026-07-03',
