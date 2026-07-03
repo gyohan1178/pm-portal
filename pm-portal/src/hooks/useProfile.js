@@ -23,6 +23,8 @@ export const ROLE_LABEL = {
   admin: '관리자',
   editor: '편집',
   viewer: '조회',
+  field_edit: '현장(수정)',
+  field_view: '현장(열람)',
 }
 export const STATUS_LABEL = {
   pending: '승인 대기',
@@ -37,9 +39,23 @@ export function hasRole(profile, minRole) {
   return (ROLE_RANK[profile.role] ?? -1) >= (ROLE_RANK[minRole] ?? 99)
 }
 
-// 편집 권한 여부 (편집 이상 = editor, admin)
+// 현장 전용 계정인가 (현장 메뉴만 접근)
+export function isFieldOnly(profile) {
+  return profile?.role === 'field_edit' || profile?.role === 'field_view'
+}
+
+// 편집 권한 여부 (editor·admin, 또는 현장수정)
 export function canEdit(profile) {
+  if (profile?.role === 'field_edit') return true
+  if (profile?.role === 'field_view') return false
   return hasRole(profile, 'editor')
+}
+
+// 현장 전용 계정이 접근 가능한 경로 (이 외에는 차단)
+export const FIELD_PATHS = ['/production', '/production/AX', '/search', '/board']
+export function canAccessPath(profile, pathname) {
+  if (!isFieldOnly(profile)) return true // 일반 계정은 전체 접근
+  return FIELD_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
 }
 
 // 세션 없이 현재 사용자 프로필 조회 (profile prop 못 받는 컴포넌트용)

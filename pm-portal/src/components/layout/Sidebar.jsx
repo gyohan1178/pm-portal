@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { isFieldOnly } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { primaryCsCode } from '../../lib/customers'
@@ -112,6 +113,7 @@ function ChangelogModal({ onClose }) {
 
 export default function Sidebar({ onNavigate, profile }) {
   const isAdmin = profile?.role === 'admin'
+  const fieldOnly = isFieldOnly(profile)
   const pcs = primaryCsCode(profile)
   const [showChangelog, setShowChangelog] = useState(false)
 
@@ -135,30 +137,38 @@ export default function Sidebar({ onNavigate, profile }) {
         </div>
 
         {/* 홈 */}
+        {!fieldOnly && (
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
         </div>
+        )}
 
-        {/* 📦 자재 — "자재가 모자라나?" 한 축으로 */}
+        {/* 📦 자재 */}
+        {!fieldOnly && (
         <CollapseSection label="📦 자재" sKey="mat">
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>출고</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>출고 작업(불출)</MenuItem>
         </CollapseSection>
+        )}
 
-        {/* 🛒 구매 — 사는 일 전부 */}
+        {/* 🛒 구매 */}
+        {!fieldOnly && (
         <CollapseSection label="🛒 구매" sKey="buy">
           <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
           <MenuItem to="/inbound"   icon="📥" onNavigate={onNavigate}>입고</MenuItem>
         </CollapseSection>
+        )}
 
-        {/* 🤝 영업 — 고객사 수주·매출 */}
+        {/* 🤝 영업 */}
+        {!fieldOnly && (
         <CollapseSection label="🤝 영업" sKey="sales">
           <MenuItem to={`/customer/${pcs}/cpo`}      icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
           <MenuItem to="/sales" icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
         </CollapseSection>
+        )}
 
         {/* 🏭 현장 — 내보내고 만드는 일 */}
         <CollapseSection label="🏭 현장" sKey="floor">
@@ -168,7 +178,8 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/board"     icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
         </CollapseSection>
 
-        {/* 📊 분석 (기본 접힘) */}
+        {/* 📊 분석 */}
+        {!fieldOnly && (
         <CollapseSection label="📊 분석" sKey="report" defaultOpen={false}>
           <MenuItem to="/weekly"              icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
           <MenuItem to="/sales"               icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
@@ -176,8 +187,10 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/what-if"             icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
           <MenuItem to="/insights"            icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
         </CollapseSection>
+        )}
 
-        {/* ⚙️ 기초자료 (기본 접힘) */}
+        {/* ⚙️ 기초자료 */}
+        {!fieldOnly && (
         <CollapseSection label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
           <MenuItem to="/master/items"   icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
           <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
@@ -187,6 +200,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/quote"     icon="🧾" onNavigate={onNavigate}>견적입력</MenuItem>
           <MenuItem to="/erp"       icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
         </CollapseSection>
+        )}
 
         {/* 하단 고정 — 관리자/회원/도움말 */}
         <div className="mt-auto border-t border-slate-200 pt-1">

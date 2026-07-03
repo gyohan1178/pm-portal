@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.3.2'
+export const APP_VERSION = 'v3.3.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.3.3',
+    date: '2026-07-03',
+    changes: [
+      '현장 전용 계정(field_edit·field_view) — 현장 메뉴(생산대시보드·생산관리·통합검색·전광판)만 접근, 그 외 메뉴는 숨김 + URL 직접입력도 차단',
+      'field_edit=현장 수정+열람 / field_view=현장 열람만',
+    ]
+  },
   {
     version: 'v3.3.2',
     date: '2026-07-03',
