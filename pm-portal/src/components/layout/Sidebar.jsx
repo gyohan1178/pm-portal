@@ -186,7 +186,7 @@ export default function Sidebar({ onNavigate, profile }) {
         <CollapseSection label="📊 분석" sKey="report" defaultOpen={false}>
           <MenuItem to="/weekly"              icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
           <MenuItem to="/sales"               icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
-          <MenuItem to="/purchase-dashboard"  icon="💰" onNavigate={onNavigate}>매입 현황</MenuItem>
+          <MenuItem to="/purchase-dashboard"  icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
           <MenuItem to="/what-if"             icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
           <MenuItem to="/insights"            icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
         </CollapseSection>

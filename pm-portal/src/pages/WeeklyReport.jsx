@@ -365,9 +365,10 @@ export default function WeeklyReport() {
     <>
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 8mm; }
+          @page { size: A4 portrait; margin: 6mm; }
           html, body { height:auto !important; overflow:visible !important; }
           body { -webkit-print-color-adjust:exact; print-color-adjust:exact; font-size:9px; }
+          .print-zoom { zoom:0.8; }
           .no-print { display:none !important; }
           aside, header, nav { display:none !important; }
           main { padding:0 !important; overflow:visible !important; }
@@ -408,7 +409,7 @@ export default function WeeklyReport() {
           .print-page-break { page-break-before:always !important; break-before:page !important; }
         }
       `}</style>
-      <div className="space-y-4 max-w-5xl mx-auto">
+      <div className="space-y-4 max-w-5xl mx-auto print-zoom">
         {/* 컨트롤 */}
         <div className="flex items-center gap-2 no-print flex-wrap">
           <button onClick={()=>setWeekOffset(v=>v-1)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">← 전주</button>

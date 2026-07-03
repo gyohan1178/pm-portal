@@ -99,20 +99,32 @@ export default function PurchaseDashboard() {
   const grandTotal = totalActual + totalPending
 
   return (
-    <div className="space-y-5 max-w-5xl mx-auto">
+    <div className="space-y-5 max-w-5xl mx-auto print-root">
       <AnalysisTabs />
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 10mm; }
+          @page { size: A4 portrait; margin: 6mm; }
           aside, header, nav { display:none !important; }
-          main { padding:0 !important; }
+          main { padding:0 !important; overflow:visible !important; }
           body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
           .no-print { display:none !important; }
-          .rounded-xl, .rounded-lg { page-break-inside:avoid !important; }
+          /* ── 1페이지 압축: 전체 축소 + 여백/폰트 다이어트 ── */
+          .print-root { zoom:0.72; }
+          .print-root .space-y-5 > * + *, .print-root.space-y-5 > * + * { margin-top:8px !important; }
+          .print-root .p-5 { padding:10px !important; }
+          .print-root .p-4 { padding:8px !important; }
+          .print-root .p-3 { padding:6px !important; }
+          .print-root .text-3xl { font-size:20px !important; }
+          .print-root .text-2xl { font-size:16px !important; }
+          .print-root .text-xl { font-size:14px !important; }
+          .print-root table { font-size:9px !important; }
+          .print-root td, .print-root th { padding:2px 6px !important; }
+          .print-root .recharts-responsive-container { height:150px !important; }
+          .print-root * { page-break-inside:avoid; }
         }
       `}</style>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-lg font-bold text-slate-900">💰 매입 현황 대시보드</h1>
+        <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
           <p className="text-xs text-slate-400">1~4월 이카운트 · AXCELIS 5월~ 포털 · 타사 업로드 · 억원</p>
           <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>

@@ -95,13 +95,13 @@ export function sectionOfPath(pathname) {
 }
 
 // 제한 계정의 기본 착지 경로 (접근 불가 페이지 진입 시 여기로)
-const SECTION_LANDING = { floor: '/production', mat: '/inventory', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
+const SECTION_LANDING = { floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
-  if (profile?.role === 'viewer') return '/search'   // 조회 계정: 통합검색을 첫 화면으로
   const a = allowedSections(profile)
-  if (a === null) return '/'          // 전체 접근
-  return SECTION_LANDING[a[0]] || '/production'
+  if (a !== null) return SECTION_LANDING[a[0]] || '/production'  // 메뉴 제한 계정: 허용된 첫 섹션으로 (viewer보다 우선!)
+  if (profile?.role === 'viewer') return '/search'   // 제한 없는 조회 계정: 통합검색
+  return '/'          // 전체 접근
 }
 
 // 특정 경로 접근 가능? (섹션 제한 계정 대응)

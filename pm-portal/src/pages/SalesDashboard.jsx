@@ -67,18 +67,37 @@ export default function SalesDashboard() {
   if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">불러오는 중...</div>
 
   return (
-    <div className="p-4 max-w-5xl mx-auto space-y-4">
+    <div className="p-4 max-w-5xl mx-auto space-y-4 print-root">
+      <style>{`
+        @media print {
+          @page { size: A4 portrait; margin: 6mm; }
+          aside, header, nav { display:none !important; }
+          main { padding:0 !important; overflow:visible !important; }
+          body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+          .no-print { display:none !important; }
+          .print-root { zoom:0.72; }
+          .print-root .p-4 { padding:8px !important; }
+          .print-root .p-3 { padding:6px !important; }
+          .print-root table { font-size:9px !important; }
+          .print-root td, .print-root th { padding:2px 6px !important; }
+          .print-root .recharts-responsive-container { height:150px !important; }
+          .print-root * { page-break-inside:avoid; }
+        }
+      `}</style>
       <AnalysisTabs />
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
           <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · 최근 {range}개월 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b></p>
         </div>
+        <div className="flex items-center gap-2">
+        <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
         <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
           {[6,12,24].map(n=>(
             <button key={n} onClick={()=>setRange(n)}
               className={`px-3 py-1.5 text-xs font-semibold rounded-md ${range===n?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{n}개월</button>
           ))}
+        </div>
         </div>
       </div>
 
