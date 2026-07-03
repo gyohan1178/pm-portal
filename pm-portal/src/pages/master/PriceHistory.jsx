@@ -34,9 +34,9 @@ export default function PriceHistory() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품명 또는 기준코드 검색"
-          className="w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <div className="flex-1" />
         <p className="text-xs text-slate-400">견적 입력 시 자동 누적됩니다</p>
       </div>

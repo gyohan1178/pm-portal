@@ -14,7 +14,7 @@
 
 @layer components {
   .btn {
-    @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-600 rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 transition-colors cursor-pointer;
+    @apply inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 transition-colors cursor-pointer;
   }
   .btn-primary {
     @apply btn bg-accent border-accent text-white hover:bg-indigo-700;
@@ -35,7 +35,7 @@
     @apply hover:bg-slate-50 transition-colors;
   }
   .badge {
-    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-600;
+    @apply inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold;
   }
   .badge-red    { @apply badge bg-red-50 text-red-600; }
   .badge-yellow { @apply badge bg-amber-50 text-amber-700; }
@@ -50,6 +50,6 @@
     @apply input appearance-none cursor-pointer;
   }
   .label {
-    @apply block text-xs font-600 text-slate-600 mb-1;
+    @apply block text-xs font-semibold text-slate-600 mb-1;
   }
 }

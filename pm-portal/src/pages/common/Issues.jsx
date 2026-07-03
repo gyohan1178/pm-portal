@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 
-const TYPES     = ['전체','사내','고객사','협력사']
+const TYPES     = ['전체','할일','사내','고객사','협력사']
 const STATUSES  = ['진행중','대기','완료']
 const PRIORITIES= ['높음','중간','낮음']
 const MEMBERS   = ['교한','황주현','남기문','충원']
@@ -25,7 +25,7 @@ async function fetchVendors() {
   return data || []
 }
 
-const EMPTY_FORM = { issue_type:'사내', title:'', content:'', priority:'중간', assigned_to:'교한', due_date:'', customer_id:'', vendor_id:'' }
+const EMPTY_FORM = { issue_type:'할일', title:'', content:'', priority:'중간', assigned_to:'교한', due_date:'', customer_id:'', vendor_id:'' }
 
 export default function Issues() {
   const qc = useQueryClient()
@@ -81,7 +81,7 @@ export default function Issues() {
         <div className="flex-1" />
         <button onClick={() => setShowForm(!showForm)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-700 rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-          ➕ 이슈 등록
+          ➕ 할일·이슈 등록
         </button>
       </div>
 
@@ -93,7 +93,7 @@ export default function Issues() {
               <label className="block text-[10px] font-700 text-slate-500 mb-1">구분 *</label>
               <select value={form.issue_type} onChange={e => setForm(f => ({...f, issue_type: e.target.value}))}
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
-                {['사내','고객사','협력사'].map(t => <option key={t}>{t}</option>)}
+                {['할일','사내','고객사','협력사'].map(t => <option key={t}>{t}</option>)}
               </select>
             </div>
             <div>
@@ -114,7 +114,7 @@ export default function Issues() {
           <div>
             <label className="block text-[10px] font-700 text-slate-500 mb-1">제목 *</label>
             <input value={form.title} onChange={e => setForm(f => ({...f, title: e.target.value}))}
-              placeholder="이슈 제목"
+              placeholder="제목"
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
           </div>
           <div>
@@ -164,7 +164,7 @@ export default function Issues() {
       {/* 이슈 목록 */}
       <div className="space-y-2">
         {filtered.length === 0 ? (
-          <div className="text-center py-12 text-slate-400 text-xs">이슈가 없습니다</div>
+          <div className="text-center py-12 text-slate-400 text-xs">할일·이슈가 없습니다</div>
         ) : filtered.map(issue => (
           <div key={issue.id} className="rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors">
             <div className="flex items-start gap-3">

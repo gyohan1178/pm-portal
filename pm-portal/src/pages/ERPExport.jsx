@@ -1,6 +1,8 @@
 import { useState } from 'react'
+import { toast, toastError, toastSuccess } from '../lib/toast'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/paginate'
 import * as XLSX from 'xlsx'
 
 const CUSTOMERS = [
@@ -31,11 +33,11 @@ export default function ERPExport() {
         // 고객사 UUID 가져오기
         const { data: cs } = await supabase.from('customers').select('id, name').in('code', csFilter)
         const csIds = (cs || []).map(c => c.id)
-        const { data: pos } = await supabase
+        const pos = await fetchAll(() => supabase
           .from('purchase_orders')
           .select('*, items(std_code, name, type), customers(name), vendors(name)')
           .in('customer_id', csIds)
-          .neq('status', '완료')
+          .neq('status', '완료'))
         data = (pos || []).map(p => ({
           '고객사': p.customers?.name,
           'PO번호': p.po_number,
@@ -68,15 +70,17 @@ export default function ERPExport() {
         const mvType = selType === 'inbound' ? '입고' : '출고'
         const { data: cs } = await supabase.from('customers').select('id, name').in('code', csFilter)
         const csIds = (cs || []).map(c => c.id)
-        let q = supabase
-          .from('stock_movements')
-          .select('*, items(std_code, name), customers(name), projects(name)')
-          .eq('movement_type', mvType)
-          .in('customer_id', csIds)
-          .order('processed_at', { ascending: false })
-        if (dateFrom) q = q.gte('processed_at', dateFrom)
-        if (dateTo)   q = q.lte('processed_at', dateTo + 'T23:59:59')
-        const { data: mvs } = await q
+        const mvs = await fetchAll(() => {
+          let q = supabase
+            .from('stock_movements')
+            .select('*, items(std_code, name), customers(name), projects(name)')
+            .eq('movement_type', mvType)
+            .in('customer_id', csIds)
+            .order('processed_at', { ascending: false })
+          if (dateFrom) q = q.gte('processed_at', dateFrom)
+          if (dateTo)   q = q.lte('processed_at', dateTo + 'T23:59:59')
+          return q
+        })
         data = (mvs || []).map(r => ({
           '일시': r.processed_at?.replace('T', ' ').slice(0, 16),
           '고객사': r.customers?.name,
@@ -90,12 +94,12 @@ export default function ERPExport() {
         }))
       }
 
-      if (!data.length) { alert('추출할 데이터가 없습니다'); return }
+      if (!data.length) { toastError('추출할 데이터가 없습니다'); return }
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), EXPORT_TYPES.find(t => t.key === selType)?.label)
       XLSX.writeFile(wb, `ERP_${selType}_${new Date().toISOString().split('T')[0]}.xlsx`)
     } catch (err) {
-      alert('추출 오류: ' + err.message)
+      toastError('추출 오류: ' + err.message)
     } finally {
       setExporting(false)
     }

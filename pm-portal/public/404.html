@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script>
+    var path = window.location.pathname;
+    var base = '/pm-portal';
+    var redirect = path.startsWith(base) ? path : base + path;
+    sessionStorage.setItem('redirect', redirect + window.location.search);
+    window.location.replace(base + '/');
+  </script>
+</head>
+<body></body>
+</html>

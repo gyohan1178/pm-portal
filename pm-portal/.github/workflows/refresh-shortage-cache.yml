@@ -1,0 +1,21 @@
+name: 쇼티지 예측 캐시 갱신
+
+on:
+  schedule:
+    - cron: '0 18 * * *'   # UTC 18:00 = KST 03:00
+  workflow_dispatch:        # 수동 실행 가능
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 전 고객사 쇼티지 캐시 재계산
+        run: |
+          curl -sS -X POST \
+            "${{ secrets.SUPABASE_URL }}/rest/v1/rpc/refresh_all_shortage_cache" \
+            -H "apikey: ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_SERVICE_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{}' \
+            --max-time 300 \
+            -w "\nHTTP %{http_code}\n"
