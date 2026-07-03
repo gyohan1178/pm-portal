@@ -772,7 +772,7 @@ function AutoDateCell({ auto, manual, done, onDate, onToggle }) {
   </td>
 }
 
-function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor = 'emerald' }) {
+function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor = 'emerald', late }) {
   const [editing, setEditing] = useState(false)
   const dateVal = row[dateField]
   const colorMap = { emerald: 'text-emerald-600', amber: 'text-amber-600' }
