@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.3.6'
+export const APP_VERSION = 'v3.3.7'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.3.7',
+    date: '2026-07-03',
+    changes: [
+      '출고(출고 처리) — BOM 전개표에 No.열, 제조사·제조사품번 추가 + 제조사→제조사품번 순 정렬',
+      '출고 — 제외 체크박스(관리대상 아님·선불출 품목 빼기), 자재 불출표 인쇄(제외·미입력 뺀 것, 키팅 확인란 포함)',
+    ]
+  },
   {
     version: 'v3.3.6',
     date: '2026-07-03',

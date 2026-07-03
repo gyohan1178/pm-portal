@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -46,6 +46,7 @@ async function fetchOutboundHistory({ from, to, customerId }) {
 export default function Outbound() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('process')
+  const [excluded, setExcluded] = useState(new Set()) // 불출표 제외 대상 (item_id)
   // 출고 처리
   const [selCustomer, setSelCustomer] = useState('')
   const [selProject, setSelProject] = useState('')
@@ -117,10 +118,62 @@ export default function Outbound() {
     return `${p.code} ${p.name||''}`.toLowerCase().includes(s)
   })
 
-  const outItems = bomItems.map(b=>({
+  // 제조사·제조사품번 조회 (BOM 품목들)
+  const outItemIds = [...new Set(bomItems.map(b=>b.item_id).filter(Boolean))]
+  const { data: makerMeta = {} } = useQuery({
+    queryKey: ['outMakerMeta', outItemIds.join(',')],
+    enabled: outItemIds.length>0,
+    queryFn: async () => {
+      const { data } = await supabase.from('items').select('id,manufacturer,manufacturer_code').in('id', outItemIds)
+      return Object.fromEntries((data||[]).map(i=>[i.id, i]))
+    },
+  })
+
+  const outItems = useMemo(() => bomItems.map(b=>({
     item_id:b.item_id, std_code:b.items?.std_code, name:b.items?.name,
     unit:b.items?.unit, bom_qty:b.qty_per_unit, outQty:outQtys[b.item_id]||'',
-  }))
+    maker: makerMeta[b.item_id]?.manufacturer || '',
+    makerPn: makerMeta[b.item_id]?.manufacturer_code || '',
+  })).sort((a,b)=>
+    String(a.maker).localeCompare(String(b.maker),'ko') ||
+    String(a.makerPn).localeCompare(String(b.makerPn),'ko') ||
+    String(a.std_code).localeCompare(String(b.std_code))
+  ), [bomItems, outQtys, makerMeta])
+
+  // 자재 불출표 인쇄 (제외 뺀 것 · 제조사→제조사품번 순 · 키팅 확인란)
+  function printIssueSheet() {
+    const rows = outItems.filter(r => !excluded.has(r.item_id) && Number(r.outQty)>0)
+    if (!rows.length) { toastError('출력할 품목이 없습니다 (출고수량 입력 + 제외 해제 확인)'); return }
+    const csName = selCustomer ? (customers.find(c=>c.id===selCustomer)?.name || '') : ''
+    const projName = selProject ? (projects.find(p=>p.id===selProject)?.code || '') : ''
+    const today = new Date().toLocaleDateString('ko-KR')
+    const body = rows.map((r,i)=>`<tr>
+      <td class="c">${i+1}</td><td>${r.maker||'-'}</td><td class="mono">${r.makerPn||'-'}</td>
+      <td class="mono">${r.std_code||''}</td><td>${r.name||''}</td>
+      <td class="c b">${r.outQty}</td><td>${r.unit||''}</td><td class="chk"></td>
+    </tr>`).join('')
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 불출표</title>
+    <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
+    .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
+    h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
+    table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+    th,td{border:1px solid #999;padding:5px 6px;text-align:left}th{background:#f0f0f0;font-size:11px}
+    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}.chk{width:44px}
+    tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
+    .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
+    @media print{body{padding:0}}</style></head><body>
+    <div class="head"><h1>자재 불출표</h1>
+    <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${outUnits}대<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
+    <table><thead><tr>
+      <th class="c" style="width:36px">No</th><th style="width:110px">제조사</th><th style="width:130px">제조사품번</th>
+      <th style="width:120px">기준코드</th><th>품명</th><th class="c" style="width:56px">수량</th><th style="width:44px">단위</th><th class="chk">키팅<br>확인</th>
+    </tr></thead><tbody>${body}</tbody></table>
+    <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
+    </body></html>`
+    const w = window.open('','_blank')
+    if(!w){ toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
+    w.document.write(html); w.document.close(); w.onload=()=>{ w.focus(); w.print() }
+  }
 
   const histTotal = history.reduce((a,r)=>a+r.qty,0)
 
@@ -218,23 +271,31 @@ export default function Outbound() {
                   <p className="text-xs font-bold text-slate-600">BOM 연동 — {bomItems.length}개 품목
                     <span className="text-slate-400 font-normal ml-2">({outUnits}대 기준)</span>
                   </p>
-                  <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
+                  <div className="flex gap-2">
+                    <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
+                    <button onClick={printIssueSheet} title="제외 체크 뺀 품목을 제조사→제조사품번 순으로 불출표 인쇄 (키팅 확인란 포함)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 불출표 출력</button>
+                  </div>
                 </div>
               )}
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
-                    {['기준코드','품명','단위','BOM/대','출고수량'].map(h=>(
+                    {['No','제조사','제조사품번','기준코드','품명','단위','BOM/대','출고수량','제외'].map(h=>(
                       <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide">{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {outItems.length===0
-                      ? <tr><td colSpan={5} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
-                      : outItems.map(item=>(
-                        <tr key={item.item_id} className="border-b border-slate-100">
+                      ? <tr><td colSpan={9} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
+                      : outItems.map((item,idx)=>{
+                        const ex = excluded.has(item.item_id)
+                        return (
+                        <tr key={item.item_id} className={`border-b border-slate-100 ${ex?'opacity-40 bg-slate-50':''}`}>
+                          <td className="px-3 py-2 text-center text-slate-400">{idx+1}</td>
+                          <td className="px-3 py-2 text-slate-500 max-w-[100px] truncate">{item.maker||'—'}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-violet-600 max-w-[130px] truncate">{item.makerPn||'—'}</td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600">{item.std_code}</td>
-                          <td className="px-3 py-2 font-semibold text-slate-800">{item.name}</td>
+                          <td className="px-3 py-2 font-semibold text-slate-800 max-w-[160px] truncate">{item.name}</td>
                           <td className="px-3 py-2 text-slate-500">{item.unit}</td>
                           <td className="px-3 py-2 text-right text-slate-600">{item.bom_qty}</td>
                           <td className="px-3 py-2">
@@ -243,8 +304,12 @@ export default function Outbound() {
                               onChange={e=>setOutQtys(prev=>({...prev,[item.item_id]:e.target.value}))}
                               className="w-24 px-2 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
                           </td>
+                          <td className="px-3 py-2 text-center">
+                            <input type="checkbox" checked={ex} title="불출표에서 제외"
+                              onChange={()=>setExcluded(p=>{ const n=new Set(p); n.has(item.item_id)?n.delete(item.item_id):n.add(item.item_id); return n })}/>
+                          </td>
                         </tr>
-                      ))
+                      )})
                     }
                   </tbody>
                 </table>
