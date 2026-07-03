@@ -146,6 +146,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {/* 📦 자재 */}
         {canAccessSection(profile, 'mat') && (
         <CollapseSection label="📦 자재" sKey="mat">
+          <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>출고</MenuItem>
@@ -173,9 +174,9 @@ export default function Sidebar({ onNavigate, profile }) {
         {/* 🏭 현장 */}
         {canAccessSection(profile, 'floor') && (
         <CollapseSection label="🏭 현장" sKey="floor">
+          <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
-          <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to="/board"     icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
         </CollapseSection>
         )}

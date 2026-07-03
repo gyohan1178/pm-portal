@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.4.1'
+export const APP_VERSION = 'v3.4.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.4.2',
+    date: '2026-07-03',
+    changes: [
+      '통합 검색 → 자재 섹션으로 이동 (재고·구매처·단가 포함 전체 정보)',
+      '현장 검색 신설 (현장 섹션 최상단) — 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM만. 재고·구매처·단가 비노출',
+      '현장 탭 순서 — 현장검색을 생산 대시보드 위로',
+    ]
+  },
   {
     version: 'v3.4.1',
     date: '2026-07-03',

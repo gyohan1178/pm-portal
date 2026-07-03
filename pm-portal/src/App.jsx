@@ -11,6 +11,7 @@ const WhatIfSim = lazy(() => import('./pages/control-tower/WhatIfSim'))
 const Insights = lazy(() => import('./pages/control-tower/Insights'))
 const Inbound = lazy(() => import('./pages/common/Inbound'))
 const CommonSearch = lazy(() => import('./pages/common/CommonSearch'))
+const FieldSearch = lazy(() => import('./pages/common/FieldSearch'))
 const ShortageForecast = lazy(() => import('./pages/common/ShortageForecast'))
 const Outbound = lazy(() => import('./pages/common/Outbound'))
 const Issue = lazy(() => import('./pages/common/Issue'))
@@ -103,6 +104,7 @@ export default function App() {
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
         <Route index element={(allowedSections(profile) === null && profile?.role !== 'viewer') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
         <Route path="search"    element={<CommonSearch />} />
+        <Route path="field-search" element={<FieldSearch />} />
         <Route path="forecast-shortage" element={<ShortageForecast />} />
         <Route path="inbound"   element={<Inbound />} />
         <Route path="outbound"  element={<Outbound />} />
