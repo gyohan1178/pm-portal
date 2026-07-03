@@ -73,7 +73,8 @@ export default function ProductionBoard() {
     const groups = {}
     shown.forEach(r => { (groups[r.pn] ??= { pn: r.pn, name: r.name, proto: r._proto, rows: [] }).rows.push(r) })
     const arr = Object.values(groups)
-    arr.forEach(g => g.rows.sort((a, b) => String(a._elec).localeCompare(String(b._elec))))
+    const hogiNo = (h) => parseInt(String(h).replace(/[^0-9]/g, ''), 10) || 0
+    arr.forEach(g => g.rows.sort((a, b) => String(a._elec).localeCompare(String(b._elec)) || (hogiNo(a.hogi) - hogiNo(b.hogi))))
     arr.sort((a, b) => (a.proto - b.proto) || String(a.pn).localeCompare(String(b.pn)))
 
     const late = enriched.filter(r => r._d < 0)
@@ -127,8 +128,7 @@ export default function ProductionBoard() {
     <div style={{ minHeight: '100vh', background: '#020617', color: '#cbd5e1', padding: 16, userSelect: 'none', fontFamily: "'Malgun Gothic',sans-serif" }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #334155', paddingBottom: 10, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 900, color: '#fff', letterSpacing: 1, padding: '2px 10px', border: '2px solid #475569', borderRadius: 6 }}>AXCELIS</span>
-          <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>PD PRODUCTION STATUS</h1>
+          <h1 style={{ fontSize: 22, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>🏭 AXCELIS PD PRODUCTION STATUS</h1>
           <span style={{ fontSize: 11, color: '#64748b' }}>진행 {view.total}대 · 오늘출하 <b style={{ color: '#6ee7b7' }}>{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
         </div>
         <div style={{ fontFamily: 'monospace', fontSize: 19, fontWeight: 800, color: '#fff' }}>
@@ -137,11 +137,11 @@ export default function ProductionBoard() {
       </div>
 
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12, fontSize: 12, fontWeight: 800, alignItems: 'center' }}>
-        {view.late.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(239,68,68,.14)', border: '1px solid rgba(239,68,68,.45)', color: '#fca5a5' }}>🚨 전장 지연 {view.late.length}대</span>}
-        {view.os.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(249,115,22,.14)', border: '1px solid rgba(249,115,22,.4)', color: '#fdba74' }}>⏱ 착수일 지남·미불출 {view.os.length}대</span>}
-        {view.bp.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(244,63,94,.14)', border: '1px solid rgba(244,63,94,.4)', color: '#fda4af' }}>🔩 부품 도착 전 착수 {view.bp.length}대</span>}
-        {view.mch.length > 0 && <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d' }}>⚙ 가공물 지연 {view.mch.length}건</span>}
-        <span style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.3)', color: '#c4b5fd' }}>⚡ 이번주 전장 {view.wkLoad}대</span>
+        {view.late.length > 0 && <span title={view.late.map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)}, ${ddText(r._d)})`).join('\n')} style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(239,68,68,.14)', border: '1px solid rgba(239,68,68,.45)', color: '#fca5a5', cursor: 'help' }}>🚨 전장 지연 {view.late.length}대</span>}
+        {view.os.length > 0 && <span title={view.os.map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)})`).join('\n')} style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(249,115,22,.14)', border: '1px solid rgba(249,115,22,.4)', color: '#fdba74', cursor: 'help' }}>⏱ 착수일 지남·미불출 {view.os.length}대</span>}
+        {view.bp.length > 0 && <span title={view.bp.map(r => `${r.pn} ${r.hogi} (가공물 입고예정 ${md(r.arrival_date)})`).join('\n')} style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(244,63,94,.14)', border: '1px solid rgba(244,63,94,.4)', color: '#fda4af', cursor: 'help' }}>🔩 부품 도착 전 착수 {view.bp.length}대</span>}
+        {view.mch.length > 0 && <span title={view.mch.map(r => `${r.pn} ${r.hogi} (입고예정 ${md(r.arrival_date)})`).join('\n')} style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d', cursor: 'help' }}>⚙ 가공물 지연 {view.mch.length}건</span>}
+        <span title={view.groups.flatMap(g => g.rows).filter(r => r._d >= 0 && r._d <= 7).map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)}, ${ddText(r._d)})`).join('\n')} style={{ padding: '5px 12px', borderRadius: 9, background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.3)', color: '#c4b5fd', cursor: 'help' }}>⚡ 이번주 전장 {view.wkLoad}대</span>
         <span style={{ marginLeft: 'auto', fontSize: 10, color: '#64748b' }}>전장 완료예정일 기준 · 🟥지남 🟧임박 🟨이번주 · 진행바: 가공·하네스·전장·품질</span>
       </div>
 

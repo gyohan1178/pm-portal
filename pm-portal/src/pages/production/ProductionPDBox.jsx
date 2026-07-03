@@ -593,6 +593,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </td>
                   <td className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
                     {r.pn}{!isMainPn(r.pn) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
+                    {startWarnIds.beforeParts.has(r.id) && <span className="ml-1 px-1 rounded bg-rose-100 text-rose-600 text-[9px] font-bold align-middle" title="전장 착수 시점까지 가공물이 못 들어옴 — 일정 조정 필요">🔩부품前</span>}
+                    {startWarnIds.overdueStart.has(r.id) && <span className="ml-1 px-1 rounded bg-orange-100 text-orange-600 text-[9px] font-bold align-middle" title="전장 시작 예정일 지남 · 아직 미불출">⏱착수지남</span>}
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>

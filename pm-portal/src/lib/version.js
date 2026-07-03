@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.3.1'
+export const APP_VERSION = 'v3.3.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.3.2',
+    date: '2026-07-03',
+    changes: [
+      '로그인 — 이메일 기억하기 체크박스 (다음 접속 시 자동 입력)',
+      '전광판 — 헤더 로고 테두리 제거(AXCELIS PD PRODUCTION STATUS 통일), 경보 배지 마우스오버 시 해당 호기 목록 미리보기, 같은 품번은 전장완료일 → 호기번호 순 정렬',
+      '생산관리 — 부품 도착 전 착수(🔩부품前)·착수일 지남(⏱착수지남) 태그를 품번 옆에 표시',
+    ]
+  },
   {
     version: 'v3.3.1',
     date: '2026-07-03',

@@ -3,8 +3,9 @@ import { supabase } from '../lib/supabase'
 
 export default function Login() {
   const [mode, setMode] = useState('login')   // login | signup
-  const [email, setEmail] = useState('')
+  const [email, setEmail] = useState(() => { try { return localStorage.getItem('pm_saved_email') || '' } catch { return '' } })
   const [password, setPassword] = useState('')
+  const [remember, setRemember] = useState(() => { try { return localStorage.getItem('pm_remember') === '1' } catch { return false } })
   const [name, setName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -14,7 +15,13 @@ export default function Login() {
     e.preventDefault()
     setLoading(true); setError('')
     const { error } = await supabase.auth.signInWithPassword({ email, password })
-    if (error) setError('이메일 또는 비밀번호가 올바르지 않습니다.')
+    if (error) { setError('이메일 또는 비밀번호가 올바르지 않습니다.') }
+    else {
+      try {
+        if (remember) { localStorage.setItem('pm_saved_email', email); localStorage.setItem('pm_remember', '1') }
+        else { localStorage.removeItem('pm_saved_email'); localStorage.removeItem('pm_remember') }
+      } catch {}
+    }
     setLoading(false)
   }
 
@@ -91,6 +98,13 @@ export default function Login() {
                 placeholder={mode==='signup'?'6자 이상':'비밀번호 입력'} required
                 className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
+            {mode==='login' && (
+              <label className="flex items-center gap-2 text-xs text-slate-500 font-semibold cursor-pointer select-none">
+                <input type="checkbox" checked={remember} onChange={e => setRemember(e.target.checked)}
+                  className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500" />
+                이메일 기억하기 (다음 로그인 시 자동 입력)
+              </label>
+            )}
 
             {error && (
               <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600 font-semibold">{error}</div>
