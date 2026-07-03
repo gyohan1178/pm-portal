@@ -1,4 +1,4 @@
-import { useEffect, useState, lazy } from 'react'
+import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useProfile, hasRole } from './hooks/useProfile'
@@ -87,6 +87,7 @@ export default function App() {
   }
 
   return (
+    <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="text-slate-400 text-sm">불러오는 중...</div></div>}>
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
@@ -132,5 +133,6 @@ export default function App() {
         <Route path="production/:code" element={<ProductionCustomer />} />
       </Route>
     </Routes>
+    </Suspense>
   )
 }
