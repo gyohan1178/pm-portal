@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.4.3'
+export const APP_VERSION = 'v3.4.4'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.4.4',
+    date: '2026-07-03',
+    changes: [
+      '현장 검색 — 자동완성을 3개 탭 전체 적용 (제품검색·역전개=품목 / BOM조회=어셈블리). 2글자↑ 입력 시 예상 목록',
+    ]
+  },
   {
     version: 'v3.4.3',
     date: '2026-07-03',

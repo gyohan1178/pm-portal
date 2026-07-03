@@ -39,6 +39,16 @@ async function suggestItems(q) {
   return data || []
 }
 
+// ── 어셈블리 자동완성 (BOM 등록된 제품, 2글자↑) ──
+async function suggestBOM(q) {
+  if (!q || q.trim().length < 2) return []
+  const { data } = await supabase.from('projects')
+    .select('id,code,name,rev')
+    .ilike('code', `%${q}%`)
+    .limit(8)
+  return data || []
+}
+
 // ── 역전개 ──
 async function whereUsedAll(q) {
   if (!q.trim()) return []
@@ -60,21 +70,47 @@ async function fetchBOMByCode(code) {
   return { rows: data || [], assembly: proj }
 }
 
+// 자동완성 입력창 (재사용)
+function AutoInput({ value, setValue, onSubmit, onPick, fetchSuggest, keyName, placeholder, renderSuggest }) {
+  const [show, setShow] = useState(false)
+  const [debounced, setDebounced] = useState('')
+  useEffect(() => { const t = setTimeout(() => setDebounced(value), 250); return () => clearTimeout(t) }, [value])
+  const { data: suggestions = [] } = useQuery({
+    queryKey: [keyName, debounced], queryFn: () => fetchSuggest(debounced), enabled: debounced.trim().length >= 2,
+  })
+  return (
+    <div className="flex gap-2">
+      <div className="flex-1 relative">
+        <input value={value}
+          onChange={e => { setValue(e.target.value); setShow(true) }}
+          onKeyDown={e => { if (e.key === 'Enter') { onSubmit(); setShow(false) } }}
+          onFocus={() => setShow(true)}
+          onBlur={() => setTimeout(() => setShow(false), 150)}
+          placeholder={placeholder}
+          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        {show && suggestions.length > 0 && (
+          <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
+            {suggestions.map((s, i) => (
+              <button key={s.id || i} onMouseDown={() => { onPick(s); setShow(false) }}
+                className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0">
+                {renderSuggest(s)}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <button onClick={() => { onSubmit(); setShow(false) }} disabled={!value.trim()}
+        className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
+    </div>
+  )
+}
+
 export default function FieldSearch() {
   const [tab, setTab] = useState('product')
 
   // 제품 검색
   const [pq, setPq] = useState('')
   const [pSubmitted, setPSubmitted] = useState('')
-  const [showSug, setShowSug] = useState(false)
-
-  // 자동완성 (디바운스)
-  const [debounced, setDebounced] = useState('')
-  useEffect(() => { const t = setTimeout(() => setDebounced(pq), 250); return () => clearTimeout(t) }, [pq])
-  const { data: suggestions = [] } = useQuery({
-    queryKey: ['fieldSuggest', debounced], queryFn: () => suggestItems(debounced), enabled: debounced.trim().length >= 2,
-  })
-
   const { data: items = [], isLoading: pLoading } = useQuery({
     queryKey: ['fieldProduct', pSubmitted], queryFn: () => searchItems(pSubmitted), enabled: !!pSubmitted.trim(),
   })
@@ -101,7 +137,6 @@ export default function FieldSearch() {
   })
 
   function openBOM(code) { setBq(code); setBSubmitted(code); setTab('bom') }
-  function pickSuggestion(s) { setPq(s.std_code); setPSubmitted(s.std_code); setShowSug(false) }
 
   const TABS = [['product', '🔎 제품 검색'], ['where', '🔍 역전개 (사용처)'], ['bom', '📋 BOM 조회']]
 
@@ -122,33 +157,17 @@ export default function FieldSearch() {
       {/* 제품 검색 */}
       {tab === 'product' && (
         <>
-          <div className="flex gap-2">
-            <div className="flex-1 relative">
-              <input value={pq}
-                onChange={e => { setPq(e.target.value); setShowSug(true) }}
-                onKeyDown={e => { if (e.key === 'Enter') { setPSubmitted(pq); setShowSug(false) } }}
-                onFocus={() => setShowSug(true)}
-                onBlur={() => setTimeout(() => setShowSug(false), 150)}
-                placeholder="품명·기준코드·제조사·제조사품번·규격 검색 (2글자↑ 자동완성)"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-              {showSug && suggestions.length > 0 && (
-                <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden">
-                  {suggestions.map(s => (
-                    <button key={s.id} onMouseDown={() => pickSuggestion(s)}
-                      className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0">
-                      <div className="flex items-center gap-2">
-                        <span className="font-mono text-xs text-indigo-600">{s.std_code}</span>
-                        {s.type && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">{s.type}</span>}
-                      </div>
-                      <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <button onClick={() => { setPSubmitted(pq); setShowSug(false) }} disabled={!pq.trim()}
-              className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
-          </div>
+          <AutoInput value={pq} setValue={setPq} onSubmit={() => setPSubmitted(pq)}
+            onPick={s => { setPq(s.std_code); setPSubmitted(s.std_code) }}
+            fetchSuggest={suggestItems} keyName="fieldSuggestProduct"
+            placeholder="품명·기준코드·제조사·제조사품번·규격 검색 (2글자↑ 자동완성)"
+            renderSuggest={s => (<>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-xs text-indigo-600">{s.std_code}</span>
+                {s.type && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">{s.type}</span>}
+              </div>
+              <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
+            </>)} />
 
           {pSubmitted && (pLoading
             ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
@@ -189,13 +208,17 @@ export default function FieldSearch() {
           <div className="rounded-xl border border-slate-200 p-4 space-y-2">
             <p className="text-xs font-bold text-slate-700">부품 → 사용처 (전 고객사 BOM)</p>
             <p className="text-[11px] text-slate-400">기준코드·제조사품번·품명 입력 → 그 부품이 들어가는 어셈블리 표시</p>
-            <div className="flex gap-2">
-              <input value={rq} onChange={e => setRq(e.target.value)} onKeyDown={e => e.key === 'Enter' && setRSubmitted(rq)}
-                placeholder="기준코드 / 제조사품번 / 품명"
-                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-              <button onClick={() => setRSubmitted(rq)} disabled={!rq.trim()}
-                className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
-            </div>
+            <AutoInput value={rq} setValue={setRq} onSubmit={() => setRSubmitted(rq)}
+              onPick={s => { setRq(s.std_code); setRSubmitted(s.std_code) }}
+              fetchSuggest={suggestItems} keyName="fieldSuggestWhere"
+              placeholder="기준코드 / 제조사품번 / 품명 (2글자↑ 자동완성)"
+              renderSuggest={s => (<>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-indigo-600">{s.std_code}</span>
+                  {s.type && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">{s.type}</span>}
+                </div>
+                <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
+              </>)} />
           </div>
 
           {rSubmitted && (rLoading
@@ -248,13 +271,17 @@ export default function FieldSearch() {
           <div className="rounded-xl border border-slate-200 p-4 space-y-2">
             <p className="text-xs font-bold text-slate-700">어셈블리 BOM 조회</p>
             <p className="text-[11px] text-slate-400">어셈블리(제품) 기준코드 입력 → 구성 부품 표시. 제품검색·역전개에서 "전개 ↗" 클릭으로도 진입</p>
-            <div className="flex gap-2">
-              <input value={bq} onChange={e => setBq(e.target.value)} onKeyDown={e => e.key === 'Enter' && setBSubmitted(bq)}
-                placeholder="어셈블리 기준코드 (예: AX-110134250)"
-                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-              <button onClick={() => setBSubmitted(bq)} disabled={!bq.trim()}
-                className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">조회</button>
-            </div>
+            <AutoInput value={bq} setValue={setBq} onSubmit={() => setBSubmitted(bq)}
+              onPick={s => { setBq(s.code); setBSubmitted(s.code) }}
+              fetchSuggest={suggestBOM} keyName="fieldSuggestBOM"
+              placeholder="어셈블리 기준코드 (예: AX-110134250) · 2글자↑ 자동완성"
+              renderSuggest={s => (<>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-xs text-indigo-600">{s.code}</span>
+                  {s.rev && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">Rev {s.rev}</span>}
+                </div>
+                {s.name && <div className="text-[11px] text-slate-500 truncate">{s.name}</div>}
+              </>)} />
           </div>
 
           {bSubmitted && (bLoading
