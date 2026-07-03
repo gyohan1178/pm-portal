@@ -98,6 +98,7 @@ export function sectionOfPath(pathname) {
 const SECTION_LANDING = { floor: '/production', mat: '/inventory', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
+  if (profile?.role === 'viewer') return '/search'   // 조회 계정: 통합검색을 첫 화면으로
   const a = allowedSections(profile)
   if (a === null) return '/'          // 전체 접근
   return SECTION_LANDING[a[0]] || '/production'
@@ -107,8 +108,9 @@ export function landingPath(profile) {
 export function canAccessPath(profile, pathname) {
   const sec = sectionOfPath(pathname)
   if (sec === 'home') {
-    // 홈/관제탑: 현장 전용만 차단(→ 생산으로), 나머지는 허용
-    return !isFieldOnly(profile)
+    // 홈/관제탑: 현장 전용·조회 계정은 차단(→ landingPath로), 나머지는 허용
+    if (isFieldOnly(profile) || profile?.role === 'viewer') return false
+    return true
   }
   return canAccessSection(profile, sec)
 }

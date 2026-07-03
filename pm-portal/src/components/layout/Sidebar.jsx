@@ -123,7 +123,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {/* 로고 */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
           <div>
-            <img src="/pm-portal/logo.png" alt="진선테크" className="h-7 object-contain" />
+            <img src="/logo.png" alt="진선테크" className="h-7 object-contain" />
             <p className="text-xs text-slate-400 mt-0.5">구매/자재 포털</p>
           </div>
           {/* 모바일 닫기 버튼 */}
@@ -136,8 +136,8 @@ export default function Sidebar({ onNavigate, profile }) {
           )}
         </div>
 
-        {/* 홈 */}
-        {!fieldOnly && (
+        {/* 홈 — 현장·조회 계정은 숨김 */}
+        {!fieldOnly && profile?.role !== 'viewer' && (
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
         </div>

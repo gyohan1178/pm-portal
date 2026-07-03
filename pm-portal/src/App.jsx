@@ -101,7 +101,7 @@ export default function App() {
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
-        <Route index element={allowedSections(profile) === null ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
+        <Route index element={(allowedSections(profile) === null && profile?.role !== 'viewer') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
         <Route path="search"    element={<CommonSearch />} />
         <Route path="forecast-shortage" element={<ShortageForecast />} />
         <Route path="inbound"   element={<Inbound />} />

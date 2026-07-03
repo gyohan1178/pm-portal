@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.3.7'
+export const APP_VERSION = 'v3.3.8'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.3.8',
+    date: '2026-07-03',
+    changes: [
+      '로고 경로 수정 (Cloudflare 루트 기준 /logo.png) — 깨진 이미지 해결',
+      '조회(viewer) 계정 — 관제탑 숨김, 통합검색을 첫 화면으로',
+    ]
+  },
   {
     version: 'v3.3.7',
     date: '2026-07-03',
