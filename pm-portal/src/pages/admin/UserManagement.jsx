@@ -14,7 +14,7 @@ const USER_COLS = [
   { key:'_act',       label:'관리',   defaultWidth:130, style:{textAlign:'center'}, sortable:false },
 ]
 
-const ROLES = ['admin', 'editor', 'viewer', 'field_edit', 'field_view']
+const ROLES = ['admin', 'editor', 'viewer']
 
 async function fetchProfiles() {
   const { data, error } = await supabase
@@ -124,11 +124,9 @@ export default function UserManagement() {
                       ) : <span className="text-slate-400">{ROLE_LABEL[p.role]}</span>}
                       {tab === 'active' && (
                         <div className="mt-1">
-                          {(p.role === 'field_edit' || p.role === 'field_view')
-                            ? <span className="text-[10px] text-slate-400">현장 전용</span>
-                            : <button onClick={() => setScopeEdit(p)} className="text-[10px] text-indigo-500 hover:underline">
-                                {allowedSections(p) === null ? '전체 메뉴' : `${allowedSections(p).length}개 메뉴`} ✎
-                              </button>}
+                          <button onClick={() => setScopeEdit(p)} className="text-[10px] text-indigo-500 hover:underline">
+                            {allowedSections(p) === null ? '전체 메뉴' : `${allowedSections(p).length}개 메뉴`} ✎
+                          </button>
                         </div>
                       )}
                     </td>

@@ -5,6 +5,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 
 const MAXBUNDLE = 10
+const WORK_UNIT = 4  // 한 번에 작업하는 권장 단위 (인원 제약상 10개를 4씩 끊어서)
 const dayMs = 86400000
 
 function hogiNum(h) { const m = String(h || '').match(/(\d+)/); return m ? +m[1] : 9999 }
@@ -37,10 +38,16 @@ function buildHarnessBundles(records, today) {
       const minReq = Math.min(...chunk.map(r => dDays(r.req_date, today) ?? 99999))
       const hogis = chunk.map(r => r.hogi).sort((a, b) => hogiNum(a) - hogiNum(b))
       const hogiRange = hogis.length === 1 ? hogis[0] : `${hogis[0]}~${hogis[hogis.length - 1]}`
-      const elecN = chunk.filter(r => r.part_issue).length          // 전장 불출된 수
-      const machineN = chunk.filter(r => r.machine_recv).length     // 가공물 입고된 수 (표시용)
-      const issuedN = chunk.filter(r => r.harness_issue).length     // 하네스 불출된 수
-      bundles.push({ pn: g.pn, name: g.name, items: chunk, qty: chunk.length, hogiRange, minReq, elecN, machineN, issuedN })
+      // 작업 단위(4개씩) 소구간 — 인원 제약상 한 번에 다 못 하니 끊어서 작업
+      const workGroups = []
+      for (let j = 0; j < hogis.length; j += WORK_UNIT) {
+        const sub = hogis.slice(j, j + WORK_UNIT)
+        workGroups.push(sub.length === 1 ? sub[0] : `${sub[0]}~${sub[sub.length - 1]}`)
+      }
+      const elecN = chunk.filter(r => r.part_issue).length
+      const machineN = chunk.filter(r => r.machine_recv).length
+      const issuedN = chunk.filter(r => r.harness_issue).length
+      bundles.push({ pn: g.pn, name: g.name, items: chunk, qty: chunk.length, hogiRange, workGroups, minReq, elecN, machineN, issuedN })
     }
   }
 
@@ -131,6 +138,9 @@ export default function ProductionHarness({ rows, csCode }) {
                     <div className="font-mono text-indigo-600 text-sm">{b.pn}</div>
                     <div className="text-[11px] text-slate-400 truncate">{b.name}</div>
                     <div className="text-xs font-bold text-slate-700 mt-0.5">{b.hogiRange} <span className="font-normal text-slate-400">· {b.qty}대</span></div>
+                    {b.workGroups && b.workGroups.length > 1 && (
+                      <div className="text-[10px] text-indigo-400 mt-0.5">작업단위: {b.workGroups.join(' / ')}</div>
+                    )}
                   </div>
                 </div>
                 <button onClick={() => { if (window.confirm(`${b.pn} ${b.hogiRange} (${b.qty}대) 하네스 완료 처리할까요?`)) doneMut.mutate(b.items) }}
@@ -175,7 +185,9 @@ export default function ProductionHarness({ rows, csCode }) {
                     <div className="font-mono text-indigo-600">{b.pn}</div>
                     <div className="text-[11px] text-slate-400">{b.name}</div>
                   </td>
-                  <td className="px-3 py-2 font-bold text-slate-700">{b.hogiRange}</td>
+                  <td className="px-3 py-2 font-bold text-slate-700">{b.hogiRange}
+                    {b.workGroups && b.workGroups.length > 1 && <div className="text-[10px] font-normal text-indigo-400">↳ {b.workGroups.join(' / ')}</div>}
+                  </td>
                   <td className="px-2 py-2 text-center font-bold">{b.qty}</td>
                   <td className="px-3 py-2 text-center">{harnessIssueBadge(b)}</td>
                   <td className="px-3 py-2 text-center">{elecStatus(b)}</td>

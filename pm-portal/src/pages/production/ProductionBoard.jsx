@@ -50,6 +50,10 @@ async function fetchBoard() {
 export default function ProductionBoard() {
   const [now, setNow] = useState(new Date())
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t) }, [])
+  const toggleFull = () => {
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.()
+    else document.exitFullscreen?.()
+  }
   const { data: rows = [], dataUpdatedAt } = useQuery({
     queryKey: ['prodBoard'], queryFn: fetchBoard,
     refetchInterval: 5 * 60 * 1000, refetchIntervalInBackground: true,
@@ -100,9 +104,9 @@ export default function ProductionBoard() {
     return (
     <div style={{ borderRadius: 14, border: `2px solid ${hasLate ? 'rgba(239,68,68,.55)' : '#334155'}`, background: hasLate ? 'rgba(239,68,68,.09)' : '#0f172a', padding: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #1e293b', paddingBottom: 8, marginBottom: 8 }}>
-        <div>
-          <div style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 900, color: '#fff', lineHeight: 1 }}>{g.pn}</div>
-          <div style={{ fontSize: 12, color: '#94a3b8', maxWidth: 240, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 3 }}>{g.name}</div>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+          <div style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 900, color: '#fff', lineHeight: 1, flexShrink: 0 }}>{g.pn}</div>
+          <div style={{ fontSize: 12, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
         </div>
         <div style={{ fontSize: 13, color: '#94a3b8', textAlign: 'right', fontWeight: 700 }}>
           {g.rows.length}대{hasLate && <div style={{ color: '#f87171', fontWeight: 900, fontSize: 14 }}>지연 {g.rows.filter(r => r._d < 0 && !r._elecDone).length}</div>}
@@ -135,8 +139,11 @@ export default function ProductionBoard() {
           <h1 style={{ fontSize: 34, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>🏭 AXCELIS PD PRODUCTION STATUS</h1>
           <span style={{ fontSize: 15, color: '#94a3b8' }}>진행 {view.total}대 · 오늘출하 <b style={{ color: '#6ee7b7' }}>{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
         </div>
-        <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 800, color: '#fff' }}>
-          {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 800, color: '#fff' }}>
+            {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+          </div>
+          <button onClick={toggleFull} title="전체화면 (ESC로 해제)" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 10px', cursor: 'pointer' }}>⛶</button>
         </div>
       </div>
 
@@ -152,7 +159,7 @@ export default function ProductionBoard() {
       {massGroups.length > 0 && (
         <>
           <div style={{ fontSize: 17, fontWeight: 800, color: '#7dd3fc', margin: '8px 0 8px' }}>🔵 양산품</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
             {massGroups.map(g => <Card key={g.pn} g={g} />)}
           </div>
         </>
@@ -160,7 +167,7 @@ export default function ProductionBoard() {
       {protoGroups.length > 0 && (
         <>
           <div style={{ fontSize: 17, fontWeight: 800, color: '#fbbf24', margin: '16px 0 8px' }}>🟡 초도품 · 신규</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
             {protoGroups.map(g => <Card key={g.pn} g={g} />)}
           </div>
         </>
