@@ -253,18 +253,22 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
   // ①-A 부품 도착 전 착수 필요: 전장 시작예정 < 가공물 입고예정 (부품이 착수 시점까지 못 옴)
   // ①-B 미불출인데 착수일 지남: 전장 시작예정 < 오늘 & 아직 전장 불출 안 됨
-  const START_WARN_WINDOW = 14  // 전장 시작 임박 기준(일) — 이 안쪽일 때만 부품도착전 경보
+  const WARN_RANGE = 30  // 경보 대상 = 전장완료예정 1개월치(+지연) — 전광판과 동일 기준
   const startWarnIds = useMemo(() => {
     const beforeParts = new Set(), overdueStart = new Set()
     rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
       const m = mdMap[r.pn] || {}
       const start = calcElecStart(r, m.qc, m.md)
-      if (!start) return
-      const ds = dday(start)                              // 전장 시작예정까지 D-day
+      const elec = calcElec(r, m.qc)
+      if (!start || !elec) return
+      const de = dday(elec)                               // 전장 완료예정까지 D-day
+      if (de == null || de > WARN_RANGE) return           // 1개월치 밖은 경보 제외
+      const elecDone = truthy(r.elec_recv) || truthy(r.quality_recv) // 전장 완료됨 → 경보 무의미
+      if (elecDone) return
       const arr = r.arrival_date ? String(r.arrival_date).slice(0,10) : null
-      // 부품 도착 전 착수: 전장시작이 임박(2주 이내)한데 & 가공물이 그 전에 못 옴 & 미입고
-      if (ds != null && ds <= START_WARN_WINDOW && arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
-      // 착수일 지남: 전장시작 예정일이 이미 지났는데 아직 미불출
+      // 부품 도착 전 착수: 가공물이 전장시작 전에 못 옴 & 미입고
+      if (arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
+      // 착수일 지남: 전장시작 예정일이 지났는데 미불출
       if (start < today && !truthy(r.part_issue)) overdueStart.add(r.id)
     })
     return { beforeParts, overdueStart }
