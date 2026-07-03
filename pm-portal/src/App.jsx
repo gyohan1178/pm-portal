@@ -1,7 +1,7 @@
 import { useEffect, useState, lazy, Suspense } from 'react'
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { supabase } from './lib/supabase'
-import { useProfile, hasRole, isFieldOnly, canAccessPath } from './hooks/useProfile'
+import { useProfile, hasRole, isFieldOnly, canAccessPath, landingPath, allowedSections } from './hooks/useProfile'
 import Layout from './components/layout/Layout'
 import Login from './pages/Login'
 import PendingApproval from './pages/PendingApproval'
@@ -49,11 +49,11 @@ function ProtectedRoute({ session, children }) {
   return children
 }
 
-// 현장 전용 계정: 허용 경로 외 접근 시 /production으로
-function FieldGuard({ profile, children }) {
+// 접근 제한 계정: 허용 안 된 섹션 진입 시 착지 경로로
+function AccessGuard({ profile, children }) {
   const loc = useLocation()
-  if (isFieldOnly(profile) && !canAccessPath(profile, loc.pathname)) {
-    return <Navigate to="/production" replace />
+  if (!canAccessPath(profile, loc.pathname)) {
+    return <Navigate to={landingPath(profile)} replace />
   }
   return children
 }
@@ -100,8 +100,8 @@ export default function App() {
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
-      <Route element={<ProtectedRoute session={session}><FieldGuard profile={profile}><Layout profile={profile} /></FieldGuard></ProtectedRoute>}>
-        <Route index element={isFieldOnly(profile) ? <Navigate to="/production" replace /> : <ControlTower scope="all" />} />
+      <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
+        <Route index element={allowedSections(profile) === null ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
         <Route path="search"    element={<CommonSearch />} />
         <Route path="forecast-shortage" element={<ShortageForecast />} />
         <Route path="inbound"   element={<Inbound />} />

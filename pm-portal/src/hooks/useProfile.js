@@ -51,11 +51,66 @@ export function canEdit(profile) {
   return hasRole(profile, 'editor')
 }
 
-// 현장 전용 계정이 접근 가능한 경로 (이 외에는 차단)
-export const FIELD_PATHS = ['/production', '/production/AX', '/search', '/board']
+// ── 상위메뉴(섹션)별 접근 권한 ──
+// menu_scope(jsonb 배열)로 사용자별 허용 섹션 지정. 비어있으면 전체 접근(admin/editor/viewer 기본)
+export const SECTIONS = [
+  { key: 'floor',  label: '🏭 현장' },
+  { key: 'mat',    label: '📦 자재' },
+  { key: 'buy',    label: '🛒 구매' },
+  { key: 'sales',  label: '🤝 영업' },
+  { key: 'report', label: '📊 분석' },
+  { key: 'master', label: '⚙️ 기초자료' },
+]
+
+// 이 프로필이 접근 가능한 섹션 목록 (null = 전체)
+export function allowedSections(profile) {
+  if (!profile) return []
+  if (profile.role === 'field_edit' || profile.role === 'field_view') return ['floor'] // 현장 role = 현장만
+  const ms = profile.menu_scope
+  if (Array.isArray(ms) && ms.length > 0) return ms
+  return null // 지정 없음 = 전체
+}
+export function canAccessSection(profile, key) {
+  const a = allowedSections(profile)
+  return a === null || a.includes(key)
+}
+
+// 경로 → 섹션 매핑 (라우트 가드용)
+export function sectionOfPath(pathname) {
+  if (pathname === '/' || pathname === '') return 'home'
+  if (pathname.startsWith('/production') || pathname === '/search' || pathname === '/board') return 'floor'
+  if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing') return 'mat'
+  if (pathname === '/inbound') return 'buy'
+  if (pathname === '/sales') return 'sales'
+  if (pathname.startsWith('/master') || pathname === '/cost' || pathname === '/quote' || pathname === '/erp') return 'master'
+  if (pathname === '/weekly' || pathname === '/purchase-dashboard' || pathname === '/what-if' || pathname === '/insights') return 'report'
+  // 고객사 하위 경로: 마지막 세그먼트로 판정
+  if (pathname.startsWith('/customer/')) {
+    if (pathname.endsWith('/short')) return 'mat'
+    if (pathname.endsWith('/purchase')) return 'buy'
+    if (pathname.endsWith('/cpo') || pathname.endsWith('/forecast')) return 'sales'
+    if (pathname.endsWith('/bom') || pathname.endsWith('/reqbom')) return 'master'
+  }
+  return 'home' // 그 외(설정 등)는 홈 취급 → 전체 허용
+}
+
+// 제한 계정의 기본 착지 경로 (접근 불가 페이지 진입 시 여기로)
+const SECTION_LANDING = { floor: '/production', mat: '/inventory', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
+export function landingPath(profile) {
+  if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
+  const a = allowedSections(profile)
+  if (a === null) return '/'          // 전체 접근
+  return SECTION_LANDING[a[0]] || '/production'
+}
+
+// 특정 경로 접근 가능? (섹션 제한 계정 대응)
 export function canAccessPath(profile, pathname) {
-  if (!isFieldOnly(profile)) return true // 일반 계정은 전체 접근
-  return FIELD_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
+  const sec = sectionOfPath(pathname)
+  if (sec === 'home') {
+    // 홈/관제탑: 현장 전용만 차단(→ 생산으로), 나머지는 허용
+    return !isFieldOnly(profile)
+  }
+  return canAccessSection(profile, sec)
 }
 
 // 세션 없이 현재 사용자 프로필 조회 (profile prop 못 받는 컴포넌트용)

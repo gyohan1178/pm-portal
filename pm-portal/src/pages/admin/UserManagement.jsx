@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
-import { ROLE_LABEL } from '../../hooks/useProfile'
+import { ROLE_LABEL, SECTIONS, allowedSections } from '../../hooks/useProfile'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useTableSort } from '../../hooks/useTableSort'
 
@@ -14,7 +14,7 @@ const USER_COLS = [
   { key:'_act',       label:'관리',   defaultWidth:130, style:{textAlign:'center'}, sortable:false },
 ]
 
-const ROLES = ['admin', 'editor', 'viewer']
+const ROLES = ['admin', 'editor', 'viewer', 'field_edit', 'field_view']
 
 async function fetchProfiles() {
   const { data, error } = await supabase
@@ -29,6 +29,7 @@ export default function UserManagement() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('pending')
   const [myId, setMyId] = useState(null)
+  const [scopeEdit, setScopeEdit] = useState(null) // 메뉴권한 편집 중인 프로필
   useEffect(() => { supabase.auth.getUser().then(({ data }) => setMyId(data?.user?.id)) }, [])
   const { data: profiles = [], isLoading } = useQuery({ queryKey: ['profiles'], queryFn: fetchProfiles })
 
@@ -44,6 +45,7 @@ export default function UserManagement() {
   const approve = (id) => mut.mutate({ id, patch: { status: 'approved', approved_at: new Date().toISOString() } })
   const reject = (id) => mut.mutate({ id, patch: { status: 'rejected' } })
   const setRole = (id, role) => mut.mutate({ id, patch: { role } })
+  const saveScope = (id, scope) => mut.mutate({ id, patch: { menu_scope: scope && scope.length ? scope : null } }, { onSuccess: () => { qc.invalidateQueries(['profiles']); toastSuccess('메뉴 권한 저장됨'); setScopeEdit(null) } })
 
   const pending = profiles.filter(p => p.status === 'pending')
   const active = profiles.filter(p => p.status === 'approved')
@@ -120,6 +122,15 @@ export default function UserManagement() {
                               {ROLES.map(r => <option key={r} value={r}>{ROLE_LABEL[r]}</option>)}
                             </select>
                       ) : <span className="text-slate-400">{ROLE_LABEL[p.role]}</span>}
+                      {tab === 'active' && (
+                        <div className="mt-1">
+                          {(p.role === 'field_edit' || p.role === 'field_view')
+                            ? <span className="text-[10px] text-slate-400">현장 전용</span>
+                            : <button onClick={() => setScopeEdit(p)} className="text-[10px] text-indigo-500 hover:underline">
+                                {allowedSections(p) === null ? '전체 메뉴' : `${allowedSections(p).length}개 메뉴`} ✎
+                              </button>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-center text-slate-400 whitespace-nowrap">{p.created_at?.slice(0, 10)}</td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -144,6 +155,39 @@ export default function UserManagement() {
           </div>
         </>
       )}
+      {scopeEdit && <ScopeModal profile={scopeEdit} onSave={saveScope} onClose={() => setScopeEdit(null)} />}
+    </div>
+  )
+}
+
+// 메뉴별 접근 권한 편집 모달
+function ScopeModal({ profile, onSave, onClose }) {
+  const init = allowedSections(profile)
+  const [all, setAll] = useState(init === null)
+  const [sel, setSel] = useState(new Set(init || []))
+  const toggle = (k) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-slate-800 mb-1">{profile.name} · 메뉴 권한</h3>
+        <p className="text-xs text-slate-400 mb-4">접근 가능한 상위 메뉴를 지정합니다. 지정 안 된 메뉴는 보이지 않고 URL 직접 접근도 차단됩니다.</p>
+        <label className="flex items-center gap-2 text-sm font-bold text-slate-700 mb-3 cursor-pointer">
+          <input type="checkbox" checked={all} onChange={e => setAll(e.target.checked)} className="rounded" />
+          전체 메뉴 접근 (제한 없음)
+        </label>
+        <div className={`space-y-2 mb-4 ${all ? 'opacity-40 pointer-events-none' : ''}`}>
+          {SECTIONS.map(sec => (
+            <label key={sec.key} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+              <input type="checkbox" checked={sel.has(sec.key)} onChange={() => toggle(sec.key)} className="rounded" />
+              {sec.label}
+            </label>
+          ))}
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button onClick={onClose} className="px-3 py-1.5 text-sm font-semibold text-slate-500 rounded-lg hover:bg-slate-100">취소</button>
+          <button onClick={() => onSave(profile.id, all ? null : [...sel])} className="px-3 py-1.5 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">저장</button>
+        </div>
+      </div>
     </div>
   )
 }

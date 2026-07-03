@@ -253,14 +253,18 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
   // ①-A 부품 도착 전 착수 필요: 전장 시작예정 < 가공물 입고예정 (부품이 착수 시점까지 못 옴)
   // ①-B 미불출인데 착수일 지남: 전장 시작예정 < 오늘 & 아직 전장 불출 안 됨
+  const START_WARN_WINDOW = 14  // 전장 시작 임박 기준(일) — 이 안쪽일 때만 부품도착전 경보
   const startWarnIds = useMemo(() => {
     const beforeParts = new Set(), overdueStart = new Set()
     rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
       const m = mdMap[r.pn] || {}
       const start = calcElecStart(r, m.qc, m.md)
       if (!start) return
+      const ds = dday(start)                              // 전장 시작예정까지 D-day
       const arr = r.arrival_date ? String(r.arrival_date).slice(0,10) : null
-      if (arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
+      // 부품 도착 전 착수: 전장시작이 임박(2주 이내)한데 & 가공물이 그 전에 못 옴 & 미입고
+      if (ds != null && ds <= START_WARN_WINDOW && arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
+      // 착수일 지남: 전장시작 예정일이 이미 지났는데 아직 미불출
       if (start < today && !truthy(r.part_issue)) overdueStart.add(r.id)
     })
     return { beforeParts, overdueStart }
@@ -565,7 +569,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
-                <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
+                <th colSpan={4} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">비고</th>
@@ -574,6 +578,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">입고예정<br /><span className="text-slate-300">클릭시완료</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">하네스<br />불출</th>
                 <th className="px-2 py-1 font-semibold">전장<br />불출</th>
+                <th className="px-2 py-1 font-semibold">시작예정<br /><span className="text-slate-300">완료−조립MD</span></th>
                 <th className="px-2 py-1 font-semibold">완료예정<br /><span className="text-slate-300">MD역산·✎수정</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">완료요청<br /><span className="text-slate-300">역산·클릭완료</span></th>
               </tr>
@@ -581,7 +586,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={14} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -620,6 +625,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue), row: r })}>
                     {truthy(r.part_issue) ? <span className="text-blue-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-blue-500">불출</span>}
                   </td>
+                  {/* 전장 시작예정 — 완료예정 − 조립MD (역산 표시 전용) */}
+                  {(() => { const st = calcElecStart(r, (mdMap[r.pn]||{}).qc, (mdMap[r.pn]||{}).md); const n = dday(st)
+                    const warn = startWarnIds.beforeParts.has(r.id) || startWarnIds.overdueStart.has(r.id)
+                    return <td className={`px-2 py-2 text-center ${warn ? 'bg-rose-50/60' : ''}`} title="전장 착수 예정일 (완료예정 − 조립MD)">
+                      <span className={n != null && n < 0 && !truthy(r.part_issue) ? 'text-red-600 font-bold' : 'text-slate-500'}>{md(st) || '—'}</span>
+                    </td> })()}
                   {/* 전장 완료예정 — MD 역산 자동, ✎로 수동 고정(elec_done), 클릭=완료 */}
                   <AutoDateCell auto={calcElec(r, (mdMap[r.pn]||{}).qc)} manual={r.elec_done} done={r.elec_recv}
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'elec_done', value: v || null })}
@@ -635,6 +646,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{md(r.arrival_date) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{truthy(r.harness_recv) ? '✔' : '—'}</td>
                   <td className="px-2 py-2 text-center text-slate-300">{truthy(r.part_issue) ? '✔' : '—'}</td>
+                  <td className="px-2 py-2 text-center text-slate-300">—</td>
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}

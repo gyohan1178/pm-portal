@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { isFieldOnly } from '../../hooks/useProfile'
+import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { primaryCsCode } from '../../lib/customers'
@@ -144,7 +144,7 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
 
         {/* 📦 자재 */}
-        {!fieldOnly && (
+        {canAccessSection(profile, 'mat') && (
         <CollapseSection label="📦 자재" sKey="mat">
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
@@ -154,7 +154,7 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
 
         {/* 🛒 구매 */}
-        {!fieldOnly && (
+        {canAccessSection(profile, 'buy') && (
         <CollapseSection label="🛒 구매" sKey="buy">
           <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
           <MenuItem to="/inbound"   icon="📥" onNavigate={onNavigate}>입고</MenuItem>
@@ -162,7 +162,7 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
 
         {/* 🤝 영업 */}
-        {!fieldOnly && (
+        {canAccessSection(profile, 'sales') && (
         <CollapseSection label="🤝 영업" sKey="sales">
           <MenuItem to={`/customer/${pcs}/cpo`}      icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
@@ -170,16 +170,18 @@ export default function Sidebar({ onNavigate, profile }) {
         </CollapseSection>
         )}
 
-        {/* 🏭 현장 — 내보내고 만드는 일 */}
+        {/* 🏭 현장 */}
+        {canAccessSection(profile, 'floor') && (
         <CollapseSection label="🏭 현장" sKey="floor">
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to="/board"     icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
         </CollapseSection>
+        )}
 
         {/* 📊 분석 */}
-        {!fieldOnly && (
+        {canAccessSection(profile, 'report') && (
         <CollapseSection label="📊 분석" sKey="report" defaultOpen={false}>
           <MenuItem to="/weekly"              icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
           <MenuItem to="/sales"               icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
@@ -190,7 +192,7 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
 
         {/* ⚙️ 기초자료 */}
-        {!fieldOnly && (
+        {canAccessSection(profile, 'master') && (
         <CollapseSection label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
           <MenuItem to="/master/items"   icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
           <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
