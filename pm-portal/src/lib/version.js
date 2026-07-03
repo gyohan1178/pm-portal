@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.4.2'
+export const APP_VERSION = 'v3.4.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.4.3',
+    date: '2026-07-03',
+    changes: [
+      '현장 검색 — 2글자↑ 입력 시 예상 품목 자동완성 드롭다운',
+      '현장 검색 — BOM 조회 탭 추가 (어셈블리 코드 입력 또는 제품검색·역전개에서 전개↗ 클릭). 뷰어·현장 계정도 기초자료 접근 없이 BOM 열람 가능',
+    ]
+  },
   {
     version: 'v3.4.2',
     date: '2026-07-03',
