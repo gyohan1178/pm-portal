@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.4.4'
+export const APP_VERSION = 'v3.4.5'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.4.5',
+    date: '2026-07-03',
+    changes: [
+      '구매 입고 — 발주외 입고 탭 추가 (구두발주·단건). PO 없이 품목 직접 검색→수량·단가 입력→입고. 재고 즉시 증가, 단가 입력 시 매입단가 갱신',
+      '입고 현황 — 발주외 입고는 "발주외" 뱃지로 구분 표시',
+    ]
+  },
   {
     version: 'v3.4.4',
     date: '2026-07-03',

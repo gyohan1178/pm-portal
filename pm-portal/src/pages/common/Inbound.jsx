@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
@@ -69,11 +69,33 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
   }
 }
 
+// 발주외(구두발주·단건) 입고 — PO 없이 품목 직접 입고
+async function processDirectInbound({ item_id, qty, unit_price, customer_id, memo, date }) {
+  const { error } = await supabase.rpc('pm_direct_inbound', {
+    p_item_id: item_id,
+    p_qty: Number(qty),
+    p_unit_price: (unit_price !== undefined && unit_price !== '') ? Number(unit_price) : null,
+    p_customer_id: customer_id || null,
+    p_vendor_note: memo || null,
+    p_date: date,
+  })
+  if (error) throw error
+}
+
 const today = new Date().toISOString().split('T')[0]
 
 export default function Inbound() {
   const qc = useQueryClient()
-  const [tab, setTab] = useState('process') // process | history
+  const [tab, setTab] = useState('process') // process | direct | history
+  // 발주외 입고 (단건)
+  const [dItem, setDItem] = useState(null)      // 선택된 품목 {id,std_code,name,unit}
+  const [dSearch, setDSearch] = useState('')
+  const [dShowSug, setDShowSug] = useState(false)
+  const [dQty, setDQty] = useState('')
+  const [dPrice, setDPrice] = useState('')
+  const [dCustomer, setDCustomer] = useState('')
+  const [dMemo, setDMemo] = useState('')
+  const [dDate, setDDate] = useState(todayStr())
   // 입고 처리
   const [selCustomer, setSelCustomer] = useState('')
   const [selVendor, setSelVendor] = useState('')
@@ -96,6 +118,28 @@ export default function Inbound() {
   const [selHist, setSelHist] = useState(new Set())
 
   const { data: customers=[] } = useCustomers()
+  // 발주외 품목 자동완성
+  const [dDebounced, setDDebounced] = useState('')
+  useEffect(()=>{ const t=setTimeout(()=>setDDebounced(dSearch),250); return ()=>clearTimeout(t) }, [dSearch])
+  const { data: dSuggest=[] } = useQuery({
+    queryKey:['directItemSuggest', dDebounced],
+    queryFn: async () => {
+      if (!dDebounced || dDebounced.trim().length < 2) return []
+      const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
+        .or(`std_code.ilike.%${dDebounced}%,name.ilike.%${dDebounced}%,manufacturer_code.ilike.%${dDebounced}%`).limit(8)
+      return data || []
+    },
+    enabled: dDebounced.trim().length >= 2,
+  })
+  const directMut = useMutation({
+    mutationFn: () => processDirectInbound({ item_id:dItem.id, qty:dQty, unit_price:dPrice, customer_id:dCustomer, memo:dMemo, date:dDate }),
+    onSuccess: () => {
+      setResult(`발주외 입고 완료 — ${dItem.std_code} ${dQty}${dItem.unit||''}`)
+      setDItem(null); setDSearch(''); setDQty(''); setDPrice(''); setDMemo('')
+      refreshProcurement(qc)
+    },
+    onError: (e) => toastError('오류: ' + e.message),
+  })
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
   const { data: pendingPOs=[], isLoading, refetch } = useQuery({
     queryKey:['pendingPOs',selCustomer],
@@ -210,7 +254,7 @@ export default function Inbound() {
   return (
     <div className="space-y-4">
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
-        {[['process','📥 입고 처리'],['history','📋 입고 현황']].map(([k,l])=>(
+        {[['process','📥 입고 처리'],['direct','✍️ 발주외 입고'],['history','📋 입고 현황']].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)}
             className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab===k?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{l}</button>
         ))}
@@ -345,6 +389,97 @@ export default function Inbound() {
         </>
       )}
 
+      {tab==='direct' && (
+        <>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3 max-w-2xl">
+            <div>
+              <p className="text-sm font-bold text-slate-700">✍️ 발주외 입고 (구두발주·단건)</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">PO 없이 품목을 직접 입고합니다. 재고가 바로 증가하고, 입고 현황에 "발주외"로 기록됩니다.</p>
+            </div>
+
+            {/* 품목 검색 (자동완성) */}
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">품목 <span className="text-rose-400">*</span></label>
+              {dItem ? (
+                <div className="flex items-center gap-2 px-3 py-2 bg-white border border-indigo-200 rounded-lg">
+                  <span className="font-mono text-xs text-indigo-600">{dItem.std_code}</span>
+                  <span className="text-xs text-slate-600 truncate flex-1">{dItem.name}</span>
+                  <button onClick={()=>{ setDItem(null); setDSearch('') }} className="text-xs text-slate-400 hover:text-rose-500">✕ 변경</button>
+                </div>
+              ) : (
+                <div className="relative">
+                  <input value={dSearch}
+                    onChange={e=>{ setDSearch(e.target.value); setDShowSug(true) }}
+                    onFocus={()=>setDShowSug(true)}
+                    onBlur={()=>setTimeout(()=>setDShowSug(false),150)}
+                    placeholder="기준코드·품명·제조사품번 검색 (2글자↑)"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+                  {dShowSug && dSuggest.length>0 && (
+                    <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
+                      {dSuggest.map(it=>(
+                        <button key={it.id} onMouseDown={()=>{ setDItem(it); setDShowSug(false) }}
+                          className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0">
+                          <div className="font-mono text-xs text-indigo-600">{it.std_code}</div>
+                          <div className="text-[11px] text-slate-500 truncate">{it.name}{it.manufacturer_code?` · ${it.manufacturer_code}`:''}</div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">입고 수량 <span className="text-rose-400">*</span></label>
+                <input type="number" min={0} value={dQty} onChange={e=>setDQty(e.target.value)}
+                  placeholder="0" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">단가 <span className="text-slate-300 font-normal">(선택)</span></label>
+                <input type="number" min={0} value={dPrice} onChange={e=>setDPrice(e.target.value)}
+                  placeholder="입력 시 매입단가 갱신" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">입고일</label>
+                <input type="date" value={dDate} onChange={e=>setDDate(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">고객사 <span className="text-slate-300 font-normal">(선택)</span></label>
+                <select value={dCustomer} onChange={e=>setDCustomer(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                  <option value="">-</option>
+                  {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">메모 <span className="text-slate-300 font-normal">(구매처·사유 등)</span></label>
+              <input value={dMemo} onChange={e=>setDMemo(e.target.value)}
+                placeholder="예: OO상사 구두발주 / 긴급건" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+            </div>
+
+            <button onClick={()=>directMut.mutate()}
+              disabled={!dItem || !dQty || Number(dQty)<=0 || directMut.isPending}
+              className="w-full px-4 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+              {directMut.isPending?'처리 중...':'📥 발주외 입고 처리'}
+            </button>
+          </div>
+
+          {result && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center max-w-2xl">
+              ✅ {result}
+              <button onClick={()=>setResult(null)} className="ml-auto text-emerald-400">✕</button>
+            </div>
+          )}
+        </>
+      )}
+
       {tab==='history' && (
         <div className="space-y-4">
           <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
@@ -438,11 +573,11 @@ export default function Inbound() {
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                           <td className="px-3 py-2 text-right font-bold text-emerald-700">{r.qty}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
-                          <td className="px-3 py-2 font-mono text-slate-500">{'-'}</td>
+                          <td className="px-3 py-2">{r.po_id ? <span className="font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</span> : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-bold">발주외</span>}</td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">{r.purchase_orders?.projects?.code||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.customers?.name||'-'}</td>
-                          <td className="px-3 py-2 text-slate-400">{r.note||'-'}</td>
+                          <td className="px-3 py-2 text-slate-400">{r.memo||r.note||'-'}</td>
                         </tr>
                       ))
                     }
