@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.5.5'
+export const APP_VERSION = 'v3.5.6'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.6',
+    date: '2026-07-06',
+    changes: [
+      '불출표 — 전장(현장재고) 항목은 품명·제조사·제조사품번을 1줄로 제한(넘치면 잘림). 중요도 낮아 공간 절약',
+    ]
+  },
   {
     version: 'v3.5.5',
     date: '2026-07-06',

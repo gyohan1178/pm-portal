@@ -240,14 +240,15 @@ export default function Outbound() {
         groupHdr = `<tr class="grp"><td colspan="9">■ ${MT_LABEL[mt] || mt}</td></tr>`
       }
       no++
+      const nw = mt === 'field_stock' ? ' nw' : ''   // 전장(현장재고)는 1줄 제한
       return groupHdr + `<tr>
         <td class="c">${no}</td>
         <td class="loc">${r.location||'-'}</td>
         <td class="code">${r.std_code||''}</td>
         <td class="cat">${r.cat||'-'}</td>
-        <td>${cut(r.maker,12)||'-'}</td>
-        <td class="mono">${cut(r.makerPn,20)||'-'}</td>
-        <td class="nm">${cut(r.name,30)}</td>
+        <td class="mk${nw}">${cut(r.maker,12)||'-'}</td>
+        <td class="mono${nw}">${cut(r.makerPn,20)||'-'}</td>
+        <td class="nm${nw}">${cut(r.name,30)}</td>
         <td class="c b">${round2(qtyFn(r))}</td>
         <td class="c">${r.unit||''}</td>
         <td class="chk"></td>
@@ -265,6 +266,7 @@ export default function Outbound() {
     .code{font-family:consolas;white-space:nowrap;overflow:hidden;text-overflow:clip}
     .cat{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .nm{line-height:1.3;word-break:break-word}
+    .nw{white-space:nowrap;overflow:hidden;text-overflow:clip}
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
     .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
     @media print{body{padding:0}}</style></head><body>
