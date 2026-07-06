@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 
@@ -79,8 +80,11 @@ export default function Outbound() {
     enabled: tab==='history',
   })
 
+  const iCanEdit = useCanEdit()
+  const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
+      if (!guardEdit()) throw new Error('__READONLY__')
       const lines = bomItems
         .map(b=>({ item_id:b.item_id, name:b.items?.name||'', qty:Number(outQtys[b.item_id]||0) }))
         .filter(l=>l.qty>0)
@@ -99,7 +103,7 @@ export default function Outbound() {
       qc.invalidateQueries(['inventory'])
       qc.invalidateQueries(['outboundHistory'])
     },
-    onError: (e) => toastError('오류: ' + e.message),
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
 
   function autoFillFromBOM(qty) {

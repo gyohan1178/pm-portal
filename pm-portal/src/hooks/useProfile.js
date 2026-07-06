@@ -44,6 +44,21 @@ export function isFieldOnly(profile) {
   return profile?.role === 'field_edit' || profile?.role === 'field_view'
 }
 
+// 페이지 어디서든 내 편집권한 확인 (뷰어 가드용) — 로딩 중엔 true(RLS가 최종 방어)
+export function useCanEdit() {
+  const { data } = useQuery({
+    queryKey: ['myRoleLite'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
+      return p
+    },
+  })
+  return data ? canEdit(data) : true
+}
+
 // 편집 권한 여부 (editor·admin, 또는 현장수정)
 export function canEdit(profile) {
   if (profile?.role === 'field_edit') return true

@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.4.7'
+export const APP_VERSION = 'v3.4.8'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.4.8',
+    date: '2026-07-03',
+    changes: [
+      '데이터 백업 메뉴 신설 (기초자료, 관리자 전용) — 주요 14개 테이블을 엑셀로 원클릭 다운로드. 주 1회 백업 루틴 권장',
+      '열람 전용 계정 가드 — 생산관리·입고·출고에서 수정 시도 시 친절한 안내 토스트 (기존엔 알 수 없는 에러)',
+    ]
+  },
   {
     version: 'v3.4.7',
     date: '2026-07-03',

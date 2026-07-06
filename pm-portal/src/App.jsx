@@ -31,6 +31,7 @@ const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
 const ERPExport = lazy(() => import('./pages/ERPExport'))
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const UserManagement = lazy(() => import('./pages/admin/UserManagement'))
+const Backup = lazy(() => import('./pages/admin/Backup'))
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport'))
 const WeeklyUpload = lazy(() => import('./pages/WeeklyUpload'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
@@ -135,6 +136,7 @@ export default function App() {
         <Route path="erp" element={<ERPExport />} />
         <Route path="admin" element={<AdminRoute profile={profile}><AdminDashboard /></AdminRoute>} />
         <Route path="users" element={<AdminRoute profile={profile}><UserManagement /></AdminRoute>} />
+        <Route path="backup" element={<AdminRoute profile={profile}><Backup /></AdminRoute>} />
         <Route path="weekly" element={<WeeklyReport />} />
         <Route path="weekly/upload" element={<WeeklyUpload />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />

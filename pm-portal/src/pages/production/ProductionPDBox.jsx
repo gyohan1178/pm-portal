@@ -3,6 +3,7 @@ import { isMainPn, MAIN_PNS } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 
@@ -118,8 +119,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   })
 
   // 완료상태 토글 (모달과 분리 — 완료 보존 버그 방지)
+  const iCanEdit = useCanEdit()
+  const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const toggleMut = useMutation({
     mutationFn: async ({ id, field, value, row }) => {
+      if (!guardEdit()) throw new Error('__READONLY__')
       const patch = { [field]: value, updated_at: new Date().toISOString() }
       // ① 불출/완료 체크 → 상태 자동 승격
       const auto = autoStatus(row, field, value)
@@ -131,7 +135,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (auto) toast(`상태 자동 변경 → ${auto}`)
     },
     onSuccess: () => qc.invalidateQueries(['production', csCode]),
-    onError: (e) => toastError('변경 오류: ' + e.message),
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('변경 오류: ' + e.message) },
   })
 
   // 선택 항목 일괄 날짜수정

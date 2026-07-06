@@ -202,6 +202,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/cost"      icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
           <MenuItem to="/quote"     icon="🧾" onNavigate={onNavigate}>견적입력</MenuItem>
           <MenuItem to="/erp"       icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
+          {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
         </CollapseSection>
         )}
 

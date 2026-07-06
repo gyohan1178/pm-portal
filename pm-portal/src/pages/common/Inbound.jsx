@@ -3,6 +3,7 @@ import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -131,14 +132,16 @@ export default function Inbound() {
     },
     enabled: dDebounced.trim().length >= 2,
   })
+  const iCanEdit = useCanEdit()
+  const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const directMut = useMutation({
-    mutationFn: () => processDirectInbound({ item_id:dItem.id, qty:dQty, unit_price:dPrice, customer_id:dCustomer, memo:dMemo, date:dDate }),
+    mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processDirectInbound({ item_id:dItem.id, qty:dQty, unit_price:dPrice, customer_id:dCustomer, memo:dMemo, date:dDate }) },
     onSuccess: () => {
       setResult(`발주외 입고 완료 — ${dItem.std_code} ${dQty}${dItem.unit||''}`)
       setDItem(null); setDSearch(''); setDQty(''); setDPrice(''); setDMemo('')
       refreshProcurement(qc)
     },
-    onError: (e) => toastError('오류: ' + e.message),
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
   const { data: pendingPOs=[], isLoading, refetch } = useQuery({
@@ -152,17 +155,19 @@ export default function Inbound() {
   })
 
   const inboundMut = useMutation({
-    mutationFn: () => processInbound({ items: checkedRows, inboundData, note, inboundDate }),
+    mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
     onSuccess: () => {
       setResult(`입고 처리 완료 (${inboundDate}) — ${checkedRows.length}건`)
       setInboundData({}); setChecked({}); setNote('')
       refreshProcurement(qc); refetch()
     },
-    onError: (e) => toastError('오류: ' + e.message),
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
 
   const delHistMut = useMutation({
     mutationFn: async (ids) => {
+      if (!guardEdit()) throw new Error('__READONLY__')
+      if (!guardEdit()) throw new Error('__READONLY__')
       const { error } = await supabase.rpc('pm_delete_movements', { p_ids: ids })
       if (error) throw error
     },
@@ -172,7 +177,7 @@ export default function Inbound() {
       qc.invalidateQueries(['purchase']); qc.invalidateQueries(['shortage'])
       qc.invalidateQueries(['pendingPOs']); refetch()
     },
-    onError: (e) => toastError('삭제 오류: ' + e.message),
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('삭제 오류: ' + e.message) },
   })
   const PROC_COLS = [
     { key:'order_date', label:'발주일자', get:po=>po.order_date||'', num:false },
