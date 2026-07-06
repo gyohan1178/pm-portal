@@ -243,8 +243,8 @@ export default function Outbound() {
       return groupHdr + `<tr>
         <td class="c">${no}</td>
         <td class="loc">${r.location||'-'}</td>
-        <td class="mono">${r.std_code||''}</td>
-        <td>${r.cat||'-'}</td>
+        <td class="code">${r.std_code||''}</td>
+        <td class="cat">${r.cat||'-'}</td>
         <td>${cut(r.maker,12)||'-'}</td>
         <td class="mono">${cut(r.makerPn,20)||'-'}</td>
         <td class="nm">${cut(r.name,30)}</td>
@@ -257,18 +257,21 @@ export default function Outbound() {
     .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
     h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
     table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;table-layout:fixed}
-    th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all}
+    th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all;vertical-align:middle}
     th{background:#f0f0f0;font-size:10px}
-    .grp td{background:#e8eef7;font-weight:bold;font-size:11px;color:#1e3a5f;border-color:#999}
-    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}.loc{font-weight:bold;font-family:consolas}
-    .nm{line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-height:2.5em}
+    .grp td{background:#e8eef7;font-weight:bold;font-size:11px;color:#1e3a5f;border-color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}
+    .loc{font-weight:bold;font-family:consolas;white-space:nowrap}
+    .code{font-family:consolas;white-space:nowrap;overflow:hidden;text-overflow:clip}
+    .cat{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .nm{line-height:1.3;word-break:break-word}
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
     .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
     @media print{body{padding:0}}</style></head><body>
     <div class="head"><h1>${title}</h1>
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><colgroup>
-      <col style="width:28px"><col style="width:48px"><col style="width:104px"><col style="width:52px">
+      <col style="width:28px"><col style="width:48px"><col style="width:94px"><col style="width:68px">
       <col style="width:92px"><col style="width:124px"><col><col style="width:42px"><col style="width:34px"><col style="width:42px">
     </colgroup><thead><tr>
       <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>

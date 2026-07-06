@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.5.4'
+export const APP_VERSION = 'v3.5.5'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.5',
+    date: '2026-07-06',
+    changes: [
+      '불출표 미세조정 — 기준코드 칸 축소(줄바꿈 안 나는 안전 폭 94px)+줄바꿈 금지, 카테고리 한글 1자 더+줄바꿈 금지, 품명 중간에 생기던 이상한 가로줄 제거(line-clamp 아티팩트), 제작구분 소제목은 넘치면 잘림',
+    ]
+  },
   {
     version: 'v3.5.4',
     date: '2026-07-06',
