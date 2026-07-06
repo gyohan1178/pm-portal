@@ -5,6 +5,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
+import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 
@@ -91,7 +92,6 @@ export default function Inbound() {
   // 발주외 입고 (단건)
   const [dItem, setDItem] = useState(null)      // 선택된 품목 {id,std_code,name,unit}
   const [dSearch, setDSearch] = useState('')
-  const [dShowSug, setDShowSug] = useState(false)
   const [dQty, setDQty] = useState('')
   const [dPrice, setDPrice] = useState('')
   const [dCustomer, setDCustomer] = useState('')
@@ -119,19 +119,12 @@ export default function Inbound() {
   const [selHist, setSelHist] = useState(new Set())
 
   const { data: customers=[] } = useCustomers()
-  // 발주외 품목 자동완성
-  const [dDebounced, setDDebounced] = useState('')
-  useEffect(()=>{ const t=setTimeout(()=>setDDebounced(dSearch),250); return ()=>clearTimeout(t) }, [dSearch])
-  const { data: dSuggest=[] } = useQuery({
-    queryKey:['directItemSuggest', dDebounced],
-    queryFn: async () => {
-      if (!dDebounced || dDebounced.trim().length < 2) return []
-      const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
-        .or(`std_code.ilike.%${dDebounced}%,name.ilike.%${dDebounced}%,manufacturer_code.ilike.%${dDebounced}%`).limit(8)
-      return data || []
-    },
-    enabled: dDebounced.trim().length >= 2,
-  })
+  // 발주외 품목 자동완성 (공용 AutoInput 사용)
+  const fetchDirectSuggest = async (q) => {
+    const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
+      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%`).limit(8)
+    return data || []
+  }
   const iCanEdit = useCanEdit()
   const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const directMut = useMutation({
@@ -412,25 +405,14 @@ export default function Inbound() {
                   <button onClick={()=>{ setDItem(null); setDSearch('') }} className="text-xs text-slate-400 hover:text-rose-500">✕ 변경</button>
                 </div>
               ) : (
-                <div className="relative">
-                  <input value={dSearch}
-                    onChange={e=>{ setDSearch(e.target.value); setDShowSug(true) }}
-                    onFocus={()=>setDShowSug(true)}
-                    onBlur={()=>setTimeout(()=>setDShowSug(false),150)}
-                    placeholder="기준코드·품명·제조사품번 검색 (2글자↑)"
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
-                  {dShowSug && dSuggest.length>0 && (
-                    <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
-                      {dSuggest.map(it=>(
-                        <button key={it.id} onMouseDown={()=>{ setDItem(it); setDShowSug(false) }}
-                          className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0">
-                          <div className="font-mono text-xs text-indigo-600">{it.std_code}</div>
-                          <div className="text-[11px] text-slate-500 truncate">{it.name}{it.manufacturer_code?` · ${it.manufacturer_code}`:''}</div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
+                <AutoInput value={dSearch} setValue={setDSearch} buttonLabel={null}
+                  fetchSuggest={fetchDirectSuggest} keyName="directItemSuggest"
+                  onPick={it => setDItem(it)}
+                  placeholder="기준코드·품명·제조사품번 검색 (2글자↑)"
+                  renderSuggest={it => (<>
+                    <div className="font-mono text-xs text-indigo-600">{it.std_code}</div>
+                    <div className="text-[11px] text-slate-500 truncate">{it.name}{it.manufacturer_code ? ` · ${it.manufacturer_code}` : ''}</div>
+                  </>)} />
               )}
             </div>
 

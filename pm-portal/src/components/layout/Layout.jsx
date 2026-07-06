@@ -1,5 +1,6 @@
 import { useState, Suspense } from 'react'
-import { Outlet, useLocation } from 'react-router-dom'
+import { Outlet, useLocation, Link } from 'react-router-dom'
+import { holidayCoverageWarning } from '../../lib/bizdays'
 import { supabase } from '../../lib/supabase'
 import Sidebar from './Sidebar'
 import SettingsModal from '../SettingsModal'
@@ -111,6 +112,29 @@ export default function Layout({ profile }) {
             로그아웃
           </button>
         </header>
+        {profile?.role === 'admin' && (() => {
+          let backupMsg = null
+          try {
+            const last = localStorage.getItem('pm_last_backup')
+            const days = last ? Math.floor((Date.now() - new Date(last)) / 86400000) : null
+            if (days === null) backupMsg = '아직 데이터 백업 이력이 없습니다'
+            else if (days >= 7) backupMsg = `마지막 백업이 ${days}일 전입니다`
+          } catch {}
+          const holiMsg = holidayCoverageWarning()
+          if (!backupMsg && !holiMsg) return null
+          return (
+            <div className="no-print px-4 pt-3 space-y-1.5">
+              {backupMsg && (
+                <Link to="/backup" className="block rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-700 hover:bg-amber-100">
+                  🗄 {backupMsg} — 클릭해서 백업 받기 (주 1회 권장)
+                </Link>
+              )}
+              {holiMsg && (
+                <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] font-semibold text-rose-600">📅 {holiMsg}</div>
+              )}
+            </div>
+          )
+        })()}
         <main className="flex-1 overflow-y-auto p-4 lg:p-5">
           <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">불러오는 중...</div>}>
             <Outlet />

@@ -56,6 +56,7 @@ export default function Backup() {
 
     const stamp = new Date().toISOString().slice(0, 10)
     XLSX.writeFile(wb, `PM포털_백업_${stamp}.xlsx`)
+    try { localStorage.setItem('pm_last_backup', new Date().toISOString()) } catch {}
     setDone({ totalRows, failed, stamp })
     setRunning(false)
   }

@@ -149,8 +149,8 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
-          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>출고</MenuItem>
-          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>출고 작업(불출)</MenuItem>
+          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>출고 처리 (BOM·불출표)</MenuItem>
+          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>불출 장바구니 (호기별)</MenuItem>
         </CollapseSection>
         )}
 

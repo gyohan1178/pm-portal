@@ -54,3 +54,15 @@ export function bdPlus(dateStr, n) {
   }
   return d.toISOString().slice(0, 10)
 }
+
+
+// 연말 공휴일 데이터 만료 경고 — 11월 이후, 다음해 공휴일이 5개 미만 등록이면 경고문 반환
+export function holidayCoverageWarning() {
+  const now = new Date()
+  if (now.getMonth() < 10) return null   // 11월(10)부터 검사
+  const nextYear = String(now.getFullYear() + 1)
+  let cnt = 0
+  for (const d of HOLIDAYS) if (d.startsWith(nextYear)) cnt++
+  if (cnt < 5) return `${nextYear}년 공휴일이 등록되지 않았습니다 — 전장 역산 일정이 틀어지기 전에 bizdays.js 갱신이 필요해요`
+  return null
+}

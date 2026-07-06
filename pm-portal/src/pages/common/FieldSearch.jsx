@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import AutoInput from '../../components/AutoInput'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
 //    노출: 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM
@@ -68,41 +69,6 @@ async function fetchBOMByCode(code) {
     .eq('customer_id', proj.customer_id).eq('project_id', proj.id)
     .order('seq').order('created_at')
   return { rows: data || [], assembly: proj }
-}
-
-// 자동완성 입력창 (재사용)
-function AutoInput({ value, setValue, onSubmit, onPick, fetchSuggest, keyName, placeholder, renderSuggest }) {
-  const [show, setShow] = useState(false)
-  const [debounced, setDebounced] = useState('')
-  useEffect(() => { const t = setTimeout(() => setDebounced(value), 250); return () => clearTimeout(t) }, [value])
-  const { data: suggestions = [] } = useQuery({
-    queryKey: [keyName, debounced], queryFn: () => fetchSuggest(debounced), enabled: debounced.trim().length >= 2,
-  })
-  return (
-    <div className="flex gap-2">
-      <div className="flex-1 relative">
-        <input value={value}
-          onChange={e => { setValue(e.target.value); setShow(true) }}
-          onKeyDown={e => { if (e.key === 'Enter') { onSubmit(); setShow(false) } }}
-          onFocus={() => setShow(true)}
-          onBlur={() => setTimeout(() => setShow(false), 150)}
-          placeholder={placeholder}
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
-        {show && suggestions.length > 0 && (
-          <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg overflow-hidden max-h-72 overflow-y-auto">
-            {suggestions.map((s, i) => (
-              <button key={s.id || i} onMouseDown={() => { onPick(s); setShow(false) }}
-                className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-50 last:border-0">
-                {renderSuggest(s)}
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-      <button onClick={() => { onSubmit(); setShow(false) }} disabled={!value.trim()}
-        className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
-    </div>
-  )
 }
 
 export default function FieldSearch() {
@@ -173,7 +139,25 @@ export default function FieldSearch() {
             ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
             : items.length === 0
               ? <div className="text-center py-12 text-slate-300 text-sm">결과가 없습니다</div>
-              : <div className="rounded-xl border border-slate-200 overflow-hidden">
+              : <>
+                {/* 📱 모바일: 카드형 (QR→폰 조회 대비) */}
+                <div className="md:hidden space-y-2">
+                  {items.map(it => (
+                    <div key={it.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-mono text-sm font-bold text-indigo-600">{it.std_code}</span>
+                        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span>
+                        {it.location && <span className="ml-auto px-2 py-0.5 rounded bg-slate-800 text-white font-mono text-xs font-bold">{it.location}</span>}
+                      </div>
+                      <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono">{it.manufacturer_code || '-'}</span></div>
+                      {it.spec && <div className="text-[11px] text-slate-400 truncate">{it.spec}</div>}
+                      <button onClick={() => openBOM(it.std_code)} className="mt-2 text-[11px] text-indigo-500 font-semibold">📋 BOM 전개 ↗</button>
+                    </div>
+                  ))}
+                </div>
+                {/* 🖥 데스크톱: 테이블 */}
+                <div className="hidden md:block rounded-xl border border-slate-200 overflow-hidden">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
@@ -198,7 +182,8 @@ export default function FieldSearch() {
                       </tbody>
                     </table>
                   </div>
-                </div>)}
+                </div>
+              </>)}
         </>
       )}
 
