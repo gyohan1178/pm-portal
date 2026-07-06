@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.5.6'
+export const APP_VERSION = 'v3.5.7'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.7',
+    date: '2026-07-06',
+    changes: [
+      '불출표 — 하네스자재도 전장(현장재고)와 동일하게 품명·제조사·제조사품번 1줄 제한',
+    ]
+  },
   {
     version: 'v3.5.6',
     date: '2026-07-06',

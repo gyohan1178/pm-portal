@@ -240,7 +240,7 @@ export default function Outbound() {
         groupHdr = `<tr class="grp"><td colspan="9">■ ${MT_LABEL[mt] || mt}</td></tr>`
       }
       no++
-      const nw = mt === 'field_stock' ? ' nw' : ''   // 전장(현장재고)는 1줄 제한
+      const nw = (mt === 'field_stock' || mt === 'harness') ? ' nw' : ''   // 전장(현장재고)·하네스는 1줄 제한
       return groupHdr + `<tr>
         <td class="c">${no}</td>
         <td class="loc">${r.location||'-'}</td>
