@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import * as XLSX from 'xlsx'
 
 // 확정 고객사 PO 기준 월별 소요/부족 (RPC: get_shortage_monthly) — range 페이징
 export async function fetchMonthly(csId) {
@@ -123,6 +124,31 @@ export default function ShortageMonthly({ csId }) {
   )
 
   const checkedItems = filtered.filter(it => checked[it.item_id] && it.orderNeed > 0)
+
+  // 엑셀 추출 — 화면 통합표 그대로 (긴급도·제조사·제조사품번 + 월별 부족)
+  function exportShortageExcel() {
+    try {
+      const data = filtered.map(it => {
+        const row = {
+          '긴급도': it.tier || '', '첫부족월': it.firstShort || '',
+          '기준코드': it.std_code || '', '제조사': it.manufacturer || '', '제조사품번': it.manufacturer_code || '',
+          '품명': it.name || '', '구매처': it.vendor_name || '',
+          'LT(주)': it.lt_weeks || 0, '현재고': it.current_stock ?? '', '발주필요': it.orderNeed > 0 ? it.orderNeed : 0,
+        }
+        months.forEach(mo => {
+          const c = it.cells[mo]
+          row[mo.slice(2)] = c && c.shortage > 0 ? -c.shortage : (c && c.demand > 0 ? Math.round(c.demand) : '')
+        })
+        return row
+      })
+      const ws = XLSX.utils.json_to_sheet(data)
+      ws['!cols'] = [{ wch: 7 }, { wch: 8 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 30 }, { wch: 14 }, { wch: 6 }, { wch: 7 }, { wch: 8 }, ...months.map(() => ({ wch: 7 }))]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '쇼티지통합')
+      XLSX.writeFile(wb, `쇼티지통합_${new Date().toISOString().split('T')[0]}.xlsx`)
+    } catch (e) { toastError('엑셀 생성 오류: ' + (e?.message || e)) }
+  }
+
   return (
     <div className="space-y-3">
       {/* 긴급도 요약 카드 (클릭 필터) */}
@@ -150,6 +176,7 @@ export default function ShortageMonthly({ csId }) {
         </label>
         {tierFilter && <button onClick={() => setTierFilter(null)} className="text-xs text-slate-400 hover:text-slate-600">필터 해제 ✕</button>}
         <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length}건</span>
+        <button onClick={exportShortageExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📥 엑셀 추출</button>
         {checkedItems.length > 0 && (
           <button onClick={() => { if (window.confirm(`${checkedItems.length}건 구매발주를 생성할까요? (발주필요 수량으로 생성)`)) orderMut.mutate(checkedItems) }}
             disabled={orderMut.isPending}
@@ -178,6 +205,8 @@ export default function ShortageMonthly({ csId }) {
                     긴급도 · 기준코드·품명
                   </span>
                 </th>
+                <th className="px-2 py-2 text-left font-bold">제조사</th>
+                <th className="px-2 py-2 text-left font-bold">제조사품번</th>
                 <th className="px-2 py-2 text-center font-bold">LT</th>
                 <th className="px-2 py-2 text-right font-bold">현재고</th>
                 <th className="px-2 py-2 text-right font-bold">발주필요</th>
@@ -201,6 +230,8 @@ export default function ShortageMonthly({ csId }) {
                       <div className="text-[11px] text-slate-400 max-w-[210px] truncate">{it.name}</div>
                       <div className="text-[10px] text-slate-400 max-w-[210px] truncate">{it.manufacturer}{it.manufacturer && it.vendor_name ? ' · ' : ''}{it.vendor_name}</div>
                     </td>
+                    <td className="px-2 py-2 text-slate-600 max-w-[110px] truncate" title={it.manufacturer}>{it.manufacturer||'-'}</td>
+                    <td className="px-2 py-2 font-mono text-[11px] text-slate-500 max-w-[120px] truncate" title={it.manufacturer_code}>{it.manufacturer_code||'-'}</td>
                     <td className="px-2 py-2 text-center"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">{it.lt_weeks}W</span></td>
                     <td className={`px-2 py-2 text-right ${it.current_stock < 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{it.current_stock}</td>
                     <td className="px-2 py-2 text-right font-bold" style={{ color: it.orderNeed > 0 ? '#DC2626' : '#059669' }}>{it.orderNeed > 0 ? it.orderNeed : '충족'}</td>

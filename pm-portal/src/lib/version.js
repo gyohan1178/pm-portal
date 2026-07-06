@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.5.9'
+export const APP_VERSION = 'v3.6.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.6.0',
+    date: '2026-07-06',
+    changes: [
+      '쇼티지(통합) — 엑셀 추출 버튼 추가 (긴급도·제조사·제조사품번·월별 부족 전체). 발주 여부 걸러보기용',
+      '쇼티지(통합) — 표에 제조사·제조사품번 컬럼 추가',
+    ]
+  },
   {
     version: 'v3.5.9',
     date: '2026-07-06',
