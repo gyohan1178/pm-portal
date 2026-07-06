@@ -26,7 +26,7 @@ async function fetchActiveCPOs(customerId, projectId) {
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
   const { data } = await supabase.from('bom')
-    .select('*, items!bom_item_id_fkey(id,std_code,name,unit)')
+    .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,manufacturer,manufacturer_code)')
     .eq('customer_id', customerId).eq('project_id', projectId)
   return data || []
 }
@@ -109,7 +109,6 @@ export default function Outbound() {
     const rows = itemIds.map(id => ({
       customer_id: selCustomer, project_id: selProject, item_id: id,
       make_type, note: note !== undefined ? note : (makeTypes[id]?.note || ''),
-      updated_at: new Date().toISOString(),
     }))
     const { error } = await supabase.from('pm_bom_notes').upsert(rows, { onConflict: 'customer_id,project_id,item_id' })
     if (error) { toastError('저장 오류: ' + error.message); return }
@@ -147,8 +146,10 @@ export default function Outbound() {
   })
 
   function autoFillFromBOM(qty) {
+    const perItem = {}
+    bomItems.forEach(b=>{ if(b.item_id) perItem[b.item_id] = (perItem[b.item_id]||0) + (b.qty_per_unit||0) })
     const qtys = {}
-    bomItems.forEach(b=>{ if (mtOf(b.item_id)==='normal') qtys[b.item_id] = b.qty_per_unit * (qty||1) })
+    Object.entries(perItem).forEach(([id, per])=>{ if (mtOf(id)==='normal') qtys[id] = per * (qty||1) })
     setOutQtys(qtys)
   }
 
@@ -162,18 +163,16 @@ export default function Outbound() {
     return `${p.code} ${p.name||''}`.toLowerCase().includes(s)
   })
 
-  // 제조사·제조사품번·위치 조회 (BOM 품목들)
+  // 위치(inventory.location)만 별도 조회 — 제조사·카테고리는 bomItems join에 포함됨
   const outItemIds = [...new Set(bomItems.map(b=>b.item_id).filter(Boolean))]
-  const { data: makerMeta = {} } = useQuery({
-    queryKey: ['outMakerMeta', outItemIds.join(',')],
+  const { data: locMeta = {} } = useQuery({
+    queryKey: ['outLocMeta', outItemIds.join(',')],
     enabled: outItemIds.length>0,
     queryFn: async () => {
-      const { data } = await supabase.from('items').select('id,manufacturer,manufacturer_code').in('id', outItemIds)
-      const meta = Object.fromEntries((data||[]).map(i=>[i.id, { ...i, location: '' }]))
-      // 위치(inventory.location) 병합
       const { data: inv } = await supabase.from('inventory').select('item_id,location').in('item_id', outItemIds)
-      ;(inv||[]).forEach(r => { if (meta[r.item_id] && r.location) meta[r.item_id].location = r.location })
-      return meta
+      const m = {}
+      ;(inv||[]).forEach(r => { if (r.location) m[r.item_id] = r.location })
+      return m
     },
   })
 
@@ -181,13 +180,21 @@ export default function Outbound() {
   // 정렬 순서만 먼저 확정 → 수량은 렌더 시 outQtys에서 직접 읽음
   const [makerFilter, setMakerFilter] = useState('')  // 제조사 필터
   const outOrder = useMemo(() => {
-    const rows = bomItems.map(b => ({
-      item_id: b.item_id, std_code: b.items?.std_code, name: b.items?.name,
-      unit: b.items?.unit, bom_qty: b.qty_per_unit, type: b.items?.type || '',
-      maker: makerMeta[b.item_id]?.manufacturer || '',
-      makerPn: makerMeta[b.item_id]?.manufacturer_code || '',
-      location: makerMeta[b.item_id]?.location || '',
-    }))
+    // 같은 품목이 BOM에 여러 줄 있으면 합침 (수량 합산) → 중복 체크박스/키 문제 해결
+    const merged = {}
+    bomItems.forEach(b => {
+      const id = b.item_id
+      if (!id) return
+      if (!merged[id]) merged[id] = {
+        item_id: id, std_code: b.items?.std_code, name: b.items?.name,
+        unit: b.items?.unit, bom_qty: 0, type: b.items?.type || '',
+        maker: b.items?.manufacturer || '',
+        makerPn: b.items?.manufacturer_code || '',
+        location: locMeta[id] || '',
+      }
+      merged[id].bom_qty += (b.qty_per_unit || 0)
+    })
+    const rows = Object.values(merged)
     const rank = { normal: 0, harness: 1, exclude: 2 }
     const cmp = {
       maker: (a,b)=> String(a.maker).localeCompare(String(b.maker),'ko') || String(a.makerPn).localeCompare(String(b.makerPn),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
@@ -198,7 +205,7 @@ export default function Outbound() {
       (rank[mtOf(a.item_id)] - rank[mtOf(b.item_id)]) ||   // 하네스·제외는 하단
       cmp[sortBy](a,b)
     )
-  }, [bomItems, makerMeta, makeTypes, sortBy])
+  }, [bomItems, locMeta, makeTypes, sortBy])
 
   // 제조사 목록 (필터 드롭다운용)
   const makerList = useMemo(() => [...new Set(outOrder.map(o=>o.maker).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko')), [outOrder])

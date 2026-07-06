@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.5.1'
+export const APP_VERSION = 'v3.5.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.2',
+    date: '2026-07-06',
+    changes: [
+      '출고 처리 버그수정 — 제조사·제조사품번·카테고리가 안 뜨던 문제(BOM 조인에 컬럼 누락), BOM에 같은 품목 여러 줄이면 합쳐서 표시(체크박스·수량 정상화)',
+      '제작구분 저장 오류 수정 — updated_at 컬럼 의존 제거',
+    ]
+  },
   {
     version: 'v3.5.1',
     date: '2026-07-06',
