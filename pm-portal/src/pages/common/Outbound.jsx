@@ -50,7 +50,7 @@ export default function Outbound() {
   const [tab, setTab] = useState('process')
   // 제작구분: item_id → { make_type:'normal'|'harness'|'exclude', note:'' }
   const [makeTypes, setMakeTypes] = useState({})
-  const [showAll, setShowAll] = useState(false)         // 전체 표시(하네스·제외 포함)
+  const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
   const [sortBy, setSortBy] = useState('maker')         // maker | location | code
   const [harnessUnits, setHarnessUnits] = useState(10)  // 하네스 불출 대수
@@ -119,8 +119,8 @@ export default function Outbound() {
       return n
     })
   }
-  const MT_LABEL = { normal: '정상', harness: '하네스자재', exclude: '불출 미대상' }
-  const MT_COLOR = { normal: 'text-slate-400', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
+  const MT_LABEL = { normal: '전장', field_stock: '전장(현장재고)', harness: '하네스자재', exclude: '불출 미대상' }
+  const MT_COLOR = { normal: 'text-slate-600 font-semibold', field_stock: 'text-teal-600 font-semibold', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
 
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
@@ -197,7 +197,7 @@ export default function Outbound() {
       merged[id].bom_qty += (b.qty_per_unit || 0)
     })
     const rows = Object.values(merged)
-    const rank = { normal: 0, harness: 1, exclude: 2 }
+    const rank = { normal: 0, field_stock: 1, harness: 2, exclude: 3 }
     const cmp = {
       maker: (a,b)=> String(a.maker).localeCompare(String(b.maker),'ko') || String(a.makerPn).localeCompare(String(b.makerPn),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
       location: (a,b)=> String(a.location||'힣').localeCompare(String(b.location||'힣'),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
@@ -215,7 +215,7 @@ export default function Outbound() {
   // 화면 표시용 = 정렬 순서 + 필터 적용 (수량은 렌더에서 outQtys로)
   const outItems = useMemo(() => {
     let rows = outOrder
-    if (!showAll) rows = rows.filter(o => mtOf(o.item_id) === 'normal')  // 기본: 정상만
+    if (!showAll) rows = rows.filter(o => mtOf(o.item_id) !== 'exclude')  // 기본: 제외만 숨김(전장·현장재고·하네스는 표시)
     if (makerFilter === '__none__') rows = rows.filter(o => !o.maker)
     else if (makerFilter) rows = rows.filter(o => o.maker === makerFilter)
     return rows
@@ -230,19 +230,24 @@ export default function Outbound() {
     const csName = selCustomer ? (customers.find(c=>c.id===selCustomer)?.name || '') : ''
     const projName = selProject ? (projects.find(p=>p.id===selProject)?.code || '') : ''
     const today = new Date().toLocaleDateString('ko-KR')
-    const body = rows.map((r,i)=>{
+    // 제작구분별 그룹핑 (소제목으로 구분) — 컬럼에서 제작구분 빼고 품명 넓힘
+    let lastMt = null, no = 0
+    const body = rows.map((r)=>{
       const mt = mtOf(r.item_id)
-      const tag = mt==='harness' ? '<span style="color:#b45309;font-weight:bold"> [하네스자재]</span>' : ''
-      const mtTxt = mt==='harness' ? '하네스' : (mt==='exclude' ? '제외' : '정상')
-      return `<tr>
-        <td class="c">${i+1}</td>
+      let groupHdr = ''
+      if (mt !== lastMt) {
+        lastMt = mt
+        groupHdr = `<tr class="grp"><td colspan="9">■ ${MT_LABEL[mt] || mt}</td></tr>`
+      }
+      no++
+      return groupHdr + `<tr>
+        <td class="c">${no}</td>
         <td class="loc">${r.location||'-'}</td>
         <td class="mono">${r.std_code||''}</td>
-        <td class="c">${mtTxt}</td>
         <td>${r.cat||'-'}</td>
         <td>${cut(r.maker,12)||'-'}</td>
         <td class="mono">${cut(r.makerPn,20)||'-'}</td>
-        <td class="nm">${cut(r.name,30)}${tag}</td>
+        <td class="nm">${cut(r.name,30)}</td>
         <td class="c b">${round2(qtyFn(r))}</td>
         <td class="c">${r.unit||''}</td>
         <td class="chk"></td>
@@ -254,6 +259,7 @@ export default function Outbound() {
     table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;table-layout:fixed}
     th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all}
     th{background:#f0f0f0;font-size:10px}
+    .grp td{background:#e8eef7;font-weight:bold;font-size:11px;color:#1e3a5f;border-color:#999}
     .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}.loc{font-weight:bold;font-family:consolas}
     .nm{line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-height:2.5em}
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
@@ -262,10 +268,10 @@ export default function Outbound() {
     <div class="head"><h1>${title}</h1>
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><colgroup>
-      <col style="width:30px"><col style="width:52px"><col style="width:118px"><col style="width:48px"><col style="width:56px">
-      <col style="width:96px"><col style="width:130px"><col><col style="width:44px"><col style="width:36px"><col style="width:44px">
+      <col style="width:28px"><col style="width:48px"><col style="width:104px"><col style="width:52px">
+      <col style="width:92px"><col style="width:124px"><col><col style="width:42px"><col style="width:34px"><col style="width:42px">
     </colgroup><thead><tr>
-      <th class="c">No</th><th>위치</th><th>기준코드</th><th class="c">제작<br>구분</th><th>카테고리</th>
+      <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>
       <th>제조사</th><th>제조사품번</th><th>품명</th><th class="c">수량</th><th class="c">단위</th><th class="c">키팅<br>확인</th>
     </tr></thead><tbody>${body}</tbody></table>
     <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
@@ -403,7 +409,7 @@ export default function Outbound() {
                     )}
                     <label className="flex items-center gap-1 text-xs font-semibold text-slate-500 cursor-pointer">
                       <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} />
-                      전체 표시(하네스·제외 포함)
+                      제외 품목도 표시
                     </label>
                     <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
                     <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
@@ -419,7 +425,8 @@ export default function Outbound() {
                 <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-indigo-50 border border-indigo-200 text-xs">
                   <span className="font-bold text-indigo-700">{selectedIds.size}개 선택</span>
                   <span className="text-slate-500">→ 제작구분 일괄:</span>
-                  <button onClick={()=>{ saveMakeType([...selectedIds],'normal'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-200 font-semibold hover:bg-slate-50">정상</button>
+                  <button onClick={()=>{ saveMakeType([...selectedIds],'normal'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50">전장</button>
+                  <button onClick={()=>{ saveMakeType([...selectedIds],'field_stock'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-teal-200 text-teal-600 font-semibold hover:bg-teal-50">전장(현장재고)</button>
                   <button onClick={()=>{ saveMakeType([...selectedIds],'harness'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-amber-200 text-amber-600 font-semibold hover:bg-amber-50">하네스자재</button>
                   <button onClick={()=>{ saveMakeType([...selectedIds],'exclude'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-200 text-slate-500 font-semibold hover:bg-slate-50">불출 미대상</button>
                   <input placeholder="비고 일괄입력 후 Enter" onKeyDown={e=>{ if(e.key==='Enter'){ saveMakeType([...selectedIds], mtOf([...selectedIds][0]), e.target.value); e.target.value=''; } }}
@@ -469,7 +476,8 @@ export default function Outbound() {
                           <td className="px-2 py-2">
                             <select value={mt} onChange={e=>saveMakeType([item.item_id], e.target.value)}
                               className={`text-xs border border-slate-200 rounded px-1 py-1 ${MT_COLOR[mt]}`}>
-                              <option value="normal">정상</option>
+                              <option value="normal">전장</option>
+                              <option value="field_stock">전장(현장재고)</option>
                               <option value="harness">하네스자재</option>
                               <option value="exclude">불출 미대상</option>
                             </select>
