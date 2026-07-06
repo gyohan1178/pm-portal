@@ -119,7 +119,7 @@ export default function Sidebar({ onNavigate, profile }) {
 
   return (
     <>
-      <aside className="w-48 min-w-[192px] h-full bg-slate-50 border-r border-slate-200 flex flex-col overflow-y-auto">
+      <aside className="w-56 min-w-[224px] h-full bg-slate-50 border-r border-slate-200 flex flex-col overflow-y-auto">
         {/* 로고 */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
           <div>
