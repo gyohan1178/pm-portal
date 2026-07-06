@@ -119,6 +119,19 @@ export default function Outbound() {
       return n
     })
   }
+  // 위치(inventory.location) 저장 — 품목 기준이라 모든 BOM·현장검색에 자동 반영
+  async function saveLocation(item_id, location) {
+    if (!guardEdit()) return
+    const loc = (location || '').trim()
+    // inventory 행이 있으면 UPDATE, 없으면 INSERT (item_id UNIQUE)
+    const { error } = await supabase.from('inventory')
+      .upsert({ item_id, location: loc || null }, { onConflict: 'item_id' })
+    if (error) { toastError('위치 저장 오류: ' + error.message); return }
+    qc.invalidateQueries(['outLocMeta'])
+    qc.invalidateQueries(['inventory'])
+    toastSuccess('위치 저장: ' + (loc || '(비움)'))
+  }
+
   const MT_LABEL = { normal: '전장', field_stock: '전장(현장재고)', harness: '하네스자재', exclude: '불출 미대상' }
   const MT_COLOR = { normal: 'text-slate-600 font-semibold', field_stock: 'text-teal-600 font-semibold', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
 
@@ -464,7 +477,12 @@ export default function Outbound() {
                               onChange={()=>setSelectedIds(p=>{ const n=new Set(p); n.has(item.item_id)?n.delete(item.item_id):n.add(item.item_id); return n })} />
                           </td>
                           <td className="px-2 py-2 text-center text-slate-400">{idx+1}</td>
-                          <td className="px-2 py-2 font-mono font-bold text-slate-700">{item.location||'—'}</td>
+                          <td className="px-2 py-2">
+                            <input defaultValue={item.location||''} placeholder="위치"
+                              key={`loc-${item.item_id}-${item.location||''}`}
+                              onBlur={e=>{ if(e.target.value.trim()!==(item.location||'')) saveLocation(item.item_id, e.target.value) }}
+                              className="w-14 px-1 py-1 text-xs font-mono font-bold text-slate-700 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                          </td>
                           <td className="px-2 py-2 text-slate-500">{item.cat||'—'}</td>
                           <td className={`px-2 py-2 max-w-[80px] truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[100px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>

@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.5.8'
+export const APP_VERSION = 'v3.5.9'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.9',
+    date: '2026-07-06',
+    changes: [
+      '출고 처리 — 위치 칸을 직접 입력 가능하게 (EFEM 등 BOM 보면서 로케이션 바로 입력). inventory.location에 저장되어 같은 품목이면 다른 BOM·현장검색·불출표에 자동 반영',
+    ]
+  },
   {
     version: 'v3.5.8',
     date: '2026-07-06',
