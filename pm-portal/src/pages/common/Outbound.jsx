@@ -47,7 +47,12 @@ async function fetchOutboundHistory({ from, to, customerId }) {
 export default function Outbound() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('process')
-  const [excluded, setExcluded] = useState(new Set()) // 불출표 제외 대상 (item_id)
+  // 제작구분: item_id → { make_type:'normal'|'harness'|'exclude', note:'' }
+  const [makeTypes, setMakeTypes] = useState({})
+  const [showAll, setShowAll] = useState(false)         // 전체 표시(하네스·제외 포함)
+  const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
+  const [sortBy, setSortBy] = useState('maker')         // maker | location | code
+  const [harnessUnits, setHarnessUnits] = useState(10)  // 하네스 불출 대수
   // 출고 처리
   const [selCustomer, setSelCustomer] = useState('')
   const [selProject, setSelProject] = useState('')
@@ -82,12 +87,47 @@ export default function Outbound() {
 
   const iCanEdit = useCanEdit()
   const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
+  // ── 저장된 제작구분 로드 (프로젝트 선택 시) ──
+  useEffect(() => {
+    if (!selCustomer || !selProject) { setMakeTypes({}); return }
+    ;(async () => {
+      const { data } = await supabase.from('pm_bom_notes').select('item_id,make_type,note')
+        .eq('customer_id', selCustomer).eq('project_id', selProject)
+      const m = {}
+      ;(data||[]).forEach(r => { m[r.item_id] = { make_type: r.make_type || 'normal', note: r.note || '' } })
+      setMakeTypes(m)
+    })()
+  }, [selCustomer, selProject])
+
+  const mtOf = (id) => makeTypes[id]?.make_type || 'normal'
+  const noteOf = (id) => makeTypes[id]?.note || ''
+
+  // 제작구분/비고 저장 (upsert) — 하나 또는 여러 개
+  async function saveMakeType(itemIds, make_type, note) {
+    if (!selCustomer || !selProject) return
+    if (!guardEdit()) return
+    const rows = itemIds.map(id => ({
+      customer_id: selCustomer, project_id: selProject, item_id: id,
+      make_type, note: note !== undefined ? note : (makeTypes[id]?.note || ''),
+      updated_at: new Date().toISOString(),
+    }))
+    const { error } = await supabase.from('pm_bom_notes').upsert(rows, { onConflict: 'customer_id,project_id,item_id' })
+    if (error) { toastError('저장 오류: ' + error.message); return }
+    setMakeTypes(prev => {
+      const n = { ...prev }
+      itemIds.forEach(id => { n[id] = { make_type, note: note !== undefined ? note : (n[id]?.note || '') } })
+      return n
+    })
+  }
+  const MT_LABEL = { normal: '정상', harness: '하네스자재', exclude: '불출 미대상' }
+  const MT_COLOR = { normal: 'text-slate-400', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
+
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
       if (!guardEdit()) throw new Error('__READONLY__')
       const lines = bomItems
         .map(b=>({ item_id:b.item_id, name:b.items?.name||'', qty:Number(outQtys[b.item_id]||0) }))
-        .filter(l=>l.qty>0)
+        .filter(l=>l.qty>0 && mtOf(l.item_id)==='normal')   // 정상만 재고 차감 (하네스·제외 제외)
       const { data, error } = await supabase.rpc('pm_process_outbound', {
         p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode,
       })
@@ -108,12 +148,12 @@ export default function Outbound() {
 
   function autoFillFromBOM(qty) {
     const qtys = {}
-    bomItems.forEach(b=>{ qtys[b.item_id] = b.qty_per_unit * (qty||1) })
+    bomItems.forEach(b=>{ if (mtOf(b.item_id)==='normal') qtys[b.item_id] = b.qty_per_unit * (qty||1) })
     setOutQtys(qtys)
   }
 
   // BOM 로드되거나 대수 바뀌면 출고수량 = BOM/대 × 대수 자동
-  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomItems, outUnits])
+  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomItems, outUnits, makeTypes])
 
   // 프로젝트 검색 필터
   const projFiltered = projects.filter(p=>{
@@ -141,46 +181,53 @@ export default function Outbound() {
   // 정렬 순서만 먼저 확정 → 수량은 렌더 시 outQtys에서 직접 읽음
   const [makerFilter, setMakerFilter] = useState('')  // 제조사 필터
   const outOrder = useMemo(() => {
-    return bomItems.map(b => ({
+    const rows = bomItems.map(b => ({
       item_id: b.item_id, std_code: b.items?.std_code, name: b.items?.name,
-      unit: b.items?.unit, bom_qty: b.qty_per_unit,
+      unit: b.items?.unit, bom_qty: b.qty_per_unit, type: b.items?.type || '',
       maker: makerMeta[b.item_id]?.manufacturer || '',
       makerPn: makerMeta[b.item_id]?.manufacturer_code || '',
       location: makerMeta[b.item_id]?.location || '',
-    })).sort((a,b)=>
-      String(a.maker).localeCompare(String(b.maker),'ko') ||
-      String(a.makerPn).localeCompare(String(b.makerPn),'ko') ||
-      String(a.std_code).localeCompare(String(b.std_code))
+    }))
+    const rank = { normal: 0, harness: 1, exclude: 2 }
+    const cmp = {
+      maker: (a,b)=> String(a.maker).localeCompare(String(b.maker),'ko') || String(a.makerPn).localeCompare(String(b.makerPn),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
+      location: (a,b)=> String(a.location||'힣').localeCompare(String(b.location||'힣'),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
+      code: (a,b)=> String(a.std_code).localeCompare(String(b.std_code)),
+    }
+    return rows.sort((a,b)=>
+      (rank[mtOf(a.item_id)] - rank[mtOf(b.item_id)]) ||   // 하네스·제외는 하단
+      cmp[sortBy](a,b)
     )
-  }, [bomItems, makerMeta])  // ← outQtys 의존 제거! 순서 안정
+  }, [bomItems, makerMeta, makeTypes, sortBy])
 
   // 제조사 목록 (필터 드롭다운용)
   const makerList = useMemo(() => [...new Set(outOrder.map(o=>o.maker).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko')), [outOrder])
 
   // 화면 표시용 = 정렬 순서 + 필터 적용 (수량은 렌더에서 outQtys로)
   const outItems = useMemo(() => {
-    if (!makerFilter) return outOrder
-    if (makerFilter === '__none__') return outOrder.filter(o => !o.maker)
-    return outOrder.filter(o => o.maker === makerFilter)
-  }, [outOrder, makerFilter])
+    let rows = outOrder
+    if (!showAll) rows = rows.filter(o => mtOf(o.item_id) === 'normal')  // 기본: 정상만
+    if (makerFilter === '__none__') rows = rows.filter(o => !o.maker)
+    else if (makerFilter) rows = rows.filter(o => o.maker === makerFilter)
+    return rows
+  }, [outOrder, makerFilter, showAll, makeTypes])
   const noMakerCount = useMemo(() => outOrder.filter(o=>!o.maker).length, [outOrder])
 
-  // 수량 소수 2째자리 반올림
-  const round2 = (v) => { const n = Number(v); return isNaN(n) ? '' : Math.round(n * 100) / 100 }
-
-  // 자재 불출표 인쇄 (제외 뺀 것 · 제조사→제조사품번 순 · 키팅 확인란)
-  function printIssueSheet() {
-    const rows = outItems.filter(r => !excluded.has(r.item_id) && Number(outQtys[r.item_id])>0)
-    if (!rows.length) { toastError('출력할 품목이 없습니다 (출고수량 입력 + 제외 해제 확인)'); return }
+  const round2 = (v) => { const n = Number(v); return isNaN(n) ? "" : Math.round(n * 100) / 100 }
+  // 불출표 HTML 빌더 (공용)
+  function buildSheet(title, rows, qtyFn, extraMeta) {
     const csName = selCustomer ? (customers.find(c=>c.id===selCustomer)?.name || '') : ''
     const projName = selProject ? (projects.find(p=>p.id===selProject)?.code || '') : ''
     const today = new Date().toLocaleDateString('ko-KR')
-    const body = rows.map((r,i)=>`<tr>
-      <td class="c">${i+1}</td><td class="loc">${r.location||'-'}</td><td>${r.maker||'-'}</td><td class="mono">${r.makerPn||'-'}</td>
-      <td class="mono">${r.std_code||''}</td><td>${r.name||''}</td>
-      <td class="c b">${round2(outQtys[r.item_id])}</td><td>${r.unit||''}</td><td class="chk"></td>
-    </tr>`).join('')
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 불출표</title>
+    const body = rows.map((r,i)=>{
+      const mt = mtOf(r.item_id)
+      const tag = mt==='harness' ? '<span style="color:#b45309;font-weight:bold"> [하네스자재]</span>' : ''
+      return `<tr>
+        <td class="c">${i+1}</td><td class="loc">${r.location||'-'}</td><td>${r.maker||'-'}</td><td class="mono">${r.makerPn||'-'}</td>
+        <td class="mono">${r.std_code||''}</td><td>${r.name||''}${tag}</td>
+        <td class="c b">${round2(qtyFn(r))}</td><td>${r.unit||''}</td><td class="chk"></td>
+      </tr>`}).join('')
+    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
     .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
     h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
@@ -190,17 +237,32 @@ export default function Outbound() {
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
     .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
     @media print{body{padding:0}}</style></head><body>
-    <div class="head"><h1>자재 불출표</h1>
-    <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${outUnits}대<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
+    <div class="head"><h1>${title}</h1>
+    <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><thead><tr>
       <th class="c" style="width:32px">No</th><th style="width:60px">위치</th><th style="width:100px">제조사</th><th style="width:120px">제조사품번</th>
       <th style="width:120px">기준코드</th><th>품명</th><th class="c" style="width:44px">수량</th><th style="width:44px">단위</th><th class="chk">키팅<br>확인</th>
     </tr></thead><tbody>${body}</tbody></table>
     <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
     </body></html>`
+  }
+  function openPrint(html) {
     const w = window.open('','_blank')
     if(!w){ toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
     w.document.write(html); w.document.close(); w.onload=()=>{ w.focus(); w.print() }
+  }
+
+  // 박스 불출표 — 정상 + 하네스(표시만). 제외는 안 나옴. 수량은 출고수량(하네스는 참고표시)
+  function printIssueSheet() {
+    const rows = outOrder.filter(r => mtOf(r.item_id) !== 'exclude')
+    if (!rows.length) { toastError('출력할 품목이 없습니다'); return }
+    openPrint(buildSheet('자재 불출표', rows, r => outQtys[r.item_id] || 0, `${outUnits}대`))
+  }
+  // 하네스 불출표 — 하네스만, 대수(harnessUnits) × BOM/대
+  function printHarnessSheet() {
+    const rows = outOrder.filter(r => mtOf(r.item_id) === 'harness')
+    if (!rows.length) { toastError('하네스 제작구분으로 지정된 품목이 없습니다'); return }
+    openPrint(buildSheet('하네스 불출표', rows, r => (r.bom_qty || 0) * (harnessUnits || 1), `${harnessUnits}대분 (하네스)`))
   }
 
   const histTotal = history.reduce((a,r)=>a+r.qty,0)
@@ -299,51 +361,98 @@ export default function Outbound() {
                   <p className="text-xs font-bold text-slate-600">BOM 연동 — {bomItems.length}개 품목
                     <span className="text-slate-400 font-normal ml-2">({outUnits}대 기준)</span>
                   </p>
-                  <div className="flex gap-2 items-center">
+                  <div className="flex gap-2 items-center flex-wrap">
+                    <select value={sortBy} onChange={e=>setSortBy(e.target.value)}
+                      className="text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500">
+                      <option value="maker">제조사순</option>
+                      <option value="location">위치순</option>
+                      <option value="code">기준코드순</option>
+                    </select>
                     {makerList.length > 0 && (
                       <select value={makerFilter} onChange={e=>setMakerFilter(e.target.value)}
                         className="text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-indigo-500">
-                        <option value="">전체 제조사 ({outOrder.length})</option>
+                        <option value="">전체 제조사</option>
                         {makerList.map(m=><option key={m} value={m}>{m}</option>)}
                         {noMakerCount>0 && <option value="__none__">⚠ 제조사 없음 ({noMakerCount})</option>}
                       </select>
                     )}
+                    <label className="flex items-center gap-1 text-xs font-semibold text-slate-500 cursor-pointer">
+                      <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} />
+                      전체 표시(하네스·제외 포함)
+                    </label>
                     <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
-                    <button onClick={printIssueSheet} title="제외 체크 뺀 품목을 제조사→제조사품번 순으로 불출표 인쇄 (위치·키팅 확인란 포함)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 불출표 출력</button>
+                    <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
+                    <span className="inline-flex items-center gap-1 text-xs">
+                      <input type="number" min={1} value={harnessUnits} onChange={e=>setHarnessUnits(Number(e.target.value)||1)}
+                        className="w-12 px-1 py-1 border border-slate-200 rounded text-right" title="하네스 불출 대수" />대
+                      <button onClick={printHarnessSheet} title="하네스 제작구분 품목만, 입력 대수분" className="font-bold text-white bg-amber-600 px-2.5 py-1 rounded hover:bg-amber-700">🖨 하네스 불출표</button>
+                    </span>
                   </div>
+                </div>
+              )}
+              {selectedIds.size > 0 && (
+                <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-indigo-50 border border-indigo-200 text-xs">
+                  <span className="font-bold text-indigo-700">{selectedIds.size}개 선택</span>
+                  <span className="text-slate-500">→ 제작구분 일괄:</span>
+                  <button onClick={()=>{ saveMakeType([...selectedIds],'normal'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-200 font-semibold hover:bg-slate-50">정상</button>
+                  <button onClick={()=>{ saveMakeType([...selectedIds],'harness'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-amber-200 text-amber-600 font-semibold hover:bg-amber-50">하네스자재</button>
+                  <button onClick={()=>{ saveMakeType([...selectedIds],'exclude'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-200 text-slate-500 font-semibold hover:bg-slate-50">불출 미대상</button>
+                  <input placeholder="비고 일괄입력 후 Enter" onKeyDown={e=>{ if(e.key==='Enter'){ saveMakeType([...selectedIds], mtOf([...selectedIds][0]), e.target.value); e.target.value=''; } }}
+                    className="ml-2 px-2 py-1 border border-slate-200 rounded flex-1 min-w-[120px]" />
+                  <button onClick={()=>setSelectedIds(new Set())} className="text-slate-400 hover:text-slate-600">선택해제</button>
                 </div>
               )}
               <div className="rounded-xl border border-slate-200 overflow-hidden">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
-                    {[['No','w-10'],['위치','w-16'],['제조사','w-24'],['제조사품번','w-28'],['기준코드','w-28'],['품명',''],['단위','w-12'],['BOM/대','w-16'],['출고수량','w-20'],['제외','w-12']].map(([h,w])=>(
-                      <th key={h} className={`px-2 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide ${w}`}>{h}</th>
+                    <th className="px-2 py-2.5 w-8 text-center">
+                      <input type="checkbox" title="전체 선택"
+                        checked={outItems.length>0 && outItems.every(o=>selectedIds.has(o.item_id))}
+                        onChange={e=>{ setSelectedIds(e.target.checked ? new Set(outItems.map(o=>o.item_id)) : new Set()) }} />
+                    </th>
+                    {[['No','w-8'],['위치','w-14'],['카테고리','w-16'],['제조사','w-20'],['제조사품번','w-24'],['기준코드','w-24'],['품명',''],['단위','w-10'],['BOM/대','w-14'],['출고수량','w-16'],['제작구분','w-24'],['비고','w-28']].map(([h,w])=>(
+                      <th key={h} className={`px-2 py-2.5 text-left font-bold text-slate-400 text-xs ${w}`}>{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {outItems.length===0
-                      ? <tr><td colSpan={10} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
+                      ? <tr><td colSpan={13} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
                       : outItems.map((item,idx)=>{
-                        const ex = excluded.has(item.item_id)
+                        const mt = mtOf(item.item_id)
+                        const dim = mt !== 'normal'
                         return (
-                        <tr key={item.item_id} className={`border-b border-slate-100 ${ex?'opacity-40 bg-slate-50':''}`}>
+                        <tr key={item.item_id} className={`border-b border-slate-100 ${dim?'bg-slate-50':''} ${selectedIds.has(item.item_id)?'bg-indigo-50/50':''}`}>
+                          <td className="px-2 py-2 text-center">
+                            <input type="checkbox" checked={selectedIds.has(item.item_id)}
+                              onChange={()=>setSelectedIds(p=>{ const n=new Set(p); n.has(item.item_id)?n.delete(item.item_id):n.add(item.item_id); return n })} />
+                          </td>
                           <td className="px-2 py-2 text-center text-slate-400">{idx+1}</td>
                           <td className="px-2 py-2 font-mono font-bold text-slate-700">{item.location||'—'}</td>
-                          <td className="px-2 py-2 text-slate-500 max-w-[90px] truncate" title={item.maker}>{item.maker||'—'}</td>
-                          <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[110px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
+                          <td className="px-2 py-2 text-slate-500">{item.type||'—'}</td>
+                          <td className={`px-2 py-2 max-w-[80px] truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
+                          <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[100px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-indigo-600">{item.std_code}</td>
-                          <td className="px-2 py-2 font-semibold text-slate-800 max-w-[200px] truncate" title={item.name}>{item.name}</td>
+                          <td className={`px-2 py-2 font-semibold max-w-[180px] truncate ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>{item.name}</td>
                           <td className="px-2 py-2 text-slate-500">{item.unit}</td>
                           <td className="px-2 py-2 text-right text-slate-600">{item.bom_qty}</td>
                           <td className="px-2 py-2">
-                            <input type="number" min={0} step="0.01"
-                              value={outQtys[item.item_id]??''}
+                            <input type="number" min={0} step="0.01" disabled={mt!=='normal'}
+                              value={mt==='normal' ? (outQtys[item.item_id]??'') : ''}
                               onChange={e=>setOutQtys(prev=>({...prev,[item.item_id]:e.target.value}))}
-                              className="w-16 px-1.5 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                              className="w-16 px-1.5 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100"/>
                           </td>
-                          <td className="px-2 py-2 text-center">
-                            <input type="checkbox" checked={ex} title="불출표에서 제외"
-                              onChange={()=>setExcluded(p=>{ const n=new Set(p); n.has(item.item_id)?n.delete(item.item_id):n.add(item.item_id); return n })}/>
+                          <td className="px-2 py-2">
+                            <select value={mt} onChange={e=>saveMakeType([item.item_id], e.target.value)}
+                              className={`text-xs border border-slate-200 rounded px-1 py-1 ${MT_COLOR[mt]}`}>
+                              <option value="normal">정상</option>
+                              <option value="harness">하네스자재</option>
+                              <option value="exclude">불출 미대상</option>
+                            </select>
+                          </td>
+                          <td className="px-2 py-2">
+                            <input defaultValue={noteOf(item.item_id)} placeholder="비고"
+                              onBlur={e=>{ if(e.target.value!==noteOf(item.item_id)) saveMakeType([item.item_id], mt, e.target.value) }}
+                              className="w-full px-1.5 py-1 text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
                           </td>
                         </tr>
                       )})
