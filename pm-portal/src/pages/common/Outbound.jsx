@@ -4,6 +4,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
+import { catOf } from '../../lib/utils'
 import * as XLSX from 'xlsx'
 
 function monthAgoStr() {
@@ -26,7 +27,7 @@ async function fetchActiveCPOs(customerId, projectId) {
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
   const { data } = await supabase.from('bom')
-    .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,manufacturer,manufacturer_code)')
+    .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code)')
     .eq('customer_id', customerId).eq('project_id', projectId)
   return data || []
 }
@@ -187,7 +188,8 @@ export default function Outbound() {
       if (!id) return
       if (!merged[id]) merged[id] = {
         item_id: id, std_code: b.items?.std_code, name: b.items?.name,
-        unit: b.items?.unit, bom_qty: 0, type: b.items?.type || '',
+        unit: b.items?.unit, bom_qty: 0,
+        cat: catOf(b.items) || '',   // 세부구분 (js_code 기준: 케이블/와이어/커넥터...)
         maker: b.items?.manufacturer || '',
         makerPn: b.items?.manufacturer_code || '',
         location: locMeta[id] || '',
@@ -221,6 +223,8 @@ export default function Outbound() {
   const noMakerCount = useMemo(() => outOrder.filter(o=>!o.maker).length, [outOrder])
 
   const round2 = (v) => { const n = Number(v); return isNaN(n) ? "" : Math.round(n * 100) / 100 }
+  // 글자수 제한 (넘으면 잘라냄)
+  const cut = (str, max) => { const t = String(str||''); return t.length > max ? t.slice(0, max) : t }
   // 불출표 HTML 빌더 (공용)
   function buildSheet(title, rows, qtyFn, extraMeta) {
     const csName = selCustomer ? (customers.find(c=>c.id===selCustomer)?.name || '') : ''
@@ -229,26 +233,40 @@ export default function Outbound() {
     const body = rows.map((r,i)=>{
       const mt = mtOf(r.item_id)
       const tag = mt==='harness' ? '<span style="color:#b45309;font-weight:bold"> [하네스자재]</span>' : ''
+      const mtTxt = mt==='harness' ? '하네스' : (mt==='exclude' ? '제외' : '정상')
       return `<tr>
-        <td class="c">${i+1}</td><td class="loc">${r.location||'-'}</td><td>${r.maker||'-'}</td><td class="mono">${r.makerPn||'-'}</td>
-        <td class="mono">${r.std_code||''}</td><td>${r.name||''}${tag}</td>
-        <td class="c b">${round2(qtyFn(r))}</td><td>${r.unit||''}</td><td class="chk"></td>
+        <td class="c">${i+1}</td>
+        <td class="loc">${r.location||'-'}</td>
+        <td class="mono">${r.std_code||''}</td>
+        <td class="c">${mtTxt}</td>
+        <td>${r.cat||'-'}</td>
+        <td>${cut(r.maker,12)||'-'}</td>
+        <td class="mono">${cut(r.makerPn,20)||'-'}</td>
+        <td class="nm">${cut(r.name,30)}${tag}</td>
+        <td class="c b">${round2(qtyFn(r))}</td>
+        <td class="c">${r.unit||''}</td>
+        <td class="chk"></td>
       </tr>`}).join('')
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
     .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
     h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
-    table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
-    th,td{border:1px solid #999;padding:5px 6px;text-align:left}th{background:#f0f0f0;font-size:11px}
-    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}.chk{width:44px}.loc{font-weight:bold;font-family:consolas}
+    table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;table-layout:fixed}
+    th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all}
+    th{background:#f0f0f0;font-size:10px}
+    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}.loc{font-weight:bold;font-family:consolas}
+    .nm{line-height:1.25;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;max-height:2.5em}
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
     .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
     @media print{body{padding:0}}</style></head><body>
     <div class="head"><h1>${title}</h1>
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
-    <table><thead><tr>
-      <th class="c" style="width:32px">No</th><th style="width:60px">위치</th><th style="width:100px">제조사</th><th style="width:120px">제조사품번</th>
-      <th style="width:120px">기준코드</th><th>품명</th><th class="c" style="width:44px">수량</th><th style="width:44px">단위</th><th class="chk">키팅<br>확인</th>
+    <table><colgroup>
+      <col style="width:30px"><col style="width:52px"><col style="width:118px"><col style="width:48px"><col style="width:56px">
+      <col style="width:96px"><col style="width:130px"><col><col style="width:44px"><col style="width:36px"><col style="width:44px">
+    </colgroup><thead><tr>
+      <th class="c">No</th><th>위치</th><th>기준코드</th><th class="c">제작<br>구분</th><th>카테고리</th>
+      <th>제조사</th><th>제조사품번</th><th>품명</th><th class="c">수량</th><th class="c">단위</th><th class="c">키팅<br>확인</th>
     </tr></thead><tbody>${body}</tbody></table>
     <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
     </body></html>`
@@ -435,7 +453,7 @@ export default function Outbound() {
                           </td>
                           <td className="px-2 py-2 text-center text-slate-400">{idx+1}</td>
                           <td className="px-2 py-2 font-mono font-bold text-slate-700">{item.location||'—'}</td>
-                          <td className="px-2 py-2 text-slate-500">{item.type||'—'}</td>
+                          <td className="px-2 py-2 text-slate-500">{item.cat||'—'}</td>
                           <td className={`px-2 py-2 max-w-[80px] truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[100px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-indigo-600">{item.std_code}</td>
