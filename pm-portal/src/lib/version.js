@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.5.7'
+export const APP_VERSION = 'v3.5.8'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.5.8',
+    date: '2026-07-06',
+    changes: [
+      '불출표 — No 칸 세 자리(100번대)에서 줄바뀜 나던 문제 수정 (칸 소폭 확대+줄바꿈 금지)',
+    ]
+  },
   {
     version: 'v3.5.7',
     date: '2026-07-06',

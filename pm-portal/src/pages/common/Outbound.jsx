@@ -242,7 +242,7 @@ export default function Outbound() {
       no++
       const nw = (mt === 'field_stock' || mt === 'harness') ? ' nw' : ''   // 전장(현장재고)·하네스는 1줄 제한
       return groupHdr + `<tr>
-        <td class="c">${no}</td>
+        <td class="c nw">${no}</td>
         <td class="loc">${r.location||'-'}</td>
         <td class="code">${r.std_code||''}</td>
         <td class="cat">${r.cat||'-'}</td>
@@ -273,7 +273,7 @@ export default function Outbound() {
     <div class="head"><h1>${title}</h1>
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><colgroup>
-      <col style="width:28px"><col style="width:48px"><col style="width:94px"><col style="width:68px">
+      <col style="width:34px"><col style="width:48px"><col style="width:94px"><col style="width:68px">
       <col style="width:92px"><col style="width:124px"><col><col style="width:42px"><col style="width:34px"><col style="width:42px">
     </colgroup><thead><tr>
       <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>
