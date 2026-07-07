@@ -97,14 +97,19 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const all = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
-          .select('id,po_number,order_line,del_line,item_rev,qty_ordered,promise_date,division,changes, items!purchase_orders_item_id_fkey(std_code)')
+          .select('id,po_number,order_line,del_line,item_rev,qty_ordered,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
           .eq('customer_id', csId).eq('order_type', 'customer_po')
           .range(from, from + 999)
         if (error) throw error
         all.push(...(data || [])); if (!data || data.length < 1000) break
       }
       const existMap = {}
-      all.forEach(e => { existMap[keyOf(e.po_number, e.order_line, e.del_line)] = e })
+      all.forEach(e => {
+        const k = keyOf(e.po_number, e.order_line, e.del_line)
+        // 같은 키에 완료/진행이 섞이면 진행중을 우선 (완료건이 신규/변경 판정을 방해하지 않게)
+        const prev = existMap[k]
+        if (!prev || (prev.status === '완료' || prev.status === '취소')) existMap[k] = e
+      })
 
       const news = [], changes = [], sames = []
       const curKeys = new Set()
