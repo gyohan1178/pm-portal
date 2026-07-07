@@ -14,7 +14,7 @@ const fmtEok = v => (v/1e8).toFixed(2)
 async function fetchSales() {
   const [{ data: pos }, { data: css }] = await Promise.all([
     supabase.from('purchase_orders')
-      .select('id,customer_id,qty_ordered,unit_price,promise_date,order_date,status,issued')
+      .select('id,customer_id,ccn,qty_ordered,unit_price,promise_date,order_date,status,issued')
       .eq('order_type','customer_po').limit(20000),
     supabase.from('customers').select('id,name'),
   ])
@@ -23,32 +23,39 @@ async function fetchSales() {
     ...p,
     csName: csMap[p.customer_id]||'기타',
     month: (p.promise_date||p.order_date||'').slice(0,7),
-    amount: (Number(p.qty_ordered)||0) * (Number(p.unit_price)||0),
+    // CCN=B는 달러(환율은 대시보드에서 곱함), 나머지는 원화
+    isUsd: (p.ccn||'').trim().toUpperCase() === 'B',
+    baseAmount: (Number(p.qty_ordered)||0) * (Number(p.unit_price)||0),
   })).filter(p=>p.month)
 }
 
 export default function SalesDashboard() {
   const { data: rows = [], isLoading } = useQuery({ queryKey:['salesDash'], queryFn: fetchSales })
   const [range, setRange] = useState(12) // 최근 N개월
+  const [fx, setFx] = useState(1400) // USD→KRW 환율 (키인)
 
   const d = useMemo(()=>{
+    // 환율 적용: 달러(CCN=B)는 fx 곱함, 원화는 그대로
+    const amt = r => r.isUsd ? r.baseAmount * fx : r.baseAmount
     const csSet = [...new Set(rows.map(r=>r.csName))].sort()
     const byMonth = {}
     rows.forEach(r=>{
+      const a = amt(r)
       byMonth[r.month] ??= { month:r.month, total:0, qty:0, done:0, cnt:0 }
       csSet.forEach(cs=>{ byMonth[r.month][cs] ??= 0 })
-      byMonth[r.month][r.csName] += r.amount
-      byMonth[r.month].total += r.amount
+      byMonth[r.month][r.csName] += a
+      byMonth[r.month].total += a
       byMonth[r.month].qty += Number(r.qty_ordered)||0
       byMonth[r.month].cnt += 1
-      if (r.issued || r.status==='완료') byMonth[r.month].done += r.amount
+      if (r.issued || r.status==='완료') byMonth[r.month].done += a
     })
     const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month)).slice(-range)
       .map(m=>({ ...m, label:m.month.slice(2,4)+'.'+m.month.slice(5,7) }))
     const noPrice = rows.filter(r=>!r.unit_price).length
     const total = months.reduce((a,m)=>a+m.total,0)
-    return { csSet, months, noPrice, total }
-  },[rows,range])
+    const doneTotal = months.reduce((a,m)=>a+m.done,0)
+    return { csSet, months, noPrice, total, doneTotal }
+  },[rows,range,fx])
 
   const tableRows = useMemo(()=>d.months.map(m=>({
     month:m.month, cnt:m.cnt, qty:m.qty, total:m.total, done:m.done, rate: m.total>0? Math.round(m.done/m.total*100):0
@@ -91,6 +98,12 @@ export default function SalesDashboard() {
           <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · 최근 {range}개월 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b></p>
         </div>
         <div className="flex items-center gap-2">
+        <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+          <span title="CCN=B(달러) PO에 적용">💱 USD</span>
+          <input type="number" value={fx} onChange={e=>setFx(Number(e.target.value)||0)}
+            className="w-16 text-right font-mono text-slate-900 outline-none" />
+          <span className="text-slate-400">원</span>
+        </label>
         <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
         <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
           {[6,12,24].map(n=>(
@@ -98,6 +111,24 @@ export default function SalesDashboard() {
               className={`px-3 py-1.5 text-xs font-semibold rounded-md ${range===n?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{n}개월</button>
           ))}
         </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs font-bold text-slate-500">예상 매출 (전체)</p>
+          <p className="text-2xl font-bold text-slate-900 mt-1">{fmtEok(d.total)}<span className="text-sm text-slate-400 ml-1">억</span></p>
+          <p className="text-[11px] text-slate-400 mt-0.5">최근 {range}개월 PO 총액</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs font-bold text-emerald-600">기매출 (납품완료)</p>
+          <p className="text-2xl font-bold text-emerald-700 mt-1">{fmtEok(d.doneTotal)}<span className="text-sm text-slate-400 ml-1">억</span></p>
+          <p className="text-[11px] text-slate-400 mt-0.5">완료·납품 처리된 금액</p>
+        </div>
+        <div className="bg-white rounded-xl border border-slate-200 p-4">
+          <p className="text-xs font-bold text-indigo-600">잔여 (진행중)</p>
+          <p className="text-2xl font-bold text-indigo-700 mt-1">{fmtEok(d.total - d.doneTotal)}<span className="text-sm text-slate-400 ml-1">억</span></p>
+          <p className="text-[11px] text-slate-400 mt-0.5">아직 납품 안 된 예정액</p>
         </div>
       </div>
 

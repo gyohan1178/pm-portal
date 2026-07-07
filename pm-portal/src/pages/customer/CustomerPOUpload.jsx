@@ -62,6 +62,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           pn,
           item_rev: s(pick(r, ['srev', 'rev', '리비전'])),   // SRev 기준
           qty: parseFloat(s(pick(r, ['quantity', '수량', 'qty', '발주량'])).replace(/,/g, '')) || 0,
+          unit_price: parseFloat(s(pick(r, ['unit price', 'unitprice', '단가'])).replace(/[^0-9.]/g, '')) || 0,
           promise_date: dnorm(pick(r, ['promisedate', 'promise date', '약속일', '납기'])),
           division: pn.startsWith('16') ? '하네스' : pn.startsWith('11') ? '전장' : '구매품',   // 16*=하네스, 11*=전장, 그외=구매품
         }
@@ -97,7 +98,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const all = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
-          .select('id,po_number,order_line,del_line,item_rev,qty_ordered,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
+          .select('id,po_number,order_line,del_line,item_rev,qty_ordered,unit_price,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
           .eq('customer_id', csId).eq('order_type', 'customer_po')
           .range(from, from + 999)
         if (error) throw error
@@ -123,6 +124,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (r.item_rev && r.item_rev !== (ex.item_rev || '')) chg.push({ field: 'item_rev', from: ex.item_rev || '-', to: r.item_rev })
         if (r.promise_date && r.promise_date !== (ex.promise_date || '')) chg.push({ field: 'promise_date', from: ex.promise_date || '-', to: r.promise_date })
         if (r.qty && r.qty !== ex.qty_ordered) chg.push({ field: 'qty_ordered', from: ex.qty_ordered, to: r.qty })
+        if (r.unit_price && r.unit_price !== (Number(ex.unit_price) || 0)) chg.push({ field: 'unit_price', from: ex.unit_price || 0, to: r.unit_price })
         if (r.division && r.division !== (ex.division || '')) chg.push({ field: 'division', from: ex.division || '-', to: r.division })
         if (chg.length) changes.push({ ...r, code, id: ex.id, prevChanges: ex.changes || [], chg })
         else sames.push(r)
@@ -225,6 +227,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           po_number: n.po_number, ccn: n.ccn || null, order_line: n.order_line || null,
           del_line: n.del_line || null, item_rev: n.item_rev || null,
           qty_ordered: Math.round(n.qty), qty_received: 0,
+          unit_price: n.unit_price || null,
           promise_date: n.promise_date, type: item.type || '자재',
           division: n.division || '전장',
           status: '진행중', changes: [],
