@@ -118,6 +118,19 @@ export default function Outbound() {
       itemIds.forEach(id => { n[id] = { make_type, note: note !== undefined ? note : (n[id]?.note || '') } })
       return n
     })
+    // 변경된 품목만 수량 조정 (전체 리셋 대신) — 전장이면 BOM기본값, 아니면 0
+    setOutQtys(prev => {
+      const q = { ...prev }
+      itemIds.forEach(id => {
+        if (make_type === 'normal') {
+          const per = bomItems.filter(b=>b.item_id===id).reduce((a,b)=>a+(b.qty_per_unit||0),0)
+          q[id] = per * (outUnits||1)
+        } else {
+          delete q[id]   // 하네스·현장재고·제외는 차감 대상 아님
+        }
+      })
+      return q
+    })
   }
   // 위치(inventory.location) 저장 — 품목 기준이라 모든 BOM·현장검색에 자동 반영
   async function saveLocation(item_id, location) {
@@ -167,8 +180,8 @@ export default function Outbound() {
     setOutQtys(qtys)
   }
 
-  // BOM 로드되거나 대수 바뀌면 출고수량 = BOM/대 × 대수 자동
-  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomItems, outUnits, makeTypes])
+  // BOM 로드되거나 대수 바뀌면 출고수량 자동계산 (제작구분 변경 시엔 리셋 안 함 — 수동 수정 보존)
+  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomItems, outUnits])
 
   // 프로젝트 검색 필터
   const projFiltered = projects.filter(p=>{

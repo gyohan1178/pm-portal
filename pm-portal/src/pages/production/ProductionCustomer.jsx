@@ -62,7 +62,7 @@ export default function ProductionCustomer() {
   const qc = useQueryClient()
 
   const syncMut = useMutation({
-    mutationFn: async () => { const { data, error } = await supabase.rpc('sync_production_from_po', { cs_code: cs }); if (error) throw error; return data?.[0] },
+    mutationFn: async (silent = false) => { const { data, error } = await supabase.rpc('sync_production_from_po', { cs_code: cs, p_silent: silent }); if (error) throw error; return data?.[0] },
     onSuccess: (r) => { qc.invalidateQueries(['production', cs]); toastSuccess(`PO 연동 완료 — 매칭 ${r?.matched||0}, 신규 호기 ${r?.created||0}, 갱신 ${r?.updated||0}`) },
     onError: (e) => toastError('연동 오류: ' + e.message),
   })
@@ -123,10 +123,16 @@ export default function ProductionCustomer() {
           <p className="text-xs text-slate-400 mt-0.5">11번대 PO 연동 — 품번 기준 호기 매칭, 부족분 자동 생성, 납기·REV 동기화</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={() => { if(window.confirm('11번대 PO를 호기에 연동할까요?\\n납품요청일·REV가 갱신되고, 부족한 호기는 새로 생성됩니다.')) syncMut.mutate() }}
+          <button onClick={() => { if(window.confirm('11번대 PO를 호기에 연동할까요?\\n납품요청일·REV가 갱신되고, 부족한 호기는 새로 생성됩니다.')) syncMut.mutate(false) }}
             disabled={syncMut.isPending}
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
             {syncMut.isPending ? '연동 중...' : '↻ PO 연동'}
+          </button>
+          <button onClick={() => { if(window.confirm('납기변경 태그 없이 연동할까요?\\n(데이터 정리 직후·대량 변경 시 사용 — 비고에 납기변경 기록 안 남김)')) syncMut.mutate(true) }}
+            disabled={syncMut.isPending}
+            title="납기변경 태그를 남기지 않고 연동 (조용히)"
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-40">
+            ↻ 조용히 연동
           </button>
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {TABS.map(([k, label]) => (

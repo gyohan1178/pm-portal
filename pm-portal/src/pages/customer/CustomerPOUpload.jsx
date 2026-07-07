@@ -67,9 +67,9 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         }
       }).filter(r => r.pn && r.po_number)
 
-      // Received 시트 → 납품 완료 키 집합 (사라진 PO 분류용)
+      // Received 시트 → 납품 완료 키→수량 맵 (부분납품 수량 반영용)
       const rcvSheet = wb.SheetNames.find(n => /received|receive/i.test(n))
-      const receivedKeys = new Set()
+      const receivedMap = {}
       if (rcvSheet) {
         const rjson = XLSX.utils.sheet_to_json(wb.Sheets[rcvSheet], { defval: '' })
         rjson.forEach(r => {
@@ -77,10 +77,14 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           const po = s(pick(r, ['order number', 'ordernumber', 'po']))
           const ol = s(pick(r, ['order lines', 'orderlines'])).replace(/\.0$/, '')
           const dl = s(pick(r, ['del line', 'delline'])).replace(/\.0$/, '')
-          if (pn && po) receivedKeys.add(keyOf(po, ol, dl))
+          const rqty = parseFloat(s(pick(r, ['quantity', '수량', 'qty', '발주량', 'received', 'rcv qty'])).replace(/,/g, '')) || 0
+          if (pn && po) {
+            const k = keyOf(po, ol, dl)
+            receivedMap[k] = (receivedMap[k] || 0) + rqty   // 같은 라인 여러 납품분 합산
+          }
         })
       }
-      setReceivedSet(receivedKeys)
+      setReceivedSet(receivedMap)
       setRows(parsed); setDiff(null); setResult(null); setSheetUsed(sheetName)
     }
     reader.readAsArrayBuffer(file)
@@ -125,11 +129,15 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const k = keyOf(e.po_number, e.order_line, e.del_line)
         if (curKeys.has(k)) continue              // 이번에도 있음 → 패스
         if (e.status === '완료' || e.status === '취소') continue   // 이미 처리됨
-        const delivered = receivedSet.has(k)
+        const rcvQty = receivedSet[k]              // Received에 있으면 납품수량, 없으면 undefined
+        const delivered = rcvQty !== undefined
+        // 부분납품: DB수량 ≠ Received수량이면 수량 보정 필요 (예: 4개 중 3개만 납품)
+        const qtyMismatch = delivered && rcvQty > 0 && rcvQty !== e.qty_ordered
         disappeared.push({
           id: e.id, code: e.items?.std_code, po_number: e.po_number,
           order_line: e.order_line, del_line: e.del_line, qty_ordered: e.qty_ordered,
           kind: delivered ? '납품' : '취소',
+          rcvQty: delivered ? rcvQty : null, qtyMismatch,
         })
       }
 
@@ -224,9 +232,10 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const dis = (diff.disappeared || []).filter(d => disCheck[d.id] !== false)  // 기본 체크
       for (const d of dis) {
         const newStatus = d.kind === '납품' ? '완료' : '취소'
-        const { error } = await supabase.from('purchase_orders')
-          .update({ status: newStatus, issued: d.kind === '납품', issued_at: d.kind === '납품' ? now : null })
-          .eq('id', d.id)
+        const patch = { status: newStatus, issued: d.kind === '납품', issued_at: d.kind === '납품' ? now : null }
+        // 부분납품이면 실제 납품수량으로 보정 (예: 4개 등록인데 3개만 납품 → qty=3으로 완료)
+        if (d.kind === '납품' && d.qtyMismatch && d.rcvQty > 0) patch.qty_ordered = d.rcvQty
+        const { error } = await supabase.from('purchase_orders').update(patch).eq('id', d.id)
         if (error) throw error
         if (d.kind === '납품') done++; else canceled++
       }
@@ -333,7 +342,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                         <span className="font-mono text-slate-500">{d.po_number}</span>
                         <span className="font-mono text-indigo-600">{d.code}</span>
                         {d.order_line && <span className="text-slate-400">L{d.order_line}/{d.del_line}</span>}
-                        <span className="text-slate-400 ml-auto">{d.qty_ordered}개</span>
+                        <span className="text-slate-400 ml-auto">
+                          {d.qtyMismatch
+                            ? <span className="text-amber-600 font-semibold">{d.qty_ordered}→{d.rcvQty}개 (부분납품)</span>
+                            : <span>{d.qty_ordered}개</span>}
+                        </span>
                       </label>
                     ))}
                   </div>

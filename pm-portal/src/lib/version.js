@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.6.0'
+export const APP_VERSION = 'v3.7.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.6.1',
+    date: '2026-07-06',
+    changes: [
+      '출고 버그수정 — 제작구분 변경 시 손으로 수정한 출고수량이 리셋되던 문제 해결. 이제 변경된 품목의 수량만 조정(전장=BOM기본, 그외=차감제외)되고 나머지 수동 수정값은 보존',
+    ]
+  },
   {
     version: 'v3.6.0',
     date: '2026-07-06',
