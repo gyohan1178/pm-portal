@@ -68,7 +68,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         }
       }).filter(r => r.pn && r.po_number)
 
-      // Received 시트 → 납품 완료 키→수량 맵 (부분납품 수량 반영용)
+      // Received 시트 → 납품 완료 키→{수량,단가} 맵 (부분납품 수량 + 완료건 단가 반영용)
       const rcvSheet = wb.SheetNames.find(n => /received|receive/i.test(n))
       const receivedMap = {}
       if (rcvSheet) {
@@ -79,9 +79,12 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           const ol = s(pick(r, ['order lines', 'orderlines'])).replace(/\.0$/, '')
           const dl = s(pick(r, ['del line', 'delline'])).replace(/\.0$/, '')
           const rqty = parseFloat(s(pick(r, ['quantity', '수량', 'qty', '발주량', 'received', 'rcv qty'])).replace(/,/g, '')) || 0
+          const rprice = parseFloat(s(pick(r, ['unit price', 'unitprice', '단가'])).replace(/[^0-9.]/g, '')) || 0
           if (pn && po) {
             const k = keyOf(po, ol, dl)
-            receivedMap[k] = (receivedMap[k] || 0) + rqty   // 같은 라인 여러 납품분 합산
+            if (!receivedMap[k]) receivedMap[k] = { qty: 0, price: 0 }
+            receivedMap[k].qty += rqty                        // 여러 납품분 수량 합산
+            if (rprice > 0) receivedMap[k].price = rprice      // 단가 (마지막 값)
           }
         })
       }
@@ -136,16 +139,35 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const k = keyOf(e.po_number, e.order_line, e.del_line)
         if (curKeys.has(k)) continue              // 이번에도 있음 → 패스
         if (e.status === '완료' || e.status === '취소') continue   // 이미 처리됨
-        const rcvQty = receivedSet[k]              // Received에 있으면 납품수량, 없으면 undefined
-        const delivered = rcvQty !== undefined
+        const rcv = receivedSet[k]                 // Received에 있으면 {qty,price}, 없으면 undefined
+        const delivered = rcv !== undefined
+        const rcvQty = delivered ? rcv.qty : 0
+        const rcvPrice = delivered ? rcv.price : 0
         // 부분납품: DB수량 ≠ Received수량이면 수량 보정 필요 (예: 4개 중 3개만 납품)
         const qtyMismatch = delivered && rcvQty > 0 && rcvQty !== e.qty_ordered
+        // 완료건 단가 채우기: DB 단가가 없는데 Received에 단가 있으면 반영
+        const priceFill = delivered && rcvPrice > 0 && !(Number(e.unit_price) > 0)
         disappeared.push({
           id: e.id, code: e.items?.std_code, po_number: e.po_number,
           order_line: e.order_line, del_line: e.del_line, qty_ordered: e.qty_ordered,
           kind: delivered ? '납품' : '취소',
           rcvQty: delivered ? rcvQty : null, qtyMismatch,
+          rcvPrice, priceFill,
         })
+      }
+
+      // ── 이미 완료된 과거 PO 단가 채우기 ──
+      // status='완료'인데 unit_price 없는 것 → Received에 단가 있으면 백필 대상
+      const priceBackfill = []
+      for (const e of all) {
+        if (e.status !== '완료') continue
+        if (Number(e.unit_price) > 0) continue          // 이미 단가 있음
+        const k = keyOf(e.po_number, e.order_line, e.del_line)
+        const rcv = receivedSet[k]
+        if (rcv && rcv.price > 0) {
+          priceBackfill.push({ id: e.id, code: e.items?.std_code, po_number: e.po_number,
+            order_line: e.order_line, del_line: e.del_line, price: rcv.price })
+        }
       }
 
       // 미등록 품목 + BOM 등록여부 점검
@@ -172,7 +194,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       // 사라진 PO 과다 경고 (전체 진행중의 40% 넘으면 의심)
       const disappearWarn = all.length > 0 && disappeared.length / all.length > 0.4
 
-      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, existCount: all.length }
+      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: all.length }
     },
     onSuccess: (d) => {
       setDiff(d)
@@ -243,14 +265,23 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const patch = { status: newStatus, issued: d.kind === '납품', issued_at: d.kind === '납품' ? now : null }
         // 부분납품이면 실제 납품수량으로 보정 (예: 4개 등록인데 3개만 납품 → qty=3으로 완료)
         if (d.kind === '납품' && d.qtyMismatch && d.rcvQty > 0) patch.qty_ordered = d.rcvQty
+        // 완료건 단가 채우기: DB에 단가 없으면 Received 단가로 (매출 집계용)
+        if (d.kind === '납품' && d.priceFill && d.rcvPrice > 0) patch.unit_price = d.rcvPrice
         const { error } = await supabase.from('purchase_orders').update(patch).eq('id', d.id)
         if (error) throw error
         if (d.kind === '납품') done++; else canceled++
       }
-      return { changed: diff.changes.length, inserted, created, done, canceled }
+      // 이미 완료된 과거 PO 단가 백필 (매출 집계용)
+      let priceFilled = 0
+      for (const p of (diff.priceBackfill || [])) {
+        const { error } = await supabase.from('purchase_orders').update({ unit_price: p.price }).eq('id', p.id)
+        if (error) throw error
+        priceFilled++
+      }
+      return { changed: diff.changes.length, inserted, created, done, canceled, priceFilled }
     },
     onSuccess: (r) => {
-      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}`)
+      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}`)
       setRows([]); setDiff(null); setDisCheck({})
       qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage'])
     },
@@ -297,6 +328,12 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                 <div className="rounded-xl border border-slate-200 p-3 text-center">
                   <p className="text-xs font-bold text-slate-400">동일</p><p className="text-xl font-bold text-slate-600">{diff.sames.length}</p></div>
               </div>
+
+              {diff.priceBackfill?.length > 0 && (
+                <p className="text-[11px] text-blue-600 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
+                  💰 이미 완료된 PO {diff.priceBackfill.length}건의 단가를 Received 시트에서 채웁니다 (매출 집계용) — 적용 시 반영됩니다.
+                </p>
+              )}
 
               {/* 미등록 품목 알림 */}
               {diff.unregistered?.length > 0 && (
@@ -382,7 +419,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                 </div>
               )}
 
-              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0)}
+              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0)}
                 className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                 {applyMut.isPending ? '적용 중...' : `적용 (신규 ${diff.news.length} · 변경 ${diff.changes.length})`}
               </button>
