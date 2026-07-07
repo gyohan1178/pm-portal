@@ -370,7 +370,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                         <div className="font-mono text-slate-500 mb-1">{c.po_number} · {c.code} {c.order_line && `· L${c.order_line}`}</div>
                         {c.chg.map((x, j) => (
                           <div key={j} className="flex items-center gap-2 ml-2">
-                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'REV' : x.field === 'division' ? '구분' : '수량'}</span>
+                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'REV' : x.field === 'division' ? '구분' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
                             <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 line-through">{x.from}</span>
                             <span className="text-slate-300">→</span>
                             <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-semibold">{x.to}</span>
