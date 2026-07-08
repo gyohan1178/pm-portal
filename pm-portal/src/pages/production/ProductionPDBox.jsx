@@ -724,6 +724,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <Field label="완료요청일"><input type="date" value={edit.elec_done || ''} onChange={e => setEdit(s => ({ ...s, elec_done: e.target.value }))} className="inp" /></Field>
                 </div>
               </div>
+              <MissingPartsEditor value={edit.missing_parts}
+                onChange={(v) => setEdit(s => ({ ...s, missing_parts: v }))} />
               <Field label="비고"><textarea value={edit.note || ''} onChange={e => setEdit(s => ({ ...s, note: e.target.value }))} rows={2} className="inp" /></Field>
             </div>
             <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2 sticky bottom-0 bg-white">
@@ -741,6 +743,63 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
 function Field({ label, children }) {
   return <label className="block"><span className="text-[11px] font-semibold text-slate-400 block mb-1">{label}</span>{children}</label>
+}
+
+// ── 파트 미불출 편집기 — 품번 입력 시 품명·제조사·제조사품번 자동 조회 ──
+function MissingPartsEditor({ value, onChange }) {
+  const list = Array.isArray(value) ? value : []
+  const add = () => onChange([...list, { pn: '', qty: '', date: '', name: '', maker: '', makerPn: '' }])
+  const del = (i) => onChange(list.filter((_, idx) => idx !== i))
+  const upd = (i, patch) => onChange(list.map((it, idx) => idx === i ? { ...it, ...patch } : it))
+
+  // 품번으로 품목 정보 자동 조회 (AX- 접두 자동 처리)
+  const lookup = async (i, rawPn) => {
+    const pn = (rawPn || '').trim()
+    if (!pn) { upd(i, { name: '', maker: '', makerPn: '' }); return }
+    const code = pn.toUpperCase().startsWith('AX-') ? pn : 'AX-' + pn
+    const { data } = await supabase.from('items')
+      .select('name,manufacturer,manufacturer_code')
+      .eq('std_code', code).maybeSingle()
+    if (data) upd(i, { name: data.name || '', maker: data.manufacturer || '', makerPn: data.manufacturer_code || '' })
+    else upd(i, { name: '(품목 없음)', maker: '', makerPn: '' })
+  }
+
+  return (
+    <div className="rounded-lg bg-slate-50 p-3 space-y-2 border border-slate-200">
+      <div className="flex items-center gap-2">
+        <p className="text-xs font-bold text-rose-600">⚠ 파트 미불출 현황</p>
+        <button type="button" onClick={add}
+          className="px-2 py-0.5 text-[11px] font-bold rounded-md bg-indigo-600 text-white hover:bg-indigo-700">+ 추가</button>
+      </div>
+      {list.length === 0 && <p className="text-[11px] text-slate-400">없음</p>}
+      {list.map((it, i) => (
+        <div key={i} className="rounded-md bg-white border border-slate-200 p-2 space-y-1.5">
+          <div className="flex gap-1.5 items-center">
+            <input value={it.pn || ''} placeholder="품번"
+              onChange={e => upd(i, { pn: e.target.value })}
+              onBlur={e => lookup(i, e.target.value)}
+              className="flex-1 px-2 py-1 text-xs font-mono border border-slate-200 rounded" />
+            <input value={it.qty || ''} placeholder="수량" type="number" min={0}
+              onChange={e => upd(i, { qty: e.target.value })}
+              className="w-16 px-2 py-1 text-xs border border-slate-200 rounded text-right" />
+            <input value={it.date || ''} type="date"
+              onChange={e => upd(i, { date: e.target.value })}
+              className="w-32 px-2 py-1 text-xs border border-slate-200 rounded" />
+            <button type="button" onClick={() => del(i)}
+              className="px-2 py-1 text-xs text-slate-400 hover:text-rose-600 border border-slate-200 rounded">✕</button>
+          </div>
+          <div className="flex gap-1.5">
+            <input value={it.name || ''} placeholder="품명 (자동)" readOnly
+              className="flex-1 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500" />
+            <input value={it.maker || ''} placeholder="제조사 (자동)" readOnly
+              className="w-28 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500" />
+            <input value={it.makerPn || ''} placeholder="제조사품번 (자동)" readOnly
+              className="w-32 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500 font-mono" />
+          </div>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 // 하이브리드 날짜 셀: 날짜 없으면 입력기, 날짜 있으면 클릭 시 완료 토글
