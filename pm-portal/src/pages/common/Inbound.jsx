@@ -31,8 +31,10 @@ async function fetchPendingPOs(customerId, vendorId) {
 }
 async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   // movement_date가 null인 경우 created_at 기준으로 대체 조회
+  // po_id로 발주(purchase_orders)를 조인해 발주 당시 구매처(vendor)를 가져옴
+  // (item의 기본 vendor가 아니라, 실제 발주한 구매처를 표시하기 위함)
   const { data, error } = await supabase.from('stock_movements')
-    .select('*, items(std_code,name,unit,vendors(name)), customers(name,code)')
+    .select('*, items(std_code,name,unit), customers(name,code), purchase_orders(po_number, vendors(name), projects(code))')
     .eq('movement_type','입고')
     .gte('movement_date', from)
     .lte('movement_date', to)
@@ -152,7 +154,10 @@ export default function Inbound() {
     onSuccess: () => {
       setResult(`입고 처리 완료 (${inboundDate}) — ${checkedRows.length}건`)
       setInboundData({}); setChecked({}); setNote('')
-      refreshProcurement(qc); refetch()
+      refreshProcurement(qc)
+      // 입고 현황 캐시 명시적 갱신 (hQuery 포함 키까지 확실히 무효화)
+      qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })
+      refetch()
     },
     onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
@@ -241,7 +246,7 @@ export default function Inbound() {
     const data = histShown.map(r=>({
       '입고일':r.movement_date, '기준코드':r.items?.std_code, '품명':r.items?.name,
       '단위':r.items?.unit, '수량':r.qty, '발주번호':r.purchase_orders?.po_number||'',
-      '구매처':r.purchase_orders?.vendors?.name||'', '고객사':r.purchase_orders?.customers?.name||'',
+      '구매처':r.purchase_orders?.vendors?.name||'', '고객사':r.customers?.name||'',
       '비고':r.note||'',
     }))
     const wb=XLSX.utils.book_new()
@@ -562,7 +567,7 @@ export default function Inbound() {
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
                           <td className="px-3 py-2">{r.po_id ? <span className="font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</span> : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-bold">발주외</span>}</td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">{r.purchase_orders?.projects?.code||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.items?.vendors?.name||'-'}</td>
+                          <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.customers?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-400">{r.memo||r.note||'-'}</td>
                         </tr>
