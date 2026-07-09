@@ -108,18 +108,15 @@ export default function PurchaseDashboard({ embed = false }) {
           main { padding:0 !important; overflow:visible !important; }
           body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
           .no-print { display:none !important; }
-          /* ── 1페이지 압축: 전체 축소 + 여백/폰트 다이어트 ── */
-          .print-root { zoom:0.72; }
+          /* ── 1페이지 유지하되 PC 비율에 가깝게 (0.72→0.8, 폰트 축소 완화) ── */
+          .print-root { zoom:0.8; }
           .print-root .space-y-5 > * + *, .print-root.space-y-5 > * + * { margin-top:8px !important; }
-          .print-root .p-5 { padding:10px !important; }
-          .print-root .p-4 { padding:8px !important; }
-          .print-root .p-3 { padding:6px !important; }
-          .print-root .text-3xl { font-size:20px !important; }
-          .print-root .text-2xl { font-size:16px !important; }
-          .print-root .text-xl { font-size:14px !important; }
-          .print-root table { font-size:9px !important; }
-          .print-root td, .print-root th { padding:2px 6px !important; }
-          .print-root .recharts-responsive-container { height:150px !important; }
+          .print-root .p-5 { padding:12px !important; }
+          .print-root .p-4 { padding:10px !important; }
+          .print-root .p-3 { padding:8px !important; }
+          .print-root table { font-size:11px !important; }
+          .print-root td, .print-root th { padding:3px 6px !important; }
+          .print-root .recharts-responsive-container { height:160px !important; }
           .print-root * { page-break-inside:avoid; }
         }
       `}</style>

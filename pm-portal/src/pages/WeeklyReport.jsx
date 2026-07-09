@@ -367,10 +367,11 @@ export default function WeeklyReport() {
     <>
       <style>{`
         @media print {
-          @page { size: A4 portrait; margin: 6mm; }
+          @page { size: A4 portrait; margin: 8mm; }
           html, body { height:auto !important; overflow:visible !important; }
-          body { -webkit-print-color-adjust:exact; print-color-adjust:exact; font-size:9px; }
-          .print-zoom { zoom:0.8; }
+          body { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+          /* PC 화면 비율 유지 — 살짝만 축소 (폰트 강제축소 제거) */
+          .print-zoom { zoom:0.9; }
           .no-print { display:none !important; }
           aside, header, nav { display:none !important; }
           main { padding:0 !important; overflow:visible !important; }
@@ -379,33 +380,7 @@ export default function WeeklyReport() {
           table { width:100% !important; table-layout:fixed !important; }
           th, td { white-space:normal !important; word-break:break-word !important; overflow:visible !important; }
           tr { page-break-inside:avoid !important; }
-          .rounded-xl { page-break-inside:avoid !important; }
-          .space-y-4 > * + * { margin-top:4px !important; }
-          .space-y-5 > * + * { margin-top:4px !important; }
-          .space-y-2 > * + * { margin-top:2px !important; }
-          .p-4 { padding:4px !important; }
-          .p-3 { padding:3px !important; }
-          .px-4 { padding-left:6px !important; padding-right:6px !important; }
-          .px-3 { padding-left:5px !important; padding-right:5px !important; }
-          .py-3 { padding-top:3px !important; padding-bottom:3px !important; }
-          .py-2 { padding-top:2px !important; padding-bottom:2px !important; }
-          .text-4xl { font-size:16px !important; }
-          .text-3xl { font-size:14px !important; }
-          .text-xl  { font-size:12px !important; }
-          .text-lg  { font-size:10px !important; }
-          .text-sm  { font-size:9px !important; }
-          .text-xs  { font-size:8px !important; }
-          .text-base{ font-size:9px !important; }
-          .min-h-\[90px\] { min-height:40px !important; }
-          .min-h-\[70px\] { min-height:30px !important; }
-          .min-h-\[40px\] { min-height:20px !important; }
-          .rounded-xl { border-radius:3px !important; }
-          .rounded-lg { border-radius:3px !important; }
-          .gap-3 { gap:3px !important; }
-          .gap-4 { gap:4px !important; }
-          .mb-1 { margin-bottom:1px !important; }
-          .mb-2 { margin-bottom:2px !important; }
-          .mb-3 { margin-bottom:3px !important; }
+          .rounded-xl, .rounded-2xl { page-break-inside:avoid !important; }
           .print-show { display:block !important; }
           .no-print-dashboard { display:none !important; }
           .print-page-break { page-break-before:always !important; break-before:page !important; }
@@ -682,38 +657,6 @@ export default function WeeklyReport() {
           </div>
         </div>
 
-        {/* 이번 주 입고 */}
-        <SectionCard title="📦 이번 주 입고 현황" color="bg-emerald-50"
-          extra={<span className="text-xs text-emerald-600 font-semibold">{(d?.inbound||[]).length}건 / {inboundTotal.toLocaleString()}개</span>}>
-          <div className="flex">
-            {(d?.inbound||[]).length===0
-              ? <p className="text-xs text-slate-400 text-center py-6 w-full">이번 주 입고 없음</p>
-              : (d?.inbound||[]).map(r=>(
-                <div key={r.customer} className="flex-1 text-center py-2 border-r border-slate-100 last:border-0">
-                  <p className={`text-xs font-bold mb-0.5 ${csColor(r.customer).text}`}>{r.customer}</p>
-                  <p className={`text-sm font-bold ${csColor(r.customer).text}`}>{Number(r.cnt)}건 <span className="text-slate-400 font-normal">{Number(r.total_qty).toLocaleString()}개</span></p>
-                </div>
-              ))
-            }
-          </div>
-        </SectionCard>
-
-        {/* 차주 입고 예정 */}
-        <SectionCard title="📋 차주 입고 예정" color="bg-blue-50"
-          extra={<span className="text-xs text-blue-600 font-semibold">{(d?.plan||[]).length}건</span>}>
-          <div className="flex">
-            {(d?.plan||[]).length===0
-              ? <p className="text-xs text-slate-400 text-center py-6 w-full">차주 예정 없음</p>
-              : (d?.plan||[]).map(r=>(
-                <div key={r.customer} className="flex-1 text-center py-2 border-r border-slate-100 last:border-0">
-                  <p className={`text-xs font-bold mb-0.5 ${csColor(r.customer).text}`}>{r.customer}</p>
-                  <p className={`text-sm font-bold ${csColor(r.customer).text}`}>{Number(r.cnt)}건 <span className="text-slate-400 font-normal">{Number(r.total_qty).toLocaleString()}개</span></p>
-                </div>
-              ))
-            }
-          </div>
-        </SectionCard>
-
         {/* 납기 지연 */}
         {(() => {
           const isStored = id => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(id||''))
@@ -844,19 +787,19 @@ export default function WeeklyReport() {
           </div>
         </div>
 
-        {/* 매입 대시보드 포함 출력 — 화면 그대로, 인쇄 시 새 페이지에서 시작 */}
-        {withDash && (
-          <div className="print-page-break pt-2">
-            <div className="flex items-center gap-2 mb-2 no-print">
-              <div className="h-px flex-1 bg-slate-200"/>
-              <span className="text-xs font-bold text-slate-400">⬇ 출력 시 아래 대시보드가 다음 페이지에 포함됩니다</span>
-              <div className="h-px flex-1 bg-slate-200"/>
-            </div>
-            <PurchaseDashboard embed />
-          </div>
-        )}
-
       </div>
+
+      {/* 매입 대시보드 포함 출력 — print-zoom 밖(zoom 중첩 방지)이라 페이지 나눔 확실히 동작 */}
+      {withDash && (
+        <div className="print-page-break pt-4 max-w-5xl mx-auto">
+          <div className="flex items-center gap-2 mb-2 no-print">
+            <div className="h-px flex-1 bg-slate-200"/>
+            <span className="text-xs font-bold text-slate-400">⬇ 출력 시 아래 대시보드가 다음 페이지에 포함됩니다</span>
+            <div className="h-px flex-1 bg-slate-200"/>
+          </div>
+          <PurchaseDashboard embed />
+        </div>
+      )}
     </>
   )
 }
