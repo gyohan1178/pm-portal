@@ -117,7 +117,7 @@ export default function PurchaseDashboard({ embed = false }) {
           .print-root table { font-size:11px !important; }
           .print-root td, .print-root th { padding:3px 6px !important; }
           .print-root .recharts-responsive-container { height:160px !important; }
-          .print-root * { page-break-inside:avoid; }
+          .print-root .rounded-xl, .print-root tr { page-break-inside:avoid; }
         }
       `}</style>
       <div className="flex items-center justify-between gap-2 flex-wrap">

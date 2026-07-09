@@ -374,6 +374,10 @@ export default function WeeklyReport() {
           .print-zoom { zoom:0.9; }
           .no-print { display:none !important; }
           aside, header, nav { display:none !important; }
+          /* ★ 핵심: 앱 레이아웃(flex h-screen overflow-hidden)을 인쇄 시 해제
+             — flex/overflow 컨테이너 안에선 page-break가 무시되어 대시보드가 이어붙던 원인 */
+          .app-shell { display:block !important; height:auto !important; overflow:visible !important; }
+          main { display:block !important; padding:0 !important; overflow:visible !important; height:auto !important; flex:none !important; }
           main { padding:0 !important; overflow:visible !important; }
           .max-w-5xl { max-width:100% !important; }
           .overflow-x-auto { overflow:visible !important; }
