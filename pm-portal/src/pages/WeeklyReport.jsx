@@ -3,6 +3,7 @@ import { toast, toastError, toastSuccess } from '../lib/toast'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import PurchaseDashboard from './PurchaseDashboard'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -187,6 +188,7 @@ export default function WeeklyReport() {
   // 캘린더 모달
   const [collapsed, setCollapsed] = useState({})
   const [noteInput, setNoteInput] = useState('')
+  const [withDash, setWithDash] = useState(false)   // 출력에 매입 대시보드 포함
   const [checkedDelay, setCheckedDelay] = useState({})
   const [calModal, setCalModal] = useState(null) // { date, type }
   const [calForm, setCalForm] = useState({ customer:'AXCELIS', project:'', name:'', qty:'', note:'' })
@@ -423,20 +425,25 @@ export default function WeeklyReport() {
           )}
           <div className="flex-1"/>
           <div className="flex items-center gap-2 no-print">
+            <button onClick={()=>setWithDash(v=>!v)}
+              className={`inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border transition-all ${withDash?'border-indigo-500 bg-indigo-600 text-white shadow-sm':'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
+              💰 대시보드 {withDash?'포함됨':'포함'}
+            </button>
             <button onClick={handlePrint} className="inline-flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
             <Link to="/weekly/upload" className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📤 업로드</Link>
           </div>
         </div>
 
-        {/* 헤더 */}
-        <div className="rounded-xl border-2 border-slate-800 p-4 flex items-center justify-between">
+        {/* 헤더 — 그라데이션 배너 */}
+        <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 flex items-center justify-between shadow-lg">
           <div>
-            <h1 className="text-lg font-bold text-slate-900">구매자재 주간업무보고</h1>
-            <p className="text-xs text-slate-500 mt-0.5">{week.label}</p>
+            <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest mb-1">Weekly Report</p>
+            <h1 className="text-xl font-bold text-white">구매자재 주간업무보고</h1>
+            <p className="text-xs text-slate-400 mt-1 font-mono">{week.label}</p>
           </div>
           <div className="text-right">
-            <p className="text-xs text-slate-400">진선테크 구매자재</p>
-            <p className="text-xs text-slate-400 mt-0.5">작성일: {today.toISOString().split('T')[0]}</p>
+            <p className="text-xs font-semibold text-slate-300">진선테크 구매자재</p>
+            <p className="text-[11px] text-slate-500 mt-0.5 font-mono">작성일 {today.toISOString().split('T')[0]}</p>
           </div>
         </div>
 
@@ -649,19 +656,28 @@ export default function WeeklyReport() {
 
         {/* KPI */}
         <div className="grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-3">
-          <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4">
-            <p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1">이번 주 입고</p>
-            <p className="text-3xl font-bold text-slate-900">{inboundCount}<span className="text-base ml-1 text-slate-400">건</span></p>
+          <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center text-xs">📦</span>
+              <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide">이번 주 입고</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{inboundCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
             <p className="text-xs text-slate-400 mt-1">총 {inboundTotal.toLocaleString()}개</p>
           </div>
-          <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4">
-            <p className="text-xs font-bold text-blue-500 uppercase tracking-wide mb-1">차주 입고 예정</p>
-            <p className="text-3xl font-bold text-slate-900">{planCount}<span className="text-base ml-1 text-slate-400">건</span></p>
+          <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-xs">📋</span>
+              <p className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">차주 입고 예정</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{planCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
             <p className="text-xs text-slate-400 mt-1">총 {planTotal.toLocaleString()}개</p>
           </div>
-          <div className="rounded-xl border border-red-200 bg-red-50/50 p-4">
-            <p className="text-xs font-bold text-red-500 uppercase tracking-wide mb-1">납기 지연</p>
-            <p className="text-3xl font-bold text-slate-900">{delayCount}<span className="text-base ml-1 text-slate-400">건</span></p>
+          <div className={`rounded-2xl border p-4 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${delayCount>0?'bg-red-100':'bg-slate-100'}`}>{delayCount>0?'🚨':'✅'}</span>
+              <p className={`text-[11px] font-bold uppercase tracking-wide ${delayCount>0?'text-red-600':'text-slate-500'}`}>납기 지연</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{delayCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
             <p className="text-xs text-slate-400 mt-1">제출: {d?.submitters?.length||0}명</p>
           </div>
         </div>
@@ -751,7 +767,10 @@ export default function WeeklyReport() {
                             <td className="px-3 py-1.5 text-slate-500">{r.manufacturer||'-'}</td>
                             <td className="px-3 py-1.5 font-mono text-slate-400">{r.manufacturer_pn||'-'}</td>
                             <td className="px-3 py-1.5 text-right font-bold text-red-600">{r.qty||'-'}</td>
-                            <td className="px-3 py-1.5 font-mono text-red-400 whitespace-nowrap">{r.target_date||'-'}</td>
+                            <td className="px-3 py-1.5 font-mono text-red-400 whitespace-nowrap">
+                              {r.target_date||'-'}
+                              {r.target_date && (()=>{ const dd=Math.floor((today-new Date(r.target_date))/86400000); return dd>0?<span className="ml-1 px-1 rounded bg-red-100 text-red-600 text-[10px] font-bold">D+{dd}</span>:null })()}
+                            </td>
                             <td className="px-3 py-1.5">
                               <input defaultValue={r.situation||''} placeholder="현황 입력"
                                 onBlur={e=>{ if(r.id) updateItemMut.mutate({id:r.id,field:'situation',value:e.target.value}) }}
@@ -824,6 +843,18 @@ export default function WeeklyReport() {
             </div>
           </div>
         </div>
+
+        {/* 매입 대시보드 포함 출력 — 화면 그대로, 인쇄 시 새 페이지에서 시작 */}
+        {withDash && (
+          <div className="print-page-break pt-2">
+            <div className="flex items-center gap-2 mb-2 no-print">
+              <div className="h-px flex-1 bg-slate-200"/>
+              <span className="text-xs font-bold text-slate-400">⬇ 출력 시 아래 대시보드가 다음 페이지에 포함됩니다</span>
+              <div className="h-px flex-1 bg-slate-200"/>
+            </div>
+            <PurchaseDashboard embed />
+          </div>
+        )}
 
       </div>
     </>

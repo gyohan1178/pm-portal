@@ -88,7 +88,7 @@ async function fetchDashboard() {
 const CS_LIST = ['AXCELIS','Edwards','VM','CSK']
 const fmt = v => (v/10000).toFixed(2)
 
-export default function PurchaseDashboard() {
+export default function PurchaseDashboard({ embed = false }) {
   const { data: d, isLoading } = useQuery({ queryKey:['purchaseDash'], queryFn: fetchDashboard, staleTime: 0, refetchOnMount: 'always' })
 
   if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
@@ -100,7 +100,7 @@ export default function PurchaseDashboard() {
 
   return (
     <div className="space-y-5 max-w-5xl mx-auto print-root">
-      <AnalysisTabs />
+      {!embed && <AnalysisTabs />}
       <style>{`
         @media print {
           @page { size: A4 portrait; margin: 6mm; }
@@ -127,7 +127,7 @@ export default function PurchaseDashboard() {
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
           <p className="text-xs text-slate-400">1~4월 이카운트 · AXCELIS 5월~ 포털 · 타사 업로드 · 억원</p>
-          <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
+          {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
         </div>
       </div>
 
