@@ -164,6 +164,18 @@ export default function Issue() {
     },
   })
 
+  // 위치(inventory.location) 메타 — 라벨/불출표에 표시
+  const { data: locMeta = {} } = useQuery({
+    queryKey: ['issueLocMeta', metaIds.join(',')],
+    enabled: metaIds.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase.from('inventory').select('item_id,location').in('item_id', metaIds)
+      const m = {}
+      ;(data || []).forEach(r => { if (r.location) m[r.item_id] = r.location })
+      return m
+    },
+  })
+
   // 품목별 합계 (여러 호기 합산)
   const itemAgg = useMemo(() => {
     const g = {}
@@ -184,6 +196,7 @@ export default function Issue() {
       ...a,
       maker: itemMeta[a.item_id]?.manufacturer || '',
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
+      location: locMeta[a.item_id] || '',
     }))
     return withMeta.sort((a, b) =>
       String(a.maker).localeCompare(String(b.maker), 'ko') ||
@@ -243,6 +256,64 @@ export default function Issue() {
     w.onload = () => { w.focus(); w.print() }
   }
 
+  // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — Zebra Browser Print 경유 ──
+  // 위치값 있는 품목만, 불출표 행순번(NO) 매칭
+  function buildZpl(rows) {
+    // 203dpi 기준: 1mm ≈ 8dot. 라벨 63.5×31.75mm = 508×254dot
+    const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')  // ZPL 제어문자 제거
+    return rows.map((r, i) => {
+      const no = i + 1
+      const pn = esc(r.std_code)
+      const qty = esc(r.qty)
+      const maker = esc(r.maker)
+      const makerPn = esc(r.makerPn)
+      const loc = esc(r.location)
+      return [
+        '^XA',
+        '^CI28',                        // UTF-8 (한글 제조사명 대응)
+        '^PW508', '^LL254', '^LH0,0',
+        // NO 박스 (검정) + 흰 숫자
+        '^FO8,8^GB80,60,60^FS',
+        `^FO8,20^FR^A0N,44,44^FB80,1,0,C^FD${no}^FS`,
+        // 품번
+        '^FO100,10^A0N,24,24^FDPN^FS',
+        `^FO100,34^A0N,40,40^FD${pn}^FS`,
+        // 수량 (우측)
+        '^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY^FS',
+        `^FO360,34^A0N,44,44^FB140,1,0,R^FD${qty}^FS`,
+        // 구분선
+        '^FO8,90^GB492,1,2^FS',
+        // 제조사·제조사품번
+        '^FO8,100^A0N,20,20^FDMAKER^FS',
+        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${maker} ${makerPn}^FS`,
+        // 위치 박스 (검정)
+        '^FO372,100^GB128,60,60^FS',
+        '^FO372,104^FR^A0N,18,18^FB128,1,0,C^FDLOC^FS',
+        `^FO372,124^FR^A0N,32,32^FB128,1,0,C^FD${loc}^FS`,
+        '^XZ',
+      ].join('')
+    }).join('')
+  }
+
+  function printLabels() {
+    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.location)
+    const noLoc = itemRows.filter(r => !excluded.has(r.std_code) && !r.location)
+    if (!rows.length) { toastError('위치값이 있는 품목이 없습니다. 출고 화면에서 위치를 먼저 저장하세요.'); return }
+    const zpl = buildZpl(rows)
+    // Zebra Browser Print (BrowserPrint.js) 필요 — 없으면 안내
+    const BP = window.BrowserPrint
+    if (!BP) {
+      toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다. (PC에 설치 후 재시도)')
+      return
+    }
+    BP.getDefaultDevice('printer', (device) => {
+      if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
+      device.send(zpl, () => {
+        toastSuccess(`라벨 ${rows.length}장 전송${noLoc.length ? ` · 위치없어 제외 ${noLoc.length}건` : ''}`)
+      }, (err) => toastError('라벨 전송 실패: ' + err))
+    }, (err) => toastError('프린터 연결 실패: ' + err))
+  }
+
   const issuedCnt = cart.filter(c => (Number(c.issue_qty ?? c.qty) || 0) > 0).length
   const shortCnt = cart.filter(c => shortQ(c) > 0).length
 
@@ -292,6 +363,7 @@ export default function Issue() {
             <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)`)) clearMut.mutate() }}
               disabled={!cart.length || clearMut.isPending} className="px-3 py-1 text-xs font-semibold rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 초기화</button>
             <button onClick={() => { setCartView('item'); setTimeout(printIssueSheet, 100) }} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>
+            <button onClick={printLabels} disabled={!cart.length} title="위치값 있는 품목을 ZM400 라벨로 출력 (Zebra Browser Print 필요)" className="px-3 py-1 text-xs font-semibold rounded border border-teal-200 text-teal-600 hover:bg-teal-50 disabled:opacity-40">🏷 라벨 출력</button>
             <button onClick={() => { if (cart.length && window.confirm(`불출분 출고처리 / 결품 ${shortCnt}건 기록. 진행할까요?`)) processMut.mutate() }}
               disabled={!cart.length || processMut.isPending} className="px-3 py-1 text-xs font-bold rounded bg-teal-600 text-white disabled:opacity-40">
               ✅ 출고 처리
