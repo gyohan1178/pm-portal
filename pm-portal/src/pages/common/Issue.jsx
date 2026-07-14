@@ -176,6 +176,23 @@ export default function Issue() {
     },
   })
 
+  // 제작구분(make_type) 메타 — 라벨은 '전장(normal)'만 출력, 현장재고·하네스·미대상 제외
+  const { data: mtMeta = {} } = useQuery({
+    queryKey: ['issueMtMeta', metaIds.join(',')],
+    enabled: metaIds.length > 0,
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_bom_notes').select('item_id,make_type').in('item_id', metaIds)
+      const m = {}
+      // 같은 품목이 여러 프로젝트에 있을 때: 하나라도 field_stock/harness/exclude면 그걸로 취급(라벨 제외)
+      ;(data || []).forEach(r => {
+        const cur = m[r.item_id]
+        const rank = { normal: 0, field_stock: 1, harness: 2, exclude: 3 }
+        if (cur === undefined || (rank[r.make_type] ?? 0) > (rank[cur] ?? 0)) m[r.item_id] = r.make_type || 'normal'
+      })
+      return m
+    },
+  })
+
   // 품목별 합계 (여러 호기 합산)
   const itemAgg = useMemo(() => {
     const g = {}
@@ -197,13 +214,14 @@ export default function Issue() {
       maker: itemMeta[a.item_id]?.manufacturer || '',
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
       location: locMeta[a.item_id] || '',
+      makeType: mtMeta[a.item_id] || 'normal',
     }))
     return withMeta.sort((a, b) =>
       String(a.maker).localeCompare(String(b.maker), 'ko') ||
       String(a.makerPn).localeCompare(String(b.makerPn), 'ko') ||
       String(a.std_code).localeCompare(String(b.std_code))
     )
-  }, [itemAgg, itemMeta])
+  }, [itemAgg, itemMeta, locMeta, mtMeta])
 
   // 자재 불출표 인쇄 (제외 대상 뺀 것, 제조사→제조사품번 순, 키팅 확인란 포함)
   function printIssueSheet() {
@@ -296,9 +314,11 @@ export default function Issue() {
   }
 
   function printLabels() {
-    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.location)
-    const noLoc = itemRows.filter(r => !excluded.has(r.std_code) && !r.location)
-    if (!rows.length) { toastError('위치값이 있는 품목이 없습니다. 출고 화면에서 위치를 먼저 저장하세요.'); return }
+    // 전장(normal)만 + 위치값이 '라벨'인 것 제외 (라벨/스티커류는 라벨 안 뽑음)
+    const isLabelLoc = (r) => String(r.location || '').trim() === '라벨'
+    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.makeType === 'normal' && !isLabelLoc(r))
+    const skipped = itemRows.filter(r => !excluded.has(r.std_code) && (r.makeType !== 'normal' || isLabelLoc(r)))
+    if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류 제외).'); return }
     const zpl = buildZpl(rows)
     // Zebra Browser Print (BrowserPrint.js) 필요 — 없으면 안내
     const BP = window.BrowserPrint
@@ -309,7 +329,7 @@ export default function Issue() {
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
       device.send(zpl, () => {
-        toastSuccess(`라벨 ${rows.length}장 전송${noLoc.length ? ` · 위치없어 제외 ${noLoc.length}건` : ''}`)
+        toastSuccess(`전장 라벨 ${rows.length}장 전송${skipped.length ? ` · 제외 ${skipped.length}건(현장재고·하네스·라벨류)` : ''}`)
       }, (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
