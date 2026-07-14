@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { isMainPn } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
@@ -48,6 +49,7 @@ async function fetchBoard() {
 }
 
 export default function ProductionBoard() {
+  const navigate = useNavigate()
   const [now, setNow] = useState(new Date())
   useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t) }, [])
   const toggleFull = () => {
@@ -143,6 +145,7 @@ export default function ProductionBoard() {
           <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 800, color: '#fff' }}>
             {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
           </div>
+          <button onClick={() => navigate(-1)} title="뒤로가기" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 12px', cursor: 'pointer' }}>← 뒤로</button>
           <button onClick={toggleFull} title="전체화면 (ESC로 해제)" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 10px', cursor: 'pointer' }}>⛶</button>
         </div>
       </div>

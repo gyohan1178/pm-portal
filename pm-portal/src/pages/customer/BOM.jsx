@@ -9,6 +9,16 @@ import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 
+// BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
+// 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
+function parseBomQty(v) {
+  if (v === null || v === undefined) return 0
+  const s = String(v).trim()
+  if (s === '') return 0
+  const n = parseFloat(s)
+  return Number.isFinite(n) ? n : 0   // A/R 등 문자 → 0
+}
+
 
 // 등록된 어셈블리 목록 (projects + BOM 품목수, RPC 한 방)
 async function fetchAssemblies(customerId) {
@@ -192,7 +202,7 @@ async function saveBOMMulti({ rows, customerId, onProgress }) {
       if (!itemId) { skipped++; continue }
       bomRows.push({
         customer_id: customerId, project_id: projId, item_id: itemId,
-        qty_per_unit: parseFloat(row['실수량'] ?? row['QTY'] ?? row['수량'] ?? 1) || 1,
+        qty_per_unit: parseBomQty(row['실수량'] ?? row['QTY'] ?? row['수량']),
         level: parseInt(row['LEVEL'] ?? row['LV'] ?? 1) || 1,
         seq: ord++,   // 파일(트리) 순서 보존 → 상세에서 레벨 중첩 표시
       })
@@ -223,7 +233,7 @@ async function saveBOM({ rows, customerId, projectCode, projectName, rev }) {
   for (const row of rows) {
     const customerCode = String(row['하위품번'] || '').trim()
     const name = String(row['품명'] || '').trim()
-    const qty = parseFloat(row['수량'] || 1) || 1
+    const qty = parseBomQty(row['수량'])
     const level = parseInt(row['LV'] || 1) || 1
     const unit = String(row['단위'] || 'EA').trim()
     const manufacturer = String(row['제조사'] || '').trim()
