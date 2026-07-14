@@ -148,6 +148,46 @@ export default function Outbound() {
   const MT_LABEL = { normal: '전장', field_stock: '전장(현장재고)', harness: '하네스자재', exclude: '불출 미대상' }
   const MT_COLOR = { normal: 'text-slate-600 font-semibold', field_stock: 'text-teal-600 font-semibold', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
 
+  // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — 불출 화면과 동일 ──
+  // 전장(normal)만 + 위치 '라벨' 제외, 수량 입력된 것만
+  function buildZplOut(rows) {
+    const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')
+    return rows.map((r, i) => {
+      const no = i + 1
+      return [
+        '^XA', '^CI28', '^PW508', '^LL254', '^LH0,0',
+        '^FO8,8^GB80,60,60^FS',
+        `^FO8,20^FR^A0N,44,44^FB80,1,0,C^FD${no}^FS`,
+        '^FO100,10^A0N,24,24^FDPN^FS',
+        `^FO100,34^A0N,40,40^FD${esc(r.std_code)}^FS`,
+        '^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY^FS',
+        `^FO360,34^A0N,44,44^FB140,1,0,R^FD${esc(r.qty)}^FS`,
+        '^FO8,90^GB492,1,2^FS',
+        '^FO8,100^A0N,20,20^FDMAKER^FS',
+        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc(r.maker)} ${esc(r.makerPn)}^FS`,
+        '^FO372,100^GB128,60,60^FS',
+        '^FO372,104^FR^A0N,18,18^FB128,1,0,C^FDLOC^FS',
+        `^FO372,124^FR^A0N,32,32^FB128,1,0,C^FD${esc(r.location)}^FS`,
+        '^XZ',
+      ].join('')
+    }).join('')
+  }
+
+  function printOutLabels() {
+    // 전장(normal)만 + 위치'라벨' 제외 + 수량 입력된 것만
+    const rows = outOrder
+      .filter(r => mtOf(r.item_id) === 'normal' && String(r.location||'').trim() !== '라벨' && Number(outQtys[r.item_id]||0) > 0)
+      .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0) }))
+    if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량을 입력하세요. 현장재고·하네스·라벨류 제외).'); return }
+    const zpl = buildZplOut(rows)
+    const BP = window.BrowserPrint
+    if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다.'); return }
+    BP.getDefaultDevice('printer', (device) => {
+      if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
+      device.send(zpl, () => toastSuccess(`전장 라벨 ${rows.length}장 전송`), (err) => toastError('라벨 전송 실패: ' + err))
+    }, (err) => toastError('프린터 연결 실패: ' + err))
+  }
+
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
       if (!guardEdit()) throw new Error('__READONLY__')
@@ -444,6 +484,7 @@ export default function Outbound() {
                     </label>
                     <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
                     <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
+                    <button onClick={printOutLabels} title="전장 자재를 ZM400 라벨로 출력 (수량 입력된 것만, 라벨류·현장재고·하네스 제외)" className="text-xs font-bold text-white bg-teal-600 px-2.5 py-1 rounded hover:bg-teal-700">🏷 라벨 출력</button>
                     <span className="inline-flex items-center gap-1 text-xs">
                       <input type="number" min={1} value={harnessUnits} onChange={e=>setHarnessUnits(Number(e.target.value)||1)}
                         className="w-12 px-1 py-1 border border-slate-200 rounded text-right" title="하네스 불출 대수" />대
