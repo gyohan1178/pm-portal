@@ -8,7 +8,7 @@ const BASE_COLS = [
   'name', 'pn', 'hogi', 'ccn', 'rev', 'status', 'po_received',
   'req_date', 'machine_date', 'arrival_date',
   'harness_issue', 'harness_done', 'part_issue', 'elec_done',
-  'note', 'updated_at',
+  'note', 'manager', 'updated_at',
 ]
 const MP_COLS = ['미불출품번', '미불출수량', '입고예정일', '비고']
 const HEADER = [...BASE_COLS, ...MP_COLS]
@@ -83,7 +83,7 @@ function colIndex(headers, candidates) {
 }
 
 // 6-4. SCHED_FIELDS (갱신 대상)
-const SCHED_FIELDS = ['status', 'req_date', 'machine_date', 'arrival_date', 'harness_issue', 'harness_done', 'part_issue', 'elec_done', 'note', 'po_received', 'ccn', 'rev', 'missing_parts']
+const SCHED_FIELDS = ['status', 'req_date', 'machine_date', 'arrival_date', 'harness_issue', 'harness_done', 'part_issue', 'elec_done', 'note', 'manager', 'po_received', 'ccn', 'rev', 'missing_parts']
 
 // CSV 텍스트 → 레코드 배열 (미불출 병합)
 export function parsePDBoxCSV(text) {
@@ -106,6 +106,7 @@ export function parsePDBoxCSV(text) {
     part_issue: colIndex(headers, ['part_issue', 'partissue', '전장불출']),
     elec_done: colIndex(headers, ['elec_done', 'elecdone', '전장완료요청']),
     note: colIndex(headers, ['note', '비고']),
+    manager: colIndex(headers, ['manager', '담당자']),
     mp_pn: colIndex(headers, ['미불출품번']),
     mp_qty: colIndex(headers, ['미불출수량']),
     mp_date: colIndex(headers, ['입고예정일']),   // 미불출용 (주의: arrival과 다름 — 끝쪽)
@@ -155,6 +156,7 @@ export function parsePDBoxCSV(text) {
       harness_issue: get(row, 'harness_issue'), harness_done: get(row, 'harness_done'),
       part_issue: get(row, 'part_issue'), elec_done: get(row, 'elec_done'),
       note: get(row, 'note'),
+      manager: get(row, 'manager'),
       missing_parts: [],
     }
     if (mpPn) rec.missing_parts.push({
