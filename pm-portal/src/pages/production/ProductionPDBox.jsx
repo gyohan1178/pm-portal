@@ -1,9 +1,7 @@
 import { useState, useMemo, useRef } from 'react'
 import { isMainPn, MAIN_PNS } from './mainPns'
-import { bdMinus } from '../../lib/bizdays'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 
@@ -19,34 +17,29 @@ function ddayCls(n) { if (n == null) return 'text-slate-300'; if (n < 0) return 
 function md(d) { return d ? String(d).slice(5, 10) : '' }
 function truthy(v) { return v === true || (typeof v === 'string' && v.trim() && v !== 'false') }
 
-// ── 역산: 납품일 − 품질MD(영업일) = 전장완료예정 − 조립MD = 전장시작 ──
-// 영업일 계산은 lib/bizdays (주말+한국공휴일 제외)
-function calcQuality(r) { return r.req_date }                              // 품질 완료요청 = 납품일
-function calcElec(r, qcMd) { return r.elec_done || bdMinus(r.req_date, Math.max(1, Math.ceil(Number(qcMd) || 2))) }  // 전장완료 = 납품 − 품질MD
-function calcElecStart(r, qcMd, asmMd) { const e = calcElec(r, qcMd); return e ? bdMinus(e, Math.max(1, Math.ceil(Number(asmMd) || 1))) : null } // 전장시작 = 전장완료 − 조립MD
+// ── 역산 상수 (영업일) — 필요시 여기만 조정 ──
+const QC_LEAD_BD = 2  // 납품 전 품질 '완료요청' 여유
+const QC_DUR_BD  = 2  // 품질 검사 기간 → 전장 완료예정 = 품질요청 - 이 값
 
+// 영업일 빼기 (주말 제외)
+function bdMinus(dateStr, n) {
+  if (!dateStr) return null
+  const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00')
+  if (isNaN(d)) return null
+  let left = Math.max(0, Math.round(n))
+  while (left > 0) { d.setDate(d.getDate() - 1); const w = d.getDay(); if (w !== 0 && w !== 6) left-- }
+  return d.toISOString().slice(0, 10)
+}
+// 역산: 품질 완료요청일 / 전장 완료예정일 / 전장 시작일(부하용)
+function calcQuality(r) { return bdMinus(r.req_date, QC_LEAD_BD) }
+function calcElec(r, mdDays) { return r.elec_done || bdMinus(calcQuality(r), QC_DUR_BD) }
+function calcElecStart(r, mdDays) { return bdMinus(calcElec(r, mdDays), Math.max(1, Math.ceil(Number(mdDays) || 1))) }
 // 주차 키 (해당 주 월요일)
 function weekKey(dateStr) {
   if (!dateStr) return null
   const d = new Date(String(dateStr).slice(0, 10) + 'T12:00:00'); if (isNaN(d)) return null
   const w = (d.getDay() + 6) % 7; d.setDate(d.getDate() - w)
   return d.toISOString().slice(0, 10)
-}
-
-// ① 상태 자동 전이 — 체크가 상태를 끌고 감 (승격만, 강등 없음 / 완료는 불가침)
-const ST_RANK = { 'PO접수': 0, '자재발주': 1, '제작중': 2, '품질검수': 3, '납품대기': 4, '완료': 5 }
-function autoStatus(row, field, value) {
-  if (!row || row.status === '완료') return null
-  const h = field === 'harness_recv' ? value : truthy(row.harness_recv)
-  const p = field === 'part_issue' ? value : truthy(row.part_issue)
-  const e = field === 'elec_recv' ? value : truthy(row.elec_recv)
-  const q = field === 'quality_recv' ? value : truthy(row.quality_recv)
-  let target = null
-  if (q) target = '납품대기'
-  else if (e) target = '품질검수'
-  else if (h && p) target = '제작중'
-  if (target && (ST_RANK[target] ?? 0) > (ST_RANK[row.status] ?? 0)) return target
-  return null
 }
 
 // 납기변동 태그: 비고의 A→B 기록에서 최초 원납기 vs 현재 납품일 차이(일)
@@ -79,7 +72,7 @@ function noteDisplay(note) {
   return { text, count: napgi.length, full }
 }
 
-const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수', po_received: true, req_date: '', machine_date: '', arrival_date: '', harness_issue: '', harness_done: '', part_issue: '', elec_done: '', note: '' }
+const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수', po_received: true, req_date: '', machine_date: '', arrival_date: '', harness_issue: '', harness_done: '', part_issue: '', elec_done: '', note: '', manager: '' }
 
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const qc = useQueryClient()
@@ -87,7 +80,6 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const [showDone, setShowDone] = useState(false)
   const [view, setView] = useState('list') // list | model | kanban | load
   const [mainTab, setMainTab] = useState('main') // main=주요 관리 | sub
-  const [expWk, setExpWk] = useState(null) // 주간부하 확장 주차
   const [edit, setEdit] = useState(null)   // 편집 중인 레코드 or null
   const [sel, setSel] = useState(new Set()) // 일괄수정 선택
   const [bulkField, setBulkField] = useState('arrival_date')
@@ -97,45 +89,27 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const { data: mdMap = {} } = useQuery({
     queryKey: ['pdboxMd'],
     queryFn: async () => {
-      const { data } = await supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%')
-      return Object.fromEntries((data || []).map(i => [String(i.std_code).replace('AX-', ''), { md: i.md_days, qc: i.qc_md_days, proto: i.is_prototype }]))
+      const { data } = await supabase.from('items').select('std_code,md_days').like('std_code', 'AX-11%')
+      return Object.fromEntries((data || []).map(i => [String(i.std_code).replace('AX-', ''), i.md_days]))
     },
   })
   const mdSaveMut = useMutation({
-    mutationFn: async ({ pn, field, val }) => {
-      const { error } = await supabase.from('items').update({ [field]: val === '' ? null : Number(val) }).eq('std_code', 'AX-' + pn)
+    mutationFn: async ({ pn, val }) => {
+      const { error } = await supabase.from('items').update({ md_days: val === '' ? null : Number(val) }).eq('std_code', 'AX-' + pn)
       if (error) throw error
     },
     onSuccess: () => { qc.invalidateQueries(['pdboxMd']); toastSuccess('MD 저장됨') },
     onError: (e) => toastError('MD 저장 오류: ' + e.message),
   })
-  const protoMut = useMutation({
-    mutationFn: async ({ pn, val }) => {
-      const { error } = await supabase.from('items').update({ is_prototype: val }).eq('std_code', 'AX-' + pn)
-      if (error) throw error
-    },
-    onSuccess: () => { qc.invalidateQueries(['pdboxMd']); qc.invalidateQueries(['prodBoard']) },
-    onError: (e) => toastError('구분 저장 오류: ' + e.message),
-  })
 
   // 완료상태 토글 (모달과 분리 — 완료 보존 버그 방지)
-  const iCanEdit = useCanEdit()
-  const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const toggleMut = useMutation({
-    mutationFn: async ({ id, field, value, row }) => {
-      if (!guardEdit()) throw new Error('__READONLY__')
-      const patch = { [field]: value, updated_at: new Date().toISOString() }
-      // ① 불출/완료 체크 → 상태 자동 승격
-      const auto = autoStatus(row, field, value)
-      if (auto) patch.status = auto
-      // ③ 완료 처리 시 실제 납품일 기록 (기존값 있으면 보존)
-      if (field === 'status' && value === '완료' && row && !row.shipped_date) patch.shipped_date = new Date().toISOString().slice(0, 10)
-      const { error } = await supabase.from('production').update(patch).eq('id', id)
+    mutationFn: async ({ id, field, value }) => {
+      const { error } = await supabase.from('production').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', id)
       if (error) throw error
-      if (auto) toast(`상태 자동 변경 → ${auto}`)
     },
     onSuccess: () => qc.invalidateQueries(['production', csCode]),
-    onError: (e) => { if (e.message !== '__READONLY__') toastError('변경 오류: ' + e.message) },
+    onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
   // 선택 항목 일괄 날짜수정
@@ -204,7 +178,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             req_date: rec.req_date || null, machine_date: rec.machine_date || null, arrival_date: rec.arrival_date || null,
             harness_issue: rec.harness_issue || null, harness_done: rec.harness_done || null,
             part_issue: rec.part_issue || null, elec_done: rec.elec_done || null,
-            note: rec.note, missing_parts: rec.missing_parts || [],
+            note: rec.note, manager: rec.manager || null, missing_parts: rec.missing_parts || [],
           }
           const { error } = await supabase.from('production').insert(ins)
           if (error) throw error
@@ -249,46 +223,6 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       (b.main - a.main) || String(a.next || '9999').localeCompare(String(b.next || '9999')))
   }, [rows])
 
-  // ② 가공물 입고 지연 (예정일 지났는데 미입고)
-  const today = new Date().toISOString().slice(0, 10)
-  const mchLateIds = useMemo(() => new Set(
-    rows.filter(r => r.status !== '완료' && r.arrival_date && !truthy(r.machine_recv) && String(r.arrival_date).slice(0,10) < today).map(r => r.id)
-  ), [rows])
-
-  // ①-A 부품 도착 전 착수 필요: 전장 시작예정 < 가공물 입고예정 (부품이 착수 시점까지 못 옴)
-  // ①-B 미불출인데 착수일 지남: 전장 시작예정 < 오늘 & 아직 전장 불출 안 됨
-  const WARN_RANGE = 30  // 경보 대상 = 전장완료예정 1개월치(+지연) — 전광판과 동일 기준
-  const startWarnIds = useMemo(() => {
-    const beforeParts = new Set(), overdueStart = new Set()
-    rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
-      const m = mdMap[r.pn] || {}
-      const start = calcElecStart(r, m.qc, m.md)
-      const elec = calcElec(r, m.qc)
-      if (!start || !elec) return
-      const de = dday(elec)                               // 전장 완료예정까지 D-day
-      if (de == null || de > WARN_RANGE) return           // 1개월치 밖은 경보 제외
-      const elecDone = truthy(r.elec_recv) || truthy(r.quality_recv) // 전장 완료됨 → 경보 무의미
-      if (elecDone) return
-      const arr = r.arrival_date ? String(r.arrival_date).slice(0,10) : null
-      // 부품 도착 전 착수: 가공물이 전장시작 전에 못 옴 & 미입고
-      if (arr && !truthy(r.machine_recv) && start < arr) beforeParts.add(r.id)
-      // 착수일 지남: 전장시작 예정일이 지났는데 미불출
-      if (start < today && !truthy(r.part_issue)) overdueStart.add(r.id)
-    })
-    return { beforeParts, overdueStart }
-  }, [rows, mdMap, today])
-
-  // ③ 납품 KPI (완료 + 실납품일 있는 호기 기준, 최근 90일)
-  const shipKpi = useMemo(() => {
-    const cut = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)
-    const done = rows.filter(r => r.status === '완료' && r.shipped_date && r.req_date && String(r.shipped_date) >= cut)
-    if (!done.length) return null
-    const onTime = done.filter(r => String(r.shipped_date).slice(0,10) <= String(r.req_date).slice(0,10)).length
-    const delays = done.map(r => Math.round((new Date(String(r.shipped_date).slice(0,10)) - new Date(String(r.req_date).slice(0,10))) / 86400000))
-    const avgDelay = delays.reduce((a, b) => a + b, 0) / done.length
-    return { n: done.length, rate: Math.round(onTime / done.length * 100), avgDelay: Math.round(avgDelay * 10) / 10 }
-  }, [rows])
-
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
     r = r.filter(x => isMainPn(x.pn) === (mainTab === 'main'))
@@ -320,15 +254,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
     const g = {}
-    const mk = (w) => (g[w] ??= { wk: w, elecMd: 0, elecCnt: 0, qcMd: 0, qcCnt: 0, elecItems: [], qcItems: [] })
     rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
-      const m = mdMap[r.pn] || {}
-      const asm = Number(m.md) || 1, qc = Number(m.qc) || 1
-      const ew = weekKey(calcElec(r, m.qc)); const qw = weekKey(calcQuality(r))
-      if (ew) { const b = mk(ew); b.elecMd += asm; b.elecCnt++; b.elecItems.push({ id: r.id, pn: r.pn, hogi: r.hogi, name: r.name, due: calcElec(r, m.qc), md: asm, req: r.req_date }) }
-      if (qw) { const b = mk(qw); b.qcMd += qc; b.qcCnt++; b.qcItems.push({ id: r.id, pn: r.pn, hogi: r.hogi, name: r.name, due: calcQuality(r), md: qc, req: r.req_date }) }
+      const mdv = Number(mdMap[r.pn]) || 1
+      const ew = weekKey(calcElec(r)); const qw = weekKey(calcQuality(r))
+      if (ew) { g[ew] ??= { wk: ew, elecMd: 0, elecCnt: 0, qcCnt: 0 }; g[ew].elecMd += mdv; g[ew].elecCnt++ }
+      if (qw) { g[qw] ??= { wk: qw, elecMd: 0, elecCnt: 0, qcCnt: 0 }; g[qw].qcCnt++ }
     })
-    Object.values(g).forEach(b => { b.elecItems.sort((a, c) => String(a.due).localeCompare(String(c.due))); b.qcItems.sort((a, c) => String(a.due).localeCompare(String(c.due))) })
     return Object.values(g).sort((a, b) => a.wk.localeCompare(b.wk))
   }, [rows, mdMap])
 
@@ -356,41 +287,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         <button onClick={() => exportPDBoxCSV(rows.filter(x => showDone || x.status !== '완료'), csCode)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 CSV 추출</button>
         <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? '가져오는 중...' : '📤 CSV 가져오기'}</button>
         <input ref={fileRef} type="file" accept=".csv" onChange={onFile} className="hidden" />
-        {mchLateIds.size > 0 && mainTab === 'main' && (
-          <button onClick={() => { setSearch(''); setView('list') }} title="가공물 입고예정일이 지났는데 미입고"
-            className="px-2.5 py-1 rounded-lg bg-red-50 border border-red-200 text-red-600 text-xs font-bold animate-pulse">⚙ 입고지연 {mchLateIds.size}건</button>
-        )}
-        {startWarnIds.beforeParts.size > 0 && mainTab === 'main' && (
-          <span className="px-2.5 py-1 rounded-lg bg-rose-50 border border-rose-200 text-rose-600 text-xs font-bold" title="전장 착수 시점까지 가공물이 못 들어옴">🔩 부품 도착 전 착수 {startWarnIds.beforeParts.size}건</span>
-        )}
-        {startWarnIds.overdueStart.size > 0 && mainTab === 'main' && (
-          <span className="px-2.5 py-1 rounded-lg bg-orange-50 border border-orange-200 text-orange-600 text-xs font-bold" title="전장 시작 예정일이 지났는데 아직 불출 안 됨">⏱ 착수일 지남·미불출 {startWarnIds.overdueStart.size}건</span>
-        )}
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          {view === 'model' && (
-            <div className="flex gap-2 px-3 pt-3 flex-wrap">
-              {shipKpi ? (<>
-                <div className="px-3 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-center">
-                  <div className="text-lg font-black text-emerald-600">{shipKpi.rate}%</div>
-                  <div className="text-[9px] font-bold text-emerald-500">정시납품률 (90일 · {shipKpi.n}대)</div>
-                </div>
-                <div className="px-3 py-2 rounded-xl bg-slate-50 border border-slate-200 text-center">
-                  <div className={`text-lg font-black ${shipKpi.avgDelay > 0 ? 'text-amber-600' : 'text-emerald-600'}`}>{shipKpi.avgDelay > 0 ? '+' : ''}{shipKpi.avgDelay}일</div>
-                  <div className="text-[9px] font-bold text-slate-400">평균 지연 (실납품−납기)</div>
-                </div>
-              </>) : (
-                <p className="text-[11px] text-slate-400 py-1">📊 납품 KPI는 완료 처리부터 쌓입니다 — 이제부터 완료 시 실납품일이 자동 기록돼요</p>
-              )}
-            </div>
-          )}
           {view === 'kanban' ? (
             <KanbanBoard rows={filtered.filter(x => !x._month)} mdMap={mdMap}
-              onStatus={(id, status, row) => toggleMut.mutate({ id, field: 'status', value: status, row })}
+              onStatus={(id, status) => toggleMut.mutate({ id, field: 'status', value: status })}
               onOpen={(r) => setEdit({ ...r })} showDone={showDone} />
           ) : view === 'load' ? (
             <div className="p-4">
@@ -404,11 +309,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     <th className="px-3 py-2 text-center font-bold">✅ 품질 건수</th>
                   </tr></thead>
                   <tbody className="divide-y divide-slate-100">
-                    {(() => { const mx = Math.max(...weeklyLoad.map(w => w.elecMd), 1); return weeklyLoad.map(w => (<>
-                      <tr key={w.wk} className="hover:bg-slate-50 cursor-pointer" onClick={() => setExpWk(expWk === w.wk ? null : w.wk)} title="클릭하면 이 주차의 부하 원인(호기) 표시">
-                        <td className="px-3 py-2 font-mono font-semibold text-slate-700">
-                          <span className="inline-flex items-center gap-1">{expWk === w.wk ? '▾' : '▸'} {w.wk.slice(5)} 주</span>
-                        </td>
+                    {(() => { const mx = Math.max(...weeklyLoad.map(w => w.elecMd), 1); return weeklyLoad.map(w => (
+                      <tr key={w.wk} className="hover:bg-slate-50">
+                        <td className="px-3 py-2 font-mono font-semibold text-slate-700">{w.wk.slice(5)} 주</td>
                         <td className="px-3 py-2 w-72">
                           <div className="flex items-center gap-1.5">
                             <div className="flex-1 h-3 bg-slate-100 rounded overflow-hidden">
@@ -418,62 +321,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                           </div>
                         </td>
                         <td className="px-3 py-2 text-center text-slate-500">{w.elecCnt}</td>
-                        <td className="px-3 py-2 text-center font-bold text-rose-500">{w.qcCnt ? `${w.qcCnt}건 · ${Math.round(w.qcMd * 10) / 10}MD` : '-'}</td>
+                        <td className="px-3 py-2 text-center font-bold text-rose-500">{w.qcCnt || '-'}</td>
                       </tr>
-                      {expWk === w.wk && (
-                        <tr key={w.wk + 'x'} className="bg-slate-50/70">
-                          <td colSpan={4} className="px-4 py-3">
-                            <div className="grid sm:grid-cols-2 gap-3">
-                              <div>
-                                <p className="text-[10px] font-bold text-violet-600 mb-1">⚡ 전장 (완료예정 이 주) — {Math.round(w.elecMd * 10) / 10}MD</p>
-                                {w.elecItems.length === 0 ? <p className="text-[10px] text-slate-300">없음</p> : w.elecItems.map(it => (
-                                  <div key={it.id + 'e'} className="flex items-center gap-2 text-[11px] py-0.5">
-                                    <span className="font-mono font-semibold text-slate-700">{it.pn} {it.hogi}</span>
-                                    <span className="text-slate-400 truncate flex-1">{it.name}</span>
-                                    <span className="text-violet-500 font-bold">{it.md}MD</span>
-                                    <span className="text-slate-400">완료 {String(it.due).slice(5)}</span>
-                                    <span className="text-slate-300">납품 {String(it.req).slice(5)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                              <div>
-                                <p className="text-[10px] font-bold text-rose-600 mb-1">✅ 품질 (완료요청 이 주) — {w.qcCnt}건 · {Math.round(w.qcMd * 10) / 10}MD</p>
-                                {w.qcItems.length === 0 ? <p className="text-[10px] text-slate-300">없음</p> : w.qcItems.map(it => (
-                                  <div key={it.id + 'q'} className="flex items-center gap-2 text-[11px] py-0.5">
-                                    <span className="font-mono font-semibold text-slate-700">{it.pn} {it.hogi}</span>
-                                    <span className="text-slate-400 truncate flex-1">{it.name}</span>
-                                    <span className="text-rose-400 font-bold">{it.md}MD</span>
-                                    <span className="text-slate-400">요청 {String(it.due).slice(5)}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </td>
-                        </tr>
-                      )}
-                    </>)) })()}
+                    )) })()}
                   </tbody>
                 </table>
               )}
             </div>
           ) : view === 'model' ? (
-            <div>
-              {(() => {
-                const cut = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10)
-                const done = rows.filter(r => r.status === '완료' && r.shipped_date && r.req_date && r.shipped_date >= cut)
-                if (!done.length) return <p className="px-4 pt-3 text-[10px] text-slate-400">📈 정시납품률·리드타임은 앞으로 완료 처리 시 자동 집계됩니다 (실납품일 기록 시작)</p>
-                const onTime = done.filter(r => r.shipped_date <= r.req_date).length
-                const delays = done.map(r => Math.round((new Date(r.shipped_date) - new Date(r.req_date)) / 86400000))
-                const leads = done.filter(r => r.created_at).map(r => Math.round((new Date(r.shipped_date) - new Date(r.created_at)) / 86400000))
-                const avg = (a) => a.length ? Math.round(a.reduce((x, y) => x + y, 0) / a.length * 10) / 10 : 0
-                return (
-                  <div className="flex gap-2 px-4 pt-3 flex-wrap">
-                    <div className="px-3 py-1.5 rounded-lg bg-emerald-50 border border-emerald-200 text-[11px]"><b className="text-emerald-700 text-sm">{Math.round(onTime / done.length * 100)}%</b> <span className="text-emerald-600 font-bold">정시납품</span> <span className="text-slate-400">(90일 {done.length}대)</span></div>
-                    <div className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px]"><b className="text-slate-700 text-sm">{avg(delays) > 0 ? '+' : ''}{avg(delays)}일</b> <span className="text-slate-500 font-bold">평균 납기편차</span></div>
-                    {leads.length > 0 && <div className="px-3 py-1.5 rounded-lg bg-slate-50 border border-slate-200 text-[11px]"><b className="text-slate-700 text-sm">{avg(leads)}일</b> <span className="text-slate-500 font-bold">평균 리드타임</span></div>}
-                  </div>
-                )
-              })()}
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 text-slate-400 border-b border-slate-200">
                   <tr>
@@ -485,9 +340,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     <th className="px-3 py-2 text-center font-bold">PO접수</th>
                     <th className="px-3 py-2 text-center font-bold">전체</th>
                     <th className="px-3 py-2 text-center font-bold">다음 납품</th>
-                    <th className="px-3 py-2 text-center font-bold">조립 MD</th>
-                    <th className="px-3 py-2 text-center font-bold">품질 MD</th>
-                    <th className="px-3 py-2 text-center font-bold">구분</th>
+                    <th className="px-3 py-2 text-center font-bold">공수 MD</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -512,32 +365,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       <td className="px-3 py-2 text-center font-semibold text-slate-600">{m.next ? m.next.slice(5) : '—'}</td>
                       <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
                         {m.main ? (
-                          <input type="number" step="0.5" min="0" defaultValue={mdMap[m.pn]?.md ?? ''} placeholder="—" title="전장 조립 공수 (MD)"
-                            onBlur={e => { const v = e.target.value; if (String(mdMap[m.pn]?.md ?? '') !== v) mdSaveMut.mutate({ pn: m.pn, field: 'md_days', val: v }) }}
-                            className="w-14 px-1 py-0.5 text-center text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-400" />
-                        ) : <span className="text-slate-200">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
-                        {m.main ? (
-                          <input type="number" step="0.5" min="0" defaultValue={mdMap[m.pn]?.qc ?? ''} placeholder="—" title="품질 검사 공수 (MD) — 전장 완료예정 역산에 사용"
-                            onBlur={e => { const v = e.target.value; if (String(mdMap[m.pn]?.qc ?? '') !== v) mdSaveMut.mutate({ pn: m.pn, field: 'qc_md_days', val: v }) }}
-                            className="w-14 px-1 py-0.5 text-center text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-rose-300" />
-                        ) : <span className="text-slate-200">—</span>}
-                      </td>
-                      <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
-                        {m.main ? (
-                          <button onClick={() => protoMut.mutate({ pn: m.pn, val: !mdMap[m.pn]?.proto })}
-                            title="전광판 배치: 양산=앞, 초도=뒤"
-                            className={`px-2 py-0.5 text-[10px] font-bold rounded-full border ${mdMap[m.pn]?.proto ? 'bg-amber-50 border-amber-300 text-amber-700' : 'bg-sky-50 border-sky-300 text-sky-700'}`}>
-                            {mdMap[m.pn]?.proto ? '🟡 초도' : '🔵 양산'}
-                          </button>
+                          <input type="number" step="0.5" min="0" defaultValue={mdMap[m.pn] ?? ''} placeholder="—"
+                            onBlur={e => { const v = e.target.value; if (String(mdMap[m.pn] ?? '') !== v) mdSaveMut.mutate({ pn: m.pn, val: v }) }}
+                            className="w-16 px-1 py-0.5 text-center text-xs border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-violet-400" />
                         ) : <span className="text-slate-200">—</span>}
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-            </div>
           ) : (<>
           {sel.size > 0 && (
             <div className="flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl border border-indigo-200 bg-indigo-50/60 sticky top-0 z-20">
@@ -577,16 +413,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
-                <th colSpan={4} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
+                <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
-                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">비고</th>
+                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
               </tr>
               <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] text-slate-400 text-center">
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">입고예정<br /><span className="text-slate-300">클릭시완료</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">하네스<br />불출</th>
                 <th className="px-2 py-1 font-semibold">전장<br />불출</th>
-                <th className="px-2 py-1 font-semibold">시작예정<br /><span className="text-slate-300">완료−조립MD</span></th>
                 <th className="px-2 py-1 font-semibold">완료예정<br /><span className="text-slate-300">MD역산·✎수정</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">완료요청<br /><span className="text-slate-300">역산·클릭완료</span></th>
               </tr>
@@ -594,7 +429,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={14} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -606,13 +441,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </td>
                   <td className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
                     {r.pn}{!isMainPn(r.pn) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
-                    {startWarnIds.beforeParts.has(r.id) && <span className="ml-1 px-1 rounded bg-rose-100 text-rose-600 text-[9px] font-bold align-middle" title="전장 착수 시점까지 가공물이 못 들어옴 — 일정 조정 필요">🔩부품前</span>}
-                    {startWarnIds.overdueStart.has(r.id) && <span className="ml-1 px-1 rounded bg-orange-100 text-orange-600 text-[9px] font-bold align-middle" title="전장 시작 예정일 지남 · 아직 미불출">⏱착수지남</span>}
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
                   <td className="px-2 py-2 text-slate-400">{r.rev || '-'}</td>
-                  <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value, row: r })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                  <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
                       {md(r.req_date) || '미정'}
@@ -622,29 +455,23 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </td>
                   {isMainPn(r.pn) ? (<>
                   {/* 가공물 입고예정 — 날짜없으면 입력, 있으면 완료토글 */}
-                  <DateCell row={r} dateField="arrival_date" doneField="machine_recv" done={r.machine_recv} doneColor="amber" late={mchLateIds.has(r.id)}
+                  <DateCell row={r} dateField="arrival_date" doneField="machine_recv" done={r.machine_recv} doneColor="amber"
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'arrival_date', value: v || null })}
                     onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'machine_recv', value: v })} />
                   {/* 전장>하네스 불출 (토글) */}
-                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'harness_recv', value: !truthy(r.harness_recv), row: r })}>
+                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'harness_recv', value: !truthy(r.harness_recv) })}>
                     {truthy(r.harness_recv) ? <span className="text-teal-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-teal-500">불출</span>}
                   </td>
                   {/* 전장>부품 불출 (토글) */}
-                  <td className="px-2 py-2 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue), row: r })}>
+                  <td className="px-2 py-2 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue) })}>
                     {truthy(r.part_issue) ? <span className="text-blue-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-blue-500">불출</span>}
                   </td>
-                  {/* 전장 시작예정 — 완료예정 − 조립MD (역산 표시 전용) */}
-                  {(() => { const st = calcElecStart(r, (mdMap[r.pn]||{}).qc, (mdMap[r.pn]||{}).md); const n = dday(st)
-                    const warn = startWarnIds.beforeParts.has(r.id) || startWarnIds.overdueStart.has(r.id)
-                    return <td className={`px-2 py-2 text-center ${warn ? 'bg-rose-50/60' : ''}`} title="전장 착수 예정일 (완료예정 − 조립MD)">
-                      <span className={n != null && n < 0 && !truthy(r.part_issue) ? 'text-red-600 font-bold' : 'text-slate-500'}>{md(st) || '—'}</span>
-                    </td> })()}
                   {/* 전장 완료예정 — MD 역산 자동, ✎로 수동 고정(elec_done), 클릭=완료 */}
-                  <AutoDateCell auto={calcElec(r, (mdMap[r.pn]||{}).qc)} manual={r.elec_done} done={r.elec_recv}
+                  <AutoDateCell auto={calcElec(r)} manual={r.elec_done} done={r.elec_recv}
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'elec_done', value: v || null })}
-                    onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'elec_recv', value: v, row: r })} />
+                    onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'elec_recv', value: v })} />
                   {/* 품질 완료요청 — 역산, 클릭=완료 */}
-                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv), row: r })}>
+                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv) })}>
                     {truthy(r.quality_recv)
                       ? <span className="text-rose-600 font-bold">✔ 완료</span>
                       : <span className="text-slate-500 hover:text-rose-500">{md(calcQuality(r)) || '—'}</span>}
@@ -654,7 +481,6 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{md(r.arrival_date) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{truthy(r.harness_recv) ? '✔' : '—'}</td>
                   <td className="px-2 py-2 text-center text-slate-300">{truthy(r.part_issue) ? '✔' : '—'}</td>
-                  <td className="px-2 py-2 text-center text-slate-300">—</td>
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}
@@ -663,13 +489,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{r.missing_parts.length}건</span>
                       : <span className="text-slate-200">—</span>}
                   </td>
-                  <td className="px-2 py-2 text-slate-400 text-left max-w-[140px] overflow-hidden text-ellipsis">
-                    {(() => { const nd = noteDisplay(r.note); return (
-                      <span title={nd.count > 1 ? nd.full : undefined} className="inline-flex items-center gap-1">
-                        <span className="truncate">{nd.text}</span>
-                        {nd.count > 1 && <span className="shrink-0 text-[10px] px-1 rounded bg-slate-100 text-slate-500" title={nd.full}>이력 {nd.count}</span>}
-                      </span>
-                    ) })()}
+                  <td className="px-2 py-2 text-left max-w-[110px] overflow-hidden text-ellipsis">
+                    {r.manager
+                      ? <span className="truncate font-semibold text-slate-600">{r.manager}</span>
+                      : <span className="text-slate-200">—</span>}
                   </td>
                 </tr>
               ))}
@@ -724,9 +547,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <Field label="완료요청일"><input type="date" value={edit.elec_done || ''} onChange={e => setEdit(s => ({ ...s, elec_done: e.target.value }))} className="inp" /></Field>
                 </div>
               </div>
-              <MissingPartsEditor value={edit.missing_parts}
-                onChange={(v) => setEdit(s => ({ ...s, missing_parts: v }))} />
-              <Field label="비고"><textarea value={edit.note || ''} onChange={e => setEdit(s => ({ ...s, note: e.target.value }))} rows={2} className="inp" /></Field>
+              <Field label="담당자"><input value={edit.manager || ''} onChange={e => setEdit(s => ({ ...s, manager: e.target.value }))} placeholder="담당자명" className="inp" /></Field>
             </div>
             <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2 sticky bottom-0 bg-white">
               <button onClick={() => setEdit(null)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
@@ -745,63 +566,6 @@ function Field({ label, children }) {
   return <label className="block"><span className="text-[11px] font-semibold text-slate-400 block mb-1">{label}</span>{children}</label>
 }
 
-// ── 파트 미불출 편집기 — 품번 입력 시 품명·제조사·제조사품번 자동 조회 ──
-function MissingPartsEditor({ value, onChange }) {
-  const list = Array.isArray(value) ? value : []
-  const add = () => onChange([...list, { pn: '', qty: '', date: '', name: '', maker: '', makerPn: '' }])
-  const del = (i) => onChange(list.filter((_, idx) => idx !== i))
-  const upd = (i, patch) => onChange(list.map((it, idx) => idx === i ? { ...it, ...patch } : it))
-
-  // 품번으로 품목 정보 자동 조회 (AX- 접두 자동 처리)
-  const lookup = async (i, rawPn) => {
-    const pn = (rawPn || '').trim()
-    if (!pn) { upd(i, { name: '', maker: '', makerPn: '' }); return }
-    const code = pn.toUpperCase().startsWith('AX-') ? pn : 'AX-' + pn
-    const { data } = await supabase.from('items')
-      .select('name,manufacturer,manufacturer_code')
-      .eq('std_code', code).maybeSingle()
-    if (data) upd(i, { name: data.name || '', maker: data.manufacturer || '', makerPn: data.manufacturer_code || '' })
-    else upd(i, { name: '(품목 없음)', maker: '', makerPn: '' })
-  }
-
-  return (
-    <div className="rounded-lg bg-slate-50 p-3 space-y-2 border border-slate-200">
-      <div className="flex items-center gap-2">
-        <p className="text-xs font-bold text-rose-600">⚠ 파트 미불출 현황</p>
-        <button type="button" onClick={add}
-          className="px-2 py-0.5 text-[11px] font-bold rounded-md bg-indigo-600 text-white hover:bg-indigo-700">+ 추가</button>
-      </div>
-      {list.length === 0 && <p className="text-[11px] text-slate-400">없음</p>}
-      {list.map((it, i) => (
-        <div key={i} className="rounded-md bg-white border border-slate-200 p-2 space-y-1.5">
-          <div className="flex gap-1.5 items-center">
-            <input value={it.pn || ''} placeholder="품번"
-              onChange={e => upd(i, { pn: e.target.value })}
-              onBlur={e => lookup(i, e.target.value)}
-              className="flex-1 px-2 py-1 text-xs font-mono border border-slate-200 rounded" />
-            <input value={it.qty || ''} placeholder="수량" type="number" min={0}
-              onChange={e => upd(i, { qty: e.target.value })}
-              className="w-16 px-2 py-1 text-xs border border-slate-200 rounded text-right" />
-            <input value={it.date || ''} type="date"
-              onChange={e => upd(i, { date: e.target.value })}
-              className="w-32 px-2 py-1 text-xs border border-slate-200 rounded" />
-            <button type="button" onClick={() => del(i)}
-              className="px-2 py-1 text-xs text-slate-400 hover:text-rose-600 border border-slate-200 rounded">✕</button>
-          </div>
-          <div className="flex gap-1.5">
-            <input value={it.name || ''} placeholder="품명 (자동)" readOnly
-              className="flex-1 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500" />
-            <input value={it.maker || ''} placeholder="제조사 (자동)" readOnly
-              className="w-28 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500" />
-            <input value={it.makerPn || ''} placeholder="제조사품번 (자동)" readOnly
-              className="w-32 px-2 py-1 text-xs bg-slate-50 border border-slate-100 rounded text-slate-500 font-mono" />
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}
-
 // 하이브리드 날짜 셀: 날짜 없으면 입력기, 날짜 있으면 클릭 시 완료 토글
 // dateField: arrival_date 등 (날짜) / doneField: machine_recv 등 (완료 bool)
 // 칸반보드 — 상태 열로 드래그해서 상태 변경
@@ -815,7 +579,7 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
       {cols.map(col => (
         <div key={col} className="flex-shrink-0 w-52 rounded-xl bg-slate-50 border border-slate-200"
           onDragOver={e => e.preventDefault()}
-          onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); const row = rows.find(x => x.id === id); if (id) onStatus(id, col, row) }}>
+          onDrop={e => { e.preventDefault(); const id = e.dataTransfer.getData('text/plain'); if (id) onStatus(id, col) }}>
           <div className={`px-3 py-2 text-[11px] font-bold rounded-t-xl flex items-center justify-between ${STATUS_COLOR[col]}`}>
             <span>{col}</span><span className="opacity-60">{(byStatus[col] || []).length}</span>
           </div>
@@ -835,11 +599,8 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
                   <div className="mt-1 flex items-center gap-1 flex-wrap">
                     <span className={`text-[10px] font-bold ${ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
                     {t != null && <span className={`px-1 rounded text-[9px] font-bold ${t>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>{t>0?`+${t}`:t}일</span>}
-                    {Number(mdMap?.[r.pn]?.md) > 0 && <span className="text-[9px] text-violet-500 font-bold">{mdMap[r.pn].md}MD</span>}
+                    {Number(mdMap?.[r.pn]) > 0 && <span className="text-[9px] text-violet-500 font-bold">{mdMap[r.pn]}MD</span>}
                     {Array.isArray(r.missing_parts) && r.missing_parts.length > 0 && <span className="text-[9px] px-1 rounded bg-red-50 text-red-500 font-bold">결품{r.missing_parts.length}</span>}
-                    {(() => { if (!r.updated_at || r.status === 'PO접수') return null
-                      const idle = Math.floor((Date.now() - new Date(r.updated_at)) / 86400000)
-                      return idle >= 3 ? <span className="text-[9px] px-1 rounded bg-slate-100 text-slate-500 font-bold" title={`마지막 변동 ${idle}일 전`}>⏸{idle}일</span> : null })()}
                   </div>
                 </div>
               )
@@ -882,7 +643,7 @@ function AutoDateCell({ auto, manual, done, onDate, onToggle }) {
   </td>
 }
 
-function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor = 'emerald', late }) {
+function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor = 'emerald' }) {
   const [editing, setEditing] = useState(false)
   const dateVal = row[dateField]
   const colorMap = { emerald: 'text-emerald-600', amber: 'text-amber-600' }
@@ -905,7 +666,7 @@ function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor
   if (dateVal) {
     return <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center group" onClick={() => onToggle(true)}>
       <span className="inline-flex items-center gap-1">
-        <span className={late ? 'text-red-600 font-bold' : 'text-slate-500 group-hover:text-emerald-600'}>{String(dateVal).slice(5, 10)}{late && ' ⚠'}</span>
+        <span className="text-slate-500 group-hover:text-emerald-600">{String(dateVal).slice(5, 10)}</span>
         <button type="button" title="날짜 수정"
           onClick={(e) => { e.stopPropagation(); setEditing(true) }}
           className="text-[10px] text-slate-300 hover:text-indigo-600 px-0.5">✎</button>
