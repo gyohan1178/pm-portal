@@ -489,10 +489,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{r.missing_parts.length}건</span>
                       : <span className="text-slate-200">—</span>}
                   </td>
-                  <td className="px-2 py-2 text-left max-w-[110px] overflow-hidden text-ellipsis">
-                    {r.manager
-                      ? <span className="truncate font-semibold text-slate-600">{r.manager}</span>
-                      : <span className="text-slate-200">—</span>}
+                  <td className="px-2 py-2 text-left" onClick={e => e.stopPropagation()}>
+                    <input
+                      defaultValue={r.manager || ''}
+                      key={`mgr-${r.id}-${r.manager || ''}`}
+                      placeholder="—"
+                      onBlur={e => { const v = e.target.value.trim(); if (v !== (r.manager || '')) toggleMut.mutate({ id: r.id, field: 'manager', value: v || null }) }}
+                      onKeyDown={e => { if (e.key === 'Enter') e.target.blur() }}
+                      className="w-[90px] px-1.5 py-0.5 text-xs font-semibold text-slate-600 bg-transparent border border-transparent rounded hover:border-slate-200 focus:border-indigo-400 focus:bg-white focus:outline-none placeholder:text-slate-200 placeholder:font-normal"
+                    />
                   </td>
                 </tr>
               ))}
