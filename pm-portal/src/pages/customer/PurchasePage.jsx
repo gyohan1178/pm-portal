@@ -1,6 +1,4 @@
 import { useState, useMemo } from 'react'
-import { refreshProcurement } from '../../lib/refresh'
-import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
@@ -68,11 +66,27 @@ function exportEcount(items, vendors) {
   const today = new Date()
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
   const headers = ['일자','순번','납기일자','거래처코드','거래처명','참조','담당자','거래유형','입고창고','통화','환율','프로젝트','배송지','메모','품목코드','품목명','규격','수량','단가','외화금액','공급가액','부가세','적요']
-  const rows = items.map((po, i) => {
+
+  // 거래처코드 + 발주일자 순 정렬 (같은 묶음끼리 인접)
+  const sorted = [...items].sort((a, b) => {
+    const va = vendorMap[a.vendor_id]?.ecount_code || ''
+    const vb = vendorMap[b.vendor_id]?.ecount_code || ''
+    if (va !== vb) return va.localeCompare(vb)
+    return String(a.order_date||'').localeCompare(String(b.order_date||''))
+  })
+
+  // 순번: (거래처코드 + 발주일자) 조합 같으면 동일 순번
+  const seqMap = {}; let seq = 0
+  const rows = sorted.map((po) => {
     const vendor = po.vendor_id ? vendorMap[po.vendor_id] : null
+    const orderYmd = (po.order_date || '').replace(/-/g, '')
+    const gkey = `${vendor?.ecount_code||''}|${orderYmd}`
+    if (!(gkey in seqMap)) { seq += 1; seqMap[gkey] = seq }
     const qty = po.qty_ordered||0, price = po.unit_price||0
     const supply = Math.round(qty*price), vat = Math.round(supply*0.1)
-    return [yyyymmdd, i+1, po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', vendor?.name||'', '','','','','','','','', po.memo||'', po.items?.std_code||'', po.items?.name||'', '', qty, price, '', supply, vat, '']
+    const spec = [po.items?.manufacturer, po.items?.manufacturer_code].filter(Boolean).join(' ')  // 규격 = 제조사 제조사품번
+    return [orderYmd || yyyymmdd, seqMap[gkey], po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '','','','','','','','', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
+    //       ↑ 일자=발주일자         ↑ 순번(묶음)                                    ↑ 거래처명 빈칸                                                      ↑ 규격
   })
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
@@ -136,6 +150,7 @@ export default function PurchasePage() {
   const [tab, setTab] = useState('po') // po | history
   const [typeTab, setTypeTab] = useState('전체')
   const [search, setSearch] = useState('')  // 거래처·제조사·품번 검색
+  const [filterOrderDate, setFilterOrderDate] = useState('')  // 발주일자 필터 (이카운트 발주서용)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(freshForm)
   const [editId, setEditId] = useState(null)
@@ -216,8 +231,8 @@ export default function PurchasePage() {
       if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
       else { const{error}=await supabase.from('purchase_orders').insert({...payload,customer_id:cs?.id,item_id:selItem?.id,order_type:'purchase',qty_received:0,status:'진행중'}); if(error) throw error }
     },
-    onSuccess:()=>{ refreshProcurement(qc); setForm(freshForm()); setSelItem(null); setSelVendor(''); setVendorSearch(''); setShowForm(false); setEditId(null) },
-    onError:(e)=>toastError('오류: '+e.message),
+    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setForm(freshForm()); setSelItem(null); setSelVendor(''); setVendorSearch(''); setShowForm(false); setEditId(null) },
+    onError:(e)=>alert('오류: '+e.message),
   })
   const buildInsert = (ln) => ({
     customer_id: cs?.id, item_id: ln.item_id, vendor_id: ln.vendor_id||null,
@@ -228,26 +243,26 @@ export default function PurchasePage() {
   })
   const saveMultiMut = useMutation({
     mutationFn: async (rows) => { const { error } = await supabase.from('purchase_orders').insert(rows.map(buildInsert)); if (error) throw error },
-    onSuccess:()=>{ refreshProcurement(qc); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
-    onError:(e)=>toastError('오류: '+e.message),
+    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
+    onError:(e)=>alert('오류: '+e.message),
   })
   const deleteMut = useMutation({
     mutationFn:async(id)=>{ const{error}=await supabase.from('purchase_orders').delete().eq('id',id); if(error) throw error },
-    onSuccess:()=>refreshProcurement(qc),
+    onSuccess:()=>qc.invalidateQueries(['purchase']),
   })
   const bulkPoMut = useMutation({
     mutationFn:async({ids,poNo})=>{ const{error}=await supabase.from('purchase_orders').update({po_number:poNo}).in('id',ids); if(error) throw error },
-    onSuccess:()=>{ refreshProcurement(qc); setBulkPo(''); setChecked({}) },
-    onError:(e)=>toastError('오류: '+e.message),
+    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkPo(''); setChecked({}) },
+    onError:(e)=>alert('오류: '+e.message),
   })
   const bulkDateMut = useMutation({
     mutationFn:async({ids,field,value})=>{ const{error}=await supabase.from('purchase_orders').update({[field]:value||null}).in('id',ids); if(error) throw error },
-    onSuccess:()=>{ refreshProcurement(qc); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({}) },
-    onError:(e)=>toastError('오류: '+e.message),
+    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({}) },
+    onError:(e)=>alert('오류: '+e.message),
   })
 
   function addLine() {
-    if (!selItem || !form.qty_ordered) { toastError('품목과 수량을 입력하세요'); return }
+    if (!selItem || !form.qty_ordered) { alert('품목과 수량을 입력하세요'); return }
     setLines(prev => {
       const idx = prev.findIndex(l => l.item_id === selItem.id)
       if (idx >= 0) {
@@ -273,7 +288,7 @@ export default function PurchasePage() {
       .map(l=>l.split(/[\t,]/).map(x=>x.trim()))
       .map(c=>({ code:c[0], qty:Number(c[1])||0, price:(c[2]!=null&&c[2]!=='')?Number(c[2]):null }))
       .filter(r=>r.code)
-    if (!parsed.length) { toastError('붙여넣은 내용이 없어요'); return }
+    if (!parsed.length) { alert('붙여넣은 내용이 없어요'); return }
     const codes = [...new Set(parsed.map(r=>r.code))]
     const { data: items } = await supabase.from('items')
       .select('id,std_code,name,type,purchase_price,vendor_id,vendors(name)').in('std_code', codes)
@@ -301,7 +316,7 @@ export default function PurchasePage() {
       return next
     })
     setBulkText(''); setShowBulk(false)
-    if (notFound.length) toastError('못 찾은 코드 '+notFound.length+'건: '+notFound.join(', '))
+    if (notFound.length) alert('못 찾은 코드 '+notFound.length+'건: '+notFound.join(', '))
   }
   function submitForm() {
     if (editId) { saveMut.mutate(form); return }
@@ -311,7 +326,7 @@ export default function PurchasePage() {
       po_number:form.po_number, memo:form.memo,
     }] : []
     const all = [...lines, ...cur]
-    if (!all.length) { toastError('담은 품목이 없습니다'); return }
+    if (!all.length) { alert('담은 품목이 없습니다'); return }
     saveMultiMut.mutate(all)
   }
   const bomShown = useMemo(() => {
@@ -326,7 +341,7 @@ export default function PurchasePage() {
   }, [bomRows, procOnly])
   function addBomToLines() {
     const picked = bomShown.filter(b => bomChecked[b.item_id])
-    if (!picked.length) { toastError('담을 가공품을 체크하세요'); return }
+    if (!picked.length) { alert('담을 가공품을 체크하세요'); return }
     const topVendorName = vendors.find(v=>v.id===selVendor)?.name || ''
     setLines(prev => {
       const next = [...prev]
@@ -357,7 +372,7 @@ export default function PurchasePage() {
   function exportStatusExcel() {
     try {
       const rows = sorted
-      if (!rows.length) { toastError('내보낼 현황이 없습니다'); return }
+      if (!rows.length) { alert('내보낼 현황이 없습니다'); return }
       const header = ['발주일자','코드','품명','제조사','제조사품번','발주수량','미입고수량','단가','공급가','납기약속일','상태','업체확인일자']
       const aoa = [header]
       for (const p of rows) {
@@ -383,7 +398,7 @@ export default function PurchasePage() {
       const tag = (search||'').trim() ? `_${search.trim().replace(/[\\/:*?"<>|]/g,'')}` : ''
       XLSX.writeFile(wb, `발주현황${tag}_${todayISO()}.xlsx`)
     } catch (e) {
-      toastError('엑셀 생성 오류: ' + (e?.message || e))
+      alert('엑셀 생성 오류: ' + (e?.message || e))
     }
   }
   function handleEdit(p) {
@@ -402,6 +417,7 @@ export default function PurchasePage() {
   const q = search.trim().toLowerCase()
   const filtered = purchases.filter(p => {
     if (typeTab !== '전체' && p.type !== typeTab) return false
+    if (filterOrderDate && (p.order_date||'').slice(0,10) !== filterOrderDate) return false
     if (!q) return true
     const it = p.items || {}
     return [p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code]
@@ -509,7 +525,7 @@ export default function PurchasePage() {
       <table class="dtbl"><thead><tr><th>발주일자</th><th>입고요청일</th><th>공급업체</th><th>품목코드</th><th>제조사</th><th>제조사품번</th><th>수량</th><th>발주금액</th><th>단위</th><th>합계금액</th><th>결제방식</th><th>프로젝트이력</th><th>비고</th></tr></thead><tbody>${detailRows}<tr class="tot"><td colspan="9" class="num">합계</td><td class="num">${propGrand.toLocaleString()}</td><td colspan="3"></td></tr></tbody></table>
     </body></html>`
     const w = window.open('', '_blank')
-    if (!w) { toastError('팝업이 차단되었어요. 팝업 허용 후 다시 시도해줘.'); return }
+    if (!w) { alert('팝업이 차단되었어요. 팝업 허용 후 다시 시도해줘.'); return }
     w.document.write(html); w.document.close(); w.focus()
     setTimeout(()=>{ w.print() }, 350)
   }
@@ -552,6 +568,13 @@ export default function PurchasePage() {
               className="w-56 pl-8 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
             {search&&<button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>}
+          </div>
+          <div className="inline-flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">발주일</span>
+            <input type="date" value={filterOrderDate} onChange={e=>setFilterOrderDate(e.target.value)}
+              title="발주일자로 필터 (이카운트 발주서 뽑을 때)"
+              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            {filterOrderDate&&<button onClick={()=>setFilterOrderDate('')} className="text-slate-400 hover:text-slate-600 text-xs px-1">✕</button>}
           </div>
           <button onClick={()=>{
             const allOn = sorted.length>0 && sorted.every(p=>checked[p.id])
