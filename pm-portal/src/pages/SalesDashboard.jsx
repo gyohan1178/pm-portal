@@ -31,36 +31,49 @@ async function fetchSales() {
 
 export default function SalesDashboard() {
   const { data: rows = [], isLoading } = useQuery({ queryKey:['salesDash'], queryFn: fetchSales })
-  const [range, setRange] = useState(12) // 최근 N개월
+  const [year, setYear] = useState(String(new Date().getFullYear())) // 연도 선택
   const [fx, setFx] = useState(1400) // USD→KRW 환율 (키인)
+
+  // 데이터에 존재하는 연도 목록 (드롭다운용)
+  const years = useMemo(()=>{
+    const ys = [...new Set(rows.map(r=>r.month.slice(0,4)).filter(Boolean))].sort().reverse()
+    return ys.length ? ys : [String(new Date().getFullYear())]
+  },[rows])
 
   const d = useMemo(()=>{
     // 환율 적용: 달러(CCN=B)는 fx 곱함, 원화는 그대로
     const amt = r => r.isUsd ? r.baseAmount * fx : r.baseAmount
     const csSet = [...new Set(rows.map(r=>r.csName))].sort()
     const byMonth = {}
-    rows.forEach(r=>{
+    // 선택 연도의 1~12월 미리 생성 (빈 달도 0으로 표시)
+    for (let m=1; m<=12; m++){
+      const key = `${year}-${String(m).padStart(2,'0')}`
+      byMonth[key] = { month:key, total:0, qty:0, done:0, pending:0, cnt:0 }
+      csSet.forEach(cs=>{ byMonth[key][cs] = 0 })
+    }
+    rows.filter(r=>r.month.slice(0,4)===year).forEach(r=>{
       const a = amt(r)
-      byMonth[r.month] ??= { month:r.month, total:0, qty:0, done:0, cnt:0 }
-      csSet.forEach(cs=>{ byMonth[r.month][cs] ??= 0 })
-      byMonth[r.month][r.csName] += a
-      byMonth[r.month].total += a
-      byMonth[r.month].qty += Number(r.qty_ordered)||0
-      byMonth[r.month].cnt += 1
-      if (r.issued || r.status==='완료') byMonth[r.month].done += a
+      const b = byMonth[r.month]; if(!b) return
+      b[r.csName] = (b[r.csName]||0) + a
+      b.total += a
+      b.qty += Number(r.qty_ordered)||0
+      b.cnt += 1
+      if (r.issued || r.status==='완료') b.done += a       // 완료(실매출)
+      else b.pending += a                                   // 예정
     })
-    const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month)).slice(-range)
-      .map(m=>({ ...m, label:m.month.slice(2,4)+'.'+m.month.slice(5,7) }))
-    const noPrice = rows.filter(r=>!r.unit_price).length
+    const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month))
+      .map(m=>({ ...m, label:m.month.slice(5,7)+'월' }))
+    const noPrice = rows.filter(r=>r.month.slice(0,4)===year && !r.unit_price).length
     const total = months.reduce((a,m)=>a+m.total,0)
     const doneTotal = months.reduce((a,m)=>a+m.done,0)
-    return { csSet, months, noPrice, total, doneTotal }
-  },[rows,range,fx])
+    const pendingTotal = months.reduce((a,m)=>a+m.pending,0)
+    return { csSet, months, noPrice, total, doneTotal, pendingTotal }
+  },[rows,year,fx])
 
   const tableRows = useMemo(()=>d.months.map(m=>({
-    month:m.month, cnt:m.cnt, qty:m.qty, total:m.total, done:m.done, rate: m.total>0? Math.round(m.done/m.total*100):0
+    month:m.month, cnt:m.cnt, qty:m.qty, total:m.total, done:m.done, pending:m.pending, rate: m.total>0? Math.round(m.done/m.total*100):0
   })),[d])
-  const { sorted, sortKey, sortDir, onSort } = useTableSort(tableRows, { defaultKey:'month', defaultDir:'desc' })
+  const { sorted, sortKey, sortDir, onSort } = useTableSort(tableRows, { defaultKey:'month', defaultDir:'asc' })
 
   const COLS = [
     { key:'month', label:'월',        defaultWidth:90 },
@@ -68,6 +81,7 @@ export default function SalesDashboard() {
     { key:'qty',   label:'수량',      defaultWidth:90,  style:{textAlign:'right'} },
     { key:'total', label:'매출(억)',  defaultWidth:100, style:{textAlign:'right'} },
     { key:'done',  label:'완료(억)',  defaultWidth:100, style:{textAlign:'right'} },
+    { key:'pending', label:'예정(억)', defaultWidth:100, style:{textAlign:'right'} },
     { key:'rate',  label:'완료율',    defaultWidth:80,  style:{textAlign:'right'} },
   ]
 
@@ -95,7 +109,7 @@ export default function SalesDashboard() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
-          <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · 최근 {range}개월 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b></p>
+          <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span></p>
         </div>
         <div className="flex items-center gap-2">
         <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
@@ -105,12 +119,10 @@ export default function SalesDashboard() {
           <span className="text-slate-400">원</span>
         </label>
         <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-lg">
-          {[6,12,24].map(n=>(
-            <button key={n} onClick={()=>setRange(n)}
-              className={`px-3 py-1.5 text-xs font-semibold rounded-md ${range===n?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{n}개월</button>
-          ))}
-        </div>
+        <select value={year} onChange={e=>setYear(e.target.value)}
+          className="text-xs font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
+          {years.map(y=>(<option key={y} value={y}>{y}년</option>))}
+        </select>
         </div>
       </div>
 
@@ -118,7 +130,7 @@ export default function SalesDashboard() {
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold text-slate-500">예상 매출 (전체)</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{fmtEok(d.total)}<span className="text-sm text-slate-400 ml-1">억</span></p>
-          <p className="text-[11px] text-slate-400 mt-0.5">최근 {range}개월 PO 총액</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">{year}년 PO 총액</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold text-emerald-600">기매출 (납품완료)</p>
@@ -144,7 +156,7 @@ export default function SalesDashboard() {
           <BarChart data={d.months}>
             <XAxis dataKey="label" tick={{fontSize:11}} />
             <YAxis tickFormatter={v=>fmtEok(v)} tick={{fontSize:11}} width={44} />
-            <Tooltip formatter={(v,n)=>[`${fmtEok(v)}억`, n]} labelFormatter={l=>`20${l.replace('.','년 ')}월`} />
+            <Tooltip formatter={(v,n)=>[`${fmtEok(v)}억`, n]} labelFormatter={l=>`${year}년 ${l}`} />
             <Legend wrapperStyle={{fontSize:11}} />
             {d.csSet.map((cs,i)=>(
               <Bar key={cs} dataKey={cs} stackId="a" fill={csColor(cs)}
@@ -164,6 +176,7 @@ export default function SalesDashboard() {
                 <td className="px-3 py-2 text-right tabular-nums text-slate-500">{r.qty.toLocaleString()}</td>
                 <td className="px-3 py-2 text-right tabular-nums font-bold text-slate-800">{fmtEok(r.total)}</td>
                 <td className="px-3 py-2 text-right tabular-nums text-emerald-600">{fmtEok(r.done)}</td>
+                <td className="px-3 py-2 text-right tabular-nums text-indigo-500">{fmtEok(r.pending)}</td>
                 <td className="px-3 py-2 text-right tabular-nums">
                   <span className={`font-bold ${r.rate>=80?'text-emerald-600':r.rate>=50?'text-amber-600':'text-slate-400'}`}>{r.rate}%</span>
                 </td>
