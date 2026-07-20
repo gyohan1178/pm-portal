@@ -8,6 +8,7 @@ const BASE_COLS = [
   'name', 'pn', 'hogi', 'ccn', 'rev', 'status', 'po_received',
   'req_date', 'machine_date', 'arrival_date',
   'harness_issue', 'harness_done', 'part_issue', 'elec_done',
+  'quality_req', 'elec_start',
   'note', 'manager', 'updated_at',
 ]
 const MP_COLS = ['미불출품번', '미불출수량', '입고예정일', '비고']
@@ -104,7 +105,7 @@ export function parsePDBoxCSV(text) {
     harness_issue: colIndex(headers, ['harness_issue', 'harnessissue', '하네스불출']),
     harness_done: colIndex(headers, ['harness_done', 'harnessdone', '하네스완료예정']),
     part_issue: colIndex(headers, ['part_issue', 'partissue', '전장불출']),
-    elec_done: colIndex(headers, ['elec_done', 'elecdone', '전장완료요청']),
+    elec_done: colIndex(headers, ['elec_done', 'elecdone', '전장완료요청', '전장완료예정일']),
     note: colIndex(headers, ['note', '비고']),
     manager: colIndex(headers, ['manager', '담당자']),
     mp_pn: colIndex(headers, ['미불출품번']),
