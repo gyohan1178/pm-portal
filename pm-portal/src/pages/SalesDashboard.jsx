@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import AnalysisTabs from '../components/AnalysisTabs'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
@@ -12,25 +13,41 @@ const csColor = n => CS_COLOR[n] || '#94a3b8'
 const fmtEok = v => (v/1e8).toFixed(2)
 
 async function fetchSales() {
-  const [{ data: pos }, { data: css }] = await Promise.all([
+  const [{ data: pos }, { data: css }, { data: sales }] = await Promise.all([
     supabase.from('purchase_orders')
       .select('id,customer_id,ccn,qty_ordered,unit_price,promise_date,order_date,status,issued')
       .eq('order_type','customer_po').limit(20000),
     supabase.from('customers').select('id,name'),
+    supabase.from('pm_sales').select('part_no,qty,unit_price,ccn,promise_date,status_note,customer_code,updated_at').limit(20000),
   ])
   const csMap = Object.fromEntries((css||[]).map(c=>[c.id,c.name]))
-  return (pos||[]).map(p=>({
-    ...p,
+  // 진행중 PO (예정 매출) — pm_sales에 실적이 있으니 완료건 중복 피하려 '완료' 아닌 것만
+  const poRows = (pos||[]).filter(p=>p.status!=='완료').map(p=>({
     csName: csMap[p.customer_id]||'기타',
     month: (p.promise_date||p.order_date||'').slice(0,7),
-    // CCN=B는 달러(환율은 대시보드에서 곱함), 나머지는 원화
     isUsd: (p.ccn||'').trim().toUpperCase() === 'B',
     baseAmount: (Number(p.qty_ordered)||0) * (Number(p.unit_price)||0),
+    qty_ordered: p.qty_ordered, unit_price: p.unit_price,
+    done: false,   // 예정
   })).filter(p=>p.month)
+  // pm_sales (실매출, 납품완료) — 취소 제외
+  const csCodeMap = { AX:'AXCELIS' }
+  const saleRows = (sales||[]).filter(r=>r.status_note!=='발주 취소').map(r=>({
+    csName: csCodeMap[r.customer_code]||r.customer_code||'AXCELIS',
+    month: (r.promise_date||'').slice(0,7),
+    isUsd: (r.ccn||'').trim().toUpperCase() === 'B',
+    baseAmount: (Number(r.qty)||0) * (Number(r.unit_price)||0),
+    qty_ordered: r.qty, unit_price: r.unit_price,
+    done: true,    // 실매출(완료)
+  })).filter(r=>r.month)
+  const lastUpdated = (sales||[]).reduce((mx,r)=> r.updated_at>mx?r.updated_at:mx, '')
+  return { rows: [...poRows, ...saleRows], lastUpdated }
 }
 
 export default function SalesDashboard() {
-  const { data: rows = [], isLoading } = useQuery({ queryKey:['salesDash'], queryFn: fetchSales })
+  const { data: fetched, isLoading } = useQuery({ queryKey:['salesDash'], queryFn: fetchSales })
+  const rows = fetched?.rows || []
+  const lastUpdated = fetched?.lastUpdated || ''
   const [year, setYear] = useState(String(new Date().getFullYear())) // 연도 선택
   const [fx, setFx] = useState(1400) // USD→KRW 환율 (키인)
 
@@ -58,8 +75,8 @@ export default function SalesDashboard() {
       b.total += a
       b.qty += Number(r.qty_ordered)||0
       b.cnt += 1
-      if (r.issued || r.status==='완료') b.done += a       // 완료(실매출)
-      else b.pending += a                                   // 예정
+      if (r.done) b.done += a       // 완료(실매출 = pm_sales)
+      else b.pending += a           // 예정 (진행중 PO)
     })
     const months = Object.values(byMonth).sort((a,b)=>a.month.localeCompare(b.month))
       .map(m=>({ ...m, label:m.month.slice(5,7)+'월' }))
@@ -109,7 +126,7 @@ export default function SalesDashboard() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
-          <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span></p>
+          <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</p>
         </div>
         <div className="flex items-center gap-2">
         <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
@@ -119,6 +136,7 @@ export default function SalesDashboard() {
           <span className="text-slate-400">원</span>
         </label>
         <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
+        <Link to="/sales/upload" className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📥 실적 업로드</Link>
         <select value={year} onChange={e=>setYear(e.target.value)}
           className="text-xs font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
           {years.map(y=>(<option key={y} value={y}>{y}년</option>))}

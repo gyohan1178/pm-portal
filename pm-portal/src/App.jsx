@@ -36,6 +36,7 @@ const WeeklyReport = lazy(() => import('./pages/WeeklyReport'))
 const WeeklyUpload = lazy(() => import('./pages/WeeklyUpload'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
+const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
 const Help = lazy(() => import('./pages/Help'))
 const ProductionDashboard = lazy(() => import('./pages/production/ProductionDashboard'))
 const ProductionCustomer = lazy(() => import('./pages/production/ProductionCustomer'))
@@ -141,6 +142,7 @@ export default function App() {
         <Route path="weekly/upload" element={<WeeklyUpload />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />
         <Route path="sales" element={<SalesDashboard />} />
+        <Route path="sales/upload" element={<SalesUpload />} />
         <Route path="help" element={<Help />} />
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
