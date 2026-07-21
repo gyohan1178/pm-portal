@@ -85,11 +85,21 @@ function exportEcount(items, vendors) {
     const qty = po.qty_ordered||0, price = po.unit_price||0
     const supply = Math.round(qty*price), vat = Math.round(supply*0.1)
     const spec = [po.items?.manufacturer, po.items?.manufacturer_code].filter(Boolean).join(' ')  // 규격 = 제조사 제조사품번
-    return [orderYmd || yyyymmdd, seqMap[gkey], po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '','','','','','','','', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
-    //       ↑ 일자=발주일자         ↑ 순번(묶음)                                    ↑ 거래처명 빈칸                                                      ↑ 규격
+    //          일자          순번          납기일자                        거래처코드              거래처명 담당자   거래유형 입고창고 통화 환율  프로젝트  배송지 메모        품목코드              품목명              규격  수량 단가  외화 공급가  부가세 적요
+    return [orderYmd || yyyymmdd, String(seqMap[gkey]), po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '', '00022', '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
+    //                                                                                          거래처명↑ 담당자↑00022      입고창고↑00009        프로젝트↑00012
   })
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet([headers, ...rows])
+  // 모든 셀을 텍스트 형식으로 (00022, 앞자리 0 보존)
+  const range = XLSX.utils.decode_range(ws['!ref'])
+  for (let R = range.s.r; R <= range.e.r; R++) {
+    for (let C = range.s.c; C <= range.e.c; C++) {
+      const addr = XLSX.utils.encode_cell({ r: R, c: C })
+      const cell = ws[addr]
+      if (cell) { cell.t = 's'; cell.v = cell.v == null ? '' : String(cell.v); cell.z = '@' }
+    }
+  }
   ws['!cols'] = headers.map(()=>({width:14}))
   XLSX.utils.book_append_sheet(wb, ws, '발주서')
   XLSX.writeFile(wb, `이카운트발주서_${yyyymmdd}.xlsx`)

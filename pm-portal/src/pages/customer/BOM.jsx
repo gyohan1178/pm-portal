@@ -19,6 +19,20 @@ function parseBomQty(v) {
   return Number.isFinite(n) ? n : 0   // A/R 등 문자 → 0
 }
 
+// 세부구분별 색상 (BOM 조회 뱃지)
+function catStyle(cat) {
+  const c = String(cat || '')
+  if (c.includes('부품')) return 'bg-blue-50 text-blue-600'
+  if (c.includes('와이어') || c.includes('케이블')) return 'bg-amber-50 text-amber-700'
+  if (c.includes('문서')) return 'bg-slate-100 text-slate-500'
+  if (c.includes('라벨')) return 'bg-pink-50 text-pink-600'
+  if (c.includes('도면')) return 'bg-indigo-50 text-indigo-600'
+  if (c.includes('KIT')) return 'bg-emerald-50 text-emerald-600'
+  if (c.includes('회로')) return 'bg-purple-50 text-purple-600'
+  if (c === '가공') return 'bg-indigo-50 text-indigo-600'
+  return 'bg-slate-50 text-slate-500'
+}
+
 
 // 등록된 어셈블리 목록 (projects + BOM 품목수, RPC 한 방)
 async function fetchAssemblies(customerId) {
@@ -43,7 +57,7 @@ async function fetchBOMDetail(customerId, projectId) {
   if (!projectId) return []
   const data = await fetchAll(() => supabase
     .from('bom')
-    .select('*, items!bom_item_id_fkey(std_code, name, type, unit, lt_weeks, manufacturer, manufacturer_code)')
+    .select('*, items!bom_item_id_fkey(std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code)')
     .eq('customer_id', customerId)
     .eq('project_id', projectId)
     .order('seq')
@@ -56,7 +70,7 @@ function exportDetailCSV(rows, assembly) {
   if (!rows?.length) return
   const data = rows.map(b => ({
     LV: b.level, 코드: b.items?.std_code || '', 품명: b.items?.name || '',
-    구분: b.items?.type || '', 단위: b.items?.unit || '',
+    구분: b.items?.category || b.items?.type || '', 단위: b.items?.unit || '',
     제조사: b.items?.manufacturer || '', 제조사코드: b.items?.manufacturer_code || '',
     소요량: b.qty_per_unit,
   }))
@@ -140,6 +154,7 @@ async function saveBOMMulti({ rows, customerId, onProgress }) {
           std_code: pn,
           name: String(row['Description'] ?? row['품명'] ?? '').trim(),
           type: '자재',
+          category: String(row['Category'] ?? row['카테고리'] ?? row['구분'] ?? '').trim() || null,
           unit: String(row['UNIT'] ?? row['단위'] ?? 'EA').trim() || 'EA',
           manufacturer: mfg || null, manufacturer_code: mfgpn || null,
           spec: [mfg, mfgpn].filter(Boolean).join(' ') || null,
@@ -565,7 +580,7 @@ export default function BOM() {
                             <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${10+Math.max((b.level||1)-1,0)*22}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}</td>
                             <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
                             <td className="px-3 py-2">
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${b.items?.type==='가공'?'bg-indigo-50 text-indigo-600':'bg-blue-50 text-blue-600'}`}>{b.items?.type}</span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
                             </td>
                             <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
                             <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
