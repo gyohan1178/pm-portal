@@ -20,6 +20,13 @@ const isTarget = (code) => {
 const fmtRev = (rev, ed) => `${rev}_${String(ed ?? 0).padStart(2, '0')}`
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '-')
 
+// 파일 용량 (재스캔 전 기존 행은 null → '-')
+const fmtSize = (b) => {
+  if (b == null) return '-'
+  if (b >= 1024 * 1024) return (b / 1024 / 1024).toFixed(1) + ' MB'
+  return Math.max(1, Math.round(b / 1024)) + ' KB'
+}
+
 // ── BOM 전 레벨 전개 ────────────────────────────────
 // projects(어셈블리) 1건 = bom 직계 자식들 구조.
 // 하위 품번이 다시 projects.code 로 존재하면 그 아래로 계속 내려간다.
@@ -83,7 +90,7 @@ async function fetchDrawings(codes) {
     const part = await fetchAll(() =>
       supabase
         .from('pm_drawings')
-        .select('std_code, rev, edition, rev_order, file_name, file_path, file_mtime, is_latest, missing_since, category, naming_ok')
+        .select('std_code, rev, edition, rev_order, file_name, file_path, file_mtime, is_latest, missing_since, category, naming_ok, is_conv, file_size')
         .in('std_code', chunk)
         .order('rev_order', { ascending: false }))
     out.push(...part)
@@ -121,9 +128,21 @@ async function runSearch(customerId, rawCode) {
   const rows = codes.map((code) => {
     const files = (byCode[code] || []).slice().sort((a, b) => b.rev_order - a.rev_order)
     const live = files.filter((f) => !f.missing_since)
-    const top = live.find((f) => f.is_latest) || live[0] || null
-    // 최신 REV 로 판정된 파일들 (복사본이 여러 곳일 수 있음)
-    const latestFiles = top ? live.filter((f) => f.rev_order === top.rev_order) : []
+
+    // 최신 REV 파일들 중 대표 1건 — 현장이 실제로 쓰는 컨버팅 도면을 우선한다.
+    // (같은 REV 로 원본·컨버팅이 공존하는 품번이 151개 있어 기준이 없으면 결과가 들쭉날쭉함)
+    const topOrder = live.length ? Math.max(...live.map((f) => f.rev_order)) : null
+    const latestFiles = topOrder == null ? [] : live.filter((f) => f.rev_order === topOrder)
+    const top = latestFiles.find((f) => f.is_conv) || latestFiles[0] || null
+
+    // 컨버팅 지연: 컨버팅 도면은 있는데 원본보다 REV 가 낮음 → 컨버팅 갱신 필요
+    const convOrders = live.filter((f) => f.is_conv).map((f) => f.rev_order)
+    const origOrders = live.filter((f) => !f.is_conv).map((f) => f.rev_order)
+    const convMax = convOrders.length ? Math.max(...convOrders) : null
+    const origMax = origOrders.length ? Math.max(...origOrders) : null
+    const convLag = convMax != null && origMax != null && origMax > convMax
+    const convRev = convMax == null ? null : live.find((f) => f.is_conv && f.rev_order === convMax)
+    const origRev = origMax == null ? null : live.find((f) => !f.is_conv && f.rev_order === origMax)
     return {
       code,
       name: seen.get(code)?.name || '',
@@ -133,6 +152,8 @@ async function runSearch(customerId, rawCode) {
       latestFiles,
       missingCount: files.filter((f) => f.missing_since).length,
       badNaming: files.some((f) => !f.naming_ok),
+      convLag, convRev, origRev,
+      hasConv: convMax != null,
     }
   })
 
@@ -164,6 +185,7 @@ export default function DrawingSearch() {
   const [query, setQuery] = useState('')
   const [onlyTarget, setOnlyTarget] = useState(true)
   const [onlyMissingDrawing, setOnlyMissingDrawing] = useState(false)
+  const [onlyConvLag, setOnlyConvLag] = useState(false)
   const [open, setOpen] = useState({})
   const [toast, setToast] = useState('')
 
@@ -210,8 +232,9 @@ export default function DrawingSearch() {
     let r = data?.rows || []
     if (onlyTarget) r = r.filter((x) => x.level === 0 || isTarget(x.code))
     if (onlyMissingDrawing) r = r.filter((x) => !x.latest)
+    if (onlyConvLag) r = r.filter((x) => x.convLag)
     return r.slice().sort((a, b) => a.level - b.level || a.code.localeCompare(b.code))
-  }, [data, onlyTarget, onlyMissingDrawing])
+  }, [data, onlyTarget, onlyMissingDrawing, onlyConvLag])
 
   const stat = useMemo(() => {
     const all = data?.rows || []
@@ -220,6 +243,7 @@ export default function DrawingSearch() {
       total: t.length,
       has: t.filter((x) => x.latest).length,
       none: t.filter((x) => !x.latest).length,
+      lag: t.filter((x) => x.convLag).length,
     }
   }, [data])
 
@@ -304,6 +328,10 @@ export default function DrawingSearch() {
             <input type="checkbox" checked={onlyMissingDrawing} onChange={(e) => setOnlyMissingDrawing(e.target.checked)} />
             도면 없는 것만
           </label>
+          <label className="flex items-center gap-1.5 cursor-pointer" title="컨버팅 도면이 고객사 원본보다 REV가 낮음 = 컨버팅 갱신 필요">
+            <input type="checkbox" checked={onlyConvLag} onChange={(e) => setOnlyConvLag(e.target.checked)} />
+            ⚠ 컨버팅 갱신 필요 {stat.lag > 0 && `(${stat.lag})`}
+          </label>
           <span className="ml-auto">
             대상 <b className="text-slate-800">{stat.total}</b> · 도면있음{' '}
             <b className="text-emerald-600">{stat.has}</b> · 없음 <b className="text-rose-600">{stat.none}</b>
@@ -323,6 +351,7 @@ export default function DrawingSearch() {
                 <th className="px-3 py-2 text-left w-14">LV</th>
                 <th className="px-3 py-2 text-left">품번</th>
                 <th className="px-3 py-2 text-left">품명</th>
+                <th className="px-3 py-2 text-center w-20">구분</th>
                 <th className="px-3 py-2 text-center w-24">최신 REV</th>
                 <th className="px-3 py-2 text-center w-28">수정일</th>
                 <th className="px-3 py-2 text-center w-16">파일</th>
@@ -372,8 +401,24 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
         <td className="px-3 py-2 font-mono text-xs text-slate-700" style={{ paddingLeft: 12 + lv * 12 }}>
           {r.code}
           {r.badNaming && <span className="ml-1 text-amber-500" title="Conversion 폴더 명명규칙 위반">⚠</span>}
+          {r.convLag && (
+            <span className="ml-1 text-orange-600 font-bold"
+              title={`컨버팅 갱신 필요 — 원본 ${r.origRev?.rev}_${String(r.origRev?.edition ?? 0).padStart(2,'0')} / 컨버팅 ${r.convRev?.rev}_${String(r.convRev?.edition ?? 0).padStart(2,'0')}`}>
+              ⚠컨버팅
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 text-slate-600 max-w-[280px] truncate">{r.name || '-'}</td>
+        <td className="px-3 py-2 text-center">
+          {r.latest ? (
+            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+              r.latest.is_conv
+                ? 'bg-sky-50 text-sky-700 border-sky-200'
+                : 'bg-slate-50 text-slate-500 border-slate-200'}`}>
+              {r.latest.is_conv ? '컨버팅' : '원본'}
+            </span>
+          ) : <span className="text-slate-300">-</span>}
+        </td>
         <td className="px-3 py-2 text-center">
           {r.latest ? (
             <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-mono text-xs font-bold">
@@ -386,7 +431,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
         <td className="px-3 py-2 text-center text-xs text-slate-500">
           {r.latest ? fmtDate(r.latest.file_mtime) : '-'}
         </td>
-        <td className="px-3 py-2 text-center text-xs text-slate-500">
+        <td className="px-3 py-2 text-center text-xs text-slate-500" title={r.latest ? `대표 파일 ${fmtSize(r.latest.file_size)}` : ''}>
           {r.files.length || '-'}
           {r.latestFiles.length > 1 && (
             <span className="ml-1 text-amber-600" title={`최신 REV 가 ${r.latestFiles.length}곳에 복사되어 있음`}>
@@ -408,8 +453,14 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
 
       {isOpen && !!r.files.length && (
         <tr className="bg-slate-50/80">
-          <td colSpan={7} className="px-4 py-3">
+          <td colSpan={8} className="px-4 py-3">
             <p className="text-xs font-bold text-slate-500 mb-2">REV 이력 · 파일 {r.files.length}건</p>
+            {r.convLag && (
+              <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1.5 mb-2">
+                ⚠ 컨버팅 갱신 필요 — 고객사 원본은 <b>{r.origRev?.rev}_{String(r.origRev?.edition ?? 0).padStart(2,'0')}</b> 인데
+                컨버팅 도면은 <b>{r.convRev?.rev}_{String(r.convRev?.edition ?? 0).padStart(2,'0')}</b> 에 머물러 있습니다.
+              </p>
+            )}
             <div className="space-y-1">
               {r.files.map((f) => (
                 <div key={f.file_path} className="flex items-center gap-2 text-xs">
@@ -424,7 +475,12 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
                   >
                     {fmtRev(f.rev, f.edition)}
                   </span>
-                  <span className="text-slate-400 w-24 shrink-0">{fmtDate(f.file_mtime)}</span>
+                  <span className={`px-1 py-0.5 rounded text-[10px] font-bold shrink-0 w-12 text-center ${
+                    f.is_conv ? 'bg-sky-100 text-sky-700' : 'bg-slate-200 text-slate-500'}`}>
+                    {f.is_conv ? '컨버팅' : '원본'}
+                  </span>
+                  <span className="text-slate-400 w-20 shrink-0">{fmtDate(f.file_mtime)}</span>
+                  <span className="text-slate-400 w-16 shrink-0 text-right tabular-nums">{fmtSize(f.file_size)}</span>
                   <span className={`flex-1 truncate ${f.missing_since ? 'text-slate-400 line-through' : 'text-slate-600'}`}>
                     {f.file_name}
                   </span>
