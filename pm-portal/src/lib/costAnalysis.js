@@ -51,7 +51,12 @@ export function explodeBOM(rows) {
     expByLevel[lv] = expQty
     // 자기보다 깊은 레벨 캐시 무효화
     Object.keys(expByLevel).map(Number).filter(l => l > lv).forEach(l => { delete expByLevel[l] })
-    return { ...r, uid: r.uid ?? i, expQty, excluded: r.excluded ?? (lv === 0) }
+    // 자기 아래에 더 깊은 레벨이 있으면 = 중간 어셈블리 노드.
+    // 그 원가는 하위 부품들이 이미 대표하므로 합산에서 뺀다(상하위 중복 방지).
+    // 레벨 0(KIT 자신)을 빼던 규칙을 다단 BOM 으로 일반화한 것.
+    const nextLv = i + 1 < rows.length ? (Number(rows[i + 1].level) || 0) : -1
+    const isParentNode = nextLv > lv
+    return { ...r, uid: r.uid ?? i, expQty, isParentNode, excluded: r.excluded ?? (lv === 0 || isParentNode) }
   })
 }
 

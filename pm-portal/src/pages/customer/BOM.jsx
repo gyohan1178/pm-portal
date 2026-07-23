@@ -116,9 +116,11 @@ function htmToBomRows(parsed) {
       Description: g.parentName, REV: g.parentRev || 'A',
       QTY: 1, UNIT: 'EA', MFG: '', 'MFG PN': '', '상위품명': g.parentName,
     })
-    for (const c of g.children) {
+    // 하위 전체를 상대 레벨 그대로 넣는다 (서브어셈블리 안쪽까지 전개).
+    // 중간 어셈블리 행은 원가 합산에서 자동 제외되므로 중복 계산되지 않는다.
+    for (const c of g.descendants) {
       rows.push({
-        NO: String(++no), LEVEL: 1, '상위PN': parentPn, PN: bare(c.code),
+        NO: String(++no), LEVEL: c.relLevel, '상위PN': parentPn, PN: bare(c.code),
         Description: c.name, REV: c.rev || '',
         QTY: c.qty, UNIT: c.unit || 'EA',
         MFG: c.mfr || '', 'MFG PN': c.mfrPn || '', '상위품명': g.parentName,
@@ -126,6 +128,42 @@ function htmToBomRows(parsed) {
     }
   }
   return rows
+}
+
+// 이미 등록된 품목의 "빈" 제조사 정보만 HTM 값으로 채운다.
+// 값이 들어있는 품목은 절대 건드리지 않는다 — 손으로 정리해둔 데이터가
+// 리포트를 올릴 때마다 덮어써지면 안 되기 때문. 빈칸 → 채움, 그것만 한다.
+async function fillMissingMfr(parsed) {
+  const src = {}
+  for (const p of parsed.parts) {
+    if (!p.code || src[p.code]) continue
+    if (p.mfr || p.mfrPn) src[p.code] = { mfr: p.mfr, mfrPn: p.mfrPn }
+  }
+  const codes = Object.keys(src)
+  if (!codes.length) return { filled: 0, checked: 0 }
+
+  const existing = []
+  for (let i = 0; i < codes.length; i += 200) {
+    const { data } = await supabase
+      .from('items')
+      .select('id, std_code, manufacturer, manufacturer_code')
+      .in('std_code', codes.slice(i, i + 200))
+    existing.push(...(data || []))
+  }
+
+  const blank = (v) => !String(v ?? '').trim()
+  let filled = 0
+  for (const it of existing) {
+    const s = src[it.std_code]
+    if (!s) continue
+    const patch = {}
+    if (blank(it.manufacturer) && s.mfr) patch.manufacturer = s.mfr
+    if (blank(it.manufacturer_code) && s.mfrPn) patch.manufacturer_code = s.mfrPn
+    if (!Object.keys(patch).length) continue
+    const { error } = await supabase.from('items').update(patch).eq('id', it.id)
+    if (!error) filled++
+  }
+  return { filled, checked: existing.length }
 }
 
 // HTM 은 UTF-8 이 아닌 경우가 있어(Non-ISO extended-ASCII) 디코딩을 이중으로 시도
@@ -361,7 +399,18 @@ export default function BOM() {
   })
 
   const saveMut = useMutation({
-    mutationFn: (rows) => saveBOMMulti({ rows, customerId: cs?.id, onProgress: setProgress }),
+    mutationFn: async (rows) => {
+      const res = await saveBOMMulti({ rows, customerId: cs?.id, onProgress: setProgress })
+      // HTM 업로드 + 옵션 켜짐일 때만, 기존 품목의 빈 제조사 채우기
+      if (htmInfo && fillMfr) {
+        setProgress('제조사 빈칸 채우는 중...')
+        try {
+          const r = await fillMissingMfr(htmInfo)
+          res.mfrFilled = r.filled
+        } catch { /* 채우기 실패는 BOM 저장 결과에 영향 주지 않음 */ }
+      }
+      return res
+    },
     onSuccess: (res) => {
       setResult(res); setPreview(null); setRawRows([]); setProgress(''); setHtmInfo(null)
       qc.invalidateQueries(['assemblies', cs?.id])
@@ -370,6 +419,7 @@ export default function BOM() {
   })
 
   const [htmInfo, setHtmInfo] = useState(null)
+  const [fillMfr, setFillMfr] = useState(true)
 
   // AXCELIS Part Report (HTM) 업로드
   async function handleHtmFile(e) {
@@ -476,6 +526,15 @@ export default function BOM() {
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
             {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
           </div>
+          <label className="mt-2 flex items-start gap-2 cursor-pointer">
+            <input type="checkbox" checked={fillMfr} onChange={(e) => setFillMfr(e.target.checked)} className="mt-0.5" />
+            <span className="text-[11px] text-sky-700">
+              <b>이미 등록된 품목의 빈 제조사 정보도 채우기</b>
+              <span className="block text-sky-500">
+                값이 있는 품목은 덮어쓰지 않고, 비어 있는 칸만 리포트 값으로 채웁니다.
+              </span>
+            </span>
+          </label>
           <p className="mt-1.5 text-[11px] text-sky-500">
             아래에서 내용을 확인한 뒤 저장하세요. 등록되지 않은 품번은 제조사·품명과 함께 자동으로 품목 등록됩니다.
           </p>
@@ -485,7 +544,7 @@ export default function BOM() {
       {/* 저장 결과 */}
       {result && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center gap-3">
-          ✅ 저장 완료 — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
+          ✅ 저장 완료 — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
         </div>
       )}

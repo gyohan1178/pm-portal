@@ -128,18 +128,26 @@ export function parseAxcelisReport(text) {
   }
 
   // ── 어셈블리 단위로 묶기 ──
-  // bom 테이블은 "부모 1건 = project 1건 + 직계 자식 행들" 구조.
-  // 트리를 부모-직계자식 쌍으로 분해한다.
+  // children     : 직계 자식만
+  // descendants  : 하위 전체 (relLevel = 부모 기준 상대 깊이)
+  //   최상위 어셈블리의 BOM 에는 서브어셈블리 안쪽까지 전부 펼쳐 넣기 위함.
+  //   예) 120212215 → 160208903(rel 1) + 그 부품 10개(rel 2)
   const groups = []
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]
     const children = []
+    const descendants = []
     for (let j = i + 1; j < parts.length; j++) {
       if (parts[j].level <= p.level) break
-      if (parts[j].level === p.level + 1) children.push(parts[j])
+      const rel = parts[j].level - p.level
+      descendants.push({ ...parts[j], relLevel: rel })
+      if (rel === 1) children.push(parts[j])
     }
     if (children.length) {
-      groups.push({ parentCode: p.code, parentName: p.name, parentRev: p.rev, children })
+      groups.push({
+        parentCode: p.code, parentName: p.name, parentRev: p.rev,
+        isRoot: p.level === 0, children, descendants,
+      })
     }
   }
 
