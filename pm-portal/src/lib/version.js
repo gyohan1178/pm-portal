@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v3.9.4'
+export const APP_VERSION = 'v3.9.5'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.9.5',
+    date: '2026-07-23',
+    changes: [
+      'BOM — AXCELIS Part Report(HTM) 직접 업로드 추가. 고객사에서 받은 리포트 파일을 그대로 올리면 BOM 트리·수량·단위·REV·제조사·제조사품번이 자동 추출되고, 미등록 품번은 품목 마스터에 자동 등록됨 (엑셀로 옮겨 적던 작업 제거)',
+      '다단 BOM 자동 분해 — 리포트의 레벨 구조를 읽어 어셈블리별로 나눠 등록. 3레벨 리포트 1건이 어셈블리 2건으로 자동 분리',
+      '제조사 매핑 정확도 — 상위 품목이 하위 품목의 제조사를 흡수하던 문제를 레벨 검사로 차단',
+      "수량 'as needed'(0) 보존 — 0을 1로 바꾸지 않고 그대로 저장",
+    ]
+  },
   {
     version: 'v3.9.4',
     date: '2026-07-23',

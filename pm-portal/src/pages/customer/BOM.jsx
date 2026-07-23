@@ -4,6 +4,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
+import { parseAxcelisReport } from '../../lib/axcelisBomReport'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -100,6 +101,39 @@ const AX = (pn) => {
   return t ? (t.startsWith('AX-') ? t : 'AX-' + t) : ''
 }
 const truthyYN = (v) => /^(y|yes|true|1|o|예)$/i.test(String(v || '').trim())
+
+// AXCELIS Part Report(HTM) → saveBOMMulti 가 받는 행 형식으로 변환.
+// 저장 로직은 CSV 업로드와 100% 동일한 경로를 탄다(신규품목 자동등록·배치·중복방어 포함).
+function htmToBomRows(parsed) {
+  const bare = (c) => String(c || '').replace(/^AX-/, '')
+  const rows = []
+  let no = 0
+  for (const g of parsed.groups) {
+    const parentPn = bare(g.parentCode)
+    // 어셈블리 자기행 — saveBOMMulti 가 여기서 프로젝트명·REV 를 읽는다
+    rows.push({
+      NO: String(++no), LEVEL: 0, '상위PN': parentPn, PN: parentPn,
+      Description: g.parentName, REV: g.parentRev || 'A',
+      QTY: 1, UNIT: 'EA', MFG: '', 'MFG PN': '', '상위품명': g.parentName,
+    })
+    for (const c of g.children) {
+      rows.push({
+        NO: String(++no), LEVEL: 1, '상위PN': parentPn, PN: bare(c.code),
+        Description: c.name, REV: c.rev || '',
+        QTY: c.qty, UNIT: c.unit || 'EA',
+        MFG: c.mfr || '', 'MFG PN': c.mfrPn || '', '상위품명': g.parentName,
+      })
+    }
+  }
+  return rows
+}
+
+// HTM 은 UTF-8 이 아닌 경우가 있어(Non-ISO extended-ASCII) 디코딩을 이중으로 시도
+function decodeHtm(buf) {
+  const utf8 = new TextDecoder('utf-8', { fatal: false }).decode(buf)
+  if (!utf8.includes('\uFFFD')) return utf8
+  try { return new TextDecoder('windows-1252').decode(buf) } catch { return utf8 }
+}
 
 // 다중 어셈블리 BOM 저장 — 배치 처리로 대량(만 단위) 빠르게
 async function saveBOMMulti({ rows, customerId, onProgress }) {
@@ -329,11 +363,42 @@ export default function BOM() {
   const saveMut = useMutation({
     mutationFn: (rows) => saveBOMMulti({ rows, customerId: cs?.id, onProgress: setProgress }),
     onSuccess: (res) => {
-      setResult(res); setPreview(null); setRawRows([]); setProgress('')
+      setResult(res); setPreview(null); setRawRows([]); setProgress(''); setHtmInfo(null)
       qc.invalidateQueries(['assemblies', cs?.id])
     },
     onError: (e) => { setProgress(''); toastError('저장 오류: ' + e.message) },
   })
+
+  const [htmInfo, setHtmInfo] = useState(null)
+
+  // AXCELIS Part Report (HTM) 업로드
+  async function handleHtmFile(e) {
+    const file = e.target.files[0]; if (!file) return
+    setUploading(true); setResult(null); setHtmInfo(null)
+    try {
+      const buf = await file.arrayBuffer()
+      const parsed = parseAxcelisReport(decodeHtm(buf))
+      if (!parsed.parts.length) throw new Error('Part 행을 찾지 못했습니다. AXCELIS Part Report 형식이 맞는지 확인해주세요.')
+      if (!parsed.groups.length) throw new Error('하위 품목이 없습니다. 단품 리포트는 BOM 등록 대상이 아닙니다.')
+
+      const rows = htmToBomRows(parsed)
+      setRawRows(rows)
+      setHtmInfo(parsed)
+      setPreview({
+        total: rows.filter(r => r.LEVEL !== 0).length,
+        groups: parsed.groups.map(g => ({
+          code: g.parentCode, name: g.parentName,
+          rev: g.parentRev || 'A', count: g.children.length,
+        })),
+        rows,
+      })
+    } catch (err) {
+      toastError('HTM 파싱 실패: ' + err.message)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
+    }
+  }
 
   async function handleFile(e) {
     const file = e.target.files[0]; if (!file) return
@@ -389,7 +454,33 @@ export default function BOM() {
           📤 {uploading ? '파싱 중...' : 'BOM CSV 업로드'}
           <input type="file" accept=".xlsx,.csv,.xls" className="hidden" onChange={handleFile} disabled={uploading} />
         </label>
+        <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-200 text-sky-600 bg-white hover:bg-sky-50 cursor-pointer ${uploading?'opacity-50':''}`}
+          title="고객사에서 받은 Part Report(HTM)를 그대로 올리면 BOM과 제조사 정보가 자동으로 들어갑니다">
+          📄 {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM)'}
+          <input type="file" accept=".htm,.html" className="hidden" onChange={handleHtmFile} disabled={uploading} />
+        </label>
       </div>
+
+      {/* HTM 리포트 정보 */}
+      {htmInfo && (
+        <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800">
+          <div className="font-bold text-sm mb-1">
+            📄 {htmInfo.header.rootCode} · REV {htmInfo.header.rev}.{htmInfo.header.edition} ({htmInfo.header.state})
+          </div>
+          <div className="text-sky-700">{htmInfo.header.description}</div>
+          <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-sky-600">
+            <span>품목 <b>{htmInfo.stats.total}</b></span>
+            <span>어셈블리 <b>{htmInfo.stats.assemblies}</b></span>
+            <span>최대 레벨 <b>{htmInfo.stats.maxLevel}</b></span>
+            <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>
+            {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
+            {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
+          </div>
+          <p className="mt-1.5 text-[11px] text-sky-500">
+            아래에서 내용을 확인한 뒤 저장하세요. 등록되지 않은 품번은 제조사·품명과 함께 자동으로 품목 등록됩니다.
+          </p>
+        </div>
+      )}
 
       {/* 저장 결과 */}
       {result && (
