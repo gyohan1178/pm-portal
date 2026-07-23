@@ -18,6 +18,13 @@ const isTarget = (code) => {
 }
 
 const fmtRev = (rev, ed) => `${rev}_${String(ed ?? 0).padStart(2, '0')}`
+
+// 화면 표기: 원본은 개정번호가 업무상 의미 없어 REV 알파벳만 보여준다.
+//            컨버팅은 사내 개정 이력이라 REV_개정 을 다 보여준다.
+const fmtRevOf = (f) => (!f ? '-' : f.is_conv ? fmtRev(f.rev, f.edition) : f.rev)
+
+// REV 알파벳 순위 (rev_order = 순위*1000 + 개정)
+const rankOf = (f) => Math.floor((f?.rev_order ?? 0) / 1000)
 const fmtDate = (v) => (v ? String(v).slice(0, 10) : '-')
 
 // 파일 용량 (재스캔 전 기존 행은 null → '-')
@@ -129,20 +136,31 @@ async function runSearch(customerId, rawCode) {
     const files = (byCode[code] || []).slice().sort((a, b) => b.rev_order - a.rev_order)
     const live = files.filter((f) => !f.missing_since)
 
-    // 최신 REV 파일들 중 대표 1건 — 현장이 실제로 쓰는 컨버팅 도면을 우선한다.
-    // (같은 REV 로 원본·컨버팅이 공존하는 품번이 151개 있어 기준이 없으면 결과가 들쭉날쭉함)
-    const topOrder = live.length ? Math.max(...live.map((f) => f.rev_order)) : null
-    const latestFiles = topOrder == null ? [] : live.filter((f) => f.rev_order === topOrder)
-    const top = latestFiles.find((f) => f.is_conv) || latestFiles[0] || null
+    // ── 대표 도면 선정 ──
+    // 비교는 REV 알파벳으로만 한다. 원본의 개정번호는 업무상 의미가 없다.
+    // REV 가 같으면 현장이 실제로 쓰는 컨버팅이 이긴다.
+    //   예) 원본 B_02 vs 컨버팅 B_01  →  컨버팅 B_01 이 대표
+    const pickMaxEd = (arr) =>
+      arr.length ? arr.reduce((a, b) => (b.edition > a.edition ? b : a)) : null
 
-    // 컨버팅 지연: 컨버팅 도면은 있는데 원본보다 REV 가 낮음 → 컨버팅 갱신 필요
-    const convOrders = live.filter((f) => f.is_conv).map((f) => f.rev_order)
-    const origOrders = live.filter((f) => !f.is_conv).map((f) => f.rev_order)
-    const convMax = convOrders.length ? Math.max(...convOrders) : null
-    const origMax = origOrders.length ? Math.max(...origOrders) : null
+    const topRank = live.length ? Math.max(...live.map(rankOf)) : null
+    const atTop = topRank == null ? [] : live.filter((f) => rankOf(f) === topRank)
+    const top = pickMaxEd(atTop.filter((f) => f.is_conv)) || pickMaxEd(atTop)
+
+    // 같은 도면의 복사본 (구분·개정까지 같은 것만)
+    const latestFiles = top
+      ? live.filter((f) => rankOf(f) === topRank && f.is_conv === top.is_conv && f.edition === top.edition)
+      : []
+
+    // ── 컨버팅 지연 ──
+    // REV 알파벳끼리만 비교. 개정번호로 비교하면 같은 REV 인데도 지연으로 오판한다.
+    const convRanks = live.filter((f) => f.is_conv).map(rankOf)
+    const origRanks = live.filter((f) => !f.is_conv).map(rankOf)
+    const convMax = convRanks.length ? Math.max(...convRanks) : null
+    const origMax = origRanks.length ? Math.max(...origRanks) : null
     const convLag = convMax != null && origMax != null && origMax > convMax
-    const convRev = convMax == null ? null : live.find((f) => f.is_conv && f.rev_order === convMax)
-    const origRev = origMax == null ? null : live.find((f) => !f.is_conv && f.rev_order === origMax)
+    const convRev = convMax == null ? null : live.find((f) => f.is_conv && rankOf(f) === convMax)
+    const origRev = origMax == null ? null : live.find((f) => !f.is_conv && rankOf(f) === origMax)
     return {
       code,
       name: seen.get(code)?.name || '',
@@ -256,7 +274,7 @@ export default function DrawingSearch() {
   const copyAllPaths = () => {
     const lines = rows
       .filter((r) => r.latest)
-      .map((r) => `${r.code}\t${fmtRev(r.latest.rev, r.latest.edition)}\t${r.latest.file_path}`)
+      .map((r) => `${r.code}\t${fmtRevOf(r.latest)}\t${r.latest.file_path}`)
     if (!lines.length) return say('복사할 경로가 없습니다')
     copyText(lines.join('\r\n'), say)
   }
@@ -403,7 +421,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
           {r.badNaming && <span className="ml-1 text-amber-500" title="Conversion 폴더 명명규칙 위반">⚠</span>}
           {r.convLag && (
             <span className="ml-1 text-orange-600 font-bold"
-              title={`컨버팅 갱신 필요 — 원본 ${r.origRev?.rev}_${String(r.origRev?.edition ?? 0).padStart(2,'0')} / 컨버팅 ${r.convRev?.rev}_${String(r.convRev?.edition ?? 0).padStart(2,'0')}`}>
+              title={`컨버팅 갱신 필요 — 원본 REV ${r.origRev?.rev} / 컨버팅 REV ${r.convRev?.rev}`}>
               ⚠컨버팅
             </span>
           )}
@@ -422,7 +440,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
         <td className="px-3 py-2 text-center">
           {r.latest ? (
             <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-mono text-xs font-bold">
-              {fmtRev(r.latest.rev, r.latest.edition)}
+              {fmtRevOf(r.latest)}
             </span>
           ) : (
             <span className="px-2 py-0.5 rounded bg-rose-100 text-rose-600 text-xs font-bold">없음</span>
@@ -457,8 +475,8 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
             <p className="text-xs font-bold text-slate-500 mb-2">REV 이력 · 파일 {r.files.length}건</p>
             {r.convLag && (
               <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1.5 mb-2">
-                ⚠ 컨버팅 갱신 필요 — 고객사 원본은 <b>{r.origRev?.rev}_{String(r.origRev?.edition ?? 0).padStart(2,'0')}</b> 인데
-                컨버팅 도면은 <b>{r.convRev?.rev}_{String(r.convRev?.edition ?? 0).padStart(2,'0')}</b> 에 머물러 있습니다.
+                ⚠ 컨버팅 갱신 필요 — 고객사 원본은 REV <b>{r.origRev?.rev}</b> 인데
+                컨버팅 도면은 REV <b>{r.convRev?.rev}</b> 에 머물러 있습니다.
               </p>
             )}
             <div className="space-y-1">
@@ -473,7 +491,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
                         : 'bg-slate-200 text-slate-500'
                     }`}
                   >
-                    {fmtRev(f.rev, f.edition)}
+                    {fmtRevOf(f)}
                   </span>
                   <span className={`px-1 py-0.5 rounded text-[10px] font-bold shrink-0 w-12 text-center ${
                     f.is_conv ? 'bg-sky-100 text-sky-700' : 'bg-slate-200 text-slate-500'}`}>
