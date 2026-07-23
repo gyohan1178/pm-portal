@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { useCustomer } from '../../hooks/useCustomers'
+import { compareRev, REV_STATE } from '../../lib/revCompare'
 
 // ── 품번 정규화: 접두 AX- 자동 처리 ──
 const AX = (s) => {
@@ -39,7 +40,7 @@ const fmtSize = (b) => {
 // 하위 품번이 다시 projects.code 로 존재하면 그 아래로 계속 내려간다.
 // 순환 참조·중복은 seen 으로 차단.
 async function expandBOM(customerId, rootCode, maxDepth = 10) {
-  const seen = new Map([[rootCode, { level: 0, name: '' }]])
+  const seen = new Map([[rootCode, { level: 0, name: '', wantRev: '' }]])
   let frontier = [rootCode]
 
   for (let depth = 1; depth <= maxDepth && frontier.length; depth++) {
@@ -48,7 +49,7 @@ async function expandBOM(customerId, rootCode, maxDepth = 10) {
     for (let i = 0; i < frontier.length; i += 200) {
       const { data } = await supabase
         .from('projects')
-        .select('id, code, name')
+        .select('id, code, name, rev')
         .eq('customer_id', customerId)
         .in('code', frontier.slice(i, i + 200))
       projs.push(...(data || []))
@@ -58,7 +59,9 @@ async function expandBOM(customerId, rootCode, maxDepth = 10) {
     // 어셈블리 이름 보강
     projs.forEach((p) => {
       const cur = seen.get(p.code)
-      if (cur && !cur.name) cur.name = p.name || ''
+      if (!cur) return
+      if (!cur.name) cur.name = p.name || ''
+      if (!cur.wantRev) cur.wantRev = p.rev || ''
     })
 
     // 2) 그 어셈블리들의 BOM 하위 품목
@@ -69,7 +72,7 @@ async function expandBOM(customerId, rootCode, maxDepth = 10) {
       const part = await fetchAll(() =>
         supabase
           .from('bom')
-          .select('project_id, qty_per_unit, level, seq, items!bom_item_id_fkey(std_code, name)')
+          .select('project_id, qty_per_unit, level, seq, item_rev, items!bom_item_id_fkey(std_code, name)')
           .in('project_id', chunk)
           .order('seq'))
       rows.push(...part)
@@ -80,7 +83,8 @@ async function expandBOM(customerId, rootCode, maxDepth = 10) {
     for (const r of rows) {
       const code = r.items?.std_code
       if (!code || seen.has(code)) continue
-      seen.set(code, { level: depth, name: r.items?.name || '' })
+      // BOM이 요구하는 부품 REV — NAS 최신 도면과 대조하는 기준
+      seen.set(code, { level: depth, name: r.items?.name || '', wantRev: r.item_rev || '' })
       next.push(code)
     }
     frontier = next
@@ -165,6 +169,7 @@ async function runSearch(customerId, rawCode) {
       code,
       name: seen.get(code)?.name || '',
       level: seen.get(code)?.level ?? 0,
+      wantRev: seen.get(code)?.wantRev || '',
       files,
       latest: top,
       latestFiles,
@@ -204,6 +209,7 @@ export default function DrawingSearch() {
   const [onlyTarget, setOnlyTarget] = useState(true)
   const [onlyMissingDrawing, setOnlyMissingDrawing] = useState(false)
   const [onlyConvLag, setOnlyConvLag] = useState(false)
+  const [onlyAsk, setOnlyAsk] = useState(false)
   const [open, setOpen] = useState({})
   const [toast, setToast] = useState('')
 
@@ -251,8 +257,9 @@ export default function DrawingSearch() {
     if (onlyTarget) r = r.filter((x) => x.level === 0 || isTarget(x.code))
     if (onlyMissingDrawing) r = r.filter((x) => !x.latest)
     if (onlyConvLag) r = r.filter((x) => x.convLag)
+    if (onlyAsk) r = r.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask')
     return r.slice().sort((a, b) => a.level - b.level || a.code.localeCompare(b.code))
-  }, [data, onlyTarget, onlyMissingDrawing, onlyConvLag])
+  }, [data, onlyTarget, onlyMissingDrawing, onlyConvLag, onlyAsk])
 
   const stat = useMemo(() => {
     const all = data?.rows || []
@@ -262,6 +269,7 @@ export default function DrawingSearch() {
       has: t.filter((x) => x.latest).length,
       none: t.filter((x) => !x.latest).length,
       lag: t.filter((x) => x.convLag).length,
+      ask: t.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask').length,
     }
   }, [data])
 
@@ -346,6 +354,10 @@ export default function DrawingSearch() {
             <input type="checkbox" checked={onlyMissingDrawing} onChange={(e) => setOnlyMissingDrawing(e.target.checked)} />
             도면 없는 것만
           </label>
+          <label className="flex items-center gap-1.5 cursor-pointer" title="BOM이 요구하는 REV가 NAS 최신 도면보다 높음 = 신도면 미수령">
+            <input type="checkbox" checked={onlyAsk} onChange={(e) => setOnlyAsk(e.target.checked)} />
+            🟠 도면 요청만 {stat.ask > 0 && `(${stat.ask})`}
+          </label>
           <label className="flex items-center gap-1.5 cursor-pointer" title="컨버팅 도면이 고객사 원본보다 REV가 낮음 = 컨버팅 갱신 필요">
             <input type="checkbox" checked={onlyConvLag} onChange={(e) => setOnlyConvLag(e.target.checked)} />
             ⚠ 컨버팅 갱신 필요 {stat.lag > 0 && `(${stat.lag})`}
@@ -353,6 +365,7 @@ export default function DrawingSearch() {
           <span className="ml-auto">
             대상 <b className="text-slate-800">{stat.total}</b> · 도면있음{' '}
             <b className="text-emerald-600">{stat.has}</b> · 없음 <b className="text-rose-600">{stat.none}</b>
+            {stat.ask > 0 && <> · 도면요청 <b className="text-orange-600">{stat.ask}</b></>}
           </span>
         </div>
       )}
@@ -369,6 +382,7 @@ export default function DrawingSearch() {
                 <th className="px-3 py-2 text-left w-14">LV</th>
                 <th className="px-3 py-2 text-left">품번</th>
                 <th className="px-3 py-2 text-left">품명</th>
+                <th className="px-3 py-2 text-center w-24">BOM 요구</th>
                 <th className="px-3 py-2 text-center w-20">구분</th>
                 <th className="px-3 py-2 text-center w-24">최신 REV</th>
                 <th className="px-3 py-2 text-center w-28">수정일</th>
@@ -427,6 +441,21 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
           )}
         </td>
         <td className="px-3 py-2 text-slate-600 max-w-[280px] truncate">{r.name || '-'}</td>
+        <td className="px-3 py-2 text-center whitespace-nowrap">
+          {(() => {
+            if (!r.wantRev) return <span className="text-slate-300">-</span>
+            const st = compareRev(r.wantRev, r.latest)
+            if (!st) return <span className="font-mono text-xs text-slate-500">{r.wantRev}</span>
+            const s2 = REV_STATE[st]
+            return (
+              <span title={st === 'none' ? 'NAS에 도면이 없습니다' : `BOM 요구 ${r.wantRev} / NAS 최신 ${r.latest?.rev} · ${s2.label}`}
+                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-mono font-bold ${s2.cls}`}>
+                <span>{s2.dot}</span>
+                <span>{r.wantRev}</span>
+              </span>
+            )
+          })()}
+        </td>
         <td className="px-3 py-2 text-center">
           {r.latest ? (
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
@@ -471,7 +500,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
 
       {isOpen && !!r.files.length && (
         <tr className="bg-slate-50/80">
-          <td colSpan={8} className="px-4 py-3">
+          <td colSpan={9} className="px-4 py-3">
             <p className="text-xs font-bold text-slate-500 mb-2">REV 이력 · 파일 {r.files.length}건</p>
             {r.convLag && (
               <p className="text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded px-2 py-1.5 mb-2">

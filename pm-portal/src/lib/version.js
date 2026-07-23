@@ -1,6 +1,24 @@
-export const APP_VERSION = 'v3.9.7'
+export const APP_VERSION = 'v3.9.9'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.9.9',
+    date: '2026-07-23',
+    changes: [
+      '도면 조회에 BOM 요구 REV 대조 추가 — BOM 전개 결과에 각 부품이 요구하는 REV를 함께 표시하고 NAS 최신 도면과 대조. 어셈블리 하나 검색하면 전 부품의 도면 상태가 한 화면에 나옴',
+      "'🟠 도면 요청만' 필터 추가 — 고객사에 신도면을 요청해야 할 부품만 추출",
+      'REV 대조 로직을 lib/revCompare.js 로 통합 — 도면조회·BOM 세부항목이 같은 규칙 사용',
+    ]
+  },
+  {
+    version: 'v3.9.8',
+    date: '2026-07-23',
+    changes: [
+      'BOM 하위 파트 REV 저장 — 그동안 어셈블리 REV만 저장하고 부품별 REV는 버려지고 있었음. 리포트의 부품 REV를 bom.item_rev 에 기록 (SQL: bom_REV컬럼추가.sql 선행 필요)',
+      'BOM 세부 항목에 REV 대조 추가 — BOM이 요구하는 REV와 NAS 최신 도면 REV를 비교해 🟢일치 🟠도면요청 🟡구버전 🔴도면없음 표시. 헤더에 도면요청·도면없음 건수 요약',
+      '고객사 PO는 최상위 품번만 대조 가능했으나, BOM 대조는 부품 단위까지 커버됨',
+    ]
+  },
   {
     version: 'v3.9.7',
     date: '2026-07-23',

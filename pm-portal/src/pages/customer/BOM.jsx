@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { parseAxcelisReport } from '../../lib/axcelisBomReport'
+import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -121,7 +122,7 @@ function htmToBomRows(parsed) {
     for (const c of g.descendants) {
       rows.push({
         NO: String(++no), LEVEL: c.relLevel, '상위PN': parentPn, PN: bare(c.code),
-        Description: c.name, REV: c.rev || '',
+        Description: c.name, REV: c.rev || '', 개정: c.edition,
         QTY: c.qty, UNIT: c.unit || 'EA',
         MFG: c.mfr || '', 'MFG PN': c.mfrPn || '', '상위품명': g.parentName,
       })
@@ -292,6 +293,15 @@ async function saveBOMMulti({ rows, customerId, onProgress }) {
         qty_per_unit: parseBomQty(row['실수량'] ?? row['QTY'] ?? row['수량']),
         level: parseInt(row['LEVEL'] ?? row['LV'] ?? 1) || 1,
         seq: ord++,   // 파일(트리) 순서 보존 → 상세에서 레벨 중첩 표시
+        // 이 BOM 행이 요구하는 부품 REV — NAS 최신 도면과 대조하는 근거
+        item_rev: (() => {
+          const v = String(row['REV'] ?? '').trim().toUpperCase()
+          return /^[A-Z]{1,2}$/.test(v) ? v : null
+        })(),
+        item_edition: (() => {
+          const v = row['개정'] ?? row['EDITION']
+          return v == null || v === '' || isNaN(Number(v)) ? null : Number(v)
+        })(),
       })
     }
   }
@@ -364,6 +374,7 @@ export default function BOM() {
   const [csvMeta, setCsvMeta] = useState({ code:'', name:'', rev:'A' })
   const [uploading, setUploading] = useState(false)
   const [asmSearch, setAsmSearch] = useState('')
+
   const [detailSearch, setDetailSearch] = useState('')
   const [result, setResult] = useState(null)
   const [progress, setProgress] = useState('')
@@ -387,6 +398,14 @@ export default function BOM() {
     queryKey: ['bomDetail', cs?.id, selAssembly?.id],
     queryFn: () => fetchBOMDetail(cs?.id, selAssembly?.id),
     enabled: !!cs?.id && !!selAssembly?.id,
+  })
+
+  // 세부 항목 부품들의 NAS 최신 도면 (1쿼리). BOM이 요구하는 REV와 대조한다.
+  const { data: dwMap = {} } = useQuery({
+    queryKey: ['bomDrawings', selAssembly?.id, bomDetail.length],
+    enabled: !!selAssembly?.id && bomDetail.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchDrawingRevs(bomDetail.map(b => b.items?.std_code)),
   })
 
   const deleteMut = useMutation({
@@ -693,6 +712,17 @@ export default function BOM() {
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 ml-1">REV {selAssembly.rev || 'A'}</span>
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-xs text-slate-400">{bomDetail.length}개 품목</span>
+                  {(() => {
+                    const ask = bomDetail.filter(b => b.item_rev && compareRev(b.item_rev, dwMap[b.items?.std_code]) === 'ask').length
+                    const none = bomDetail.filter(b => b.item_rev && compareRev(b.item_rev, dwMap[b.items?.std_code]) === 'none').length
+                    if (!ask && !none) return null
+                    return (
+                      <span className="text-xs font-bold">
+                        {ask > 0 && <span className="text-orange-600 mr-2">🟠 도면요청 {ask}</span>}
+                        {none > 0 && <span className="text-rose-500">🔴 도면없음 {none}</span>}
+                      </span>
+                    )
+                  })()}
                   <button onClick={()=>exportDetailCSV(bomDetail, selAssembly)} disabled={!bomDetail.length}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
                 </div>
@@ -708,16 +738,16 @@ export default function BOM() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
-                          {['LV','코드','품명','구분','단위','제조사','제조사코드','소요량'].map(h => (
+                          {['LV','코드','품명','REV 대조','구분','단위','제조사','제조사코드','소요량'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {detailLoading ? (
-                          <tr><td colSpan={8} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+                          <tr><td colSpan={9} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
                         ) : bomDetail.length === 0 ? (
-                          <tr><td colSpan={8} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
+                          <tr><td colSpan={9} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
                         ) : bomDetail.filter(b=>{
                           const q=detailSearch.trim().toLowerCase(); if(!q) return true
                           const it=b.items||{}
@@ -729,6 +759,23 @@ export default function BOM() {
                             </td>
                             <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${10+Math.max((b.level||1)-1,0)*22}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}</td>
                             <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
+                            <td className="px-3 py-2 text-center whitespace-nowrap">
+                              {(() => {
+                                const dw = dwMap[b.items?.std_code]
+                                const st = b.item_rev ? compareRev(b.item_rev, dw) : null
+                                if (!b.item_rev) return <span className="text-slate-300">-</span>
+                                if (!st) return <span className="font-mono text-slate-500">{b.item_rev}</span>
+                                const s2 = REV_STATE[st]
+                                return (
+                                  <span title={st === 'none' ? 'NAS에 도면이 없습니다' : `BOM 요구 ${b.item_rev} / NAS 최신 ${dw?.rev} · ${s2.label}`}
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-mono font-bold ${s2.cls}`}>
+                                    <span>{s2.dot}</span>
+                                    <span>{b.item_rev}</span>
+                                    {st !== 'match' && st !== 'none' && <span className="opacity-60">→{dw?.rev}</span>}
+                                  </span>
+                                )
+                              })()}
+                            </td>
                             <td className="px-3 py-2">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
                             </td>
