@@ -178,6 +178,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/board"     icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
+          <MenuItem to="/drawings"  icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
         </CollapseSection>
         )}
 

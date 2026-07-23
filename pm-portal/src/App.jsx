@@ -41,6 +41,7 @@ const Help = lazy(() => import('./pages/Help'))
 const ProductionDashboard = lazy(() => import('./pages/production/ProductionDashboard'))
 const ProductionCustomer = lazy(() => import('./pages/production/ProductionCustomer'))
 const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
+const DrawingSearch = lazy(() => import('./pages/production/DrawingSearch'))
 
 function ControlTowerRoute() {
   const { scope } = useParams()
@@ -146,6 +147,7 @@ export default function App() {
         <Route path="help" element={<Help />} />
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
+        <Route path="drawings" element={<DrawingSearch />} />
       </Route>
     </Routes>
     </Suspense>

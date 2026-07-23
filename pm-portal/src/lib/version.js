@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.8.2'
+export const APP_VERSION = 'v3.9.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.9.0',
+    date: '2026-07-23',
+    changes: [
+      '도면 조회 신설 — NAS 도면의 최신 REV를 품번으로 조회. BOM 전 레벨 전개, REV 이력, 경로 복사, 소실 도면 배너 지원 (현장 메뉴)',
+      '도면 인덱스는 사무실 PC 스캐너가 매일 07:00 자동 적재. 파일은 읽기만 하며 이동·수정하지 않음',
+    ]
+  },
   {
     version: 'v3.6.1',
     date: '2026-07-06',
