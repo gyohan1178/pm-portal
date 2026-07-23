@@ -24,13 +24,67 @@ async function fetchCustomerPOs(csId, showAll) {
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date&&p.promise_date<today }))
 }
 
+// ── 도면 REV 대조 ──────────────────────────────────
+// REV 순서값: 1글자 A~Z = 1~26, 2글자 AA~ZZ = 27~ (스캐너 규칙과 동일)
+function revRank(rev) {
+  const r = String(rev ?? '').trim().toUpperCase()
+  if (!/^[A-Z]{1,2}$/.test(r)) return null
+  return r.length === 1
+    ? r.charCodeAt(0) - 64
+    : (r.charCodeAt(0) - 64) * 26 + (r.charCodeAt(1) - 64) + 26
+}
+
+// 도면이 존재하는 품번대만 대조 (11 조립도 / 12 모듈 / 16 하네스 / 17 가공물)
+// 볼트(44*)·부품(5*)까지 대조하면 "도면 없음"이 도배됨
+const hasDrawingCode = (code) => {
+  const d = String(code || '').replace(/^AX-/, '')
+  return d.length >= 8 && ['11', '12', '16', '17'].includes(d.slice(0, 2))
+}
+
+// 품번별 최신 도면 1건 맵
+async function fetchDrawingRevs(codes) {
+  const map = {}
+  for (let i = 0; i < codes.length; i += 200) {
+    const chunk = codes.slice(i, i + 200)
+    const rows = await fetchAll(() => supabase
+      .from('pm_drawings')
+      .select('std_code,rev,edition,rev_order,file_path,file_mtime')
+      .in('std_code', chunk)
+      .is('missing_since', null)
+      .eq('is_latest', true))
+    for (const r of rows) {
+      const cur = map[r.std_code]
+      if (!cur || r.rev_order > cur.rev_order) map[r.std_code] = r
+    }
+  }
+  return map
+}
+
+// 대조 결과 4종
+const REV_STATE = {
+  match: { dot:'🟢', label:'일치',      cls:'bg-emerald-50 text-emerald-700 border-emerald-200' },
+  ask:   { dot:'🟠', label:'도면 요청',  cls:'bg-orange-50 text-orange-700 border-orange-300' },
+  old:   { dot:'🟡', label:'PO 구버전',  cls:'bg-amber-50 text-amber-700 border-amber-200' },
+  none:  { dot:'🔴', label:'도면 없음',  cls:'bg-rose-50 text-rose-600 border-rose-200' },
+}
+
+// PO REV vs NAS 최신 REV
+//   같으면 일치 / PO가 높으면 신도면 미수령(요청 필요) / PO가 낮으면 PO 구버전
+function compareRev(poRev, dw) {
+  if (!dw) return 'none'
+  const a = revRank(poRev), b = revRank(dw.rev)
+  if (a === null || b === null) return null   // 비교 불가 → 배지 없음
+  if (a === b) return 'match'
+  return a > b ? 'ask' : 'old'
+}
+
 const COLS = [
   {key:'po_number', label:'PO번호', defaultWidth:100},
   {key:'ccn', label:'CCN', defaultWidth:90},
   {key:'lines', label:'오더/DEL', defaultWidth:80},
   {key:'division', label:'구분', defaultWidth:60},
   {key:'std_code', label:'기준코드·품명', defaultWidth:160},
-  {key:'item_rev', label:'REV', defaultWidth:55},
+  {key:'item_rev', label:'REV 대조', defaultWidth:110},
   {key:'parent', label:'프로젝트', defaultWidth:95},
   {key:'qty_ordered', label:'발주량', defaultWidth:60},
   {key:'promise_date', label:'납기(약속일)', defaultWidth:100},
@@ -55,10 +109,21 @@ export default function CustomerPO() {
   const [search, setSearch] = useState('')
   const [picked, setPicked] = useState({})
   const [chgTab, setChgTab] = useState(false)
+  const [revTab, setRevTab] = useState(false)
 
   const { data: cs } = useCustomer(csCode)
   const { data: pos=[], isLoading, error } = useQuery({
     queryKey:['cpo',cs?.id,showAll], queryFn:()=>fetchCustomerPOs(cs?.id,showAll), enabled:!!cs?.id,
+  })
+
+  // 도면 최신 REV 맵 (PO 목록의 품번만 1회 조회)
+  const { data: revMap = {} } = useQuery({
+    queryKey: ['cpoDrawings', cs?.id, showAll],
+    enabled: !!cs?.id && pos.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchDrawingRevs(
+      [...new Set(pos.map(p => p.items?.std_code).filter(c => c && hasDrawingCode(c)))]
+    ),
   })
 
   const saveMut = useMutation({
@@ -146,6 +211,15 @@ export default function CustomerPO() {
   const changedPOs = pos.filter(p => Array.isArray(p.changes) && p.changes.length > 0)
   if (chgTab) filtered = changedPOs.filter(p => divTab==='전체' || (p.division||'전장')===divTab)
   if (hideIssued) filtered = filtered.filter(p => !p.material_issued)
+
+  // 도면 REV 대조 — 대상 품번만 판정, 그 외는 null(배지 없음)
+  const revOf = (p) => {
+    const code = p.items?.std_code
+    if (!code || !hasDrawingCode(code)) return null
+    return compareRev(p.item_rev, revMap[code])
+  }
+  const askCount = pos.filter(p => revOf(p) === 'ask').length
+  if (revTab) filtered = filtered.filter(p => revOf(p) === 'ask')
   const today = new Date().toISOString().split('T')[0]
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
 
@@ -210,13 +284,21 @@ export default function CustomerPO() {
           className={`px-3 py-2 text-xs font-bold rounded-lg border ${chgTab?'border-amber-300 bg-amber-50 text-amber-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
           ⚡ 변경 이력만 {changedPOs.length>0 && `(${changedPOs.length})`}
         </button>
+        <button onClick={()=>setRevTab(v=>!v)} title="PO의 REV가 NAS 최신 도면보다 높음 = 신도면 미수령"
+          className={`px-3 py-2 text-xs font-bold rounded-lg border ${revTab?'border-orange-300 bg-orange-50 text-orange-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+          🟠 도면 요청만 {askCount>0 && `(${askCount})`}
+        </button>
+        <span className="text-[11px] text-slate-400 whitespace-nowrap">
+          🟢 일치 · 🟠 도면 요청 · 🟡 PO 구버전 · 🔴 도면 없음
+        </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
         <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 PO</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
         <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">납기 지연</p><p className="text-xl font-bold text-red-600">{filtered.filter(p=>p.isDelayed).length}</p></div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">납기 변경</p><p className="text-xl font-bold text-amber-700">{changedPOs.filter(p=>p.changes.some(c=>c.field==='promise_date')).length}</p></div>
         <div className="rounded-xl border border-violet-200 bg-violet-50 p-3"><p className="text-xs font-bold text-violet-500 uppercase tracking-wide mb-1">REV 변경</p><p className="text-xl font-bold text-violet-700">{changedPOs.filter(p=>p.changes.some(c=>c.field==='item_rev')).length}</p></div>
+        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><p className="text-xs font-bold text-orange-500 uppercase tracking-wide mb-1">도면 요청</p><p className="text-xl font-bold text-orange-700">{askCount}</p></div>
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
@@ -234,7 +316,19 @@ export default function CustomerPO() {
                     <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code||'-'}</div>
                     <div className="text-[11px] text-slate-500 truncate">{p.items?.name||''}</div>
                   </td>
-                  <td className="px-3 py-2 text-center font-mono text-xs text-slate-600">{p.item_rev||'-'}</td>
+                  <td className="px-3 py-2 text-center">
+                    {(()=>{ const st=revOf(p); const dw=revMap[p.items?.std_code]
+                      if(!st) return <span className="font-mono text-xs text-slate-600">{p.item_rev||'-'}</span>
+                      const s2=REV_STATE[st]
+                      return (
+                        <span title={st==='none'?'NAS에 도면 없음':`PO ${p.item_rev||'-'} / NAS ${dw?.rev||'-'} · ${s2.label}`}
+                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold font-mono ${s2.cls}`}>
+                          <span>{s2.dot}</span>
+                          <span>{p.item_rev||'-'}</span>
+                          {st!=='match' && st!=='none' && <span className="opacity-60">→{dw?.rev}</span>}
+                        </span>
+                      ) })()}
+                  </td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{p.projects?.code||'-'}</td>
                   <td className="px-3 py-2 text-right font-bold text-slate-900">{p.qty_ordered}</td>
                   <td className="px-3 py-2 text-slate-500">{p.promise_date||p.required_date||'-'}</td>

@@ -1,6 +1,22 @@
-export const APP_VERSION = 'v3.9.0'
+export const APP_VERSION = 'v3.9.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.9.2',
+    date: '2026-07-23',
+    changes: [
+      '도면 조회 권한 수정 — 뷰어·현장 계정이 도면 조회 탭에 진입하지 못하고 착지 페이지로 튕기던 문제 해결. /drawings 경로를 현장(floor) 섹션에 매핑',
+    ]
+  },
+  {
+    version: 'v3.9.1',
+    date: '2026-07-23',
+    changes: [
+      '고객사 PO — 도면 REV 대조 추가. PO의 REV와 NAS 최신 도면 REV를 비교해 🟢일치 🟠도면요청(PO가 신버전) 🟡PO구버전 🔴도면없음 으로 표시',
+      '\'도면 요청만\' 필터와 KPI 카드 추가 — 고객사에 신도면을 요청해야 할 건을 바로 추출',
+      '대조 대상은 도면이 존재하는 품번대(11·12·16·17)로 한정. 볼트·부품은 배지 없음',
+    ]
+  },
   {
     version: 'v3.9.0',
     date: '2026-07-23',

@@ -93,7 +93,7 @@ export function canAccessSection(profile, key) {
 // 경로 → 섹션 매핑 (라우트 가드용)
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
-  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board') return 'floor'
+  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search') return 'mat'
   if (pathname === '/inbound') return 'buy'
   if (pathname === '/sales') return 'sales'
