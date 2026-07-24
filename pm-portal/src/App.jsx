@@ -28,6 +28,7 @@ const Items = lazy(() => import('./pages/master/Items'))
 const Vendors = lazy(() => import('./pages/master/Vendors'))
 const PriceHistory = lazy(() => import('./pages/master/PriceHistory'))
 const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
+const PurchaseQuote = lazy(() => import('./pages/master/PurchaseQuote'))
 const ERPExport = lazy(() => import('./pages/ERPExport'))
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const UserManagement = lazy(() => import('./pages/admin/UserManagement'))
@@ -116,6 +117,7 @@ export default function App() {
         <Route path="inventory" element={<Inventory />} />
         <Route path="quote"     element={<Quote />} />
         <Route path="cost"      element={<CostAnalysis />} />
+        <Route path="quote"     element={<PurchaseQuote />} />
         <Route path="control-tower"        element={<ControlTower scope="all" />} />
         <Route path="control-tower/:scope" element={<ControlTowerRoute />} />
         <Route path="what-if"              element={<WhatIfSim />} />

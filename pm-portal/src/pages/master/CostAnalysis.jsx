@@ -90,8 +90,8 @@ export default function CostAnalysis() {
     <div className="space-y-4">
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">💵 원가분석</h1>
-          <p className="text-xs text-slate-400">BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토</p>
+          <h1 className="text-lg font-bold text-slate-900">💵 견적 및 원가분석</h1>
+          <p className="text-xs text-slate-400">BOM 매입원가 합산 → 마진 검토 → 매출견적 작성. 업체에서 받은 매입견적은 <b>매입견적 입력</b> 탭에서 등록하세요.</p>
         </div>
         <div className="flex items-center gap-2">
           <select value={code} onChange={e => { setCsCode(e.target.value); setProjectId('') }}
@@ -136,7 +136,7 @@ export default function CostAnalysis() {
               className={`px-3 py-2 text-xs font-bold rounded-lg border ${showQuote
                 ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
                 : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
-              📄 {showQuote ? '견적서 닫기' : '이 원가로 견적서 작성'}
+              📄 {showQuote ? '견적서 닫기' : '이 원가로 매출견적 작성'}
             </button>
           </div>
           {showQuote && (
@@ -144,6 +144,7 @@ export default function CostAnalysis() {
               customerId={cs?.id}
               customerName={custList.find(c => c.id === code)?.name || cs?.name || ''}
               cfg={cfg}
+              fixedKind="sales"
               onClose={() => setShowQuote(false)}
               initialLine={{
                 std_code: selAsmInfo?.code || '',

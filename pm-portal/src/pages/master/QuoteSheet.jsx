@@ -40,9 +40,10 @@ function priceFrom(costKrw, currency, sellRate, marginOverride) {
   return currency === 'KRW' ? Math.round(krw) : krw / (num(sellRate) || 1)
 }
 
-export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose }) {
+export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind }) {
   // ★ 매출견적(고객사 제출) / 매입견적(업체 수령) — 섞이면 안 되는 구분
-  const [quoteKind, setQuoteKind] = useState('sales')
+  // fixedKind 가 주어지면 탭 자체가 한 종류 전용이므로 전환 버튼을 숨긴다.
+  const [quoteKind, setQuoteKind] = useState(fixedKind || 'sales')
   const isSales = quoteKind === 'sales'
 
   const [currency, setCurrency] = useState('USD')
@@ -353,14 +354,20 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       {/* 매출/매입 구분 — 색으로 확실히 갈라둔다 */}
       <div className={`no-print rounded-xl border-2 p-3 ${isSales ? 'border-indigo-300 bg-indigo-50/50' : 'border-amber-400 bg-amber-50/60'}`}>
         <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 bg-white rounded-lg p-1 border border-slate-200">
-            {[['sales', '📤 매출견적', '고객사에 제출'], ['purchase', '📥 매입견적', '업체에서 수령']].map(([k, l, t]) => (
-              <button key={k} onClick={() => switchKind(k)} title={t}
-                className={`px-3 py-1.5 text-xs font-bold rounded-md ${quoteKind === k
-                  ? (k === 'sales' ? 'bg-indigo-600 text-white' : 'bg-amber-500 text-white')
-                  : 'text-slate-500 hover:text-slate-700'}`}>{l}</button>
-            ))}
-          </div>
+          {fixedKind ? (
+            <span className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white ${isSales ? 'bg-indigo-600' : 'bg-amber-500'}`}>
+              {isSales ? '📤 매출견적' : '📥 매입견적'}
+            </span>
+          ) : (
+            <div className="flex gap-1 bg-white rounded-lg p-1 border border-slate-200">
+              {[['sales', '📤 매출견적', '고객사에 제출'], ['purchase', '📥 매입견적', '업체에서 수령']].map(([k, l, t]) => (
+                <button key={k} onClick={() => switchKind(k)} title={t}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-md ${quoteKind === k
+                    ? (k === 'sales' ? 'bg-indigo-600 text-white' : 'bg-amber-500 text-white')
+                    : 'text-slate-500 hover:text-slate-700'}`}>{l}</button>
+              ))}
+            </div>
+          )}
 
           {isSales ? (
             <span className="text-xs text-indigo-700 font-semibold">우리가 고객사에 주는 가격 · 마진 관리 대상</span>
