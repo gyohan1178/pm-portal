@@ -7,6 +7,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import {
   explodeBOM, computeCost, suggestPrice, calcMargin, fxScenario, tierMargin, DEFAULT_CFG,
 } from '../../lib/costAnalysis'
+import QuoteSheet from './QuoteSheet'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString()
 const usd = n => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -59,6 +60,7 @@ export default function CostAnalysis() {
 
   // 사용자 토글 (제외)
   const [excludeMap, setExcludeMap] = useState({})  // {uid: bool}
+  const [showQuote, setShowQuote] = useState(false)
 
   const exploded = useMemo(() => {
     const mapped = bomRows.map((b, i) => ({
@@ -81,6 +83,7 @@ export default function CostAnalysis() {
   const margin = calcMargin({ sellUsd, totalBuyKrw: cost.totalBuyKrw, impUsd: cost.impUsd, sellRate: cfg.sellRate })
   const fx = fxScenario({ sellUsd, domKrw: cost.domKrw, laborKrw: cost.laborKrw, impUsd: cost.impUsd, baseBuyRate: cfg.buyRate, sellRate: cfg.sellRate })
 
+  const selAsmInfo = assemblies.find(a => a.id === projectId) || null
   const toggleExclude = (uid, cur) => setExcludeMap(m => ({ ...m, [uid]: !cur }))
 
   return (
@@ -126,6 +129,33 @@ export default function CostAnalysis() {
             <Card label="매출 (KRW)" value={won(margin.revenueKrw) + '원'} sub={`@${cfg.sellRate}`} />
             <Card label="마진" value={won(margin.marginKrw) + '원'} sub={pct(margin.marginPct)} accent={margin.marginKrw >= 0 ? 'emerald' : 'rose'} />
           </div>
+
+          {/* 견적서 */}
+          <div className="flex justify-end">
+            <button onClick={() => setShowQuote(v => !v)}
+              className={`px-3 py-2 text-xs font-bold rounded-lg border ${showQuote
+                ? 'border-indigo-300 bg-indigo-50 text-indigo-700'
+                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+              📄 {showQuote ? '견적서 닫기' : '이 원가로 견적서 작성'}
+            </button>
+          </div>
+          {showQuote && (
+            <QuoteSheet
+              customerId={cs?.id}
+              customerName={custList.find(c => c.id === code)?.name || cs?.name || ''}
+              cfg={cfg}
+              onClose={() => setShowQuote(false)}
+              initialLine={{
+                std_code: selAsmInfo?.code || '',
+                description: selAsmInfo?.name || '',
+                unit: 'EA',
+                qty: 1,
+                costKrw: cost.totalBuyKrw,
+                unitPrice: sellUsd,
+                origin: cost.impKrw > cost.domKrw ? 'imp' : 'dom',
+              }}
+            />
+          )}
 
           {/* 환율 시나리오 */}
           <div className="bg-white rounded-xl border border-slate-200 p-3">
