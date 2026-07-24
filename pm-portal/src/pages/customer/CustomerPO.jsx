@@ -8,6 +8,7 @@ import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import CustomerPOUpload from './CustomerPOUpload'
 import CustomerTabs from '../../components/CustomerTabs'
+import { downloadSheet } from '../../lib/exportSheet'
 
 async function fetchCustomerPOs(csId, showAll) {
   if (!csId) return []
@@ -125,6 +126,63 @@ export default function CustomerPO() {
       [...new Set(pos.map(p => p.items?.std_code).filter(c => c && hasDrawingCode(c)))]
     ),
   })
+
+  const [exporting, setExporting] = useState(false)
+
+  // 지금 화면에 보이는 목록(filtered)을 그대로 엑셀로.
+  // 필터를 바꾸면 내보내는 내용도 따라 바뀐다.
+  async function exportList() {
+    setExporting(true)
+    try {
+      const rows = filtered.map((p) => {
+        const st = revOf(p)
+        const dw = revMap[p.items?.std_code]
+        return {
+          'PO번호': p.po_number || '',
+          'CCN': p.ccn || '',
+          '오더라인': p.order_line || '',
+          'DEL라인': p.del_line || '',
+          '구분': p.division || '',
+          '기준코드': p.items?.std_code || '',
+          '품명': p.items?.name || '',
+          'PO REV': p.item_rev || '',
+          'NAS 최신 REV': dw?.rev || '',
+          '도면대조': st ? REV_STATE[st].label : '',
+          '도면경로': st && st !== 'none' ? (dw?.file_path || '') : '',
+          '프로젝트': p.projects?.code || '',
+          '발주량': Number(p.qty_ordered) || 0,
+          '입고량': Number(p.qty_received) || 0,
+          '잔량': Number(p.qty_remaining ?? 0),
+          '요청일': p.required_date || '',
+          '약속일': p.promise_date || '',
+          '납기지연': p.isDelayed ? 'Y' : '',
+          '상태': p.status || '',
+          '변경건수': Array.isArray(p.changes) ? p.changes.length : 0,
+          '자재불출': p.material_issued ? 'Y' : '',
+          '메모': p.memo || '',
+        }
+      })
+
+      const cond = [['구분', divTab]]
+      if (search.trim()) cond.push(['검색', search.trim()])
+      if (chgTab) cond.push(['필터', '변경 이력만'])
+      if (revTab) cond.push(['필터', '도면 요청만'])
+      if (hideIssued) cond.push(['필터', '불출완료 제외'])
+      cond.push(['건수', `${rows.length}건`])
+      cond.push(['추출일시', new Date().toLocaleString('ko-KR')])
+
+      const tag = revTab ? '_도면요청' : chgTab ? '_변경이력' : ''
+      await downloadSheet({
+        rows,
+        sheetName: '고객사PO',
+        title: `고객사 PO 목록${revTab ? ' — 도면 요청 필요' : chgTab ? ' — 변경 이력' : ''}`,
+        meta: cond,
+        fileName: `고객사PO${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+      })
+    } catch (e) {
+      toastError('내보내기 실패: ' + e.message)
+    } finally { setExporting(false) }
+  }
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
@@ -287,6 +345,11 @@ export default function CustomerPO() {
         <button onClick={()=>setRevTab(v=>!v)} title="PO의 REV가 NAS 최신 도면보다 높음 = 신도면 미수령"
           className={`px-3 py-2 text-xs font-bold rounded-lg border ${revTab?'border-orange-300 bg-orange-50 text-orange-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
           🟠 도면 요청만 {askCount>0 && `(${askCount})`}
+        </button>
+        <button onClick={exportList} disabled={exporting || !filtered.length}
+          title="지금 화면에 보이는 목록을 그대로 엑셀로 내보냅니다"
+          className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+          📑 {exporting ? '생성 중…' : `내보내기 (${filtered.length})`}
         </button>
         <span className="text-[11px] text-slate-400 whitespace-nowrap">
           🟢 일치 · 🟠 도면 요청 · 🟡 PO 구버전 · 🔴 도면 없음
