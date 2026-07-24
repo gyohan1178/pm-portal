@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
-import * as XLSX from 'xlsx'
+import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
 import { tierMargin, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 
@@ -25,11 +25,15 @@ const newLine = (p = {}) => ({
   std_code: '', description: '', rev: '', unit: 'EA', qty: 1,
   unitPrice: 0, alternative: '', remarks: '',
   materialKrw: 0, laborKrw: 0, vendor: '', origin: 'dom', marginPct: null,
-  noPrice: 0, partCount: 0, laborSrc: null,
+  noPrice: 0, partCount: 0, laborSrc: null, parts: null,
   ...p,
 })
 
 const lineCost = (l) => num(l.materialKrw) + num(l.laborKrw)
+
+// 세부 부품에서 자재비를 다시 합산 (제외 체크·단가 수정 반영)
+const sumParts = (parts) =>
+  (parts || []).reduce((a, p) => a + (p.excluded || p.buyKrw == null ? 0 : num(p.buyKrw) * num(p.qty)), 0)
 
 // 매입원가(원) → 매출단가. 마진은 금액대별 자동(20/25/35/45%).
 function priceFrom(costKrw, currency, sellRate, marginOverride) {
@@ -62,6 +66,17 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [adding, setAdding] = useState(false)
   const [history, setHistory] = useState({})
   const [savedNo, setSavedNo] = useState('')
+  const [openParts, setOpenParts] = useState({})
+
+  // 견적 담당자 — 매번 다시 치지 않도록 마지막 값을 기억한다
+  const LS = 'pm_quote_contact'
+  const saved0 = (() => { try { return JSON.parse(localStorage.getItem(LS) || '{}') } catch { return {} } })()
+  const [contactName, setContactName] = useState(saved0.name || '')
+  const [contactPhone, setContactPhone] = useState(saved0.phone || '')
+  const [contactEmail, setContactEmail] = useState(saved0.email || 'sales@jinsuntech.co.kr')
+  useEffect(() => {
+    try { localStorage.setItem(LS, JSON.stringify({ name: contactName, phone: contactPhone, email: contactEmail })) } catch {}
+  }, [contactName, contactPhone, contactEmail])
   const [err, setErr] = useState('')
 
   const sellRate = num(cfg.sellRate) || 1250
@@ -135,6 +150,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           materialKrw: c.totalBuyKrw, laborKrw, laborSrc,
           origin: c.impKrw > c.domKrw ? 'imp' : 'dom',
           noPrice, partCount: c.items.length,
+          // 세부견적용 부품 목록 — 화면에서 제외·단가 조정 가능
+          parts: c.items.map((r) => ({
+            uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
+            buyKrw: r.buyKrw, qty: r.qty, origin: r.origin,
+            vendor: r.vendor || '', status: r.status, excluded: r.excluded,
+          })),
           unitPrice: isSales ? priceFrom(c.totalBuyKrw + laborKrw, currency, sellRate) : 0,
         })])
         setAddCode('')
@@ -167,6 +188,16 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const patchCost = (key, p) => setLines((ls) => ls.map((l) => {
     if (l.key !== key) return l
     const n = { ...l, ...p }
+    return isSales ? { ...n, unitPrice: priceFrom(lineCost(n), currency, sellRate, n.marginPct) } : n
+  }))
+
+  // 세부 부품 수정 → 자재비 재합산 → 매출단가 재산출
+  const patchPart = (key, uid, p) => setLines((ls) => ls.map((l) => {
+    if (l.key !== key || !l.parts) return l
+    const parts = l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x))
+    const materialKrw = sumParts(parts)
+    const noPrice = parts.filter((x) => !x.excluded && (x.buyKrw == null || x.status === 'unreg')).length
+    const n = { ...l, parts, materialKrw, noPrice }
     return isSales ? { ...n, unitPrice: priceFrom(lineCost(n), currency, sellRate, n.marginPct) } : n
   }))
 
@@ -222,6 +253,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         total_cost_krw: isSales ? totals.costKrw : null,
         margin_pct: isSales ? totals.marginPct : null,
         memo: memo || null,
+        issuer_name: contactName || null,
+        issuer_phone: contactPhone || null,
+        issuer_email: contactEmail || null,
       }).select('id, quote_no').single()
       if (qErr) throw new Error('견적 저장 실패: ' + qErr.message)
 
@@ -267,48 +301,49 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setTimeout(() => window.print(), 60)
   }
 
-  function doExcel() {
+  async function doExcel() {
     const cur = currency
     const kindLabel = isSales ? '매출견적' : '매입견적'
-    const quoteRows = lines.map((l, i) => ({
-      NO: i + 1, 'Item no.': l.std_code, Description: l.description, REV: l.rev,
-      Unit: l.unit, Quantity: num(l.qty),
-      [`Unit Price (${cur})`]: num(l.unitPrice),
-      [`Amount (${cur})`]: num(l.qty) * num(l.unitPrice),
-      alternative: l.alternative, Remarks: l.remarks,
-    }))
-    quoteRows.push({
-      NO: '', 'Item no.': '', Description: 'TOTAL', REV: '', Unit: '', Quantity: '',
-      [`Unit Price (${cur})`]: '', [`Amount (${cur})`]: totals.amount, alternative: '', Remarks: '',
-    })
 
     const detailRows = lines.map((l, i) => ({
       NO: i + 1, 구분: l.kind === 'assy' ? 'ASSY' : '단품',
-      Itemno: l.std_code, Description: l.description, REV: l.rev, QTY: num(l.qty),
+      품번: l.std_code, 품명: l.description, REV: l.rev, 수량: num(l.qty),
       '자재비(원)': num(l.materialKrw),
       '작업비(원)': num(l.laborKrw),
       '원가계(원)': lineCost(l),
       '원가합계(원)': num(l.qty) * lineCost(l),
-      '마진율': isSales ? (l.marginPct != null ? num(l.marginPct) : tierMargin(lineCost(l))) : '',
+      마진율: isSales ? (l.marginPct != null ? num(l.marginPct) : tierMargin(lineCost(l))) : '',
       [`단가(${cur})`]: num(l.unitPrice),
       [`합계(${cur})`]: num(l.qty) * num(l.unitPrice),
-      '구매처': l.vendor,
+      구매처: l.vendor,
       '수입/내수': l.origin === 'imp' ? '수입' : '내수',
-      '직전견적': history[l.std_code]
+      직전견적: history[l.std_code]
         ? `${history[l.std_code].unit_price} ${history[l.std_code].currency} (${history[l.std_code].quote_date})` : '',
     }))
 
-    const info = [
+    const bomRows = []
+    lines.forEach((l, i) => {
+      if (!l.parts) return
+      l.parts.forEach((pt) => bomRows.push({
+        라인: i + 1, 어셈블리: l.std_code,
+        LV: pt.level, 품번: pt.std_code, 품명: pt.name,
+        '매입가(원)': pt.buyKrw == null ? '' : num(pt.buyKrw),
+        전개수량: num(pt.qty),
+        '소계(원)': pt.excluded || pt.buyKrw == null ? 0 : num(pt.buyKrw) * num(pt.qty),
+        '수입/내수': pt.origin === 'imp' ? '수입' : '내수',
+        구매처: pt.vendor || '',
+        포함: pt.excluded ? '제외' : 'O',
+      }))
+    })
+
+    const infoRows = [
       { 항목: '견적구분', 값: kindLabel },
       { 항목: '견적번호', 값: savedNo || '(미저장)' },
       { 항목: '견적일', 값: quoteDate },
       { 항목: isSales ? 'Issued to' : '업체', 값: isSales ? issuedTo : (vendors.find((v) => v.id === vendorId)?.name || '') },
-      { 항목: 'Attn', 값: attn },
-      { 항목: 'Project Name', 값: projectName },
+      { 항목: '담당자', 값: contactName },
       { 항목: '통화', 값: cur },
       { 항목: '판매환율', 값: sellRate },
-      { 항목: '유효기간(일)', 값: validityDays },
-      { 항목: 'Lead Time', 값: leadTime },
       { 항목: '자재비 합계(원)', 값: Math.round(totals.materialKrw) },
       { 항목: '작업비 합계(원)', 값: Math.round(totals.laborKrw) },
       { 항목: '원가 합계(원)', 값: Math.round(totals.costKrw) },
@@ -319,11 +354,22 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       ] : []),
     ]
 
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(quoteRows), '견적서')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detailRows), '세부견적')
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(info), '견적정보')
-    XLSX.writeFile(wb, `${kindLabel}_${savedNo || projectName || todayISO()}.xlsx`)
+    try {
+      await downloadQuoteExcel({
+        head: {
+          quoteNo: savedNo, quoteDate, currency: cur,
+          issuedTo: isSales ? issuedTo : (vendors.find((v) => v.id === vendorId)?.name || ''),
+          attn, projectName, validityDays, validUntil,
+          leadTime, deliveryNote, memo,
+          contactName, contactPhone, contactEmail,
+        },
+        lines, totals,
+        extra: { detailRows, bomRows, infoRows },
+        fileName: `${kindLabel}_${savedNo || projectName || todayISO()}.xlsx`,
+      })
+    } catch (e) {
+      setErr('엑셀 생성 실패: ' + e.message)
+    }
   }
 
   const sym = currency === 'KRW' ? '₩' : '$'
@@ -453,34 +499,66 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       {/* ── 인쇄 영역 ── */}
       <div className="quote-print-area bg-white border border-slate-200 rounded-xl p-6">
-        <div className="flex justify-between items-start mb-4">
+        <div className="text-center mb-4">
+          <h2 className="text-3xl font-bold tracking-widest text-slate-900">
+            {isSales ? 'QUOTE' : 'PURCHASE QUOTE (수령)'}
+          </h2>
+          <p className="text-xs text-slate-500 mt-1">NO : {savedNo || '(저장 시 자동 부여)'} · {quoteDate}</p>
+        </div>
+
+        {/* Issued by / Supplier */}
+        <div className="grid grid-cols-2 gap-6 mb-4 text-xs">
           <div>
-            <h2 className="text-2xl font-bold tracking-wide text-slate-900">
-              {isSales ? 'QUOTATION' : 'PURCHASE QUOTATION (수령)'}
-            </h2>
-            <p className="text-xs text-slate-500 mt-1">NO : {savedNo || '(저장 시 자동 부여)'}</p>
+            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Issued by</div>
+            {isSales
+              ? <input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)}
+                  className="qi w-full font-bold text-sm" placeholder="AXCELIS Corp." />
+              : <div className="font-bold text-sm">{vendors.find((v) => v.id === vendorId)?.name || '(업체 미선택)'}</div>}
+            <div className="flex gap-1 mt-1.5">
+              <span className="text-slate-400 w-10 shrink-0">Attn</span>
+              <input value={attn} onChange={(e) => setAttn(e.target.value)} className="qi flex-1" placeholder="담당자명" />
+            </div>
+            <p className="mt-3 text-slate-600">We hereby provide the following quotation:</p>
+            <p className="text-slate-500">Quotation Validity: {validityDays} days from the date of the quotation</p>
           </div>
-          <div className="text-right text-xs text-slate-600 leading-relaxed">
-            <div className="font-bold text-sm text-slate-800">JINSUN TECH CO., LTD.</div>
-            <div>구매자재팀</div>
-            <div>gyohan@jinsuntech.co.kr</div>
+
+          <div>
+            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Supplier</div>
+            <div className="text-slate-600 leading-relaxed">
+              <div>Company : {SUPPLIER.company}</div>
+              <div>Business registration number : {SUPPLIER.bizNo}</div>
+              <div>CEO : {SUPPLIER.ceo}</div>
+              <div>Adress : {SUPPLIER.address}</div>
+              <div>Business Type : {SUPPLIER.bizType}</div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <span>Contact :</span>
+                <input value={contactName} onChange={(e) => setContactName(e.target.value)}
+                  className="qi w-28" placeholder="담당자명" />
+                <span>(</span>
+                <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)}
+                  className="qi w-36" placeholder="82+10-0000-0000" />
+                <span>)</span>
+              </div>
+              <div>Tel : {SUPPLIER.tel}   Fax : {SUPPLIER.fax}</div>
+              <div className="flex items-center gap-1">
+                <span>E-Mail :</span>
+                <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)}
+                  className="qi flex-1" placeholder="sales@jinsuntech.co.kr" />
+              </div>
+              <div className="text-slate-400">{SUPPLIER.invoiceEmail} (Invoice)</div>
+            </div>
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs mb-4">
           <Row label="Date"><input value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} type="date" className="qi" /></Row>
-          <Row label={isSales ? 'Issued to' : 'From (업체)'}>
-            {isSales
-              ? <input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)} className="qi" placeholder="AXCELIS Corp." />
-              : <span className="font-semibold">{vendors.find((v) => v.id === vendorId)?.name || '(업체 미선택)'}</span>}
-          </Row>
-          <Row label="Project Name"><input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="qi" placeholder="RFQ_110228078" /></Row>
-          <Row label="Attn"><input value={attn} onChange={(e) => setAttn(e.target.value)} className="qi" placeholder="담당자명" /></Row>
           <Row label="Currency"><span className="font-bold">{currency}</span></Row>
+          <Row label="Project Name"><input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="qi" placeholder="RFQ_110228078" /></Row>
           <Row label="Validity">
             <input type="number" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} className="qi w-16" />
             <span className="ml-1 text-slate-400">days ({validUntil})</span>
           </Row>
+          <Row label="Delivery"><input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} className="qi flex-1" /></Row>
         </div>
 
         <table className="w-full text-xs border-t-2 border-slate-800">
@@ -508,6 +586,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               const cost = lineCost(l)
               const revKrw = currency === 'KRW' ? num(l.unitPrice) : num(l.unitPrice) * sellRate
               return (
+                <>
                 <tr key={l.key} className="border-b border-slate-100 align-top">
                   <td className="py-1.5 text-slate-400">{i + 1}</td>
                   <td className="py-1.5">
@@ -534,10 +613,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5 no-print text-right">
                     <input type="number" value={l.materialKrw} onChange={(e) => patchCost(l.key, { materialKrw: Number(e.target.value) })} className="qi w-full text-right" />
                     {l.kind === 'assy' && (
-                      <div className="text-[10px] text-slate-400 mt-0.5">
-                        부품 {l.partCount}
+                      <button type="button"
+                        onClick={() => setOpenParts((o) => ({ ...o, [l.key]: !o[l.key] }))}
+                        className="text-[10px] text-indigo-500 hover:text-indigo-700 mt-0.5 underline">
+                        {openParts[l.key] ? '▲ 접기' : `▼ 부품 ${l.partCount}`}
                         {l.noPrice > 0 && <span className="text-amber-600 font-bold"> · 단가없음 {l.noPrice}</span>}
-                      </div>
+                      </button>
                     )}
                   </td>
                   <td className="py-1.5 no-print text-right">
@@ -558,6 +639,79 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   </td>
                   <td className="py-1.5 no-print"><button onClick={() => remove(l.key)} className="text-slate-300 hover:text-rose-500">✕</button></td>
                 </tr>
+                {openParts[l.key] && l.parts && (
+                  <tr key={l.key + '-p'} className="no-print bg-slate-50/80">
+                    <td colSpan={14} className="px-3 py-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <p className="text-[11px] font-bold text-slate-500">
+                          세부견적 — {l.std_code} 부품 {l.parts.length}건
+                          <span className="ml-2 font-normal text-slate-400">
+                            체크 해제하면 원가에서 빠지고, 매입가를 고치면 견적단가가 다시 계산됩니다.
+                          </span>
+                        </p>
+                        <span className="text-[11px] font-bold text-slate-700">자재비 {won(l.materialKrw)}원</span>
+                      </div>
+                      <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                        <table className="w-full text-[11px]">
+                          <thead className="bg-slate-50 text-slate-400 sticky top-0">
+                            <tr>
+                              <th className="px-2 py-1.5 w-10 text-center">포함</th>
+                              <th className="px-2 py-1.5 w-10 text-left">LV</th>
+                              <th className="px-2 py-1.5 text-left">품번</th>
+                              <th className="px-2 py-1.5 text-left">품명</th>
+                              <th className="px-2 py-1.5 w-24 text-right">매입가(원)</th>
+                              <th className="px-2 py-1.5 w-16 text-right">수량</th>
+                              <th className="px-2 py-1.5 w-24 text-right">소계(원)</th>
+                              <th className="px-2 py-1.5 w-14 text-center">구분</th>
+                              <th className="px-2 py-1.5 w-28 text-left">구매처</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {l.parts.map((pt) => (
+                              <tr key={pt.uid}
+                                className={`border-t border-slate-100 ${pt.excluded ? 'opacity-40' : ''} ${
+                                  pt.status === 'unreg' ? 'bg-rose-50' : pt.buyKrw == null ? 'bg-amber-50' : ''}`}>
+                                <td className="px-2 py-1 text-center">
+                                  <input type="checkbox" checked={!pt.excluded}
+                                    onChange={() => patchPart(l.key, pt.uid, { excluded: !pt.excluded })} />
+                                </td>
+                                <td className="px-2 py-1 text-slate-400">L{pt.level}</td>
+                                <td className="px-2 py-1 font-mono text-slate-700"
+                                  style={{ paddingLeft: `${8 + (Number(pt.level) || 0) * 10}px` }}>{pt.std_code || '—'}</td>
+                                <td className="px-2 py-1 text-slate-600 max-w-[240px] truncate" title={pt.name}>{pt.name}</td>
+                                <td className="px-2 py-1 text-right">
+                                  <input type="number" value={pt.buyKrw ?? ''}
+                                    onChange={(e) => patchPart(l.key, pt.uid, {
+                                      buyKrw: e.target.value === '' ? null : Number(e.target.value),
+                                      status: e.target.value === '' ? 'noprice' : 'ok',
+                                    })}
+                                    placeholder="미등록"
+                                    className="qi w-full text-right" />
+                                </td>
+                                <td className="px-2 py-1 text-right text-slate-500">{pt.qty}</td>
+                                <td className="px-2 py-1 text-right font-semibold">
+                                  {pt.excluded || pt.buyKrw == null ? '—' : won(num(pt.buyKrw) * num(pt.qty))}
+                                </td>
+                                <td className="px-2 py-1 text-center">
+                                  {pt.origin === 'imp'
+                                    ? <span className="text-blue-500">수입</span>
+                                    : <span className="text-slate-400">내수</span>}
+                                </td>
+                                <td className="px-2 py-1 text-slate-400 truncate">{pt.vendor || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <p className="text-[10px] text-slate-400 mt-1.5">
+                        · 하위 부품을 가진 중간 어셈블리는 자동으로 제외됩니다(상하위 중복 방지).
+                        · <span className="text-amber-600">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>.
+                        여기서 고친 매입가는 이 견적에만 적용되고 품목 마스터는 바뀌지 않습니다.
+                      </p>
+                    </td>
+                  </tr>
+                )}
+                </>
               )
             })}
             {!lines.length && (
@@ -578,8 +732,6 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </table>
 
         <div className="mt-4 text-xs text-slate-600 space-y-1">
-          <div className="flex gap-2"><span className="w-24 text-slate-400">Delivery</span>
-            <input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} className="qi flex-1" /></div>
           <div className="flex gap-2"><span className="w-24 text-slate-400">Lead Time</span>
             <input value={leadTime} onChange={(e) => setLeadTime(e.target.value)} className="qi flex-1" /></div>
           <div className="flex gap-2"><span className="w-24 text-slate-400">Validity</span>
