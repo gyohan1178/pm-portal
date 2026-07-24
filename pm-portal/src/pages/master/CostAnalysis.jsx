@@ -150,9 +150,13 @@ export default function CostAnalysis() {
                 description: selAsmInfo?.name || '',
                 unit: 'EA',
                 qty: 1,
-                costKrw: cost.totalBuyKrw,
+                materialKrw: cost.impKrw + cost.domKrw,
+                laborKrw: Number(laborKrw) || 0,
                 unitPrice: sellUsd,
                 origin: cost.impKrw > cost.domKrw ? 'imp' : 'dom',
+                kind: 'assy',
+                partCount: cost.items.length,
+                noPrice: cost.items.filter(r => !r.excluded && r.status !== 'ok').length,
               }}
             />
           )}
