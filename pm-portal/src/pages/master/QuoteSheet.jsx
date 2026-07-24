@@ -124,12 +124,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (proj) {
         const { data: rows } = await supabase
           .from('bom')
-          .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, purchase_price, vendors(name))')
+          .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendors(name))')
           .eq('customer_id', customerId).eq('project_id', proj.id)
           .order('seq').order('created_at')
 
         const mapped = (rows || []).map((b, i) => ({
           uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
+          std_code: b.items?.std_code || '', name: b.items?.name || '',
+          manufacturer: b.items?.manufacturer || '',
+          manufacturer_code: b.items?.manufacturer_code || '',
           purchase_price: b.items?.purchase_price ?? null,
           vendor: b.items?.vendors?.name || '',
           registered: !!b.items,
@@ -153,6 +156,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           // 세부견적용 부품 목록 — 화면에서 제외·단가 조정 가능
           parts: c.items.map((r) => ({
             uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
+            manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
             buyKrw: r.buyKrw, qty: r.qty, origin: r.origin,
             vendor: r.vendor || '', status: r.status, excluded: r.excluded,
           })),
@@ -327,6 +331,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       l.parts.forEach((pt) => bomRows.push({
         라인: i + 1, 어셈블리: l.std_code,
         LV: pt.level, 품번: pt.std_code, 품명: pt.name,
+        제조사: pt.manufacturer || '', 제조사품번: pt.manufacturer_code || '',
         '매입가(원)': pt.buyKrw == null ? '' : num(pt.buyKrw),
         전개수량: num(pt.qty),
         '소계(원)': pt.excluded || pt.buyKrw == null ? 0 : num(pt.buyKrw) * num(pt.qty),
@@ -659,6 +664,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                               <th className="px-2 py-1.5 w-10 text-left">LV</th>
                               <th className="px-2 py-1.5 text-left">품번</th>
                               <th className="px-2 py-1.5 text-left">품명</th>
+                              <th className="px-2 py-1.5 w-28 text-left">제조사</th>
+                              <th className="px-2 py-1.5 w-32 text-left">제조사품번</th>
                               <th className="px-2 py-1.5 w-24 text-right">매입가(원)</th>
                               <th className="px-2 py-1.5 w-16 text-right">수량</th>
                               <th className="px-2 py-1.5 w-24 text-right">소계(원)</th>
@@ -678,7 +685,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                 <td className="px-2 py-1 text-slate-400">L{pt.level}</td>
                                 <td className="px-2 py-1 font-mono text-slate-700"
                                   style={{ paddingLeft: `${8 + (Number(pt.level) || 0) * 10}px` }}>{pt.std_code || '—'}</td>
-                                <td className="px-2 py-1 text-slate-600 max-w-[240px] truncate" title={pt.name}>{pt.name}</td>
+                                <td className="px-2 py-1 text-slate-600 max-w-[220px] truncate" title={pt.name}>{pt.name}</td>
+                                <td className="px-2 py-1 text-slate-500 truncate" title={pt.manufacturer}>{pt.manufacturer || '-'}</td>
+                                <td className="px-2 py-1 font-mono text-slate-500 truncate" title={pt.manufacturer_code}>{pt.manufacturer_code || '-'}</td>
                                 <td className="px-2 py-1 text-right">
                                   <input type="number" value={pt.buyKrw ?? ''}
                                     onChange={(e) => patchPart(l.key, pt.uid, {

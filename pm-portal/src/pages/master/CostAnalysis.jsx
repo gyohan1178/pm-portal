@@ -24,7 +24,7 @@ async function fetchCostBOM(csId, projectId) {
   if (!csId || !projectId) return []
   const { data, error } = await supabase
     .from('bom')
-    .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, purchase_price, vendor_id, vendors(name))')
+    .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
     .eq('customer_id', csId).eq('project_id', projectId)
     .order('seq').order('created_at')
   if (error) throw error
@@ -66,6 +66,7 @@ export default function CostAnalysis() {
     const mapped = bomRows.map((b, i) => ({
       uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
       std_code: b.items?.std_code || '', name: b.items?.name || '',
+      manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '',
       purchase_price: b.items?.purchase_price ?? null,
       vendor: b.items?.vendors?.name || '',
       registered: !!b.items,
@@ -158,6 +159,12 @@ export default function CostAnalysis() {
                 kind: 'assy',
                 partCount: cost.items.length,
                 noPrice: cost.items.filter(r => !r.excluded && r.status !== 'ok').length,
+                parts: cost.items.map(r => ({
+                  uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
+                  manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
+                  buyKrw: r.buyKrw, qty: r.qty, origin: r.origin,
+                  vendor: r.vendor || '', status: r.status, excluded: r.excluded,
+                })),
               }}
             />
           )}
@@ -184,6 +191,8 @@ export default function CostAnalysis() {
                   <th className="px-2 py-2 text-left">LV</th>
                   <th className="px-2 py-2 text-left">코드</th>
                   <th className="px-2 py-2 text-left">품명</th>
+                  <th className="px-2 py-2 text-left">제조사</th>
+                  <th className="px-2 py-2 text-left">제조사품번</th>
                   <th className="px-2 py-2 text-right">매입가</th>
                   <th className="px-2 py-2 text-right">전개수량</th>
                   <th className="px-2 py-2 text-center">수입/국내</th>
@@ -196,7 +205,9 @@ export default function CostAnalysis() {
                   <tr key={r.uid} className={`border-t border-slate-100 ${r.excluded ? 'opacity-40' : ''} ${r.status === 'noprice' ? 'bg-amber-50' : ''} ${r.status === 'unreg' ? 'bg-rose-50' : ''}`}>
                     <td className="px-2 py-1.5 text-slate-400">{r.level}</td>
                     <td className="px-2 py-1.5 font-mono text-xs" style={{ paddingLeft: `${8 + (Number(r.level) || 0) * 12}px` }}>{r.std_code || '—'}</td>
-                    <td className="px-2 py-1.5 text-slate-600 max-w-[260px] truncate" title={r.name}>{r.name}</td>
+                    <td className="px-2 py-1.5 text-slate-600 max-w-[220px] truncate" title={r.name}>{r.name}</td>
+                    <td className="px-2 py-1.5 text-slate-500 max-w-[130px] truncate" title={r.manufacturer}>{r.manufacturer || '-'}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs text-slate-500 max-w-[150px] truncate" title={r.manufacturer_code}>{r.manufacturer_code || '-'}</td>
                     <td className="px-2 py-1.5 text-right">{r.buyKrw == null ? <span className="text-amber-500 text-xs">미등록가</span> : won(r.buyKrw)}</td>
                     <td className="px-2 py-1.5 text-right text-slate-500">{r.qty}</td>
                     <td className="px-2 py-1.5 text-center text-xs">{r.origin === 'imp' ? <span className="text-blue-500">수입</span> : <span className="text-slate-400">국내</span>}</td>

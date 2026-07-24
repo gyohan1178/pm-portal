@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.13.0'
+export const APP_VERSION = 'v3.13.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.13.1',
+    date: '2026-07-24',
+    changes: [
+      '매출견적 세부견적에서 품번·품명이 빈칸으로 나오던 문제 수정 — 품번으로 어셈블리를 담을 때 해당 필드를 가져오지 않고 있었음',
+      '원가분석·매출견적 부품 목록에 제조사·제조사품번 컬럼 추가. 엑셀 부품명세 시트에도 포함',
+    ]
+  },
   {
     version: 'v3.13.0',
     date: '2026-07-24',
