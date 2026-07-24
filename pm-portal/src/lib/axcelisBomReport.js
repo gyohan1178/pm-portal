@@ -26,6 +26,21 @@ export function parseQty(v) {
   return Number.isFinite(n) ? n : 0
 }
 
+// ── 피트 → 미터 환산 ──
+// 고객사 리포트는 케이블·튜브류를 Foot 단위로 준다.
+// 사내 기준은 미터라 여기서 바꿔둔다.
+//   소수 둘째 자리에서 올림 → 첫째 자리까지 (모자라면 안 되므로 반올림이 아닌 올림)
+//   예) 1.6 ft = 0.48768 m → 0.5 / 0.2 ft = 0.06096 m → 0.1
+const FT_TO_M = 0.3048
+const isFeet = (u) => /^(foot|feet|ft\.?)$/i.test(String(u ?? '').trim())
+
+export function feetToMeter(qtyFt) {
+  const m = Number(qtyFt) * FT_TO_M
+  if (!Number.isFinite(m)) return 0
+  // toFixed 로 부동소수점 오차를 먼저 털어낸 뒤 올림 (0.3 이 2.9999→3 이 되는 것 방지)
+  return Math.ceil(Number((m * 10).toFixed(9))) / 10
+}
+
 const stripTags = (s) => s.replace(/<[^>]+>/g, '')
 
 const decode = (s) =>
@@ -109,14 +124,23 @@ export function parseAxcelisReport(text) {
     const revRaw = dot >= 0 ? ver.slice(0, dot) : ver
     const edRaw = dot >= 0 ? ver.slice(dot + 1) : ''
 
+    const unitRaw = String(c[5] || '').trim()
+    const qtyRawNum = parseQty(c[4])
+    const feet = isFeet(unitRaw)
+
     parts.push({
       level,
       rawPn: String(c[2] || '').trim(),
       code: AX(c[2]),
       name: String(c[3] || '').trim(),
-      qty: parseQty(c[4]),
+      // 환산 후 값이 실제 등록에 쓰인다
+      qty: feet ? feetToMeter(qtyRawNum) : qtyRawNum,
+      unit: feet ? 'M' : (unitRaw || 'EA'),
+      // 원본 보존 — 화면에서 "0.2 Foot → 0.1 M" 으로 확인할 수 있게
+      converted: feet,
+      qtyOrig: qtyRawNum,
+      unitOrig: unitRaw,
       qtyRaw: String(c[4] || '').trim(),
-      unit: String(c[5] || '').trim() || 'EA',
       rev: /^[A-Z]{1,2}$/i.test(revRaw) ? revRaw.toUpperCase() : '',
       revRaw,
       edition: /^\d+$/.test(edRaw) ? Number(edRaw) : 0,
@@ -161,6 +185,7 @@ export function parseAxcelisReport(text) {
       uniqueCodes: codes.length,
       withMfr: parts.filter((p) => p.mfr).length,
       zeroQty: parts.filter((p) => p.level > 0 && p.qty === 0).length,
+      converted: parts.filter((p) => p.converted).length,
       maxLevel: parts.reduce((a, p) => Math.max(a, p.level), 0),
       assemblies: groups.length,
     },

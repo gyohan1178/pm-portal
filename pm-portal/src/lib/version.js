@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.13.1'
+export const APP_VERSION = 'v3.14.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.14.0',
+    date: '2026-07-24',
+    changes: [
+      'AXCELIS 리포트 Foot 단위 자동 환산 — 케이블·튜브류가 Foot으로 오던 것을 M로 변환해 등록. 소수 둘째 자리에서 올림하여 첫째 자리까지 (자재가 모자라면 안 되므로 반올림이 아닌 올림). 예) 1.6 Foot → 0.5 M',
+      '업로드 화면에 환산 내역 표시 — 어느 품번이 몇 Foot에서 몇 M로 바뀌었는지 저장 전에 확인 가능',
+    ]
+  },
   {
     version: 'v3.13.1',
     date: '2026-07-24',

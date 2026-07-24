@@ -543,8 +543,25 @@ export default function BOM() {
             <span>최대 레벨 <b>{htmInfo.stats.maxLevel}</b></span>
             <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
+            {htmInfo.stats.converted > 0 && <span className="text-emerald-700">Foot→M 환산 <b>{htmInfo.stats.converted}</b></span>}
             {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
           </div>
+          {htmInfo.stats.converted > 0 && (
+            <div className="mt-2 rounded-lg bg-white/70 border border-sky-200 px-2.5 py-2">
+              <p className="text-[11px] font-bold text-emerald-700 mb-1">
+                Foot → M 환산 (소수 둘째 자리 올림)
+              </p>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 text-[11px] text-slate-600">
+                {htmInfo.parts.filter(p => p.converted).map(p => (
+                  <span key={p.code} className="font-mono">
+                    {p.code} <span className="text-slate-400">{p.qtyOrig} {p.unitOrig} →</span>{' '}
+                    <b className="text-emerald-700">{p.qty} M</b>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           <label className="mt-2 flex items-start gap-2 cursor-pointer">
             <input type="checkbox" checked={fillMfr} onChange={(e) => setFillMfr(e.target.checked)} className="mt-0.5" />
             <span className="text-[11px] text-sky-700">
