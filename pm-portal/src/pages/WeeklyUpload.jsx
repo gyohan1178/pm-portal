@@ -46,6 +46,14 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
         const hi = k => headers.findIndex(h=>h.includes(k))
         // 핵심 열은 인덱스 고정 (A=0,B=1,C=2,...,H=7,I=8,K=10)
         // 나머지는 헤더 이름으로 탐색
+        // 금액 열은 파일마다 위치가 다르다.
+        // (에드워드 파일은 I=단위, J=합계금액 / 인덱스 고정 시 '단위'·'DB단가'를 금액으로 읽어
+        //  합계금액이 0이 되고 발주금액(=단가)만 잡혀 매입액이 수량배만큼 작아졌다)
+        // → 헤더 이름으로 먼저 찾고, 못 찾을 때만 기존 고정 위치를 쓴다.
+        const hEq  = k => headers.findIndex(h => h === k)
+        const hHas = (k, ex) => headers.findIndex(h => h.includes(k) && (!ex || !h.includes(ex)))
+        const pick = (...cands) => { for (const c of cands) if (c >= 0) return c; return -1 }
+
         const idx = {
           orderDate:  0,  // A열: 발주일자
           reqDate:    1,  // B열: 입고요청일자
@@ -55,9 +63,11 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
           mfg:        headers.findIndex(h=>h==='제조사'),
           mfgPn:      hi('제조사품번'),
           qty:        hi('수량'),
-          unitPrice:  8,  // I열: 단가
-          totalAmt:   10, // K열: 합계금액
-          orderAmt:   7,  // H열: 발주금액
+          // 'DB단가', 'DB단가합계' 는 참고용 열이라 제외
+          // 고정 폴백(8)이 '단위' 열인 파일이 있어 그 경우엔 쓰지 않는다
+          unitPrice:  pick(hEq('단가'), hHas('단가', 'DB'), headers[8] === '단위' ? -1 : 8),
+          totalAmt:   pick(hEq('합계금액'), hHas('합계금액', 'DB'), 10),
+          orderAmt:   pick(hEq('발주금액'), hHas('발주금액'), 7),
           unit:       hi('단위'),
           payment:    hi('결제방식'),
           blno:       hi('BL'),
@@ -93,13 +103,15 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
 
           // 담당자별 자동 고객사 분류
           const noteStr = String(r[idx.note]||'')
-          const autoCs = autoClassify(submitter, noteStr)
+          const autoCs = autoClassify(submitter, noteStr, file?.name)
 
           const unitPrice = Number(r[idx.unitPrice])||0   // I열 단가
           const totalAmt  = Number(r[idx.totalAmt])||0    // K열 합계금액
-          const orderAmt  = Number(r[idx.orderAmt])||0    // H열 발주금액
+          const orderAmt  = Number(r[idx.orderAmt])||0    // 발주금액
           // 합계금액 우선, 없으면 발주금액, 없으면 단가×수량
           const finalAmt  = totalAmt || orderAmt || unitPrice * qty
+          // 단가 열이 없는 파일은 합계금액에서 역산 (0으로 남겨두면 단가 이력이 비어버림)
+          const finalUnit = unitPrice || (qty ? Math.round((finalAmt / qty) * 100) / 100 : 0)
 
           parsed.push({
             category,
@@ -109,7 +121,7 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
             manufacturer: idx.mfg>=0 ? String(r[idx.mfg]||'').trim() : '',
             manufacturer_pn: idx.mfgPn>=0 ? String(r[idx.mfgPn]||'').trim() : '',
             qty,
-            unit_price:   unitPrice,
+            unit_price:   finalUnit,
             amount:       finalAmt,
             target_date:  inDate || reqDate, // 입고일자 우선, 없으면 입고요청일자
             order_date:   orderDate,
@@ -129,8 +141,23 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
 }
 
 
-// 담당자별 자동 고객사 분류
-function autoClassify(submitter, noteVal) {
+// 파일명으로 고객사 판별.
+// 담당자 이름만으로 분류하면 담당이 바뀔 때마다 미분류가 되어 집계에서 통째로 빠진다.
+// 파일명에는 고객사가 들어있으므로 이쪽을 먼저 본다.
+function csFromFileName(fileName) {
+  const n = String(fileName || '').toLowerCase()
+  if (/에드워드|edwards/.test(n)) return 'Edwards'
+  if (/axcelis|액셀리스|엑셀리스/.test(n)) return 'AXCELIS'
+  if (/csk/.test(n)) return 'CSK'
+  if (/(^|[^a-z])vm([^a-z]|$)|브이엠/.test(n)) return 'VM'
+  return ''
+}
+
+// 자동 고객사 분류 — 파일명 우선, 없으면 담당자 이름
+function autoClassify(submitter, noteVal, fileName) {
+  const byFile = csFromFileName(fileName)
+  if (byFile) return byFile
+
   const name = (submitter||'').trim()
   const note = (noteVal||'').toLowerCase()
   if (name.includes('남기문')) {
@@ -153,7 +180,8 @@ export default function WeeklyUpload() {
     if (preview) {
       setPreview(v => v.map(r => ({
         ...r,
-        customer: autoClassify(name, r.note) || r.customer || '',
+        // 파일명 판별이 우선이므로 담당자를 바꿔도 고객사가 뒤집히지 않는다
+        customer: autoClassify(name, r.note, file?.name) || r.customer || '',
       })))
     }
   }
