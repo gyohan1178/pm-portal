@@ -200,10 +200,10 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
           <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
           <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>
-          <MenuItem to="/cost"           icon="💵" onNavigate={onNavigate}>견적 및 원가분석</MenuItem>
-          <MenuItem to="/purchase-quote" icon="📥" onNavigate={onNavigate}>매입견적 입력</MenuItem>
-          <MenuItem to="/quote"          icon="🧾" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
-          <MenuItem to="/quote-history"  icon="📋" onNavigate={onNavigate}>견적 이력</MenuItem>
+          <MenuItem to="/cost"          icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
+          <MenuItem to="/sales-quote"   icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
+          <MenuItem to="/quote"         icon="📥" onNavigate={onNavigate}>매입견적</MenuItem>
+          <MenuItem to="/quote-history" icon="📋" onNavigate={onNavigate}>견적 이력</MenuItem>
           <MenuItem to="/erp"       icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
           {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
         </CollapseSection>

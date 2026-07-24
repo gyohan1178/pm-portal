@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.11.2'
+export const APP_VERSION = 'v3.11.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.11.3',
+    date: '2026-07-24',
+    changes: [
+      '메뉴 이름 정정 — 원가분석 / 매출견적 / 매입견적 / 견적 이력. 실제 업무 흐름에 맞춰 정리',
+      '매출견적 탭 신설(/sales-quote) — 어셈블리 선택 없이 바로 견적서 작성. 원가분석에서 넘어오는 경로도 유지',
+      '매입견적 = 기존 품목 단가 등록 화면. 업체에서 받은 단가를 등록하면 items.purchase_price 가 함께 갱신됨',
+    ]
+  },
   {
     version: 'v3.11.2',
     date: '2026-07-24',

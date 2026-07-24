@@ -90,8 +90,8 @@ export default function CostAnalysis() {
     <div className="space-y-4">
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">💵 견적 및 원가분석</h1>
-          <p className="text-xs text-slate-400">BOM 매입원가 합산 → 마진 검토 → 매출견적 작성. 업체에서 받은 매입견적은 <b>매입견적 입력</b> 탭에서 등록하세요.</p>
+          <h1 className="text-lg font-bold text-slate-900">💵 원가분석</h1>
+          <p className="text-xs text-slate-400">BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.</p>
         </div>
         <div className="flex items-center gap-2">
           <select value={code} onChange={e => { setCsCode(e.target.value); setProjectId('') }}
