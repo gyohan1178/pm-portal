@@ -159,10 +159,27 @@ export default function Issue() {
     enabled: metaIds.length > 0,
     queryFn: async () => {
       const { data } = await supabase.from('items')
-        .select('id,manufacturer,manufacturer_code').in('id', metaIds)
+        .select('id,manufacturer,manufacturer_code,label_mode,pack_qty').in('id', metaIds)
       return Object.fromEntries((data || []).map(i => [i.id, i]))
     },
   })
+
+  // 라벨 출력 단위 — 건별 덮어쓰기.
+  // 화면에서 바꾸면 즉시 품목 마스터(items)에도 저장되어 다음 불출에서도 유지된다.
+  // 위치(location)를 저장해 재사용하는 방식과 동일.
+  const [labelOv, setLabelOv] = useState({})   // { std_code: 'sum'|'each' }
+  const [packOv, setPackOv]   = useState({})   // { std_code: 원포장수량 }
+
+  async function saveLabelMode(row, mode, pack) {
+    setLabelOv(v => ({ ...v, [row.std_code]: mode }))
+    if (pack !== undefined) setPackOv(v => ({ ...v, [row.std_code]: pack }))
+    if (!row.item_id) return
+    const patch = { label_mode: mode }
+    if (pack !== undefined) patch.pack_qty = pack === '' || pack == null ? null : Number(pack)
+    const { error } = await supabase.from('items').update(patch).eq('id', row.item_id)
+    if (error) toastError('라벨 설정 저장 실패: ' + error.message)
+    else qc.invalidateQueries({ queryKey: ['issueItemMeta'], exact: false })
+  }
 
   // 위치(inventory.location) 메타 — 라벨/불출표에 표시
   const { data: locMeta = {} } = useQuery({
@@ -215,13 +232,16 @@ export default function Issue() {
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
       location: locMeta[a.item_id] || '',
       makeType: mtMeta[a.item_id] || 'normal',
+      // 라벨 출력 단위 — 품목 마스터 기본값. 미설정이면 합산
+      labelMode: labelOv[a.std_code] ?? itemMeta[a.item_id]?.label_mode ?? 'sum',
+      packQty: packOv[a.std_code] ?? itemMeta[a.item_id]?.pack_qty ?? null,
     }))
     return withMeta.sort((a, b) =>
       String(a.maker).localeCompare(String(b.maker), 'ko') ||
       String(a.makerPn).localeCompare(String(b.makerPn), 'ko') ||
       String(a.std_code).localeCompare(String(b.std_code))
     )
-  }, [itemAgg, itemMeta, locMeta, mtMeta])
+  }, [itemAgg, itemMeta, locMeta, mtMeta, labelOv, packOv])
 
   // 자재 불출표 인쇄 (제외 대상 뺀 것, 제조사→제조사품번 순, 키팅 확인란 포함)
   function printIssueSheet() {
@@ -276,13 +296,39 @@ export default function Issue() {
 
   // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — Zebra Browser Print 경유 ──
   // 위치값 있는 품목만, 불출표 행순번(NO) 매칭
+  // 출력 단위에 따라 실제 발행할 라벨 목록으로 펼친다.
+  //   합산(sum)  → 1장, 합친 수량
+  //   개별(each) → ceil(수량 / 원포장수량) 장. 각 장에 그 포장의 수량과 n/N 표기
+  // 원포장 수량이 없으면 장수를 알 수 없으므로 1장으로 처리한다(합산과 동일).
+  const MAX_PER_ITEM = 50   // 실수로 수백 장이 나가는 것 방지
+  function expandLabels(rows) {
+    const out = []
+    const capped = []
+    for (const r of rows) {
+      const qty = Number(r.qty) || 0
+      const pack = Number(r.packQty) || 0
+      if (r.labelMode !== 'each' || pack <= 0 || qty <= pack) {
+        out.push({ ...r, labelQty: r.qty, part: '', total: 1 })
+        continue
+      }
+      let n = Math.ceil(qty / pack)
+      if (n > MAX_PER_ITEM) { capped.push({ code: r.std_code, want: n }); n = MAX_PER_ITEM }
+      for (let i = 0; i < n; i++) {
+        const q = i === n - 1 ? qty - pack * (n - 1) : pack
+        out.push({ ...r, labelQty: q, part: `${i + 1}/${n}`, total: n })
+      }
+    }
+    return { labels: out, capped }
+  }
+
   function buildZpl(rows) {
     // 203dpi 기준: 1mm ≈ 8dot. 라벨 63.5×31.75mm = 508×254dot
     const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')  // ZPL 제어문자 제거
     return rows.map((r, i) => {
-      const no = i + 1
+      const no = r.no ?? (i + 1)
       const pn = esc(r.std_code)
-      const qty = esc(r.qty)
+      const qty = esc(r.labelQty ?? r.qty)
+      const part = esc(r.part || '')
       const maker = esc(r.maker)
       const makerPn = esc(r.makerPn)
       const loc = esc(r.location)
@@ -297,7 +343,7 @@ export default function Issue() {
         '^FO100,10^A0N,24,24^FDPN^FS',
         `^FO100,34^A0N,40,40^FD${pn}^FS`,
         // 수량 (우측)
-        '^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY^FS',
+        `^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY${part ? ` (${part})` : ''}^FS`,
         `^FO360,34^A0N,44,44^FB140,1,0,R^FD${qty}^FS`,
         // 구분선
         '^FO8,90^GB492,1,2^FS',
@@ -319,7 +365,14 @@ export default function Issue() {
     const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.makeType === 'normal' && !isLabelLoc(r))
     const skipped = itemRows.filter(r => !excluded.has(r.std_code) && (r.makeType !== 'normal' || isLabelLoc(r)))
     if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류 제외).'); return }
-    const zpl = buildZpl(rows)
+
+    // 불출표 행순번(NO)을 먼저 매긴 뒤 출력 단위에 따라 펼친다
+    const numbered = rows.map((r, i) => ({ ...r, no: i + 1 }))
+    const { labels, capped } = expandLabels(numbered)
+    if (capped.length) {
+      toastError(`원포장 수량이 작아 라벨이 과다합니다: ${capped.map(c => `${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장으로 제한`)
+    }
+    const zpl = buildZpl(labels)
     // Zebra Browser Print (BrowserPrint.js) 필요 — 없으면 안내
     const BP = window.BrowserPrint
     if (!BP) {
@@ -329,7 +382,8 @@ export default function Issue() {
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
       device.send(zpl, () => {
-        toastSuccess(`전장 라벨 ${rows.length}장 전송${skipped.length ? ` · 제외 ${skipped.length}건(현장재고·하네스·라벨류)` : ''}`)
+        const eachN = labels.filter(l => l.part).length
+        toastSuccess(`전장 라벨 ${labels.length}장 전송 (품목 ${rows.length}건${eachN ? ` · 개별출력 ${eachN}장 포함` : ''})${skipped.length ? ` · 제외 ${skipped.length}건` : ''}`)
       }, (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
@@ -400,6 +454,7 @@ export default function Issue() {
               <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
               <th className="px-2 py-1.5 text-left">호기</th>
               <th className="px-2 py-1.5 text-right">총소요</th><th className="px-2 py-1.5 text-right">총불출</th><th className="px-2 py-1.5 text-right">총결품</th>
+              <th className="px-2 py-1.5 text-center w-36" title="라벨 출력 단위 — 바꾸면 품목에 저장되어 다음에도 유지됩니다">라벨</th>
               <th className="px-2 py-1.5 text-center w-10" title="체크 = 불출표에서 제외">제외</th>
             </tr></thead>
             <tbody>
@@ -416,6 +471,34 @@ export default function Issue() {
                   <td className="px-2 py-1.5 text-right font-bold text-slate-700">{a.qty}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-teal-600">{a.issue}</td>
                   <td className={`px-2 py-1.5 text-right font-bold ${a.short > 0 ? 'text-red-500' : 'text-slate-300'}`}>{a.short || '-'}</td>
+                  <td className="px-2 py-1.5 text-center whitespace-nowrap">
+                    {a.makeType === 'normal' && String(a.location || '').trim() !== '라벨' ? (
+                      <div className="inline-flex items-center gap-1">
+                        <div className="inline-flex rounded border border-slate-200 overflow-hidden">
+                          {[['sum', '합산'], ['each', '개별']].map(([m2, l2]) => (
+                            <button key={m2} onClick={() => saveLabelMode(a, m2)}
+                              title={m2 === 'sum' ? '소분봉투 1개에 라벨 1장 (합친 수량)' : '포장 단위마다 라벨 1장'}
+                              className={`px-1.5 py-0.5 text-[10px] font-bold ${a.labelMode === m2
+                                ? (m2 === 'sum' ? 'bg-teal-600 text-white' : 'bg-amber-500 text-white')
+                                : 'text-slate-400 hover:text-slate-600'}`}>{l2}</button>
+                          ))}
+                        </div>
+                        {a.labelMode === 'each' && (
+                          <input type="number" value={a.packQty ?? ''} placeholder="원포장"
+                            onChange={(e) => setPackOv(v => ({ ...v, [a.std_code]: e.target.value }))}
+                            onBlur={(e) => saveLabelMode(a, 'each', e.target.value)}
+                            title="원포장 수량 (100개입이면 100). 비우면 1장만 출력됩니다"
+                            className={`w-14 px-1 py-0.5 text-[10px] text-right border rounded ${
+                              Number(a.packQty) > 0 ? 'border-slate-200' : 'border-amber-400 bg-amber-50'}`} />
+                        )}
+                        {a.labelMode === 'each' && Number(a.packQty) > 0 && (
+                          <span className="text-[10px] text-amber-600 font-bold">
+                            {Math.min(50, Math.ceil((Number(a.qty) || 0) / Number(a.packQty)))}장
+                          </span>
+                        )}
+                      </div>
+                    ) : <span className="text-slate-300 text-[10px]">—</span>}
+                  </td>
                   <td className="px-2 py-1.5 text-center">
                     <input type="checkbox" checked={ex} onChange={() => setExcluded(p => { const n = new Set(p); n.has(a.std_code) ? n.delete(a.std_code) : n.add(a.std_code); return n })} title="불출표에서 제외" />
                   </td>
