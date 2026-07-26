@@ -27,7 +27,7 @@ async function fetchActiveCPOs(customerId, projectId) {
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
   const { data } = await supabase.from('bom')
-    .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code)')
+    .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code,label_mode,pack_qty)')
     .eq('customer_id', customerId).eq('project_id', projectId)
   return data || []
 }
@@ -50,6 +50,23 @@ export default function Outbound() {
   const [tab, setTab] = useState('process')
   // 제작구분: item_id → { make_type:'normal'|'harness'|'exclude', note:'' }
   const [makeTypes, setMakeTypes] = useState({})
+
+  // 라벨 출력 단위 — 건별 덮어쓰기. 바꾸면 품목 마스터(items)에 저장돼 다음에도 유지된다.
+  //   sum=합산 / each=개별 / none=미출력
+  const [labelOv, setLabelOv] = useState({})   // { item_id: 'sum'|'each'|'none' }
+  const [packOv, setPackOv]   = useState({})   // { item_id: 원포장수량 }
+  const labelModeOf = (b) => labelOv[b.item_id] ?? b.items?.label_mode ?? 'sum'
+  const packQtyOf   = (b) => packOv[b.item_id] ?? b.items?.pack_qty ?? null
+
+  async function saveLabelMode(itemId, mode, pack) {
+    setLabelOv(v => ({ ...v, [itemId]: mode }))
+    if (pack !== undefined) setPackOv(v => ({ ...v, [itemId]: pack }))
+    if (!itemId) return
+    const patch = { label_mode: mode }
+    if (pack !== undefined) patch.pack_qty = (pack === '' || pack == null) ? null : Number(pack)
+    const { error } = await supabase.from('items').update(patch).eq('id', itemId)
+    if (error) toastError('라벨 설정 저장 실패: ' + error.message)
+  }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
   const [sortBy, setSortBy] = useState('maker')         // maker | location | code
@@ -153,15 +170,16 @@ export default function Outbound() {
   function buildZplOut(rows) {
     const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')
     return rows.map((r, i) => {
-      const no = i + 1
+      const no = r.no ?? (i + 1)
+      const part = esc(r.part || '')
       return [
         '^XA', '^CI28', '^PW508', '^LL254', '^LH0,0',
         '^FO8,8^GB80,60,60^FS',
         `^FO8,20^FR^A0N,44,44^FB80,1,0,C^FD${no}^FS`,
         '^FO100,10^A0N,24,24^FDPN^FS',
         `^FO100,34^A0N,40,40^FD${esc(r.std_code)}^FS`,
-        '^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY^FS',
-        `^FO360,34^A0N,44,44^FB140,1,0,R^FD${esc(r.qty)}^FS`,
+        `^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY${part ? ` (${part})` : ''}^FS`,
+        `^FO360,34^A0N,44,44^FB140,1,0,R^FD${esc(r.labelQty ?? r.qty)}^FS`,
         '^FO8,90^GB492,1,2^FS',
         '^FO8,100^A0N,20,20^FDMAKER^FS',
         `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc(r.maker)} ${esc(r.makerPn)}^FS`,
@@ -173,18 +191,47 @@ export default function Outbound() {
     }).join('')
   }
 
+  // 출력 단위에 따라 라벨 목록으로 전개 (합산 1장 / 개별 ceil(수량/원포장) 장)
+  const MAX_PER_ITEM = 50
+  function expandOutLabels(rows) {
+    const out = []; const capped = []
+    for (const r of rows) {
+      const mode = labelModeOf({ item_id: r.item_id, items: r.items })
+      const qty = Number(r.qty) || 0
+      const pack = Number(packQtyOf({ item_id: r.item_id, items: r.items })) || 0
+      if (mode !== 'each' || pack <= 0 || qty <= pack) {
+        out.push({ ...r, labelQty: r.qty, part: '', total: 1 })
+        continue
+      }
+      let n = Math.ceil(qty / pack)
+      if (n > MAX_PER_ITEM) { capped.push({ code: r.std_code, want: n }); n = MAX_PER_ITEM }
+      for (let i = 0; i < n; i++) {
+        const q = i === n - 1 ? qty - pack * (n - 1) : pack
+        out.push({ ...r, labelQty: q, part: `${i + 1}/${n}`, total: n })
+      }
+    }
+    return { labels: out, capped }
+  }
+
   function printOutLabels() {
-    // 전장(normal)만 + 위치'라벨' 제외 + 수량 입력된 것만
+    // 전장(normal)만 + 위치'라벨' 제외 + 미출력(none) 제외 + 수량 입력된 것만
     const rows = outOrder
-      .filter(r => mtOf(r.item_id) === 'normal' && String(r.location||'').trim() !== '라벨' && Number(outQtys[r.item_id]||0) > 0)
+      .filter(r => mtOf(r.item_id) === 'normal'
+        && String(r.location||'').trim() !== '라벨'
+        && labelModeOf({ item_id: r.item_id, items: r.items }) !== 'none'
+        && Number(outQtys[r.item_id]||0) > 0)
       .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0) }))
-    if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량을 입력하세요. 현장재고·하네스·라벨류 제외).'); return }
-    const zpl = buildZplOut(rows)
+    if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량 입력. 현장재고·하네스·라벨류·미출력 제외).'); return }
+
+    const numbered = rows.map((r, i) => ({ ...r, no: i + 1 }))
+    const { labels, capped } = expandOutLabels(numbered)
+    if (capped.length) toastError(`원포장 수량이 작아 라벨 과다: ${capped.map(c=>`${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장 제한`)
+    const zpl = buildZplOut(labels)
     const BP = window.BrowserPrint
     if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다.'); return }
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
-      device.send(zpl, () => toastSuccess(`전장 라벨 ${rows.length}장 전송`), (err) => toastError('라벨 전송 실패: ' + err))
+      device.send(zpl, () => toastSuccess(`전장 라벨 ${labels.length}장 전송 (품목 ${rows.length}건)`), (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
 
@@ -514,7 +561,7 @@ export default function Outbound() {
                         checked={outItems.length>0 && outItems.every(o=>selectedIds.has(o.item_id))}
                         onChange={e=>{ setSelectedIds(e.target.checked ? new Set(outItems.map(o=>o.item_id)) : new Set()) }} />
                     </th>
-                    {[['No','w-8'],['위치','w-14'],['카테고리','w-16'],['제조사','w-20'],['제조사품번','w-24'],['기준코드','w-24'],['품명',''],['단위','w-10'],['BOM/대','w-14'],['출고수량','w-16'],['제작구분','w-24'],['비고','w-28']].map(([h,w])=>(
+                    {[['No','w-8'],['위치','w-14'],['카테고리','w-16'],['제조사','w-20'],['제조사품번','w-24'],['기준코드','w-24'],['품명',''],['단위','w-10'],['BOM/대','w-14'],['출고수량','w-16'],['제작구분','w-24'],['라벨','w-32'],['비고','w-28']].map(([h,w])=>(
                       <th key={h} className={`px-2 py-2.5 text-left font-bold text-slate-400 text-xs ${w}`}>{h}</th>
                     ))}
                   </tr></thead>
@@ -558,6 +605,33 @@ export default function Outbound() {
                               <option value="harness">하네스자재</option>
                               <option value="exclude">불출 미대상</option>
                             </select>
+                          </td>
+                          <td className="px-2 py-2">
+                            {mt === 'normal' && String(item.location||'').trim() !== '라벨' ? (() => {
+                              const lm = labelModeOf(item)
+                              const pq = packQtyOf(item)
+                              const q = Number(outQtys[item.item_id]||0)
+                              return (
+                                <div className="flex items-center gap-1 whitespace-nowrap">
+                                  <div className="inline-flex rounded border border-slate-200 overflow-hidden">
+                                    {[['sum','합산','bg-teal-600'],['each','개별','bg-amber-500'],['none','미출력','bg-slate-400']].map(([m2,l2,bg])=>(
+                                      <button key={m2} onClick={()=>saveLabelMode(item.item_id, m2)}
+                                        className={`px-1.5 py-0.5 text-[10px] font-bold ${lm===m2 ? `${bg} text-white` : 'text-slate-400 hover:text-slate-600'}`}>{l2}</button>
+                                    ))}
+                                  </div>
+                                  {lm==='each' && (
+                                    <input type="number" value={pq ?? ''} placeholder="원포장"
+                                      onChange={e=>setPackOv(v=>({...v,[item.item_id]:e.target.value}))}
+                                      onBlur={e=>saveLabelMode(item.item_id,'each',e.target.value)}
+                                      title="원포장 수량 (100개입이면 100)"
+                                      className={`w-14 px-1 py-0.5 text-[10px] text-right border rounded ${Number(pq)>0?'border-slate-200':'border-amber-400 bg-amber-50'}`}/>
+                                  )}
+                                  {lm==='each' && Number(pq)>0 && q>0 && (
+                                    <span className="text-[10px] text-amber-600 font-bold">{Math.min(50,Math.ceil(q/Number(pq)))}장</span>
+                                  )}
+                                </div>
+                              )
+                            })() : <span className="text-slate-300 text-[10px]">—</span>}
                           </td>
                           <td className="px-2 py-2">
                             <input defaultValue={noteOf(item.item_id)} placeholder="비고"

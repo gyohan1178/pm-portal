@@ -362,7 +362,7 @@ export default function Issue() {
   function printLabels() {
     // 전장(normal)만 + 위치값이 '라벨'인 것 제외 (라벨/스티커류는 라벨 안 뽑음)
     const isLabelLoc = (r) => String(r.location || '').trim() === '라벨'
-    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.makeType === 'normal' && !isLabelLoc(r))
+    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.makeType === 'normal' && !isLabelLoc(r) && r.labelMode !== 'none')
     const skipped = itemRows.filter(r => !excluded.has(r.std_code) && (r.makeType !== 'normal' || isLabelLoc(r)))
     if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류 제외).'); return }
 
