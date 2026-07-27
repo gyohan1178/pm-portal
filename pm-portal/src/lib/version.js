@@ -1,10 +1,11 @@
-export const APP_VERSION = 'v3.17.3'
+export const APP_VERSION = 'v3.17.4'
 
 export const CHANGELOG = [
   {
-    version: 'v3.17.3',
+    version: 'v3.17.4',
     date: '2026-07-24',
     changes: [
+      '라벨 글자·박스 크기 확대 — 하단 여백이 13mm 남던 것을 활용해 전체를 약 1.6배 키움. 품번 4.6mm·수량 5.2mm·제조사 3.8mm로 현장에서 읽기 쉽게',
       '라벨 여백 추가 — 왼쪽이 잘려 MAKER가 KER로 찍히던 문제. 좌 8mm·상 3mm·우 3mm 여백 적용',
       '제조사와 제조사품번을 각각 다른 줄에 배치 — 제조사명이 길어도 품번과 겹치지 않음',
       '위치(LOC) 박스를 우측 고정하고 제조사 영역과 분리 — 겹침 해소',
