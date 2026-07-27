@@ -66,7 +66,9 @@ export default function Outbound() {
     const patch = { label_mode: mode }
     if (pack !== undefined) patch.pack_qty = (pack === '' || pack == null) ? null : Number(pack)
     const { error } = await supabase.from('items').update(patch).eq('id', itemId)
-    if (error) toastError('라벨 설정 저장 실패: ' + error.message)
+    if (error) { toastError('라벨 설정 저장 실패: ' + error.message); return }
+    // 저장한 값이 다음 조회에 반영되도록 BOM 캐시 무효화 (안 하면 새로고침 시 옛 값이 보임)
+    qc.invalidateQueries({ queryKey: ['bomForOut'], exact: false })
   }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
