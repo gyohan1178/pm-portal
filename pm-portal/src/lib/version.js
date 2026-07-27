@@ -1,10 +1,13 @@
-export const APP_VERSION = 'v3.16.9'
+export const APP_VERSION = 'v3.17.0'
 
 export const CHANGELOG = [
   {
-    version: 'v3.16.9',
+    version: 'v3.17.0',
     date: '2026-07-24',
     changes: [
+      '매입 대시보드를 ecount 기준으로 단순화 — 확정매입=ecount 회계확정치, 예상매입=담당자 엑셀 미입고분(입고예정). 기존의 confirmed_purchases·포털·RPC 짜깁기를 제거하고 두 소스로 정리',
+      '고객사 분류를 ecount와 통일(에드워드/VM/CSK/엑셀리스/하네스/기타). 하네스·기타는 확정만 집계되고 예상은 없음',
+      'SQL: pm_weekly_pending_monthly.sql 선행 필요 (예상매입 집계 함수)',
       '라벨 기능 통합 재배포 — 이전 배포에서 라벨 파일(Issue·Outbound·labelZpl)이 누락돼 저장·300dpi·확인창 수정이 반영되지 않던 문제. 관련 파일을 모두 포함해 재배포',
       '확정매입(ecount) 화면 연결 통합본 — 이전 배포에서 App 라우트·사이드바 메뉴·권한 파일이 누락돼 분석 메뉴에 확정매입 탭이 안 보이던 문제. 관련 파일을 모두 포함해 재배포',
       'ecount 매입 업로드에 담당자+메모 자동 분류 추가 — 고객사 열이 없는 파일도 담당자와 메모를 보고 자동 분류됨. 김교한→엑셀리스, 황주현·문순옥·박웅진→에드워드, 남기문→메모(csk/vm·em·ex·ep)로 CSK·VM 구분, 윤여민·황동일→하네스, 나머지→기타. 파일만 올리면 되고 SQL 실행 불필요',

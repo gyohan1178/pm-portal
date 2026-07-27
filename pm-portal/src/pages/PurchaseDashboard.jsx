@@ -5,87 +5,71 @@ import { supabase } from '../lib/supabase'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 const CS_COLORS = {
-  AXCELIS: { light:'bg-indigo-50', border:'border-indigo-200', text:'text-indigo-700', hex:'#6366f1' },
-  Edwards: { light:'bg-rose-50',   border:'border-rose-200',   text:'text-rose-700',   hex:'#f43f5e' },
-  VM:      { light:'bg-emerald-50',border:'border-emerald-200',text:'text-emerald-700',hex:'#10b981' },
-  CSK:     { light:'bg-amber-50',  border:'border-amber-200',  text:'text-amber-700',  hex:'#f59e0b' },
+  '에드워드': { light:'bg-rose-50',    border:'border-rose-200',    text:'text-rose-700',    hex:'#f43f5e' },
+  'VM':       { light:'bg-emerald-50', border:'border-emerald-200', text:'text-emerald-700', hex:'#10b981' },
+  'CSK':      { light:'bg-amber-50',   border:'border-amber-200',   text:'text-amber-700',   hex:'#f59e0b' },
+  '엑셀리스':  { light:'bg-indigo-50',  border:'border-indigo-200',  text:'text-indigo-700',  hex:'#6366f1' },
+  '하네스':    { light:'bg-sky-50',     border:'border-sky-200',     text:'text-sky-700',     hex:'#0ea5e9' },
+  '기타':      { light:'bg-slate-50',   border:'border-slate-200',   text:'text-slate-600',   hex:'#94a3b8' },
 }
 const csColor = cs => CS_COLORS[cs] || { light:'bg-slate-50', border:'border-slate-200', text:'text-slate-600', hex:'#94a3b8' }
+// 예상매입 관리 대상(확정+예상). 하네스·기타는 확정만.
+const FORECAST_CS = ['에드워드','VM','CSK','엑셀리스']
 
 async function fetchDashboard() {
   const year = new Date().getFullYear()
 
-  const [confirmedRes, rpcRes, portalRes] = await Promise.all([
-    supabase.from('confirmed_purchases').select('year,month,customer,amount').eq('year', year).lte('month', 4),
-    supabase.rpc('get_purchase_monthly', { year_val: year }),
-    supabase.rpc('get_weekly_portal_ax', { p_from: year+'-01-01', p_to: year+'-12-31', p_year: year })
-      .then(r=>r.data).catch(()=>({})),
+  // 확정매입 = ecount (회계 확정치) / 예상매입 = 담당자 엑셀 미입고분(weekly plan)
+  const [ecountRes, pendingRes] = await Promise.all([
+    supabase.rpc('pm_ecount_monthly', { p_year: year }),
+    supabase.rpc('pm_weekly_pending_monthly', { p_year: year }).then(r => r).catch(() => ({ data: [] })),
   ])
-  const AXN = 'AXCELIS'
-  const portalAx = portalRes || {}
 
   const monthlyMap = {}
   const csAmtMap = {}
   const addAmt = (m, cs, amt, type) => {
+    if (!amt) return
     if (!monthlyMap[m]) monthlyMap[m] = { month: m }
+    csAmtMap[cs] = csAmtMap[cs] || { name: cs, actual: 0, pending: 0 }
     if (type === 'actual') {
-      monthlyMap[m].actual = (monthlyMap[m].actual||0) + amt
-      monthlyMap[m][cs] = (monthlyMap[m][cs]||0) + amt
-      csAmtMap[cs] = csAmtMap[cs]||{name:cs,actual:0,pending:0}
+      monthlyMap[m].actual = (monthlyMap[m].actual || 0) + amt
+      monthlyMap[m][cs] = (monthlyMap[m][cs] || 0) + amt
       csAmtMap[cs].actual += amt
     } else {
-      monthlyMap[m].pending = (monthlyMap[m].pending||0) + amt
-      monthlyMap[m][cs+'Pend'] = (monthlyMap[m][cs+'Pend']||0) + amt
-      csAmtMap[cs] = csAmtMap[cs]||{name:cs,actual:0,pending:0}
+      monthlyMap[m].pending = (monthlyMap[m].pending || 0) + amt
+      monthlyMap[m][cs + 'Pend'] = (monthlyMap[m][cs + 'Pend'] || 0) + amt
       csAmtMap[cs].pending += amt
     }
   }
 
-  // confirmed_purchases 확정 월 파악 (동적)
-  const maxConfirmedMonth = (confirmedRes.data||[]).reduce((max, r) => Math.max(max, r.month), 0)
-
-  // 확정값 적용
-  ;(confirmedRes.data||[]).forEach(r => {
-    const m = `${r.year}-${String(r.month).padStart(2,'0')}`
-    const cs = r.customer||'기타'
-    const amt = Math.round((r.amount||0)/10000)
-    if (amt) addAmt(m, cs, amt, 'actual')
+  // 확정 (ecount) — 만원 단위로
+  ;(ecountRes.data || []).forEach(r => {
+    const m = `${r.year}-${String(r.month).padStart(2, '0')}`
+    const amt = Math.round((r.supply_amt || 0) / 10000)
+    addAmt(m, r.customer || '기타', amt, 'actual')
   })
 
-  // 확정 이후 월만 RPC 집계 사용 (중복 방지). AX는 포털로 대체하므로 제외.
-  ;(rpcRes.data||[]).forEach(r => {
-    const monthNum = parseInt(r.month.slice(5,7))
-    if (monthNum <= maxConfirmedMonth) return
-    const cs = r.customer||'기타'
-    if (cs === AXN) return   // AXCELIS는 5월~ 포털값 사용
-    const actualAmt = Math.round((r.actual_sum||0)/10000)
-    const pendingAmt = Math.round((r.pending_sum||0)/10000)
-    if (actualAmt) addAmt(r.month, cs, actualAmt, 'actual')
-    if (pendingAmt) addAmt(r.month, cs, pendingAmt, 'pending')
+  // 예상 (미입고, 담당자 엑셀) — 예상 관리 대상 고객사만
+  ;(pendingRes.data || []).forEach(r => {
+    const m = `${r.year}-${String(r.month).padStart(2, '0')}`
+    const amt = Math.round((r.pending_amt || 0) / 10000)
+    addAmt(m, r.customer || '기타', amt, 'pending')
   })
 
-  // AXCELIS — 확정 이후 월은 포털 실데이터(입고×단가 / 진행중 발주)
-  ;(portalAx.purchase||[]).forEach(r => {
-    const m = (r.target_date||'').slice(0,7)
-    if (!m || parseInt(m.slice(5,7)) <= maxConfirmedMonth) return
-    const amt = Math.round((r.amount||0)/10000)
-    if (amt) addAmt(m, AXN, amt, 'actual')
-  })
-  ;(portalAx.pending||[]).forEach(r => {
-    const m = (r.target_date||'').slice(0,7)
-    if (!m || parseInt(m.slice(5,7)) <= maxConfirmedMonth) return
-    const amt = Math.round((r.amount||0)/10000)
-    if (amt) addAmt(m, AXN, amt, 'pending')
-  })
-
-  const months = Object.values(monthlyMap).sort((a,b)=>a.month.localeCompare(b.month))
-    .map(m => ({ ...m, label: m.month.slice(2,4)+'.'+m.month.slice(5,7)+'월' }))
-  const csChart = Object.values(csAmtMap).filter(c=>c.actual+c.pending>0)
+  const months = Object.values(monthlyMap).sort((a, b) => a.month.localeCompare(b.month))
+    .map(m => ({ ...m, label: m.month.slice(2, 4) + '.' + m.month.slice(5, 7) + '월' }))
+  // 고객사 정렬: 확정 관리 대상 먼저, 그다음 금액순
+  const order = ['에드워드','VM','CSK','엑셀리스','하네스','기타']
+  const csChart = Object.values(csAmtMap).filter(c => c.actual + c.pending > 0)
+    .sort((a, b) => {
+      const ia = order.indexOf(a.name), ib = order.indexOf(b.name)
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib)
+    })
 
   return { months, csChart, monthlyMap }
 }
 
-const CS_LIST = ['AXCELIS','Edwards','VM','CSK']
+const CS_LIST = ['에드워드','VM','CSK','엑셀리스','하네스','기타']
 const fmt = v => (v/10000).toFixed(2)
 
 export default function PurchaseDashboard({ embed = false }) {
@@ -123,7 +107,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
-          <p className="text-xs text-slate-400">1~4월 이카운트 · AXCELIS 5월~ 포털 · 타사 업로드 · 억원</p>
+          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=담당자 엑셀 미입고 · 억원</p>
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
         </div>
       </div>
@@ -201,7 +185,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <p className="text-sm font-bold text-slate-700">월별 고객사별 매입 현황 (단위: 억원)</p>
-          <p className="text-xs text-slate-400 mt-0.5">1~4월 이카운트 · AXCELIS 5월~ 포털 · 타사 업로드</p>
+          <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=담당자 엑셀 미입고</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
