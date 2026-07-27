@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { buildLabelZpl } from '../../lib/labelZpl'
 
 const today = () => new Date().toISOString().split('T')[0]
 
@@ -295,72 +296,7 @@ export default function Issue() {
     w.onload = () => { w.focus(); w.print() }
   }
 
-  // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — Zebra Browser Print 경유 ──
-  // 위치값 있는 품목만, 불출표 행순번(NO) 매칭
-  // 출력 단위에 따라 실제 발행할 라벨 목록으로 펼친다.
-  //   합산(sum)  → 1장, 합친 수량
-  //   개별(each) → ceil(수량 / 원포장수량) 장. 각 장에 그 포장의 수량과 n/N 표기
-  // 원포장 수량이 없으면 장수를 알 수 없으므로 1장으로 처리한다(합산과 동일).
-  const MAX_PER_ITEM = 50   // 실수로 수백 장이 나가는 것 방지
-  function expandLabels(rows) {
-    const out = []
-    const capped = []
-    for (const r of rows) {
-      const qty = Number(r.qty) || 0
-      const pack = Number(r.packQty) || 0
-      if (r.labelMode !== 'each' || pack <= 0 || qty <= pack) {
-        out.push({ ...r, labelQty: r.qty, part: '', total: 1 })
-        continue
-      }
-      let n = Math.ceil(qty / pack)
-      if (n > MAX_PER_ITEM) { capped.push({ code: r.std_code, want: n }); n = MAX_PER_ITEM }
-      for (let i = 0; i < n; i++) {
-        const q = i === n - 1 ? qty - pack * (n - 1) : pack
-        out.push({ ...r, labelQty: q, part: `${i + 1}/${n}`, total: n })
-      }
-    }
-    return { labels: out, capped }
-  }
-
-  function buildZpl(rows) {
-    // 203dpi 기준: 1mm ≈ 8dot. 라벨 63.5×31.75mm = 508×254dot
-    // 값이 비면 '^FD^FS' 가 되어 프린터가 거부(No value for name)하므로 빈값은 공백으로.
-    const esc = (s) => {
-      const t = String(s ?? '').replace(/[\^~]/g, ' ').trim()
-      return t === '' ? ' ' : t
-    }
-    return rows.map((r, i) => {
-      const no = esc(r.no ?? (i + 1))
-      const pn = esc(r.std_code)
-      const qty = esc(r.labelQty ?? r.qty)
-      const part = String(r.part || '').replace(/[\^~]/g, ' ')
-      const loc = esc(r.location)
-      return [
-        '^XA',
-        '^CI28',                        // UTF-8 (한글 제조사명 대응)
-        '^PW508', '^LL254', '^LH0,0',
-        // NO 박스 (검정) + 흰 숫자
-        '^FO8,8^GB80,60,60^FS',
-        `^FO8,20^FR^A0N,44,44^FB80,1,0,C^FD${no}^FS`,
-        // 품번
-        '^FO100,10^A0N,24,24^FDPN^FS',
-        `^FO100,34^A0N,40,40^FD${pn}^FS`,
-        // 수량 (우측)
-        `^FO360,10^A0N,24,24^FB140,1,0,R^FDQTY${part ? ` (${part})` : ''}^FS`,
-        `^FO360,34^A0N,44,44^FB140,1,0,R^FD${qty}^FS`,
-        // 구분선
-        '^FO8,90^GB492,1,2^FS',
-        // 제조사·제조사품번
-        '^FO8,100^A0N,20,20^FDMAKER^FS',
-        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc((String(r.maker||'') + ' ' + String(r.makerPn||'')).trim())}^FS`,
-        // 위치 박스 (검정)
-        '^FO372,100^GB128,60,60^FS',
-        '^FO372,104^FR^A0N,18,18^FB128,1,0,C^FDLOC^FS',
-        `^FO372,124^FR^A0N,32,32^FB128,1,0,C^FD${loc}^FS`,
-        '^XZ',
-      ].join('')
-    }).join('')
-  }
+  // 라벨 ZPL 은 lib/labelZpl.js 에서 생성 (DPI 스케일 자동)
 
   function printLabels() {
     // 전장(normal)만 + 위치값이 '라벨'인 것 제외 (라벨/스티커류는 라벨 안 뽑음)
@@ -390,7 +326,7 @@ export default function Issue() {
   // 확인 모달에서 '출력' 누르면 실제 전송
   function sendLabels(labels) {
     setLabelConfirm(null)
-    const zpl = buildZpl(labels)
+    const zpl = buildLabelZpl(labels)
     const BP = window.BrowserPrint
     if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다. (PC에 설치 후 재시도)'); return }
     BP.getDefaultDevice('printer', (device) => {
