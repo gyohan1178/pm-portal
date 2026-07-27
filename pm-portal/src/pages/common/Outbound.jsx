@@ -369,7 +369,8 @@ export default function Outbound() {
       let groupHdr = ''
       if (mt !== lastMt) {
         lastMt = mt
-        groupHdr = `<tr class="grp"><td colspan="9">■ ${MT_LABEL[mt] || mt}</td></tr>`
+        // 열이 10개이므로 colspan 도 10 (9로 두면 그룹 줄마다 빈 칸이 생겨 표가 어긋남)
+        groupHdr = `<tr class="grp"><td colspan="10">■ ${MT_LABEL[mt] || mt}</td></tr>`
       }
       no++
       const nw = (mt === 'field_stock' || mt === 'harness') ? ' nw' : ''   // 전장(현장재고)·하네스는 1줄 제한
@@ -406,7 +407,8 @@ export default function Outbound() {
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><colgroup>
       <col style="width:34px"><col style="width:48px"><col style="width:94px"><col style="width:68px">
-      <col style="width:92px"><col style="width:124px"><col><col style="width:42px"><col style="width:34px"><col style="width:42px">
+      <col style="width:92px"><col style="width:124px"><col>
+      <col style="width:46px"><col style="width:36px"><col style="width:44px">
     </colgroup><thead><tr>
       <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>
       <th>제조사</th><th>제조사품번</th><th>품명</th><th class="c">수량</th><th class="c">단위</th><th class="c">키팅<br>확인</th>
