@@ -36,6 +36,7 @@ const UserManagement = lazy(() => import('./pages/admin/UserManagement'))
 const Backup = lazy(() => import('./pages/admin/Backup'))
 const WeeklyReport = lazy(() => import('./pages/WeeklyReport'))
 const WeeklyUpload = lazy(() => import('./pages/WeeklyUpload'))
+const EcountUpload = lazy(() => import('./pages/EcountUpload'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
 const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
@@ -145,6 +146,7 @@ export default function App() {
         <Route path="backup" element={<AdminRoute profile={profile}><Backup /></AdminRoute>} />
         <Route path="weekly" element={<WeeklyReport />} />
         <Route path="weekly/upload" element={<WeeklyUpload />} />
+        <Route path="ecount" element={<EcountUpload />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />
         <Route path="sales" element={<SalesDashboard />} />
         <Route path="sales/upload" element={<SalesUpload />} />

@@ -98,7 +98,7 @@ export function sectionOfPath(pathname) {
   if (pathname === '/inbound') return 'buy'
   if (pathname === '/sales') return 'sales'
   if (pathname.startsWith('/master') || pathname === '/cost' || pathname.startsWith('/quote') || pathname === '/sales-quote' || pathname === '/erp') return 'master'
-  if (pathname === '/weekly' || pathname === '/purchase-dashboard' || pathname === '/what-if' || pathname === '/insights') return 'report'
+  if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard' || pathname === '/what-if' || pathname === '/insights') return 'report'
   // 고객사 하위 경로: 마지막 세그먼트로 판정
   if (pathname.startsWith('/customer/')) {
     if (pathname.endsWith('/short')) return 'mat'
