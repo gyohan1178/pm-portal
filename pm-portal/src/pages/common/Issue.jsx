@@ -174,13 +174,20 @@ export default function Issue() {
 
   async function saveLabelMode(row, mode, pack) {
     setLabelOv(v => ({ ...v, [row.std_code]: mode }))
-    if (pack !== undefined) setPackOv(v => ({ ...v, [row.std_code]: pack }))
+    const packNum = (pack === '' || pack == null) ? null : Number(pack)
+    if (pack !== undefined) setPackOv(v => ({ ...v, [row.std_code]: packNum }))
     if (!row.item_id) return
     const patch = { label_mode: mode }
-    if (pack !== undefined) patch.pack_qty = pack === '' || pack == null ? null : Number(pack)
+    if (pack !== undefined) patch.pack_qty = packNum
     const { error } = await supabase.from('items').update(patch).eq('id', row.item_id)
-    if (error) toastError('라벨 설정 저장 실패: ' + error.message)
-    else qc.invalidateQueries({ queryKey: ['issueItemMeta'], exact: false })
+    if (error) { toastError('라벨 설정 저장 실패: ' + error.message); return }
+    // itemMeta 캐시를 직접 갱신 (refetch 로 입력값이 날아가지 않게)
+    qc.setQueriesData({ queryKey: ['issueItemMeta'], exact: false }, (old) => {
+      if (!old || typeof old !== 'object') return old
+      const cur = old[row.item_id]
+      if (!cur) return old
+      return { ...old, [row.item_id]: { ...cur, label_mode: mode, ...(pack !== undefined ? { pack_qty: packNum } : {}) } }
+    })
   }
 
   // 위치(inventory.location) 메타 — 라벨/불출표에 표시
@@ -438,7 +445,7 @@ export default function Issue() {
                         </div>
                         {a.labelMode === 'each' && (
                           <input type="number" value={a.packQty ?? ''} placeholder="원포장"
-                            onChange={(e) => setPackOv(v => ({ ...v, [a.std_code]: e.target.value }))}
+                            onChange={(e) => setPackOv(v => ({ ...v, [a.std_code]: e.target.value === '' ? null : Number(e.target.value) }))}
                             onBlur={(e) => saveLabelMode(a, 'each', e.target.value)}
                             title="원포장 수량 (100개입이면 100). 비우면 1장만 출력됩니다"
                             className={`w-14 px-1 py-0.5 text-[10px] text-right border rounded ${

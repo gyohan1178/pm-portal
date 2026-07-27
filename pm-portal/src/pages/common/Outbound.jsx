@@ -61,15 +61,24 @@ export default function Outbound() {
   const packQtyOf   = (b) => packOv[b.item_id] ?? b.items?.pack_qty ?? null
 
   async function saveLabelMode(itemId, mode, pack) {
-    setLabelOv(v => ({ ...v, [itemId]: mode }))
-    if (pack !== undefined) setPackOv(v => ({ ...v, [itemId]: pack }))
     if (!itemId) return
+    // 로컬 오버라이드는 항상 유지한다. (invalidate 후 refetch 가 입력값을 덮어쓰는 문제 방지)
+    setLabelOv(v => ({ ...v, [itemId]: mode }))
+    const packNum = (pack === '' || pack == null) ? null : Number(pack)
+    if (pack !== undefined) setPackOv(v => ({ ...v, [itemId]: packNum }))
+
     const patch = { label_mode: mode }
-    if (pack !== undefined) patch.pack_qty = (pack === '' || pack == null) ? null : Number(pack)
+    if (pack !== undefined) patch.pack_qty = packNum
     const { error } = await supabase.from('items').update(patch).eq('id', itemId)
     if (error) { toastError('라벨 설정 저장 실패: ' + error.message); return }
-    // 저장한 값이 다음 조회에 반영되도록 BOM 캐시 무효화 (안 하면 새로고침 시 옛 값이 보임)
-    qc.invalidateQueries({ queryKey: ['bomForOut'], exact: false })
+
+    // refetch 로 입력값이 날아가지 않도록, 캐시를 직접 갱신한다 (조용히 병합)
+    qc.setQueriesData({ queryKey: ['bomForOut'], exact: false }, (old) => {
+      if (!Array.isArray(old)) return old
+      return old.map(b => b.item_id === itemId
+        ? { ...b, items: { ...b.items, label_mode: mode, ...(pack !== undefined ? { pack_qty: packNum } : {}) } }
+        : b)
+    })
   }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
@@ -604,9 +613,9 @@ export default function Outbound() {
                                   </div>
                                   {lm==='each' && (
                                     <input type="number" value={pq ?? ''} placeholder="원포장"
-                                      onChange={e=>setPackOv(v=>({...v,[item.item_id]:e.target.value}))}
-                                      onBlur={e=>saveLabelMode(item.item_id,'each',e.target.value)}
-                                      title="원포장 수량 (100개입이면 100)"
+                                      onChange={e=>setPackOv(v=>({...v,[item.item_id]: e.target.value === '' ? null : Number(e.target.value)}))}
+                                      onBlur={e=>saveLabelMode(item.item_id, 'each', e.target.value)}
+                                      title="원포장 수량 (100개입이면 100). 입력 후 칸 밖을 클릭하면 저장됩니다"
                                       className={`w-14 px-1 py-0.5 text-[10px] text-right border rounded ${Number(pq)>0?'border-slate-200':'border-amber-400 bg-amber-50'}`}/>
                                   )}
                                   {lm==='each' && Number(pq)>0 && q>0 && (
