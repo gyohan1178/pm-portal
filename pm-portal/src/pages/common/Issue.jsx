@@ -168,6 +168,7 @@ export default function Issue() {
   // 화면에서 바꾸면 즉시 품목 마스터(items)에도 저장되어 다음 불출에서도 유지된다.
   // 위치(location)를 저장해 재사용하는 방식과 동일.
   const [labelOv, setLabelOv] = useState({})   // { std_code: 'sum'|'each' }
+  const [labelConfirm, setLabelConfirm] = useState(null)  // 출력 전 확인 모달 데이터
   const [packOv, setPackOv]   = useState({})   // { std_code: 원포장수량 }
 
   async function saveLabelMode(row, mode, pack) {
@@ -323,14 +324,16 @@ export default function Issue() {
 
   function buildZpl(rows) {
     // 203dpi 기준: 1mm ≈ 8dot. 라벨 63.5×31.75mm = 508×254dot
-    const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')  // ZPL 제어문자 제거
+    // 값이 비면 '^FD^FS' 가 되어 프린터가 거부(No value for name)하므로 빈값은 공백으로.
+    const esc = (s) => {
+      const t = String(s ?? '').replace(/[\^~]/g, ' ').trim()
+      return t === '' ? ' ' : t
+    }
     return rows.map((r, i) => {
-      const no = r.no ?? (i + 1)
+      const no = esc(r.no ?? (i + 1))
       const pn = esc(r.std_code)
       const qty = esc(r.labelQty ?? r.qty)
-      const part = esc(r.part || '')
-      const maker = esc(r.maker)
-      const makerPn = esc(r.makerPn)
+      const part = String(r.part || '').replace(/[\^~]/g, ' ')
       const loc = esc(r.location)
       return [
         '^XA',
@@ -349,7 +352,7 @@ export default function Issue() {
         '^FO8,90^GB492,1,2^FS',
         // 제조사·제조사품번
         '^FO8,100^A0N,20,20^FDMAKER^FS',
-        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${maker} ${makerPn}^FS`,
+        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc((String(r.maker||'') + ' ' + String(r.makerPn||'')).trim())}^FS`,
         // 위치 박스 (검정)
         '^FO372,100^GB128,60,60^FS',
         '^FO372,104^FR^A0N,18,18^FB128,1,0,C^FDLOC^FS',
@@ -372,18 +375,29 @@ export default function Issue() {
     if (capped.length) {
       toastError(`원포장 수량이 작아 라벨이 과다합니다: ${capped.map(c => `${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장으로 제한`)
     }
+    // 바로 출력하지 않고 확인 모달을 띄운다 (개별 출력으로 장수가 불어날 수 있어 오출력 방지)
+    const eachRows = numbered.filter(r => r.labelMode === 'each' && Number(r.packQty) > 0 && Number(r.qty) > Number(r.packQty))
+    setLabelConfirm({
+      labels,
+      itemCount: rows.length,
+      labelCount: labels.length,
+      eachCount: labels.filter(l => l.part).length,
+      eachItems: eachRows.map(r => ({ code: r.std_code, qty: r.qty, pack: r.packQty, n: Math.min(MAX_PER_ITEM, Math.ceil(r.qty / r.packQty)) })),
+      skipped: skipped.length,
+    })
+  }
+
+  // 확인 모달에서 '출력' 누르면 실제 전송
+  function sendLabels(labels) {
+    setLabelConfirm(null)
     const zpl = buildZpl(labels)
-    // Zebra Browser Print (BrowserPrint.js) 필요 — 없으면 안내
     const BP = window.BrowserPrint
-    if (!BP) {
-      toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다. (PC에 설치 후 재시도)')
-      return
-    }
+    if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다. (PC에 설치 후 재시도)'); return }
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
       device.send(zpl, () => {
         const eachN = labels.filter(l => l.part).length
-        toastSuccess(`전장 라벨 ${labels.length}장 전송 (품목 ${rows.length}건${eachN ? ` · 개별출력 ${eachN}장 포함` : ''})${skipped.length ? ` · 제외 ${skipped.length}건` : ''}`)
+        toastSuccess(`전장 라벨 ${labels.length}장 전송${eachN ? ` · 개별출력 ${eachN}장 포함` : ''}`)
       }, (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
@@ -393,6 +407,9 @@ export default function Issue() {
 
   return (
     <div className="p-4 max-w-5xl mx-auto space-y-4">
+      {labelConfirm && (
+        <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendLabels(labelConfirm.labels)} />
+      )}
       <h1 className="text-lg font-bold text-slate-800">📤 출고 작업 <span className="text-xs font-normal text-slate-400">· 장바구니에 담아 한 번에 출고</span></h1>
 
       {/* 담기 영역 */}
@@ -543,6 +560,43 @@ export default function Issue() {
       </div>
 
       {msg && <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap text-slate-600">{msg}</pre>}
+    </div>
+  )
+}
+
+
+// 라벨 출력 전 확인 모달 — 몇 장 나가는지 보고 나서 출력한다 (오출력 방지)
+function LabelConfirmModal({ data, onCancel, onPrint }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-slate-500">품목</span><span className="font-bold">{data.itemCount}건</span></div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-500">출력 매수</span>
+            <span className="text-xl font-bold text-teal-600">{data.labelCount}장</span>
+          </div>
+          {data.eachCount > 0 && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs">
+              <p className="font-bold text-amber-700 mb-1">개별 출력 {data.eachCount}장 포함</p>
+              {data.eachItems.map(it => (
+                <div key={it.code} className="flex justify-between text-amber-700">
+                  <span className="font-mono">{it.code}</span>
+                  <span>{it.qty} / {it.pack}개입 → <b>{it.n}장</b></span>
+                </div>
+              ))}
+            </div>
+          )}
+          {data.skipped > 0 && (
+            <p className="text-xs text-slate-400">제외 {data.skipped}건 (하네스·현장재고·라벨류·미출력)</p>
+          )}
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={onCancel} className="flex-1 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
+          <button onClick={onPrint} className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700">출력</button>
+        </div>
+      </div>
     </div>
   )
 }

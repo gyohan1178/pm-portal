@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.16.1'
+export const APP_VERSION = 'v3.16.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.16.3',
+    date: '2026-07-24',
+    changes: [
+      '라벨 전송 실패(500 No value for name) 수정 — 제조사·위치 등 빈 값이 있는 품목에서 ZPL 필드가 \'^FD^FS\'가 되어 프린터가 거부하던 문제. 빈 값을 공백으로 대체해 해결. 불출·출고 양쪽 적용',
+      '라벨 출력 전 확인 창 추가 — 누르면 바로 출력하지 않고 \'품목 N건 → 라벨 N장\'을 보여주고 출력/취소 선택. 개별 출력으로 장수가 불어난 품목은 품번별로 상세 표시해 오출력 방지. 불출·출고 양쪽 적용',
+    ]
+  },
   {
     version: 'v3.16.1',
     date: '2026-07-24',

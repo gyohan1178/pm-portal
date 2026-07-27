@@ -55,6 +55,7 @@ export default function Outbound() {
   //   sum=합산 / each=개별 / none=미출력
   const [labelOv, setLabelOv] = useState({})   // { item_id: 'sum'|'each'|'none' }
   const [packOv, setPackOv]   = useState({})   // { item_id: 원포장수량 }
+  const [labelConfirm, setLabelConfirm] = useState(null)
   const labelModeOf = (b) => labelOv[b.item_id] ?? b.items?.label_mode ?? 'sum'
   const packQtyOf   = (b) => packOv[b.item_id] ?? b.items?.pack_qty ?? null
 
@@ -168,10 +169,15 @@ export default function Outbound() {
   // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — 불출 화면과 동일 ──
   // 전장(normal)만 + 위치 '라벨' 제외, 수량 입력된 것만
   function buildZplOut(rows) {
-    const esc = (s) => String(s || '').replace(/[\^~]/g, ' ')
+    // 값이 비면 ZPL 필드가 '^FD^FS' 가 되어 프린터가 거부한다(No value for name).
+    // 빈 값은 공백 하나로 대체하고, 제어문자(^ ~)는 제거한다.
+    const esc = (s) => {
+      const t = String(s ?? '').replace(/[\^~]/g, ' ').trim()
+      return t === '' ? ' ' : t
+    }
     return rows.map((r, i) => {
-      const no = r.no ?? (i + 1)
-      const part = esc(r.part || '')
+      const no = esc(r.no ?? (i + 1))
+      const part = String(r.part || '').replace(/[\^~]/g, ' ')
       return [
         '^XA', '^CI28', '^PW508', '^LL254', '^LH0,0',
         '^FO8,8^GB80,60,60^FS',
@@ -182,7 +188,7 @@ export default function Outbound() {
         `^FO360,34^A0N,44,44^FB140,1,0,R^FD${esc(r.labelQty ?? r.qty)}^FS`,
         '^FO8,90^GB492,1,2^FS',
         '^FO8,100^A0N,20,20^FDMAKER^FS',
-        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc(r.maker)} ${esc(r.makerPn)}^FS`,
+        `^FO8,124^A0N,28,28^FB360,1,0,L^FD${esc((String(r.maker||'') + ' ' + String(r.makerPn||'')).trim())}^FS`,
         '^FO372,100^GB128,60,60^FS',
         '^FO372,104^FR^A0N,18,18^FB128,1,0,C^FDLOC^FS',
         `^FO372,124^FR^A0N,32,32^FB128,1,0,C^FD${esc(r.location)}^FS`,
@@ -226,12 +232,33 @@ export default function Outbound() {
     const numbered = rows.map((r, i) => ({ ...r, no: i + 1 }))
     const { labels, capped } = expandOutLabels(numbered)
     if (capped.length) toastError(`원포장 수량이 작아 라벨 과다: ${capped.map(c=>`${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장 제한`)
+
+    // 바로 출력하지 않고 확인 모달 (개별 출력으로 장수가 불어날 수 있어 오출력 방지)
+    const eachRows = numbered.filter(r => {
+      const pack = Number(packQtyOf({ item_id: r.item_id, items: r.items })) || 0
+      return labelModeOf({ item_id: r.item_id, items: r.items }) === 'each' && pack > 0 && Number(r.qty) > pack
+    })
+    setLabelConfirm({
+      labels,
+      itemCount: rows.length,
+      labelCount: labels.length,
+      eachCount: labels.filter(l => l.part).length,
+      eachItems: eachRows.map(r => {
+        const pack = Number(packQtyOf({ item_id: r.item_id, items: r.items }))
+        return { code: r.std_code, qty: r.qty, pack, n: Math.min(MAX_PER_ITEM, Math.ceil(r.qty / pack)) }
+      }),
+      skipped: 0,
+    })
+  }
+
+  function sendOutLabels(labels) {
+    setLabelConfirm(null)
     const zpl = buildZplOut(labels)
     const BP = window.BrowserPrint
     if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다.'); return }
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
-      device.send(zpl, () => toastSuccess(`전장 라벨 ${labels.length}장 전송 (품목 ${rows.length}건)`), (err) => toastError('라벨 전송 실패: ' + err))
+      device.send(zpl, () => toastSuccess(`전장 라벨 ${labels.length}장 전송`), (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
 
@@ -431,6 +458,9 @@ export default function Outbound() {
 
   return (
     <div className="space-y-4">
+      {labelConfirm && (
+        <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendOutLabels(labelConfirm.labels)} />
+      )}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
         {[['process','📤 출고 처리'],['history','📋 출고 현황']].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)}
@@ -735,6 +765,43 @@ export default function Outbound() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+
+// 라벨 출력 전 확인 모달 — 몇 장 나가는지 보고 나서 출력한다 (오출력 방지)
+function LabelConfirmModal({ data, onCancel, onPrint }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
+        <div className="space-y-2 text-sm">
+          <div className="flex justify-between"><span className="text-slate-500">품목</span><span className="font-bold">{data.itemCount}건</span></div>
+          <div className="flex justify-between items-center">
+            <span className="text-slate-500">출력 매수</span>
+            <span className="text-xl font-bold text-teal-600">{data.labelCount}장</span>
+          </div>
+          {data.eachCount > 0 && (
+            <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs">
+              <p className="font-bold text-amber-700 mb-1">개별 출력 {data.eachCount}장 포함</p>
+              {data.eachItems.map(it => (
+                <div key={it.code} className="flex justify-between text-amber-700">
+                  <span className="font-mono">{it.code}</span>
+                  <span>{it.qty} / {it.pack}개입 → <b>{it.n}장</b></span>
+                </div>
+              ))}
+            </div>
+          )}
+          {data.skipped > 0 && (
+            <p className="text-xs text-slate-400">제외 {data.skipped}건</p>
+          )}
+        </div>
+        <div className="flex gap-2 mt-5">
+          <button onClick={onCancel} className="flex-1 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
+          <button onClick={onPrint} className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700">출력</button>
+        </div>
+      </div>
     </div>
   )
 }
