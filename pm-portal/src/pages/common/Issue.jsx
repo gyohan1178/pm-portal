@@ -181,6 +181,8 @@ export default function Issue() {
     if (pack !== undefined) patch.pack_qty = packNum
     const { error } = await supabase.from('items').update(patch).eq('id', row.item_id)
     if (error) { toastError('라벨 설정 저장 실패: ' + error.message); return }
+    const lb = mode === 'sum' ? '합산' : mode === 'each' ? '개별' : '미출력'
+    toastSuccess(`라벨 ${lb}${pack !== undefined && packNum ? ` · 원포장 ${packNum}` : ''} 저장`)
     // itemMeta 캐시를 직접 갱신 (refetch 로 입력값이 날아가지 않게)
     qc.setQueriesData({ queryKey: ['issueItemMeta'], exact: false }, (old) => {
       if (!old || typeof old !== 'object') return old

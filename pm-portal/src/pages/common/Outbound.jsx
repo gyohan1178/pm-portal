@@ -57,8 +57,9 @@ export default function Outbound() {
   const [labelOv, setLabelOv] = useState({})   // { item_id: 'sum'|'each'|'none' }
   const [packOv, setPackOv]   = useState({})   // { item_id: 원포장수량 }
   const [labelConfirm, setLabelConfirm] = useState(null)
-  const labelModeOf = (b) => labelOv[b.item_id] ?? b.items?.label_mode ?? 'sum'
-  const packQtyOf   = (b) => packOv[b.item_id] ?? b.items?.pack_qty ?? null
+  // 로컬 오버라이드 → 행 직속 값 → BOM join 값 → 기본(sum) 순
+  const labelModeOf = (b) => labelOv[b.item_id] ?? b.label_mode ?? b.items?.label_mode ?? 'sum'
+  const packQtyOf   = (b) => packOv[b.item_id] ?? b.pack_qty ?? b.items?.pack_qty ?? null
 
   async function saveLabelMode(itemId, mode, pack) {
     if (!itemId) return
@@ -71,13 +72,15 @@ export default function Outbound() {
     if (pack !== undefined) patch.pack_qty = packNum
     const { error } = await supabase.from('items').update(patch).eq('id', itemId)
     if (error) { toastError('라벨 설정 저장 실패: ' + error.message); return }
+    const label = mode === 'sum' ? '합산' : mode === 'each' ? '개별' : '미출력'
+    toastSuccess(`라벨 ${label}${pack !== undefined && packNum ? ` · 원포장 ${packNum}` : ''} 저장`)
 
     // refetch 로 입력값이 날아가지 않도록, 캐시를 직접 갱신한다 (조용히 병합)
     qc.setQueriesData({ queryKey: ['bomForOut'], exact: false }, (old) => {
       if (!Array.isArray(old)) return old
       return old.map(b => b.item_id === itemId
         ? { ...b, items: { ...b.items, label_mode: mode, ...(pack !== undefined ? { pack_qty: packNum } : {}) } }
-        : b)
+        : b)   // outOrder 는 bomItems 에서 파생되므로 items 만 갱신하면 함께 반영됨
     })
   }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
@@ -295,6 +298,9 @@ export default function Outbound() {
         maker: b.items?.manufacturer || '',
         makerPn: b.items?.manufacturer_code || '',
         location: locMeta[id] || '',
+        // 라벨 출력 단위 — 행에 직접 담아야 새로고침 후에도 값이 살아난다
+        label_mode: b.items?.label_mode ?? null,
+        pack_qty: b.items?.pack_qty ?? null,
       }
       merged[id].bom_qty += (b.qty_per_unit || 0)
     })

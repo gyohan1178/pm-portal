@@ -1,10 +1,13 @@
-export const APP_VERSION = 'v3.17.0'
+export const APP_VERSION = 'v3.17.1'
 
 export const CHANGELOG = [
   {
-    version: 'v3.17.0',
+    version: 'v3.17.1',
     date: '2026-07-24',
     changes: [
+      '출고 처리 라벨 설정이 새로고침하면 항상 합산으로 돌아가던 문제 수정 — DB 저장은 정상이었으나(204), 화면 목록을 만들 때 라벨 설정 값을 담지 않아 항상 기본값으로 표시되던 것. 품목 행에 label_mode·pack_qty를 직접 담도록 수정',
+      '라벨 설정 저장 시 알림 표시 — 위치 저장과 동일하게 \'라벨 개별 · 원포장 10 저장\' 식으로 확인 가능',
+      '※ 미출력(none) 저장 400 오류는 items_label_mode_chk 제약에 none 추가로 해결됨 (SQL 별도 실행)',
       '매입 대시보드를 ecount 기준으로 단순화 — 확정매입=ecount 회계확정치, 예상매입=담당자 엑셀 미입고분(입고예정). 기존의 confirmed_purchases·포털·RPC 짜깁기를 제거하고 두 소스로 정리',
       '고객사 분류를 ecount와 통일(에드워드/VM/CSK/엑셀리스/하네스/기타). 하네스·기타는 확정만 집계되고 예상은 없음',
       'SQL: pm_weekly_pending_monthly.sql 선행 필요 (예상매입 집계 함수)',
