@@ -184,12 +184,34 @@ export default function Outbound() {
   // ── ZM400 라벨 출력 (63.5×31.75mm, gap 3mm) — 불출 화면과 동일 ──
   // 라벨 ZPL 은 lib/labelZpl.js 에서 생성 (DPI 스케일 자동)
 
+  // 출력 단위에 따라 라벨 목록으로 전개 (합산 1장 / 개별 ceil(수량/원포장) 장)
+  const MAX_PER_ITEM = 50   // 실수로 수백 장이 나가는 것 방지
+  function expandOutLabels(rows) {
+    const out = []; const capped = []
+    for (const r of rows) {
+      const mode = labelModeOf(r)
+      const qty = Number(r.qty) || 0
+      const pack = Number(packQtyOf(r)) || 0
+      if (mode !== 'each' || pack <= 0 || qty <= pack) {
+        out.push({ ...r, labelQty: r.qty, part: '', total: 1 })
+        continue
+      }
+      let n = Math.ceil(qty / pack)
+      if (n > MAX_PER_ITEM) { capped.push({ code: r.std_code, want: n }); n = MAX_PER_ITEM }
+      for (let i = 0; i < n; i++) {
+        const q = i === n - 1 ? qty - pack * (n - 1) : pack
+        out.push({ ...r, labelQty: q, part: `${i + 1}/${n}`, total: n })
+      }
+    }
+    return { labels: out, capped }
+  }
+
   function printOutLabels() {
     // 전장(normal)만 + 위치'라벨' 제외 + 미출력(none) 제외 + 수량 입력된 것만
     const rows = outOrder
       .filter(r => mtOf(r.item_id) === 'normal'
         && String(r.location||'').trim() !== '라벨'
-        && labelModeOf({ item_id: r.item_id, items: r.items }) !== 'none'
+        && labelModeOf(r) !== 'none'
         && Number(outQtys[r.item_id]||0) > 0)
       .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0) }))
     if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량 입력. 현장재고·하네스·라벨류·미출력 제외).'); return }
@@ -200,8 +222,8 @@ export default function Outbound() {
 
     // 바로 출력하지 않고 확인 모달 (개별 출력으로 장수가 불어날 수 있어 오출력 방지)
     const eachRows = numbered.filter(r => {
-      const pack = Number(packQtyOf({ item_id: r.item_id, items: r.items })) || 0
-      return labelModeOf({ item_id: r.item_id, items: r.items }) === 'each' && pack > 0 && Number(r.qty) > pack
+      const pack = Number(packQtyOf(r)) || 0
+      return labelModeOf(r) === 'each' && pack > 0 && Number(r.qty) > pack
     })
     setLabelConfirm({
       labels,
@@ -209,7 +231,7 @@ export default function Outbound() {
       labelCount: labels.length,
       eachCount: labels.filter(l => l.part).length,
       eachItems: eachRows.map(r => {
-        const pack = Number(packQtyOf({ item_id: r.item_id, items: r.items }))
+        const pack = Number(packQtyOf(r))
         return { code: r.std_code, qty: r.qty, pack, n: Math.min(MAX_PER_ITEM, Math.ceil(r.qty / pack)) }
       }),
       skipped: 0,

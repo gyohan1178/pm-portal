@@ -307,6 +307,31 @@ export default function Issue() {
 
   // 라벨 ZPL 은 lib/labelZpl.js 에서 생성 (DPI 스케일 자동)
 
+  // 출력 단위에 따라 실제 발행할 라벨 목록으로 펼친다.
+  //   합산(sum)  → 1장, 합친 수량
+  //   개별(each) → ceil(수량 / 원포장수량) 장. 각 장에 그 포장의 수량과 n/N 표기
+  // 원포장 수량이 없으면 장수를 알 수 없으므로 1장으로 처리한다(합산과 동일).
+  const MAX_PER_ITEM = 50   // 실수로 수백 장이 나가는 것 방지
+  function expandLabels(rows) {
+    const out = []
+    const capped = []
+    for (const r of rows) {
+      const qty = Number(r.qty) || 0
+      const pack = Number(r.packQty) || 0
+      if (r.labelMode !== 'each' || pack <= 0 || qty <= pack) {
+        out.push({ ...r, labelQty: r.qty, part: '', total: 1 })
+        continue
+      }
+      let n = Math.ceil(qty / pack)
+      if (n > MAX_PER_ITEM) { capped.push({ code: r.std_code, want: n }); n = MAX_PER_ITEM }
+      for (let i = 0; i < n; i++) {
+        const q = i === n - 1 ? qty - pack * (n - 1) : pack
+        out.push({ ...r, labelQty: q, part: `${i + 1}/${n}`, total: n })
+      }
+    }
+    return { labels: out, capped }
+  }
+
   function printLabels() {
     // 전장(normal)만 + 위치값이 '라벨'인 것 제외 (라벨/스티커류는 라벨 안 뽑음)
     const isLabelLoc = (r) => String(r.location || '').trim() === '라벨'

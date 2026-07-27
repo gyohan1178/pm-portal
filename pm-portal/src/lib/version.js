@@ -1,10 +1,11 @@
-export const APP_VERSION = 'v3.17.1'
+export const APP_VERSION = 'v3.17.2'
 
 export const CHANGELOG = [
   {
-    version: 'v3.17.1',
+    version: 'v3.17.2',
     date: '2026-07-24',
     changes: [
+      '라벨 출력 시 \'expandOutLabels is not defined\' 오류 수정 — ZPL 생성을 공용 모듈로 분리하는 과정에서 라벨 장수 계산 함수가 함께 삭제됐던 것. 불출·출고 양쪽 복구',
       '출고 처리 라벨 설정이 새로고침하면 항상 합산으로 돌아가던 문제 수정 — DB 저장은 정상이었으나(204), 화면 목록을 만들 때 라벨 설정 값을 담지 않아 항상 기본값으로 표시되던 것. 품목 행에 label_mode·pack_qty를 직접 담도록 수정',
       '라벨 설정 저장 시 알림 표시 — 위치 저장과 동일하게 \'라벨 개별 · 원포장 10 저장\' 식으로 확인 가능',
       '※ 미출력(none) 저장 400 오류는 items_label_mode_chk 제약에 none 추가로 해결됨 (SQL 별도 실행)',
