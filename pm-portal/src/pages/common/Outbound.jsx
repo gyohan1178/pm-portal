@@ -208,20 +208,22 @@ export default function Outbound() {
 
   function printOutLabels() {
     // 전장(normal)만 + 위치'라벨' 제외 + 미출력(none) 제외 + 수량 입력된 것만
-    const rows = outOrder
+    // ★ 라벨 NO 는 화면 목록(outItems)의 순번과 일치해야 현장에서 불출표와 대조된다.
+    //   출력 대상만 다시 1,2,3... 매기면 하네스·미출력이 섞였을 때 번호가 어긋난다.
+    const noMap = new Map(outItems.map((o, i) => [o.item_id, i + 1]))
+    const rows = outItems
       .filter(r => mtOf(r.item_id) === 'normal'
         && String(r.location||'').trim() !== '라벨'
         && labelModeOf(r) !== 'none'
         && Number(outQtys[r.item_id]||0) > 0)
-      .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0) }))
+      .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0), no: noMap.get(r.item_id) }))
     if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량 입력. 현장재고·하네스·라벨류·미출력 제외).'); return }
 
-    const numbered = rows.map((r, i) => ({ ...r, no: i + 1 }))
-    const { labels, capped } = expandOutLabels(numbered)
+    const { labels, capped } = expandOutLabels(rows)
     if (capped.length) toastError(`원포장 수량이 작아 라벨 과다: ${capped.map(c=>`${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장 제한`)
 
     // 바로 출력하지 않고 확인 모달 (개별 출력으로 장수가 불어날 수 있어 오출력 방지)
-    const eachRows = numbered.filter(r => {
+    const eachRows = rows.filter(r => {
       const pack = Number(packQtyOf(r)) || 0
       return labelModeOf(r) === 'each' && pack > 0 && Number(r.qty) > pack
     })

@@ -335,18 +335,24 @@ export default function Issue() {
   function printLabels() {
     // 전장(normal)만 + 위치값이 '라벨'인 것 제외 (라벨/스티커류는 라벨 안 뽑음)
     const isLabelLoc = (r) => String(r.location || '').trim() === '라벨'
-    const rows = itemRows.filter(r => !excluded.has(r.std_code) && r.makeType === 'normal' && !isLabelLoc(r) && r.labelMode !== 'none')
-    const skipped = itemRows.filter(r => !excluded.has(r.std_code) && (r.makeType !== 'normal' || isLabelLoc(r)))
-    if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류 제외).'); return }
 
-    // 불출표 행순번(NO)을 먼저 매긴 뒤 출력 단위에 따라 펼친다
-    const numbered = rows.map((r, i) => ({ ...r, no: i + 1 }))
-    const { labels, capped } = expandLabels(numbered)
+    // ★ 라벨 NO 는 불출표(printIssueSheet)의 행번호와 일치해야 현장에서 대조된다.
+    //   출력 대상만 다시 1,2,3... 매기면 하네스·미출력이 빠진 만큼 번호가 어긋난다.
+    const sheetRows = itemRows.filter(r => !excluded.has(r.std_code))
+    const noMap = new Map(sheetRows.map((r, i) => [r.std_code, i + 1]))
+
+    const rows = sheetRows
+      .filter(r => r.makeType === 'normal' && !isLabelLoc(r) && r.labelMode !== 'none')
+      .map(r => ({ ...r, no: noMap.get(r.std_code) }))
+    const skipped = sheetRows.filter(r => r.makeType !== 'normal' || isLabelLoc(r) || r.labelMode === 'none')
+    if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류·미출력 제외).'); return }
+
+    const { labels, capped } = expandLabels(rows)
     if (capped.length) {
       toastError(`원포장 수량이 작아 라벨이 과다합니다: ${capped.map(c => `${c.code} ${c.want}장`).join(', ')} → ${MAX_PER_ITEM}장으로 제한`)
     }
     // 바로 출력하지 않고 확인 모달을 띄운다 (개별 출력으로 장수가 불어날 수 있어 오출력 방지)
-    const eachRows = numbered.filter(r => r.labelMode === 'each' && Number(r.packQty) > 0 && Number(r.qty) > Number(r.packQty))
+    const eachRows = rows.filter(r => r.labelMode === 'each' && Number(r.packQty) > 0 && Number(r.qty) > Number(r.packQty))
     setLabelConfirm({
       labels,
       itemCount: rows.length,
@@ -445,11 +451,15 @@ export default function Issue() {
               <th className="px-2 py-1.5 text-center w-10" title="체크 = 불출표에서 제외">제외</th>
             </tr></thead>
             <tbody>
-              {itemRows.map((a, i) => {
+              {(() => {
+                // 화면 NO 를 불출표·라벨과 같은 기준으로 매긴다 (제외 항목은 번호 없음)
+                let n = 0
+                return itemRows.map((a, i) => {
                 const ex = excluded.has(a.std_code)
+                const sheetNo = ex ? null : ++n
                 return (
                 <tr key={a.std_code} className={`border-t border-slate-100 ${ex ? 'opacity-40 bg-slate-50' : a.short > 0 ? 'bg-red-50/40' : ''}`}>
-                  <td className="px-2 py-1.5 text-center text-slate-400">{i + 1}</td>
+                  <td className="px-2 py-1.5 text-center text-slate-400">{sheetNo ?? '—'}</td>
                   <td className="px-2 py-1.5 text-slate-500 max-w-[90px] truncate">{a.maker || '—'}</td>
                   <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>
@@ -490,7 +500,8 @@ export default function Issue() {
                     <input type="checkbox" checked={ex} onChange={() => setExcluded(p => { const n = new Set(p); n.has(a.std_code) ? n.delete(a.std_code) : n.add(a.std_code); return n })} title="불출표에서 제외" />
                   </td>
                 </tr>
-              )})}
+              )})
+              })()}
             </tbody>
           </table>
         ) : (
