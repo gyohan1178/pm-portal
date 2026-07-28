@@ -45,34 +45,44 @@ export default function SalesQuote() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
           <p className="text-xs text-slate-400">
-고객사에 제출할 견적서를 작성합니다. 업체에서 받은 매입단가는 <b>매입견적</b> 탭에서 등록하세요.
+고객사에 제출할 견적서를 작성하고 지난 견적을 조회합니다. 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+            {[['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
+              <button key={k} onClick={() => setTab(k)}
+                className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                {l}
+              </button>
+            ))}
+          </div>
           <select value={code} onChange={(e) => setCsCode(e.target.value)}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
             {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
-          <Field label="매입환율">
+          {tab === 'write' && <Field label="매입환율">
             <input type="number" value={buyRate} onChange={(e) => setBuyRate(e.target.value)}
               className="w-24 px-2 py-1.5 text-sm text-right rounded border border-slate-200" />
-          </Field>
-          <Field label="판매환율">
+          </Field>}
+          {tab === 'write' && <Field label="판매환율">
             <input type="number" value={sellRate} onChange={(e) => setSellRate(e.target.value)}
               className="w-24 px-2 py-1.5 text-sm text-right rounded border border-slate-200" />
-          </Field>
+          </Field>}
         </div>
       </div>
 
+      {tab === 'history' ? <QuoteHistory /> : (
       <QuoteSheet
         fixedKind="sales"
         customerId={cs?.id}
         customerName={custList.find((c) => c.id === code)?.name || ''}
         cfg={cfg}
       />
+      )}
 
       {/* 최근 등록분 — 중복 입력 방지용 */}
-      {!!recent.length && (
+      {tab === 'write' && !!recent.length && (
         <div className="bg-white rounded-xl border border-slate-200 p-3">
           <div className="text-xs font-bold text-slate-500 mb-2">최근 작성한 매출견적</div>
           <div className="overflow-x-auto">

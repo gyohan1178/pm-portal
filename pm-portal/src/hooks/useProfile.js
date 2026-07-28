@@ -95,13 +95,18 @@ export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search') return 'mat'
-  if (pathname === '/inbound') return 'buy'
-  if (pathname === '/sales') return 'sales'
-  if (pathname.startsWith('/master') || pathname === '/cost' || pathname.startsWith('/quote') || pathname === '/sales-quote' || pathname === '/erp') return 'master'
-  if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard' || pathname === '/what-if' || pathname === '/insights') return 'report'
+  // 구매 — 입고·품목 단가 등록(/quote)
+  if (pathname === '/inbound' || pathname === '/quote') return 'buy'
+  // 영업 — 매출견적(+견적이력 내부 탭)
+  if (pathname === '/sales-quote' || pathname === '/quote-history') return 'sales'
+  // 분석 — 원가분석이 여기로 이동
+  if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard'
+      || pathname === '/sales' || pathname === '/cost'
+      || pathname === '/what-if' || pathname === '/insights') return 'report'
+  if (pathname.startsWith('/master') || pathname === '/erp') return 'master'
   // 고객사 하위 경로: 마지막 세그먼트로 판정
   if (pathname.startsWith('/customer/')) {
-    if (pathname.endsWith('/short')) return 'mat'
+    if (pathname.endsWith('/short')) return 'buy'   // 자재 상황판 — 부족 확인 후 발주로 이어지므로 구매
     if (pathname.endsWith('/purchase')) return 'buy'
     if (pathname.endsWith('/cpo') || pathname.endsWith('/forecast')) return 'sales'
     if (pathname.endsWith('/bom') || pathname.endsWith('/reqbom')) return 'master'

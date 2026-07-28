@@ -147,27 +147,28 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'mat') && (
         <CollapseSection label="📦 자재" sKey="mat">
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
-          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
-          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>출고 처리 (BOM·불출표)</MenuItem>
-          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>불출 장바구니 (호기별)</MenuItem>
+          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
+          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>부분 불출 (호기별 키팅)</MenuItem>
         </CollapseSection>
         )}
 
-        {/* 🛒 구매 */}
+        {/* 🛒 구매 — 부족 확인부터 발주·입고·단가까지 한 흐름 */}
         {canAccessSection(profile, 'buy') && (
         <CollapseSection label="🛒 구매" sKey="buy">
           <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
-          <MenuItem to="/inbound"   icon="📥" onNavigate={onNavigate}>입고</MenuItem>
+          <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
+          <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
+          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
         </CollapseSection>
         )}
 
         {/* 🤝 영업 */}
         {canAccessSection(profile, 'sales') && (
         <CollapseSection label="🤝 영업" sKey="sales">
-          <MenuItem to={`/customer/${pcs}/cpo`}      icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
+          <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
+          <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
-          <MenuItem to="/sales" icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
         </CollapseSection>
         )}
 
@@ -177,36 +178,38 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
-          <MenuItem to="/board"     icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
-          <MenuItem to="/drawings"  icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
+          <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
+          <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
         </CollapseSection>
         )}
 
         {/* 📊 분석 */}
         {canAccessSection(profile, 'report') && (
         <CollapseSection label="📊 분석" sKey="report" defaultOpen={false}>
-          <MenuItem to="/weekly"              icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
-          <MenuItem to="/ecount"              icon="💳" onNavigate={onNavigate}>확정매입 (ecount)</MenuItem>
-          <MenuItem to="/sales"               icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
-          <MenuItem to="/purchase-dashboard"  icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
-          <MenuItem to="/what-if"             icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
-          <MenuItem to="/insights"            icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
+          <MenuItem to="/weekly"             icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
+          <MenuItem to="/purchase-dashboard" icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
+          <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
+          <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
+          <MenuItem to="/what-if"            icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
+          <MenuItem to="/insights"           icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
         </CollapseSection>
         )}
 
-        {/* ⚙️ 기초자료 */}
+        {/* ⚙️ 기초자료 — 자주 보는 마스터만 */}
         {canAccessSection(profile, 'master') && (
         <CollapseSection label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
-          <MenuItem to="/master/items"   icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
-          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
-          <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
-          <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
+          <MenuItem to="/master/items" icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
           <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>
-          <MenuItem to="/cost"          icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
-          <MenuItem to="/sales-quote"   icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
-          <MenuItem to="/quote"         icon="📥" onNavigate={onNavigate}>매입견적</MenuItem>
-          <MenuItem to="/quote-history" icon="📋" onNavigate={onNavigate}>견적 이력</MenuItem>
-          <MenuItem to="/erp"       icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
+          <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
+        </CollapseSection>
+        )}
+
+        {/* 🔧 기타 — 가끔 쓰는 것. 기본 접힘 */}
+        {canAccessSection(profile, 'master') && (
+        <CollapseSection label="🔧 기타" sKey="etc" defaultOpen={false}>
+          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
+          <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
+          <MenuItem to="/erp"    icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
           {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
         </CollapseSection>
         )}
