@@ -398,7 +398,8 @@ export default function Outbound() {
     .loc{font-weight:bold;font-family:consolas;white-space:nowrap}
     .code{font-family:consolas;white-space:nowrap;overflow:hidden;text-overflow:clip}
     .cat{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .nm{line-height:1.3;word-break:break-word}
+    .nm{line-height:1.3;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    td{max-height:34px}
     .nw{white-space:nowrap;overflow:hidden;text-overflow:clip}
     tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
     .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
@@ -406,9 +407,9 @@ export default function Outbound() {
     <div class="head"><h1>${title}</h1>
     <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
     <table><colgroup>
-      <col style="width:34px"><col style="width:48px"><col style="width:94px"><col style="width:68px">
-      <col style="width:92px"><col style="width:124px"><col>
-      <col style="width:46px"><col style="width:36px"><col style="width:44px">
+      <col style="width:3%"><col style="width:5%"><col style="width:11%"><col style="width:7%">
+      <col style="width:10%"><col style="width:14%"><col style="width:33%">
+      <col style="width:6%"><col style="width:5%"><col style="width:6%">
     </colgroup><thead><tr>
       <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>
       <th>제조사</th><th>제조사품번</th><th>품명</th><th class="c">수량</th><th class="c">단위</th><th class="c">키팅<br>확인</th>

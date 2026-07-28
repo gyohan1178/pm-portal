@@ -160,7 +160,7 @@ export default function Issue() {
     enabled: metaIds.length > 0,
     queryFn: async () => {
       const { data } = await supabase.from('items')
-        .select('id,manufacturer,manufacturer_code,label_mode,pack_qty').in('id', metaIds)
+        .select('id,name,manufacturer,manufacturer_code,label_mode,pack_qty').in('id', metaIds)
       return Object.fromEntries((data || []).map(i => [i.id, i]))
     },
   })
@@ -241,6 +241,8 @@ export default function Issue() {
       ...a,
       maker: itemMeta[a.item_id]?.manufacturer || '',
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
+      // 장바구니 담을 당시 품명이 비어 있던 건은 품목 마스터에서 보충
+      name: a.name || itemMeta[a.item_id]?.name || '',
       location: locMeta[a.item_id] || '',
       makeType: mtMeta[a.item_id] || 'normal',
       // 라벨 출력 단위 — 품목 마스터 기본값. 미설정이면 합산
@@ -292,8 +294,8 @@ export default function Issue() {
     </div>
     <table>
       <thead><tr>
-        <th class="c" style="width:36px">No</th><th style="width:110px">제조사</th><th style="width:130px">제조사품번</th>
-        <th style="width:120px">기준코드</th><th>품명</th><th class="c" style="width:60px">수량</th><th class="chk">키팅<br>확인</th>
+        <th class="c" style="width:5%">No</th><th style="width:15%">제조사</th><th style="width:18%">제조사품번</th>
+        <th style="width:16%">기준코드</th><th style="width:31%">품명</th><th class="c" style="width:8%">수량</th><th class="chk" style="width:7%">키팅<br>확인</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
