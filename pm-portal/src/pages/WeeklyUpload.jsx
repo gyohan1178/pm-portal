@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { toast, toastError, toastSuccess } from '../lib/toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import EcountUpload from './EcountUpload'
 import * as XLSX from 'xlsx'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
@@ -169,6 +170,8 @@ function autoClassify(submitter, noteVal, fileName) {
 }
 
 export default function WeeklyUpload() {
+  // 확정매입(ecount)은 주 1회 올리는 작업이라 주간보고 안에 탭으로 둔다.
+  const [mainTab, setMainTab] = useState('weekly')   // weekly=담당자 엑셀 / ecount=확정매입
   const qc = useQueryClient()
   const [weekOffset, setWeekOffset] = useState(0)
   const week = getWeekRange(weekOffset)
@@ -295,6 +298,18 @@ export default function WeeklyUpload() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
+      {/* 담당자 엑셀(예상) / ecount(확정) */}
+      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+        {[['weekly', '📄 주간 업무보고'], ['ecount', '💳 확정매입 (ecount)']].map(([k, l]) => (
+          <button key={k} onClick={() => setMainTab(k)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg ${mainTab === k
+              ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'ecount' ? <EcountUpload /> : (<>
       {/* 주차 선택 */}
       <div className="flex items-center gap-2">
         <button onClick={()=>setWeekOffset(v=>v-1)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">← 전주</button>
@@ -468,6 +483,7 @@ export default function WeeklyUpload() {
           {submitMut.isPending?'제출 중...':'📤 주간보고 제출'}
         </button>
       </div>
+      </>)}
     </div>
   )
 }
