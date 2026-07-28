@@ -19,10 +19,12 @@ const FORECAST_CS = ['에드워드','VM','CSK','엑셀리스']
 async function fetchDashboard() {
   const year = new Date().getFullYear()
 
-  // 확정매입 = ecount (회계 확정치) / 예상매입 = 담당자 엑셀 미입고분(weekly plan)
+  // 확정매입 = ecount (회계 확정치)
+  // 예상매입 = 발주 미입고 잔량. 납기약속일(promise_date)이 곧 입고 예정일.
+  //   주간보고 plan 은 보고 시점이 박제돼 입고 후에도 남아 이중 계산됐으므로 사용하지 않는다.
   const [ecountRes, pendingRes] = await Promise.all([
     supabase.rpc('pm_ecount_monthly', { p_year: year }),
-    supabase.rpc('pm_weekly_pending_monthly', { p_year: year }).then(r => r).catch(() => ({ data: [] })),
+    supabase.rpc('pm_pending_purchase_monthly', { p_year: year }).then(r => r).catch(() => ({ data: [] })),
   ])
 
   const monthlyMap = {}
@@ -49,7 +51,7 @@ async function fetchDashboard() {
     addAmt(m, r.customer || '기타', amt, 'actual')
   })
 
-  // 예상 (미입고, 담당자 엑셀) — 예상 관리 대상 고객사만
+  // 예상 (발주 미입고 잔량) — 입고 예정일이 속한 달에 반영
   ;(pendingRes.data || []).forEach(r => {
     const m = `${r.year}-${String(r.month).padStart(2, '0')}`
     const amt = Math.round((r.pending_amt || 0) / 10000)
@@ -107,7 +109,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
-          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=담당자 엑셀 미입고 · 억원</p>
+          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=발주 미입고 잔량(입고 예정일 기준) · 억원</p>
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
         </div>
       </div>
@@ -185,7 +187,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="rounded-xl border border-slate-200 overflow-hidden">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <p className="text-sm font-bold text-slate-700">월별 고객사별 매입 현황 (단위: 억원)</p>
-          <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=담당자 엑셀 미입고</p>
+          <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=발주 미입고 잔량</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
