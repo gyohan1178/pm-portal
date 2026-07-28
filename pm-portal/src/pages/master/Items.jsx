@@ -8,7 +8,7 @@ import { ResizableTable } from '../../components/ResizableTable'
 import VendorPicker from '../../components/VendorPicker'
 import * as XLSX from 'xlsx'
 
-const EMPTY = { std_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false }
+const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false }
 
 // JS코드 prefix → 세부 분류명
 const CAT_LIST = ['케이블','와이어','커넥터','차단기','전장','판금','어셈블리','하네스','하드웨어','기타']
@@ -115,6 +115,7 @@ export default function Items() {
     mutationFn: async (data) => {
       const payload = {
         std_code: data.std_code,
+        js_code: data.js_code || null,
         name: data.name,
         type: data.type,
         unit: data.unit,
@@ -147,6 +148,28 @@ export default function Items() {
     mutationFn: async (id) => { const { error } = await supabase.from('items').delete().eq('id', id); if (error) throw error },
     onSuccess: () => qc.invalidateQueries(['items']),
   })
+
+  // 기준코드 채번 — 분류를 고르면 다음 번호를 제안한다.
+  // items 와 pm_code_map(ecount 매핑) 양쪽 최대값을 보므로 번호가 겹치지 않는다.
+  const { data: nextCodes = [] } = useQuery({
+    queryKey: ['nextJsCodes', showForm],
+    enabled: !!showForm,
+    staleTime: 0,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_next_js_codes')
+      if (error) return []
+      return data || []
+    },
+  })
+
+  async function pickNextCode(cat) {
+    if (!cat) return
+    // 저장 직전이 아니라도 최신값을 다시 조회해 중복을 줄인다
+    const { data, error } = await supabase.rpc('pm_next_js_code', { p_cat: cat })
+    if (error) { toastError('채번 실패: ' + error.message); return }
+    setForm(v => ({ ...v, js_code: data }))
+    toastSuccess(`기준코드 ${data} 부여`)
+  }
 
   const addCodeMut = useMutation({
     mutationFn: async ({ itemId, customer_id, customer_code, customer_name }) => {
@@ -187,7 +210,7 @@ export default function Items() {
 
   function handleEdit(item) {
     setForm({
-      std_code: item.std_code||'', name: item.name||'', type: item.type||'자재',
+      std_code: item.std_code||'', js_code: item.js_code||'', name: item.name||'', type: item.type||'자재',
       proc_order: !!item.proc_order,
       unit: item.unit||'EA', spec: item.spec||'',
       lt_weeks: item.lt_weeks||'', safety_stock: item.safety_stock||'',
@@ -418,9 +441,27 @@ export default function Items() {
           <p className="text-xs font-bold text-slate-700">{editId ? '품목 수정' : '신규 품목 등록'}</p>
           <div className="grid grid-cols-4 gap-3">
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">기준코드 *</label>
-              <input value={form.std_code} onChange={f('std_code')} placeholder="기준코드"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+              <label className="block text-xs font-bold text-slate-500 mb-1">고객사 코드 *</label>
+              <input value={form.std_code} onChange={f('std_code')} placeholder="AX-160003770"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">
+                기준코드 (JS)
+                <span className="ml-1 font-normal text-slate-400">분류 선택 시 자동 부여</span>
+              </label>
+              <div className="flex gap-1">
+                <input value={form.js_code} onChange={f('js_code')} placeholder="JS-CA0527"
+                  className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                <select onChange={e => { pickNextCode(e.target.value); e.target.value = '' }} defaultValue=""
+                  title="분류를 고르면 다음 번호가 자동으로 들어갑니다"
+                  className="px-2 py-2 text-xs border border-indigo-200 bg-indigo-50 text-indigo-700 rounded-lg font-bold">
+                  <option value="">채번</option>
+                  {nextCodes.map(c => (
+                    <option key={c.code} value={c.code}>{c.code} {c.label} → {c.next_code}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <div className="col-span-2">
               <label className="block text-xs font-bold text-slate-500 mb-1">품명 *</label>
