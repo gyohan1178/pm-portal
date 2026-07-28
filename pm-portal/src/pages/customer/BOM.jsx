@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
+import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
@@ -408,6 +409,51 @@ export default function BOM() {
     queryFn: () => fetchDrawingRevs(bomDetail.map(b => b.items?.std_code)),
   })
 
+  // ── BOM 행 편집 ─────────────────────────────────
+  // 대체품 사용 등으로 등록 후 수정이 필요한 경우.
+  // 재업로드하면 어셈블리 전체가 갈아끼워지므로, 여기서 고친 내용은
+  // 같은 리포트를 다시 올리면 사라진다. (대체품은 보통 리포트에 없으므로 주의)
+  const canEdit = useCanEdit()
+  const [editRow, setEditRow] = useState(null)      // 편집 중인 bom 행
+  const [addOpen, setAddOpen] = useState(false)
+  const [pnHit, setPnHit] = useState(null)          // 품번 조회 결과
+
+  // 품번으로 items 조회 (AX- 접두 자동 처리)
+  async function lookupItem(code) {
+    const raw = String(code || '').trim().toUpperCase()
+    if (!raw) return null
+    const cand = raw.startsWith('AX-') ? [raw] : [`AX-${raw}`, raw]
+    for (const c of cand) {
+      const { data } = await supabase.from('items')
+        .select('id, std_code, name, unit, manufacturer, manufacturer_code, category, type')
+        .eq('std_code', c).maybeSingle()
+      if (data) return data
+    }
+    return null
+  }
+
+  const rowMut = useMutation({
+    mutationFn: async ({ action, row, patch }) => {
+      if (action === 'update') {
+        const { error } = await supabase.from('bom').update(patch).eq('id', row.id)
+        if (error) throw error
+      } else if (action === 'delete') {
+        const { error } = await supabase.from('bom').delete().eq('id', row.id)
+        if (error) throw error
+      } else if (action === 'insert') {
+        const { error } = await supabase.from('bom').insert(patch)
+        if (error) throw error
+      }
+    },
+    onSuccess: (_, v) => {
+      qc.invalidateQueries({ queryKey: ['bomDetail'], exact: false })
+      qc.invalidateQueries({ queryKey: ['ca-bom'], exact: false })
+      setEditRow(null); setAddOpen(false); setPnHit(null)
+      toastSuccess(v.action === 'delete' ? '행을 삭제했습니다' : v.action === 'insert' ? '행을 추가했습니다' : '수정했습니다')
+    },
+    onError: (e) => toastError('BOM 수정 실패: ' + e.message),
+  })
+
   const deleteMut = useMutation({
     mutationFn: ({ customerId, projectId }) => deleteAssembly(customerId, projectId),
     onSuccess: () => {
@@ -744,9 +790,21 @@ export default function BOM() {
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
                 </div>
               </div>
-              <input value={detailSearch} onChange={e=>setDetailSearch(e.target.value)}
-                placeholder="코드·품명·제조사·제조사코드 검색"
-                className="w-full sm:w-80 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+              <div className="flex flex-wrap items-center gap-2">
+                <input value={detailSearch} onChange={e=>setDetailSearch(e.target.value)}
+                  placeholder="코드·품명·제조사·제조사코드 검색"
+                  className="w-full sm:w-80 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                {canEdit && selAssembly && (
+                  <button onClick={() => { setAddOpen(true); setPnHit(null) }}
+                    className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+                    ＋ 행 추가
+                  </button>
+                )}
+              </div>
+              <p className="text-[11px] text-slate-400">
+                대체품 사용 등으로 수정한 내용은 <b>같은 어셈블리의 리포트를 다시 업로드하면 사라집니다</b>
+                (업로드 시 어셈블리 전체가 새로 등록되기 때문).
+              </p>
               {detailError ? (
                 <div className="text-center py-8 text-red-500 text-sm">오류: {detailError.message}</div>
               ) : (
@@ -755,16 +813,16 @@ export default function BOM() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
-                          {['LV','코드','품명','REV 대조','구분','단위','제조사','제조사코드','소요량'].map(h => (
+                          {['LV','코드','품명','REV 대조','구분','단위','제조사','제조사코드','소요량','수정'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {detailLoading ? (
-                          <tr><td colSpan={9} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+                          <tr><td colSpan={10} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
                         ) : bomDetail.length === 0 ? (
-                          <tr><td colSpan={9} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
+                          <tr><td colSpan={10} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
                         ) : bomDetail.filter(b=>{
                           const q=detailSearch.trim().toLowerCase(); if(!q) return true
                           const it=b.items||{}
@@ -800,6 +858,15 @@ export default function BOM() {
                             <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
                             <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
                             <td className="px-3 py-2 text-right font-bold text-slate-900">{b.qty_per_unit}</td>
+                            <td className="px-3 py-2 text-center whitespace-nowrap">
+                              {canEdit ? (
+                                <button onClick={() => { setEditRow(b); setPnHit(null) }}
+                                  title="대체품 교체·수량 수정"
+                                  className="px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">
+                                  수정
+                                </button>
+                              ) : <span className="text-slate-300">-</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -811,6 +878,152 @@ export default function BOM() {
           )}
         </div>
       )}
+      {/* BOM 행 편집 — 대체품 교체·수량 수정 */}
+      {editRow && (
+        <BomRowModal
+          row={editRow} mode="edit"
+          onClose={() => { setEditRow(null); setPnHit(null) }}
+          onLookup={lookupItem} hit={pnHit} setHit={setPnHit}
+          busy={rowMut.isPending}
+          onSave={(patch) => rowMut.mutate({ action: 'update', row: editRow, patch })}
+          onDelete={() => {
+            if (!confirm(`${editRow.items?.std_code} 행을 BOM에서 삭제할까요?\n(원가·견적에서도 빠집니다)`)) return
+            rowMut.mutate({ action: 'delete', row: editRow })
+          }}
+        />
+      )}
+
+      {/* BOM 행 추가 */}
+      {addOpen && selAssembly && (
+        <BomRowModal
+          row={null} mode="add"
+          onClose={() => { setAddOpen(false); setPnHit(null) }}
+          onLookup={lookupItem} hit={pnHit} setHit={setPnHit}
+          busy={rowMut.isPending}
+          onSave={(patch) => rowMut.mutate({
+            action: 'insert',
+            patch: {
+              customer_id: cs?.id, project_id: selAssembly.id,
+              item_id: patch.item_id, qty_per_unit: patch.qty_per_unit,
+              level: patch.level, item_rev: patch.item_rev || null,
+              seq: (bomDetail.length + 1) * 10,
+            },
+          })}
+        />
+      )}
+    </div>
+  )
+}
+
+// BOM 행 편집·추가 모달
+// 대체품을 쓰는 경우 품번을 바꾸면 품명·제조사가 자동으로 따라온다.
+function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setHit, busy }) {
+  const isEdit = mode === 'edit'
+  const [code, setCode] = useState(isEdit ? (row.items?.std_code || '') : '')
+  const [qty, setQty] = useState(isEdit ? (row.qty_per_unit ?? 1) : 1)
+  const [level, setLevel] = useState(isEdit ? (row.level ?? 1) : 1)
+  const [rev, setRev] = useState(isEdit ? (row.item_rev || '') : '')
+  const [checking, setChecking] = useState(false)
+
+  const codeChanged = isEdit && code.trim().toUpperCase() !== String(row.items?.std_code || '').toUpperCase()
+
+  async function check() {
+    if (!code.trim()) return
+    setChecking(true)
+    const r = await onLookup(code)
+    setHit(r || { notFound: true })
+    setChecking(false)
+  }
+
+  const canSave = isEdit
+    ? (!codeChanged || (hit && !hit.notFound)) && Number(qty) >= 0
+    : (hit && !hit.notFound && Number(qty) > 0)
+
+  function save() {
+    if (mode === 'add') {
+      onSave({ item_id: hit.id, qty_per_unit: Number(qty), level: Number(level), item_rev: rev.trim() })
+      return
+    }
+    const patch = { qty_per_unit: Number(qty), level: Number(level), item_rev: rev.trim() || null }
+    if (codeChanged && hit && !hit.notFound) patch.item_id = hit.id
+    onSave(patch)
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
+        <h3 className="text-base font-bold text-slate-800 mb-1">
+          {isEdit ? '🔧 BOM 행 수정' : '＋ BOM 행 추가'}
+        </h3>
+        <p className="text-[11px] text-slate-400 mb-3">
+          {isEdit ? '대체품을 쓰는 경우 품번을 바꾸면 됩니다. 품명·제조사는 자동으로 따라옵니다.' : '추가할 품번을 입력하고 조회하세요.'}
+        </p>
+
+        <div className="space-y-3 text-sm">
+          <div>
+            <label className="text-xs font-semibold text-slate-500">품번</label>
+            <div className="flex gap-1.5 mt-1">
+              <input value={code} onChange={e => { setCode(e.target.value); setHit(null) }}
+                onBlur={check} placeholder="160003770 또는 AX-160003770"
+                className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono" />
+              <button onClick={check} disabled={checking || !code.trim()}
+                className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+                {checking ? '조회중' : '조회'}
+              </button>
+            </div>
+            {hit && !hit.notFound && (
+              <div className="mt-1.5 rounded-lg bg-emerald-50 border border-emerald-200 px-2.5 py-1.5 text-[11px]">
+                <div className="font-bold text-emerald-800">{hit.std_code}</div>
+                <div className="text-emerald-700">{hit.name}</div>
+                <div className="text-emerald-600">{hit.manufacturer || '-'} · {hit.manufacturer_code || '-'} · {hit.unit || 'EA'}</div>
+              </div>
+            )}
+            {hit?.notFound && (
+              <p className="mt-1.5 text-[11px] text-rose-600">
+                품목 마스터에 없는 품번입니다. 기준코드 DB에 먼저 등록해주세요.
+              </p>
+            )}
+            {isEdit && codeChanged && !hit && (
+              <p className="mt-1.5 text-[11px] text-amber-600">품번을 바꿨습니다 — 조회를 눌러 확인해주세요.</p>
+            )}
+          </div>
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="text-xs font-semibold text-slate-500">소요량</label>
+              <input type="number" step="any" value={qty} onChange={e => setQty(e.target.value)}
+                className="w-full mt-1 px-3 py-2 text-sm text-right border border-slate-200 rounded-lg" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">레벨</label>
+              <input type="number" value={level} onChange={e => setLevel(e.target.value)}
+                className="w-full mt-1 px-3 py-2 text-sm text-right border border-slate-200 rounded-lg" />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-500">REV</label>
+              <input value={rev} onChange={e => setRev(e.target.value)} placeholder="-"
+                className="w-full mt-1 px-3 py-2 text-sm border border-slate-200 rounded-lg font-mono" />
+            </div>
+          </div>
+        </div>
+
+        <div className="flex gap-2 mt-5">
+          {isEdit && (
+            <button onClick={onDelete} disabled={busy}
+              className="px-3 py-2.5 text-sm font-semibold rounded-lg border border-rose-200 text-rose-600 hover:bg-rose-50 disabled:opacity-40">
+              삭제
+            </button>
+          )}
+          <button onClick={onClose} disabled={busy}
+            className="flex-1 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
+            취소
+          </button>
+          <button onClick={save} disabled={busy || !canSave}
+            className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+            {busy ? '저장 중…' : '저장'}
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
