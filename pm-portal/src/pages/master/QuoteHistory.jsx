@@ -99,18 +99,38 @@ export default function QuoteHistory() {
     qc.invalidateQueries({ queryKey: ['quoteItemStatus'], exact: false })
   }
 
-  // 작업비 저장 → pm_labor_costs 에 오늘 날짜로 기록 (다음 견적에서 자동 조회됨)
+  // 작업비 저장 → pm_labor_costs 에 오늘 날짜로 기록.
+  // 견적서에서 그 품번을 담으면 pm_labor_latest 가 이 값을 자동으로 불러온다.
+  // 같은 날 다시 저장하면 덮어쓴다(upsert). 0 을 넣으면 오늘 기록을 지운다.
   async function saveLabor(code, val) {
+    const today = new Date().toISOString().slice(0, 10)
     const labor = Number(val)
-    if (!Number.isFinite(labor) || labor <= 0) { toastError('작업비는 0보다 큰 숫자여야 합니다'); return }
+
+    if (val === '' || labor === 0) {
+      const { error } = await supabase.from('pm_labor_costs')
+        .delete().eq('std_code', code).eq('effective_date', today).eq('source', 'manual')
+      if (error) { toastError('작업비 삭제 실패: ' + error.message); return }
+      toastSuccess(`${code} 오늘 작업비 기록 삭제`)
+      qc.invalidateQueries({ queryKey: ['quoteItemStatus'], exact: false })
+      return
+    }
+    if (!Number.isFinite(labor) || labor < 0) { toastError('작업비는 숫자여야 합니다'); return }
+
     const { error } = await supabase.from('pm_labor_costs').upsert({
       std_code: code, labor_krw: labor,
-      effective_date: new Date().toISOString().slice(0, 10),
+      effective_date: today,
       source: 'manual', quote_no: null, memo: '견적이력에서 직접 입력',
     }, { onConflict: 'std_code,effective_date,source,quote_no' })
     if (error) { toastError('작업비 저장 실패: ' + error.message); return }
-    toastSuccess(`${code} 작업비 ${won(labor)}원 저장`)
+    toastSuccess(`${code} 작업비 ${won(labor)}원 저장 — 다음 견적에서 자동 적용`)
     qc.invalidateQueries({ queryKey: ['quoteItemStatus'], exact: false })
+  }
+
+  // 작업비 이력 조회 (행 펼쳤을 때)
+  async function loadLaborHistory(code) {
+    const { data, error } = await supabase.rpc('pm_labor_history', { p_code: code })
+    if (error) { toastError('작업비 이력 조회 실패: ' + error.message); return [] }
+    return data || []
   }
 
   // 품번별 — 같은 품번의 견적을 최신순으로 묶는다
@@ -148,33 +168,59 @@ export default function QuoteHistory() {
   }, [quotes, q])
 
   function exportXlsx() {
-    const rows = items.map((it) => {
+    const rows = buildExportRows()
+    if (!rows.length) { toastError('내보낼 데이터가 없습니다'); return }
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), isSales ? '매출견적이력' : '매입견적이력')
+    XLSX.writeFile(wb, `견적이력_${isSales ? '매출' : '매입'}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  // 내보낼 행 만들기 (엑셀·CSV 공용)
+  function buildExportRows() {
+    return items.map((it) => {
       const qq = qMap[it.quote_id] || {}
+      const st = statusMap[it.std_code] || {}
+      const cost = num(st.purchase_price) + num(st.last_labor)
+      const pk = qq.currency === 'KRW' ? num(it.unit_price) : num(it.unit_price) * num(sellRate)
       return {
         견적구분: qq.quote_kind === 'sales' ? '매출' : '매입',
         견적번호: qq.quote_no, 견적일: qq.quote_date,
         상대처: qq.issued_to, 건명: qq.project_name,
-        품번: it.std_code, 품명: it.description, REV: it.rev,
+        품번: it.std_code, 품명: it.description || st.name || '', REV: it.rev,
         구분: it.line_kind === 'assy' ? 'ASSY' : '단품',
         수량: num(it.qty), 통화: qq.currency,
         단가: num(it.unit_price), 금액: num(it.qty) * num(it.unit_price),
         '자재비(원)': it.material_krw == null ? '' : num(it.material_krw),
         '작업비(원)': num(it.labor_krw),
         '원가(원)': it.cost_krw == null ? '' : num(it.cost_krw),
-        // 현재 마스터 기준 원가·마진 (관리용)
-        '현재매입가(원)': num(statusMap[it.std_code]?.purchase_price) || '',
-        '현재작업비(원)': num(statusMap[it.std_code]?.last_labor) || '',
-        마진율: (() => {
-          const c = num(statusMap[it.std_code]?.purchase_price) + num(statusMap[it.std_code]?.last_labor)
-          const pk = qq.currency === 'KRW' ? num(it.unit_price) : num(it.unit_price) * num(sellRate)
-          return pk > 0 && c > 0 ? ((pk - c) / pk * 100).toFixed(1) + '%' : ''
-        })(),
+        '현재매입가(원)': num(st.purchase_price) || '',
+        '현재작업비(원)': num(st.last_labor) || '',
+        '현재원가(원)': cost || '',
+        '견적단가(원)': Math.round(pk) || '',
+        마진율: pk > 0 && cost > 0 ? ((pk - cost) / pk * 100).toFixed(1) + '%' : '',
         상태: STATUS[qq.status]?.label || qq.status,
       }
     })
-    const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), isSales ? '매출견적이력' : '매입견적이력')
-    XLSX.writeFile(wb, `견적이력_${isSales ? '매출' : '매입'}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  }
+
+  // CSV — 엑셀에서 바로 열리도록 BOM 포함
+  function exportCsv() {
+    const rows = buildExportRows()
+    if (!rows.length) { toastError('내보낼 데이터가 없습니다'); return }
+    const keys = Object.keys(rows[0])
+    const cell = (v) => {
+      const t = String(v ?? '')
+      return /[",\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t
+    }
+    const csv = '\uFEFF' + [keys.join(','), ...rows.map(r => keys.map(k => cell(r[k])).join(','))].join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `견적이력_${isSales ? '매출' : '매입'}_${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+    toastSuccess(`CSV ${rows.length}행 내보냄`)
   }
 
   return (
@@ -184,10 +230,16 @@ export default function QuoteHistory() {
           <h1 className="text-lg font-bold text-slate-900">📋 견적 이력</h1>
           <p className="text-xs text-slate-400">저장된 견적을 품번별·견적별로 조회합니다. 매출과 매입은 절대 섞이지 않습니다.</p>
         </div>
-        <button onClick={exportXlsx} disabled={!items.length}
-          className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-          📑 엑셀 추출
-        </button>
+        <div className="flex gap-2">
+          <button onClick={exportCsv} disabled={!items.length}
+            className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+            📄 CSV
+          </button>
+          <button onClick={exportXlsx} disabled={!items.length}
+            className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+            📑 엑셀 추출
+          </button>
+        </div>
       </div>
 
       {/* 매출/매입 + 보기 전환 */}
@@ -244,7 +296,7 @@ export default function QuoteHistory() {
             <tbody>
               {codeRows.map((r) => (
                 <FragRow key={r.code} r={r} st={statusMap[r.code]} rate={sellRate}
-                  onSavePrice={savePurchasePrice} onSaveLabor={saveLabor} />
+                  onSavePrice={savePurchasePrice} onSaveLabor={saveLabor} onLoadLabor={loadLaborHistory} />
               ))}
               {!codeRows.length && (
                 <tr><td colSpan={8} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
@@ -341,8 +393,9 @@ export default function QuoteHistory() {
 
 // 품번별 행 — 펼치면 그 품번의 견적 변동 이력
 // 품번별 행 — 펼치면 단가 변동 이력. 매입가·작업비를 여기서 바로 수정한다.
-function FragRow({ r, st, rate, onSavePrice, onSaveLabor }) {
+function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
   const [open, setOpen] = useState(false)
+  const [laborHist, setLaborHist] = useState(null)
   const [priceEdit, setPriceEdit] = useState(null)
   const [laborEdit, setLaborEdit] = useState(null)
   const L = r.latest
@@ -361,7 +414,12 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor }) {
   return (
     <>
       <tr className="border-t border-slate-100 hover:bg-indigo-50/40">
-        <td className="px-3 py-2 font-mono text-indigo-600 cursor-pointer" onClick={() => setOpen((v) => !v)}>
+        <td className="px-3 py-2 font-mono text-indigo-600 cursor-pointer"
+          onClick={() => {
+            const next = !open
+            setOpen(next)
+            if (next && laborHist === null && onLoadLabor) onLoadLabor(r.code).then(setLaborHist)
+          }}>
           {open ? '▾ ' : '▸ '}{r.code}
         </td>
         <td className="px-3 py-2 text-slate-600 max-w-[240px] truncate cursor-pointer" onClick={() => setOpen((v) => !v)}
@@ -453,6 +511,26 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor }) {
                 )}
                 {!buy && (
                   <p className="mt-1.5 text-[10px] text-amber-600">매입가를 입력하면 마진율이 계산됩니다</p>
+                )}
+
+                {/* 작업비 이력 — 언제 얼마로 잡았는지 */}
+                {!!laborHist?.length && (
+                  <div className="mt-2 pt-2 border-t border-slate-200">
+                    <p className="text-[10px] font-bold text-slate-500 mb-1">작업비 이력</p>
+                    {laborHist.slice(0, 6).map((h, i) => (
+                      <div key={i} className="flex items-center gap-2 text-[10px] text-slate-500">
+                        <span className="w-16">{h.effective_date}</span>
+                        <span className="w-16 text-right font-semibold text-sky-700">{won(h.labor_krw)}원</span>
+                        <span className="text-slate-400">
+                          {h.source === 'quote' ? `견적 ${h.quote_no || ''}` : h.source === 'manual' ? '직접입력' : h.source}
+                        </span>
+                      </div>
+                    ))}
+                    {laborHist.length > 6 && <p className="text-[10px] text-slate-400">… 외 {laborHist.length - 6}건</p>}
+                  </div>
+                )}
+                {laborHist?.length === 0 && (
+                  <p className="mt-2 pt-2 border-t border-slate-200 text-[10px] text-slate-400">작업비 이력 없음</p>
                 )}
               </div>
             </div>
