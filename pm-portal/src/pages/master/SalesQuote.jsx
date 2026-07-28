@@ -15,6 +15,7 @@ const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 export default function SalesQuote() {
   const { data: profile } = useMyProfile()
   const custList = orderedCustomers(profile)
+  const [tab, setTab] = useState('write')   // write=견적 작성 / history=견적 이력
   const [csCode, setCsCode] = useState(null)
   const code = csCode || primaryCsCode(profile)
   const { data: cs } = useCustomer(code)
