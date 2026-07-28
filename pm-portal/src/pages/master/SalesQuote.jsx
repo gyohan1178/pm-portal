@@ -6,6 +6,7 @@ import { orderedCustomers, primaryCsCode } from '../../lib/customers'
 import { useCustomer } from '../../hooks/useCustomers'
 import { DEFAULT_CFG } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
+import QuoteHistory from './QuoteHistory'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 
