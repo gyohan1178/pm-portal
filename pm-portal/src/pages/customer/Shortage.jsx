@@ -351,7 +351,7 @@ export default function Shortage() {
       {showOrderForm&&(
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-700">구매발주 일괄 생성 — {checkedItems.length}개 품목</p>
-          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden max-h-48 overflow-y-auto">
+          <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto max-h-48 overflow-y-auto">
             <table className="w-full text-xs"><thead><tr className="bg-slate-50 border-b border-slate-200">
               <th className="px-3 py-2 text-left font-bold text-slate-400">기준코드</th>
               <th className="px-3 py-2 text-left font-bold text-slate-400">품명</th>
@@ -400,7 +400,7 @@ export default function Shortage() {
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">계산 중...</div> : (
         <>
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <div className="overflow-x-auto">
             <table className="text-xs" style={{tableLayout:'fixed',width:COLS.reduce((a,c)=>a+(widths[c.key]||COL_DEFAULTS[c.key]||80),44)+'px'}}>
               <colgroup>

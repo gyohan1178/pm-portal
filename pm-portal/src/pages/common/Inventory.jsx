@@ -228,7 +228,7 @@ export default function Inventory() {
                 </button>
               </div>
             </div>
-            <div className="rounded-xl border border-indigo-100 bg-white overflow-hidden max-h-80 overflow-y-auto">
+            <div className="rounded-xl border border-indigo-100 bg-white max-h-80 overflow-auto">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-indigo-50 z-10"><tr className="border-b border-indigo-100 text-indigo-400">
                   <th className="px-3 py-2 text-left font-bold">기준코드</th>
@@ -275,7 +275,7 @@ export default function Inventory() {
               </button>
             </div>
           </div>
-          <div className="rounded-xl border border-rose-100 bg-white overflow-hidden max-h-80 overflow-y-auto">
+          <div className="rounded-xl border border-rose-100 bg-white max-h-80 overflow-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-rose-50 z-10">
                 <tr className="border-b border-rose-100 text-rose-400">

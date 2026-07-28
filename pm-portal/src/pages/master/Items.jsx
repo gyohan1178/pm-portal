@@ -48,9 +48,26 @@ async function fetchItems(search, type, field = '전체') {
     return conds.join(',')
   }
 
-  // Supabase 1000행 제한 대응 — 전체 페이징 로딩
+  // ★ 품목이 14,000건을 넘어 전체 로딩은 14회 왕복 + 고객사코드 조인까지 붙어 매우 무겁다.
+  //   검색 없이 들어오면 최근 등록 순 상위 300건만 보여주고, 검색하면 그때 범위를 넓힌다.
+  //   (전체를 다 봐야 하는 경우는 엑셀 내보내기로 처리)
+  const LIMIT_NO_SEARCH = 300
+  const LIMIT_SEARCH = 3000
+
+  if (!search && type === '전체') {
+    const { data, error } = await supabase.from('items')
+      .select('*, vendors(id,name), customer_item_codes(id,customer_code,customer_id)')
+      .order('created_at', { ascending: false })
+      .limit(LIMIT_NO_SEARCH)
+    if (error) throw error
+    const rows = data || []
+    rows._partial = true          // 화면에 "검색해서 찾으세요" 안내를 띄우는 표시
+    return rows
+  }
+
+  // 검색·필터가 있으면 결과가 크게 줄어드므로 페이징으로 모은다 (상한 3,000건)
   const all = []
-  for (let from = 0; ; from += 1000) {
+  for (let from = 0; from < LIMIT_SEARCH; from += 1000) {
     let q = supabase.from('items')
       .select('*, vendors(id,name), customer_item_codes(id,customer_code,customer_id)')
       .order('std_code')
@@ -306,6 +323,11 @@ export default function Items() {
         </select>
         <div className="flex-1"/>
         <span className="text-xs text-slate-400 font-semibold">{shown.length}개{shown.length>visibleCount && ` (${visibleCount}개 표시)`}</span>
+        {items._partial && (
+          <span className="text-xs text-amber-600 font-semibold" title="품목이 많아 전체를 불러오지 않습니다">
+            · 최근 등록 {items.length}건만 표시 — 검색하면 전체에서 찾습니다
+          </span>
+        )}
         <button onClick={exportExcel}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">
           📥 엑셀 추출
@@ -358,7 +380,7 @@ export default function Items() {
           {vendorImport.toUpdate.length>0 && (
             <details className="rounded-lg border border-emerald-200 bg-white p-3">
               <summary className="text-xs font-bold text-emerald-700 cursor-pointer">변경 대상 {vendorImport.toUpdate.length}건 미리보기</summary>
-              <div className="mt-2 max-h-60 overflow-y-auto">
+              <div className="mt-2 max-h-60 overflow-auto">
                 <table className="w-full text-xs">
                   <thead className="text-slate-400 border-b border-slate-100">
                     <tr><th className="text-left py-1 px-1 font-semibold">기준코드</th><th className="text-left py-1 px-1 font-semibold">기존 구매처</th><th className="text-left py-1 px-1 font-semibold">→ 새 구매처</th></tr>

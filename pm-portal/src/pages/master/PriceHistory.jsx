@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useDebounced } from '../../hooks/useDebounced'
 
 async function fetchPriceHistory(search) {
   let q = supabase
@@ -16,10 +17,12 @@ async function fetchPriceHistory(search) {
 
 export default function PriceHistory() {
   const [search, setSearch] = useState('')
+  // 타이핑 중 매 글자마다 조회되지 않게 입력이 멈춘 뒤 한 번만 조회
+  const dq = useDebounced(search, 300)
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['price-history', search],
-    queryFn: () => fetchPriceHistory(search),
+    queryKey: ['price-history', dq],
+    queryFn: () => fetchPriceHistory(dq),
   })
 
   // 기준코드별 연도 비교
@@ -41,7 +44,7 @@ export default function PriceHistory() {
         <p className="text-xs text-slate-400">견적 입력 시 자동 누적됩니다</p>
       </div>
 
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
+      <div className="rounded-xl border border-slate-200 overflow-x-auto">
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">

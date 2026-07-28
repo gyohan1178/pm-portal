@@ -104,7 +104,7 @@ async function fetchWeeklyReport(from, to) {
 
 function SectionCard({ title, color, children, id, collapsed, onToggle, extra }) {
   return (
-    <div className="rounded-xl border border-slate-200 overflow-hidden">
+    <div className="rounded-xl border border-slate-200 overflow-x-auto">
       <div className={`px-4 py-3 border-b border-slate-200 ${color} flex items-center justify-between`}>
         <div className="flex items-center gap-2">
           <p className="text-sm font-bold text-slate-800">{title}</p>
@@ -459,7 +459,7 @@ export default function WeeklyReport() {
           }
 
           return (
-            <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="rounded-xl border border-slate-200 overflow-x-auto">
               {/* 이번 주 */}
               <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
                 <span className="text-xs font-bold text-slate-700">이번 주</span>
@@ -763,7 +763,7 @@ export default function WeeklyReport() {
         )}
 
         {/* 특이사항 */}
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
             <p className="text-sm font-bold text-slate-700">📝 특이사항</p>
           </div>

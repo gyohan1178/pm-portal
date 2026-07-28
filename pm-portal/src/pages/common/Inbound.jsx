@@ -315,7 +315,7 @@ export default function Inbound() {
                   미입고 발주가 없습니다
                 </div>
               : (
-                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="rounded-xl border border-slate-200 overflow-x-auto">
                   <div className="overflow-x-auto max-h-[58vh] overflow-y-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="sticky top-0 z-10">
@@ -538,7 +538,7 @@ export default function Inbound() {
           </div>
 
           {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
-            <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">

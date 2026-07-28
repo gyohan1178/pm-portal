@@ -195,7 +195,7 @@ export default function AdminDashboard() {
               </div>
 
               {/* 테이블 */}
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead><tr className="bg-slate-50 border-b border-slate-200">
@@ -262,7 +262,7 @@ export default function AdminDashboard() {
                 <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">우선순위 높음</p><p className="text-xl font-bold text-red-600">{actionItems.filter(r=>['높음','High'].includes(getStr(r.properties,'우선순위','Priority'))).length}</p></div>
               </div>
 
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
                     {['','제목','담당','우선순위','상태','마감일','D-day','Notion'].map(h=>(

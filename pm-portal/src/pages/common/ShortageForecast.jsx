@@ -557,7 +557,7 @@ export default function ShortageForecast() {
           ? <div className="text-center py-16 text-slate-300 text-sm">
               {items.length === 0 ? '포캐스트가 없습니다. 먼저 포캐스트를 접수해주세요.' : '쇼티지 예상 품목이 없습니다 👍'}
             </div>
-          : <div className="rounded-xl border border-slate-200 overflow-hidden">
+          : <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
                 <table className="text-xs whitespace-nowrap">
                   <thead className="sticky top-0 z-10">

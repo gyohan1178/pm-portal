@@ -209,7 +209,7 @@ export default function EcountUpload() {
               </div>
 
               {/* 거래처 단위 일괄 지정 — 같은 거래처는 대개 같은 고객사 */}
-              <div className="mb-3 max-h-56 overflow-y-auto rounded-lg border border-slate-200">
+              <div className="mb-3 max-h-56 overflow-auto rounded-lg border border-slate-200">
                 <table className="w-full text-[11px]">
                   <thead className="bg-slate-50 text-slate-400 sticky top-0">
                     <tr>
@@ -253,7 +253,7 @@ export default function EcountUpload() {
 
               <details>
                 <summary className="text-[11px] text-slate-500 cursor-pointer">건별로 지정하기 ({unclassified.length}건)</summary>
-                <div className="mt-2 max-h-72 overflow-y-auto rounded-lg border border-slate-200">
+                <div className="mt-2 max-h-72 overflow-auto rounded-lg border border-slate-200">
                   <table className="w-full text-[11px]">
                     <tbody>
                       {unclassified.slice(0, 300).map((r) => (

@@ -2,7 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CUSTOMERS } from '../lib/customers'
 
-// Ctrl+K / Cmd+K 빠른 실행창 — 어디서든 열어서 검색 후 이동. 분산된 메뉴 동선을 하나로.
+// Ctrl+D (또는 Ctrl+K) 빠른 실행창 — 어디서든 열어서 검색 후 이동. 분산된 메뉴 동선을 하나로.
+// D 를 기본으로 둔 이유: 마우스를 쥔 채 왼손만으로 누를 수 있다.
 function buildCommands() {
   const cmds = []
   const push = (group, label, to, keywords = '') => cmds.push({ group, label, to, keywords })
@@ -54,7 +55,12 @@ export default function CommandPalette() {
 
   useEffect(() => {
     function onKey(e) {
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+      // 왼손만으로 열 수 있게 Ctrl+D 를 주 단축키로 둔다. Ctrl+K 도 계속 동작.
+      //   D 는 브라우저 북마크 단축키지만 preventDefault 로 막힌다.
+      //   (W·T·R 은 탭 닫기·새 탭·새로고침이라 가로챌 수 없어 피했다)
+      const mod = e.metaKey || e.ctrlKey
+      const k = (e.key || '').toLowerCase()
+      if (mod && (k === 'd' || k === 'k')) {
         e.preventDefault(); setOpen(o => !o); setQ(''); setHi(0)
       } else if (e.key === 'Escape') { setOpen(false) }
     }
@@ -102,7 +108,7 @@ export default function CommandPalette() {
           ))}
         </div>
         <div className="px-4 py-2 border-t border-slate-100 text-[10px] text-slate-400 flex gap-3">
-          <span>↑↓ 이동</span><span>Enter 이동</span><span>Esc 닫기</span><span className="ml-auto">Ctrl/⌘ + K</span>
+          <span>↑↓ 이동</span><span>Enter 이동</span><span>Esc 닫기</span><span className="ml-auto">Ctrl + D <span className="text-slate-300">또는 K</span></span>
         </div>
       </div>
     </div>

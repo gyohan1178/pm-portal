@@ -709,7 +709,7 @@ export default function BOM() {
             return (a.code||'').toLowerCase().includes(q)||(a.name||'').toLowerCase().includes(q)
           }).length} / {assemblies.length}개</span>
         </div>
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
@@ -808,7 +808,7 @@ export default function BOM() {
               {detailError ? (
                 <div className="text-center py-8 text-red-500 text-sm">오류: {detailError.message}</div>
               ) : (
-                <div className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="rounded-xl border border-slate-200 overflow-x-auto">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead>

@@ -267,7 +267,7 @@ export default function Forecast() {
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : fc.latest.length === 0
           ? <div className="text-center py-16 text-slate-300 text-sm">접수된 포캐스트가 없습니다. 엑셀을 업로드해주세요.</div>
-          : <div className="rounded-xl border border-slate-200 overflow-hidden">
+          : <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
                 <table className="text-xs whitespace-nowrap">
                   <thead className="sticky top-0 z-10">

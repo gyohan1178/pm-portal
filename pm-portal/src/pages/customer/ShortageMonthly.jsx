@@ -191,7 +191,7 @@ export default function ShortageMonthly({ csId }) {
       </div>
 
       {/* 통합 표 */}
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
+      <div className="rounded-xl border border-slate-200 overflow-x-auto">
         <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
           <table className="text-xs whitespace-nowrap">
             <thead className="sticky top-0 z-10">

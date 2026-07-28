@@ -157,7 +157,7 @@ export default function FieldSearch() {
                   ))}
                 </div>
                 {/* 🖥 데스크톱: 테이블 */}
-                <div className="hidden md:block rounded-xl border border-slate-200 overflow-hidden">
+                <div className="hidden md:block rounded-xl border border-slate-200 overflow-x-auto">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
@@ -212,7 +212,7 @@ export default function FieldSearch() {
               ? <div className="text-center py-12 text-slate-300 text-sm">사용처가 없습니다</div>
               : <div className="space-y-3">
                   {grouped.map((g, gi) => (
-                    <div key={gi} className="rounded-xl border border-slate-200 overflow-hidden">
+                    <div key={gi} className="rounded-xl border border-slate-200 overflow-x-auto">
                       <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                         <span className="font-mono font-bold text-indigo-600 text-sm">{g.child_code}</span>
                         <span className="text-xs text-slate-500">{g.child_name}</span>
@@ -275,7 +275,7 @@ export default function FieldSearch() {
               ? <div className="text-center py-12 text-slate-300 text-sm">해당 어셈블리를 찾을 수 없습니다</div>
               : bom.rows.length === 0
                 ? <div className="text-center py-12 text-slate-300 text-sm">등록된 BOM이 없습니다</div>
-                : <div className="rounded-xl border border-slate-200 overflow-hidden">
+                : <div className="rounded-xl border border-slate-200 overflow-x-auto">
                     <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-bold text-indigo-600 text-sm">{bom.assembly.code}</span>
                       {bom.assembly.rev && <span className="text-[11px] text-slate-400">Rev {bom.assembly.rev}</span>}

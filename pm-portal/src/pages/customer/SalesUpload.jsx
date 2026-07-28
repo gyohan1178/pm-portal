@@ -147,7 +147,7 @@ export default function SalesUpload() {
         )}
 
         {Object.keys(yearSummary).length > 0 && (
-          <div className="border border-slate-100 rounded-lg overflow-hidden">
+          <div className="border border-slate-100 rounded-lg overflow-x-auto">
             <table className="w-full text-xs">
               <thead className="bg-slate-50 text-slate-500">
                 <tr><th className="px-3 py-1.5 text-left">연도</th><th className="px-3 py-1.5 text-right">건수</th><th className="px-3 py-1.5 text-right">금액(원화·달러혼합)</th></tr>

@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useDebounced } from '../../hooks/useDebounced'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
 
@@ -29,6 +30,8 @@ async function fetchVendors(search) {
 export default function Vendors() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
+  // 타이핑 중 매 글자마다 조회되지 않게 입력이 멈춘 뒤 한 번만 조회
+  const dq = useDebounced(search, 300)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
@@ -36,7 +39,7 @@ export default function Vendors() {
   const [importMsg, setImportMsg] = useState('')
 
   const { data: vendors = [], isLoading } = useQuery({
-    queryKey: ['vendors', search], queryFn: () => fetchVendors(search),
+    queryKey: ['vendors', dq], queryFn: () => fetchVendors(dq),
   })
 
   const saveMut = useMutation({

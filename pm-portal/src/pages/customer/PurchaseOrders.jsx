@@ -151,7 +151,7 @@ export default function PurchaseOrders() {
       {isLoading ? (
         <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
       ) : (
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>

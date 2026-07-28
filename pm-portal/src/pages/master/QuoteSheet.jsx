@@ -657,7 +657,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                         </p>
                         <span className="text-[11px] font-bold text-slate-700">자재비 {won(l.materialKrw)}원</span>
                       </div>
-                      <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white">
+                      <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200 bg-white overflow-x-auto">
                         <table className="w-full text-[11px]">
                           <thead className="bg-slate-50 text-slate-400 sticky top-0">
                             <tr>

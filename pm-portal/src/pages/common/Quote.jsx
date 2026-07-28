@@ -200,7 +200,7 @@ export default function Quote() {
               </div>
 
               {/* 견적 이력 */}
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
                   <p className="text-xs font-bold text-slate-600">견적 이력</p>
                 </div>

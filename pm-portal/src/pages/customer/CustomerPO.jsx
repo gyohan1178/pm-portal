@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import { useParams } from 'react-router-dom'
@@ -9,6 +9,7 @@ import { ResizableTable } from '../../components/ResizableTable'
 import CustomerPOUpload from './CustomerPOUpload'
 import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
+import { useDebounced } from '../../hooks/useDebounced'
 
 async function fetchCustomerPOs(csId, showAll) {
   if (!csId) return []
@@ -108,6 +109,8 @@ export default function CustomerPO() {
   const [showAll, setShowAll] = useState(false)
   const [hideIssued, setHideIssued] = useState(false)
   const [search, setSearch] = useState('')
+  // PO 가 수천 건이라 한 글자마다 전체를 훑으면 입력이 멈춘다
+  const dq = useDebounced(search, 250)
   const [picked, setPicked] = useState({})
   const [chgTab, setChgTab] = useState(false)
   const [revTab, setRevTab] = useState(false)
@@ -255,20 +258,25 @@ export default function CustomerPO() {
     setEditId(p.id); setShowForm(true)
   }
 
-  let filtered = divTab==='전체' ? pos : pos.filter(p=>(p.division||'전장')===divTab)
-  if (search.trim()) {
-    const q = search.toLowerCase()
-    filtered = filtered.filter(p =>
-      (p.po_number||'').toLowerCase().includes(q) ||
-      (p.ccn||'').toLowerCase().includes(q) ||
-      (p.items?.std_code||'').toLowerCase().includes(q) ||
-      (p.items?.name||'').toLowerCase().includes(q) ||
-      (p.item_rev||'').toLowerCase().includes(q))
-  }
   // 변경 이력 있는 PO만 (대시보드용)
-  const changedPOs = pos.filter(p => Array.isArray(p.changes) && p.changes.length > 0)
-  if (chgTab) filtered = changedPOs.filter(p => divTab==='전체' || (p.division||'전장')===divTab)
-  if (hideIssued) filtered = filtered.filter(p => !p.material_issued)
+  const changedPOs = useMemo(
+    () => pos.filter(p => Array.isArray(p.changes) && p.changes.length > 0), [pos])
+
+  const baseFiltered = useMemo(() => {
+    let rows = divTab==='전체' ? pos : pos.filter(p=>(p.division||'전장')===divTab)
+    if (dq.trim()) {
+      const q = dq.toLowerCase()
+      rows = rows.filter(p =>
+        (p.po_number||'').toLowerCase().includes(q) ||
+        (p.ccn||'').toLowerCase().includes(q) ||
+        (p.items?.std_code||'').toLowerCase().includes(q) ||
+        (p.items?.name||'').toLowerCase().includes(q) ||
+        (p.item_rev||'').toLowerCase().includes(q))
+    }
+    if (chgTab) rows = changedPOs.filter(p => divTab==='전체' || (p.division||'전장')===divTab)
+    if (hideIssued) rows = rows.filter(p => !p.material_issued)
+    return rows
+  }, [pos, changedPOs, divTab, dq, chgTab, hideIssued])
 
   // 도면 REV 대조 — 대상 품번만 판정, 그 외는 null(배지 없음)
   const revOf = (p) => {
@@ -276,8 +284,11 @@ export default function CustomerPO() {
     if (!code || !hasDrawingCode(code)) return null
     return compareRev(p.item_rev, revMap[code])
   }
-  const askCount = pos.filter(p => revOf(p) === 'ask').length
-  if (revTab) filtered = filtered.filter(p => revOf(p) === 'ask')
+  const askCount = useMemo(() => pos.filter(p => revOf(p) === 'ask').length, [pos, revMap])
+  // 도면 요청 필터는 REV 대조(revOf)가 필요해 이 위치에서 적용한다
+  const filtered = useMemo(
+    () => revTab ? baseFiltered.filter(p => revOf(p) === 'ask') : baseFiltered,
+    [baseFiltered, revTab, revMap])
   const today = new Date().toISOString().split('T')[0]
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
 

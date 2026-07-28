@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { useCustomer } from '../../hooks/useCustomers'
 import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
@@ -160,6 +161,9 @@ export default function PurchasePage() {
   const [tab, setTab] = useState('po') // po | history
   const [typeTab, setTypeTab] = useState('전체')
   const [search, setSearch] = useState('')  // 거래처·제조사·품번 검색
+  // 발주가 수천 건이라 한 글자마다 필터·정렬을 다시 돌리면 입력이 멈춘다.
+  // 입력은 즉시 반영하되(타이핑 끊김 없음) 실제 필터는 멈춘 뒤에 한 번만.
+  const dq = useDebounced(search, 250)
   const [filterOrderDate, setFilterOrderDate] = useState('')  // 발주일자 필터 (이카운트 발주서용)
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(freshForm)
@@ -424,15 +428,15 @@ export default function PurchasePage() {
     setItemResults(data||[])
   }
 
-  const q = search.trim().toLowerCase()
-  const filtered = purchases.filter(p => {
+  const q = dq.trim().toLowerCase()
+  const filtered = useMemo(() => purchases.filter(p => {
     if (typeTab !== '전체' && p.type !== typeTab) return false
     if (filterOrderDate && (p.order_date||'').slice(0,10) !== filterOrderDate) return false
     if (!q) return true
     const it = p.items || {}
     return [p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code]
       .some(x => (x || '').toLowerCase().includes(q))
-  })
+  }), [purchases, typeTab, filterOrderDate, q])
   const today = new Date().toISOString().split('T')[0]
   const sortVal = (p,k)=>({
     po_number:p.po_number||'', order_date:p.order_date||'', std_code:p.items?.std_code||'',
@@ -443,13 +447,13 @@ export default function PurchasePage() {
     vendor:p.vendors?.name||'', memo:p.memo||'', status:p.isDelayed?1:0,
   }[k] ?? '')
   const NUM_SORT = ['lt','qty_ordered','qty_received','qty_remaining','unit_price','supply','status']
-  const sorted = sort.key
+  const sorted = useMemo(() => sort.key
     ? [...filtered].sort((a,b)=>{
         const va=sortVal(a,sort.key), vb=sortVal(b,sort.key)
         const c = NUM_SORT.includes(sort.key) ? (Number(va)||0)-(Number(vb)||0) : String(va).localeCompare(String(vb),'ko')
         return sort.dir==='asc'?c:-c
       })
-    : filtered
+    : filtered, [filtered, sort.key, sort.dir])
   const onSort = k => setSort(prev => prev.key===k ? {key:k,dir:prev.dir==='asc'?'desc':'asc'} : {key:k,dir:'asc'})
   const checkedPOs = filtered.filter(p=>checked[p.id])
   const histTotalSupply = history.reduce((a,r)=>a+(r.supply||0),0)
@@ -1007,7 +1011,7 @@ export default function PurchasePage() {
                 </table>
               </div>
 
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <div className="px-4 py-2 bg-slate-50 border-b border-slate-200"><p className="text-xs font-bold text-slate-600">3. 세부 품목 <span className="text-slate-400 font-normal">· 결제방식·비고는 직접 선택/입력</span></p></div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">

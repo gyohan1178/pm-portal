@@ -184,7 +184,7 @@ export default function PurchaseDashboard({ embed = false }) {
       )}
 
       {/* 월별 표 */}
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
+      <div className="rounded-xl border border-slate-200 overflow-x-auto">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <p className="text-sm font-bold text-slate-700">월별 고객사별 매입 현황 (단위: 억원)</p>
           <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=발주 미입고 잔량</p>

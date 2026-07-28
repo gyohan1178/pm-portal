@@ -305,7 +305,7 @@ export default function WeeklyUpload() {
 
       {/* 기제출 목록 */}
       {reports.length > 0 && (
-        <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200">
             <p className="text-xs font-bold text-slate-600">이번 주 제출 현황 ({reports.length}건)</p>
           </div>

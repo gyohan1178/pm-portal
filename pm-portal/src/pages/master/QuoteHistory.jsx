@@ -356,7 +356,7 @@ export default function QuoteHistory() {
 
       {/* 품번별 */}
       {!isLoading && view === 'item' && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
           <ResizableTable cols={ITEM_COLS} storageKey="quote_hist_cols">
             {() => (
             <tbody>
@@ -375,7 +375,7 @@ export default function QuoteHistory() {
 
       {/* 견적별 */}
       {!isLoading && view === 'quote' && (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-400">
               <tr>

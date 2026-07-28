@@ -578,7 +578,7 @@ export default function Outbound() {
                   <button onClick={()=>setSelectedIds(new Set())} className="text-slate-400 hover:text-slate-600">선택해제</button>
                 </div>
               )}
-              <div className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="rounded-xl border border-slate-200 overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
                     <th className="px-2 py-2.5 w-8 text-center">
@@ -728,7 +728,7 @@ export default function Outbound() {
           </div>
 
           {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
-            <div className="rounded-xl border border-slate-200 overflow-hidden">
+            <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">

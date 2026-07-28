@@ -442,7 +442,8 @@ export default function Issue() {
         {cart.length === 0 ? (
           <p className="px-3 py-8 text-center text-sm text-slate-400">담긴 품목이 없습니다</p>
         ) : cartView === 'item' ? (
-          <table className="w-full text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[900px]">
             <thead><tr className="bg-slate-50 text-slate-400">
               <th className="px-2 py-1.5 text-center w-8">No</th>
               <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
@@ -506,8 +507,10 @@ export default function Issue() {
               })()}
             </tbody>
           </table>
+          </div>
         ) : (
-          <table className="w-full text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[900px]">
             <thead><tr className="bg-slate-50 text-slate-400">
               <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
               <th className="px-2 py-1.5 text-left">호기</th><th className="px-2 py-1.5 text-right">소요</th>
@@ -539,6 +542,7 @@ export default function Issue() {
               )})}
             </tbody>
           </table>
+          </div>
         )}
       </div>
 

@@ -96,9 +96,9 @@ export default function Layout({ profile }) {
           </div>
           <div className="flex-1" />
           <button onClick={() => window.dispatchEvent(new Event('open-command-palette'))}
-            className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors flex-shrink-0 mr-1" title="빠른 실행 (Ctrl+K)">
+            className="hidden sm:flex items-center gap-1.5 text-xs text-slate-400 hover:text-slate-600 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors flex-shrink-0 mr-1" title="빠른 실행 (Ctrl+D 또는 Ctrl+K)">
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-            <span className="font-mono">⌘K</span>
+            <span className="font-mono">Ctrl D</span>
           </button>
           <button onClick={() => setSettingsOpen(true)}
             className="text-slate-400 hover:text-slate-600 p-1.5 rounded hover:bg-slate-100 transition-colors flex-shrink-0" title="설정">
