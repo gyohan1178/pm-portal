@@ -124,8 +124,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (proj) {
         const { data: rows } = await supabase
           .from('bom')
-          .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendors(name))')
+          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendors(name))')
           .eq('customer_id', customerId).eq('project_id', proj.id)
+          .eq('quote_excluded', false)   // 원가분석에서 제외 지정한 부품은 견적에서도 빠진다
           .order('seq').order('created_at')
 
         const mapped = (rows || []).map((b, i) => ({

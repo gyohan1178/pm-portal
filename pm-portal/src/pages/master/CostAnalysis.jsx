@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile } from '../../hooks/useProfile'
 import { orderedCustomers, primaryCsCode } from '../../lib/customers'
 import { useCustomer } from '../../hooks/useCustomers'
@@ -24,7 +25,7 @@ async function fetchCostBOM(csId, projectId) {
   if (!csId || !projectId) return []
   const { data, error } = await supabase
     .from('bom')
-    .select('level, qty_per_unit, seq, created_at, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
+    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
     .eq('customer_id', csId).eq('project_id', projectId)
     .order('seq').order('created_at')
   if (error) throw error
@@ -59,12 +60,17 @@ export default function CostAnalysis() {
   const cfg = { ...DEFAULT_CFG, buyRate: Number(buyRate) || 1, sellRate: Number(sellRate) || 1 }
 
   // 사용자 토글 (제외)
-  const [excludeMap, setExcludeMap] = useState({})  // {uid: bool}
+  const qc = useQueryClient()
+  const [excludeMap, setExcludeMap] = useState({})  // {uid: bool} — 화면 임시 조작
   const [showQuote, setShowQuote] = useState(false)
 
   const exploded = useMemo(() => {
     const mapped = bomRows.map((b, i) => ({
       uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
+      bomId: b.id,
+      // DB에 저장된 견적 제외 (고객 지급자재 등) — 새로고침해도 유지된다
+      savedExcluded: !!b.quote_excluded,
+      excludeMemo: b.exclude_memo || '',
       std_code: b.items?.std_code || '', name: b.items?.name || '',
       manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '',
       purchase_price: b.items?.purchase_price ?? null,
@@ -72,7 +78,7 @@ export default function CostAnalysis() {
       registered: !!b.items,
     }))
     const ex = explodeBOM(mapped)
-    return ex.map(r => ({ ...r, excluded: excludeMap[r.uid] != null ? excludeMap[r.uid] : r.excluded }))
+    return ex.map(r => ({ ...r, excluded: excludeMap[r.uid] != null ? excludeMap[r.uid] : (r.savedExcluded || r.excluded) }))
   }, [bomRows, excludeMap])
 
   const cost = useMemo(() => computeCost(exploded, cfg, {}, Number(laborKrw) || 0), [exploded, buyRate, laborKrw])
@@ -85,7 +91,18 @@ export default function CostAnalysis() {
   const fx = fxScenario({ sellUsd, domKrw: cost.domKrw, laborKrw: cost.laborKrw, impUsd: cost.impUsd, baseBuyRate: cfg.buyRate, sellRate: cfg.sellRate })
 
   const selAsmInfo = assemblies.find(a => a.id === projectId) || null
-  const toggleExclude = (uid, cur) => setExcludeMap(m => ({ ...m, [uid]: !cur }))
+  // 제외 토글 — 화면 반영 후 BOM 행에 저장해 다음에도 유지
+  async function toggleExclude(uid, cur) {
+    const next = !cur
+    setExcludeMap(m => ({ ...m, [uid]: next }))
+    const row = exploded.find(r => r.uid === uid)
+    if (!row?.bomId) return   // LV0(어셈블리 자신) 등은 저장 대상 아님
+    const { error } = await supabase.from('bom')
+      .update({ quote_excluded: next }).eq('id', row.bomId)
+    if (error) { toastError('제외 저장 실패: ' + error.message); return }
+    toastSuccess(`${row.std_code} 견적 ${next ? '제외' : '포함'}`)
+    qc.invalidateQueries({ queryKey: ['ca-bom'], exact: false })
+  }
 
   return (
     <div className="space-y-4">
@@ -213,7 +230,9 @@ export default function CostAnalysis() {
                     <td className="px-2 py-1.5 text-center text-xs">{r.origin === 'imp' ? <span className="text-blue-500">수입</span> : <span className="text-slate-400">국내</span>}</td>
                     <td className="px-2 py-1.5 text-right font-semibold">{r.counted ? won(r.buyKrwTotal) : '—'}</td>
                     <td className="px-2 py-1.5 text-center">
-                      <input type="checkbox" checked={!!r.excluded} onChange={() => toggleExclude(r.uid, r.excluded)} />
+                      <input type="checkbox" checked={!!r.excluded} onChange={() => toggleExclude(r.uid, r.excluded)}
+                        title={r.bomId ? '체크하면 원가에서 제외되고 저장됩니다 (고객 지급자재 등)' : '중간 어셈블리는 상하위 중복 방지로 자동 제외됩니다'} />
+                      {r.savedExcluded && <span className="ml-0.5 text-[9px] text-rose-500 font-bold" title="저장된 제외">●</span>}
                     </td>
                   </tr>
                 ))}

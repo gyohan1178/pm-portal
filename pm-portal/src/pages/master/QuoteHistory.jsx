@@ -90,6 +90,22 @@ export default function QuoteHistory() {
     staleTime: 60 * 1000,
   })
 
+  // ASSY 자재비 — 어셈블리는 매입가가 없고 BOM 전개 합산이 원가다
+  const { data: assyCost = {} } = useQuery({
+    queryKey: ['assyMaterialCost', allCodes.length],
+    enabled: allCodes.length > 0 && kind === 'sales',
+    queryFn: async () => {
+      const out = {}
+      for (let i = 0; i < allCodes.length; i += 200) {
+        const { data, error } = await supabase.rpc('pm_assy_material_cost', { p_codes: allCodes.slice(i, i + 200) })
+        if (error) throw error
+        ;(data || []).forEach((r) => { out[r.std_code] = r })
+      }
+      return out
+    },
+    staleTime: 60 * 1000,
+  })
+
   // 매입가 저장 → items 마스터 갱신 (견적서 원가 계산에 바로 반영됨)
   async function savePurchasePrice(code, val) {
     const price = val === '' || val == null ? null : Number(val)
@@ -286,7 +302,7 @@ export default function QuoteHistory() {
                 <th className="px-3 py-2 text-left">품번</th>
                 <th className="px-3 py-2 text-left">품명</th>
                 <th className="px-3 py-2 text-right w-28">최근 단가</th>
-                <th className="px-3 py-2 text-right w-28" title="items 마스터 매입가 — 여기서 바로 수정 가능">매입가(원)</th>
+                <th className="px-3 py-2 text-right w-28" title="단품은 매입가 직접 수정, ASSY는 BOM 부품 합산(읽기전용)">자재비/매입가</th>
                 <th className="px-3 py-2 text-right w-24" title="최근 작업비 — 여기서 바로 수정 가능">작업비(원)</th>
                 <th className="px-3 py-2 text-right w-20" title="(견적단가 - 원가) / 견적단가">마진율</th>
                 <th className="px-3 py-2 text-center w-24">최근 견적일</th>
@@ -295,7 +311,7 @@ export default function QuoteHistory() {
             </thead>
             <tbody>
               {codeRows.map((r) => (
-                <FragRow key={r.code} r={r} st={statusMap[r.code]} rate={sellRate}
+                <FragRow key={r.code} r={r} st={statusMap[r.code]} assy={assyCost[r.code]} rate={sellRate}
                   onSavePrice={savePurchasePrice} onSaveLabor={saveLabor} onLoadLabor={loadLaborHistory} />
               ))}
               {!codeRows.length && (
@@ -393,7 +409,7 @@ export default function QuoteHistory() {
 
 // 품번별 행 — 펼치면 그 품번의 견적 변동 이력
 // 품번별 행 — 펼치면 단가 변동 이력. 매입가·작업비를 여기서 바로 수정한다.
-function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
+function FragRow({ r, st, assy, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
   const [open, setOpen] = useState(false)
   const [laborHist, setLaborHist] = useState(null)
   const [priceEdit, setPriceEdit] = useState(null)
@@ -401,8 +417,10 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
   const L = r.latest
   const cur = L.quote.currency
 
-  // 원가 = 매입가 + 작업비, 매출 = 견적단가(원화 환산)
-  const buy = num(st?.purchase_price)
+  // ★ 어셈블리(ASSY)는 매입가가 없다. BOM 전개 합산이 자재비다.
+  //   단품은 items.purchase_price 가 그대로 자재비.
+  const isAssy = !!assy
+  const buy = isAssy ? num(assy.material_krw) : num(st?.purchase_price)
   const labor = num(st?.last_labor)
   const cost = buy + labor
   const priceKrw = cur === 'KRW' ? num(L.unit_price) : num(L.unit_price) * num(rate)
@@ -428,12 +446,22 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
         </td>
         <td className="px-3 py-2 text-right font-bold">{amt(L.unit_price, cur)}</td>
 
-        {/* 매입가 — 직접 수정 */}
+        {/* 자재비 — ASSY 는 BOM 합산(읽기전용), 단품은 매입가 직접 수정 */}
         <td className="px-3 py-2 text-right">
-          <input type="number" defaultValue={st?.purchase_price ?? ''} placeholder="미등록"
-            onChange={(e) => setPriceEdit(e.target.value)}
-            onBlur={(e) => { if (priceEdit !== null) { onSavePrice(r.code, e.target.value); setPriceEdit(null) } }}
-            className={`w-24 px-1 py-0.5 text-right border rounded ${num(st?.purchase_price) > 0 ? 'border-slate-200' : 'border-amber-400 bg-amber-50'}`} />
+          {isAssy ? (
+            <span className="inline-flex items-center gap-1" title={`BOM 부품 ${assy.part_count}건 합산${assy.no_price_count > 0 ? ` · 단가없음 ${assy.no_price_count}건` : ''}`}>
+              <span className="px-1 py-0.5 rounded bg-sky-100 text-sky-700 text-[10px] font-bold">ASSY</span>
+              <span className="font-semibold">{won(buy)}</span>
+              {assy.no_price_count > 0 && (
+                <span className="text-amber-600 text-[10px] font-bold">▲{assy.no_price_count}</span>
+              )}
+            </span>
+          ) : (
+            <input type="number" defaultValue={st?.purchase_price ?? ''} placeholder="미등록"
+              onChange={(e) => setPriceEdit(e.target.value)}
+              onBlur={(e) => { if (priceEdit !== null) { onSavePrice(r.code, e.target.value); setPriceEdit(null) } }}
+              className={`w-24 px-1 py-0.5 text-right border rounded ${num(st?.purchase_price) > 0 ? 'border-slate-200' : 'border-amber-400 bg-amber-50'}`} />
+          )}
         </td>
 
         {/* 작업비 — 직접 수정 */}
@@ -492,8 +520,13 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
                 <p className="text-[11px] font-bold text-slate-500 mb-2">원가 구성</p>
                 <table className="w-full text-[11px]">
                   <tbody>
-                    <tr><td className="py-0.5 text-slate-500">매입가</td>
-                      <td className="py-0.5 text-right font-semibold">{buy ? won(buy) + '원' : <span className="text-amber-600">미등록</span>}</td></tr>
+                    <tr><td className="py-0.5 text-slate-500">{isAssy ? `자재비 (BOM ${assy.part_count}건)` : '매입가'}</td>
+                      <td className="py-0.5 text-right font-semibold">{buy ? won(buy) + '원' : <span className="text-amber-600">{isAssy ? '0 (부품 단가 미등록)' : '미등록'}</span>}</td></tr>
+                    {isAssy && assy.no_price_count > 0 && (
+                      <tr><td className="py-0.5 text-[10px] text-amber-600" colSpan={2}>
+                        ▲ 매입가 없는 부품 {assy.no_price_count}건 — 자재비가 실제보다 낮게 잡혀 마진이 과대 표시됩니다
+                      </td></tr>
+                    )}
                     <tr><td className="py-0.5 text-slate-500">작업비</td>
                       <td className="py-0.5 text-right font-semibold">{labor ? won(labor) + '원' : '—'}</td></tr>
                     <tr className="border-t border-slate-200"><td className="py-0.5 font-bold text-slate-600">원가 계</td>
@@ -509,8 +542,14 @@ function FragRow({ r, st, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
                 {margin != null && margin < 0 && (
                   <p className="mt-1.5 text-[10px] text-rose-600 font-semibold">⚠ 원가가 견적단가보다 높습니다</p>
                 )}
-                {!buy && (
+                {!buy && !isAssy && (
                   <p className="mt-1.5 text-[10px] text-amber-600">매입가를 입력하면 마진율이 계산됩니다</p>
+                )}
+                {isAssy && (
+                  <p className="mt-1.5 text-[10px] text-slate-400">
+                    어셈블리 자재비는 BOM 부품 매입가의 합계입니다. 직접 수정할 수 없고,
+                    부품 매입가를 채우면 자동으로 반영됩니다. (견적 제외로 지정한 부품은 합산에서 빠집니다)
+                  </p>
                 )}
 
                 {/* 작업비 이력 — 언제 얼마로 잡았는지 */}
