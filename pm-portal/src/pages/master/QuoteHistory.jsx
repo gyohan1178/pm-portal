@@ -4,12 +4,26 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { ResizableTable } from '../../components/ResizableTable'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const won = (v) => Math.round(num(v)).toLocaleString('ko-KR')
 const amt = (v, cur) =>
   cur === 'KRW' ? '₩' + won(v) : '$' + num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const pct = (v) => (v == null ? '-' : (num(v) * 100).toFixed(1) + '%')
+
+// 품번별 보기 컬럼 — 마우스로 너비 조정 가능 (localStorage 저장)
+const ITEM_COLS = [
+  { key: 'code',   label: '품번',          defaultWidth: 150 },
+  { key: 'name',   label: '품명',          defaultWidth: 240 },
+  { key: 'price',  label: '최근 단가',      defaultWidth: 110, align: 'right' },
+  { key: 'buy',    label: '자재비/매입가',  defaultWidth: 120, align: 'right' },
+  { key: 'labor',  label: '작업비(원)',     defaultWidth: 100, align: 'right' },
+  { key: 'margin', label: '마진율',        defaultWidth: 80,  align: 'right' },
+  { key: 'po',     label: 'PO',           defaultWidth: 130, align: 'center' },
+  { key: 'date',   label: '최근 견적일',    defaultWidth: 100, align: 'center' },
+  { key: 'cnt',    label: '횟수',          defaultWidth: 60,  align: 'center' },
+]
 
 const STATUS = {
   draft: { label: '작성중', cls: 'bg-slate-100 text-slate-500' },
@@ -90,31 +104,19 @@ export default function QuoteHistory() {
     staleTime: 60 * 1000,
   })
 
+  // PO 조회 기간 (개월). null 이면 전체
+  const [poMonths, setPoMonths] = useState(6)
+
   // 고객사 PO 접수 현황 — 견적이 수주로 이어졌는지
   const { data: poMap = {} } = useQuery({
-    queryKey: ['quotePoStatus', allCodes.length],
+    queryKey: ['quotePoStatus', allCodes.length, poMonths],
     enabled: allCodes.length > 0 && kind === 'sales',
     queryFn: async () => {
       const out = {}
       for (let i = 0; i < allCodes.length; i += 200) {
-        const { data, error } = await supabase.rpc('pm_quote_po_status', { p_codes: allCodes.slice(i, i + 200) })
-        if (error) throw error
-        ;(data || []).forEach((r) => { out[r.std_code] = r })
-      }
-      return out
-    },
-    staleTime: 60 * 1000,
-  })
-
-  // 최근 N개월 견적 이력
-  const [months, setMonths] = useState(6)
-  const { data: recentMap = {} } = useQuery({
-    queryKey: ['quoteRecent', allCodes.length, months],
-    enabled: allCodes.length > 0 && kind === 'sales',
-    queryFn: async () => {
-      const out = {}
-      for (let i = 0; i < allCodes.length; i += 200) {
-        const { data, error } = await supabase.rpc('pm_quote_recent', { p_codes: allCodes.slice(i, i + 200), p_months: months })
+        const { data, error } = await supabase.rpc('pm_quote_po_status', {
+          p_codes: allCodes.slice(i, i + 200), p_months: poMonths,
+        })
         if (error) throw error
         ;(data || []).forEach((r) => { out[r.std_code] = r })
       }
@@ -258,10 +260,11 @@ export default function QuoteHistory() {
         '현재원가(원)': cost || '',
         '견적단가(원)': Math.round(pk) || '',
         마진율: pk > 0 && cost > 0 ? ((pk - cost) / pk * 100).toFixed(1) + '%' : '',
-        'PO건수': num(poMap[it.std_code]?.po_count) || '',
+        [`PO건수(${poMonths ? poMonths + 'M' : '전체'})`]: num(poMap[it.std_code]?.po_count) || '',
         'PO진행중': num(poMap[it.std_code]?.open_count) || '',
+        'PO완료': num(poMap[it.std_code]?.done_count) || '',
         '최근PO번호': poMap[it.std_code]?.last_po_no || '',
-        [`최근${months}개월견적`]: num(recentMap[it.std_code]?.recent_count) || '',
+        '최근PO일자': poMap[it.std_code]?.last_po_date || '',
         상태: STATUS[qq.status]?.label || qq.status,
       }
     })
@@ -327,10 +330,11 @@ export default function QuoteHistory() {
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-64" />
         {view === 'item' && isSales && (
           <label className="flex items-center gap-1 text-xs text-slate-500">
-            최근
-            <select value={months} onChange={(e) => setMonths(Number(e.target.value))}
+            PO 기간
+            <select value={poMonths ?? ''} onChange={(e) => setPoMonths(e.target.value === '' ? null : Number(e.target.value))}
               className="px-1.5 py-1 text-xs border border-slate-200 rounded">
               {[3, 6, 12, 24].map((m) => <option key={m} value={m}>{m}개월</option>)}
+              <option value="">전체</option>
             </select>
           </label>
         )}
@@ -353,31 +357,19 @@ export default function QuoteHistory() {
       {/* 품번별 */}
       {!isLoading && view === 'item' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-          <table className="w-full text-xs">
-            <thead className="bg-slate-50 text-slate-400">
-              <tr>
-                <th className="px-3 py-2 text-left">품번</th>
-                <th className="px-3 py-2 text-left">품명</th>
-                <th className="px-3 py-2 text-right w-28">최근 단가</th>
-                <th className="px-3 py-2 text-right w-28" title="단품은 매입가 직접 수정, ASSY는 BOM 부품 합산(읽기전용)">자재비/매입가</th>
-                <th className="px-3 py-2 text-right w-24" title="최근 작업비 — 여기서 바로 수정 가능">작업비(원)</th>
-                <th className="px-3 py-2 text-right w-20" title="(견적단가 - 원가) / 견적단가">마진율</th>
-                <th className="px-3 py-2 text-center w-20" title="고객사 PO 접수 여부 — 견적이 수주로 이어졌는지">PO</th>
-                <th className="px-3 py-2 text-center w-20" title={`최근 ${months}개월 내 견적 이력`}>최근 {months}개월</th>
-                <th className="px-3 py-2 text-center w-24">최근 견적일</th>
-                <th className="px-3 py-2 text-center w-16">횟수</th>
-              </tr>
-            </thead>
+          <ResizableTable cols={ITEM_COLS} storageKey="quote_hist_cols">
+            {() => (
             <tbody>
               {codeRows.map((r) => (
-                <FragRow key={r.code} r={r} st={statusMap[r.code]} assy={assyCost[r.code]} po={poMap[r.code]} rec={recentMap[r.code]} rate={sellRate}
+                <FragRow key={r.code} r={r} st={statusMap[r.code]} assy={assyCost[r.code]} po={poMap[r.code]} rate={sellRate}
                   onSavePrice={savePurchasePrice} onSaveLabor={saveLabor} onLoadLabor={loadLaborHistory} />
               ))}
               {!codeRows.length && (
-                <tr><td colSpan={10} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
+                <tr><td colSpan={ITEM_COLS.length} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
               )}
             </tbody>
-          </table>
+            )}
+          </ResizableTable>
         </div>
       )}
 
@@ -476,7 +468,7 @@ export default function QuoteHistory() {
 
 // 품번별 행 — 펼치면 그 품번의 견적 변동 이력
 // 품번별 행 — 펼치면 단가 변동 이력. 매입가·작업비를 여기서 바로 수정한다.
-function FragRow({ r, st, assy, po, rec, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
+function FragRow({ r, st, assy, po, rate, onSavePrice, onSaveLabor, onLoadLabor }) {
   const [open, setOpen] = useState(false)
   const [laborHist, setLaborHist] = useState(null)
   const [priceEdit, setPriceEdit] = useState(null)
@@ -546,25 +538,19 @@ function FragRow({ r, st, assy, po, rec, rate, onSavePrice, onSaveLabor, onLoadL
           {margin == null ? '—' : (margin * 100).toFixed(1) + '%'}
         </td>
 
-        {/* PO 접수 — 견적이 수주로 이어졌는지 */}
-        <td className="px-3 py-2 text-center">
+        {/* PO 접수 — 진행 / 완료 */}
+        <td className="px-3 py-2 text-center whitespace-nowrap">
           {num(po?.po_count) > 0 ? (
-            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${num(po.open_count) > 0
-              ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}
-              title={`PO ${po.po_count}건${num(po.open_count) > 0 ? ` · 진행중 ${po.open_count}` : ' · 모두 완료'}${po.last_po_no ? `\n최근 ${po.last_po_no} (${po.last_po_date || '-'})` : ''}`}>
-              {num(po.open_count) > 0 ? `진행 ${po.open_count}` : `완료 ${po.po_count}`}
+            <span className="inline-flex gap-1"
+              title={`PO ${po.po_count}건${po.last_po_no ? `\n최근 ${po.last_po_no} (${po.last_po_date || '-'})` : ''}`}>
+              {num(po.open_count) > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-700 text-[10px] font-bold">진행 {po.open_count}</span>
+              )}
+              {num(po.done_count) > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">완료 {po.done_count}</span>
+              )}
             </span>
           ) : <span className="text-slate-300 text-[10px]" title="고객사 PO 없음 — 미수주">—</span>}
-        </td>
-
-        {/* 최근 N개월 견적 */}
-        <td className="px-3 py-2 text-center">
-          {num(rec?.recent_count) > 0 ? (
-            <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[10px] font-bold"
-              title={`${rec.last_date} · ${amt(rec.last_price, rec.last_currency)}`}>
-              {rec.recent_count}회
-            </span>
-          ) : <span className="text-slate-300 text-[10px]" title="해당 기간 내 견적 없음">—</span>}
         </td>
 
         <td className="px-3 py-2 text-center text-slate-500">{L.quote.quote_date}</td>
@@ -577,7 +563,7 @@ function FragRow({ r, st, assy, po, rec, rate, onSavePrice, onSaveLabor, onLoadL
 
       {open && (
         <tr className="bg-slate-50/80">
-          <td colSpan={10} className="px-4 py-3">
+          <td colSpan={9} className="px-4 py-3">
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
               {/* 단가 변동 이력 */}
               <div>
