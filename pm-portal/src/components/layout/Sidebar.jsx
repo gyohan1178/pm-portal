@@ -198,6 +198,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'master') && (
         <CollapseSection label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
           <MenuItem to="/master/items"   icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
+          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
           <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
           <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
           <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>

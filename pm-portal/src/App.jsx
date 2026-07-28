@@ -25,6 +25,7 @@ const BOM = lazy(() => import('./pages/customer/BOM'))
 const ReqBOM = lazy(() => import('./pages/customer/ReqBOM'))
 const Forecast = lazy(() => import('./pages/customer/Forecast'))
 const Items = lazy(() => import('./pages/master/Items'))
+const CodeMapUpload = lazy(() => import('./pages/master/CodeMapUpload'))
 const Vendors = lazy(() => import('./pages/master/Vendors'))
 const PriceHistory = lazy(() => import('./pages/master/PriceHistory'))
 const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
@@ -137,6 +138,7 @@ export default function App() {
         </Route>
         <Route path="master">
           <Route path="items"   element={<Items />} />
+          <Route path="codemap" element={<CodeMapUpload />} />
           <Route path="vendors" element={<Vendors />} />
           <Route path="price"   element={<PriceHistory />} />
         </Route>
