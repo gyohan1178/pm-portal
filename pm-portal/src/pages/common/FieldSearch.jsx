@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import AutoInput from '../../components/AutoInput'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
@@ -65,7 +66,7 @@ async function fetchBOMByCode(code) {
   const proj = projs && projs[0]
   if (!proj) return { rows: [], assembly: null }
   const { data } = await supabase.from('bom')
-    .select('seq,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,unit,manufacturer,manufacturer_code)')
+    .select('seq,level,item_rev,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,category,unit,manufacturer,manufacturer_code)')
     .eq('customer_id', proj.customer_id).eq('project_id', proj.id)
     .order('seq').order('created_at')
   return { rows: data || [], assembly: proj }
@@ -100,6 +101,14 @@ export default function FieldSearch() {
   const [bq, setBq] = useState(''); const [bSubmitted, setBSubmitted] = useState('')
   const { data: bom = { rows: [], assembly: null }, isLoading: bLoading } = useQuery({
     queryKey: ['fieldBOM', bSubmitted], queryFn: () => fetchBOMByCode(bSubmitted), enabled: !!bSubmitted.trim(),
+  })
+
+  // BOM 화면과 같은 기준으로 REV 대조를 보여준다
+  const { data: dwMap = {} } = useQuery({
+    queryKey: ['fieldBomDrawings', bom.assembly?.id, bom.rows.length],
+    enabled: bom.rows.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: () => fetchDrawingRevs(bom.rows.map(r => r.items?.std_code)),
   })
 
   function openBOM(code) { setBq(code); setBSubmitted(code); setTab('bom') }
@@ -284,7 +293,7 @@ export default function FieldSearch() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs whitespace-nowrap">
                         <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
-                          {['No', '기준코드', '품명', '구분', '제조사', '제조사품번', '단위', '소요량'].map(h =>
+                          {['No', 'LV', '기준코드', '품명', 'REV 대조', '구분', '제조사', '제조사품번', '단위', '소요량'].map(h =>
                             <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
                         </tr></thead>
                         <tbody>
@@ -293,9 +302,27 @@ export default function FieldSearch() {
                             return (
                               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                                 <td className="px-3 py-2 text-center text-slate-400">{i + 1}</td>
+                                <td className="px-3 py-2 text-center text-slate-400">{r.level ?? '-'}</td>
                                 <td className="px-3 py-2 font-mono text-indigo-600">{it.std_code || '-'}</td>
                                 <td className="px-3 py-2 text-slate-700 max-w-[220px] truncate">{it.name || '-'}</td>
-                                <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span></td>
+                                <td className="px-3 py-2 whitespace-nowrap">
+                                  {(() => {
+                                    const dw = dwMap[it.std_code]
+                                    const st = r.item_rev ? compareRev(r.item_rev, dw) : null
+                                    if (!r.item_rev) return <span className="text-slate-300">-</span>
+                                    if (!st) return <span className="font-mono text-slate-500">{r.item_rev}</span>
+                                    const s2 = REV_STATE[st]
+                                    return (
+                                      <span title={st === 'none' ? 'NAS에 도면이 없습니다' : `BOM 요구 ${r.item_rev} / NAS 최신 ${dw?.rev} · ${s2.label}`}
+                                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-mono font-bold text-[10px] ${s2.cls}`}>
+                                        <span>{s2.dot}</span>
+                                        <span>{r.item_rev}</span>
+                                        {st !== 'match' && st !== 'none' && <span className="opacity-60">→{dw?.rev}</span>}
+                                      </span>
+                                    )
+                                  })()}
+                                </td>
+                                <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${(it.category || it.type) === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.category || it.type || '-'}</span></td>
                                 <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
                                 <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}</td>
                                 <td className="px-3 py-2 text-slate-500">{it.unit || '-'}</td>
