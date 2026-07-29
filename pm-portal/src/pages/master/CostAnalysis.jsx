@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
@@ -25,7 +26,7 @@ async function fetchCostBOM(csId, projectId) {
   if (!csId || !projectId) return []
   const { data, error } = await supabase
     .from('bom')
-    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
+    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
     .eq('customer_id', csId).eq('project_id', projectId)
     .order('seq').order('created_at')
   if (error) throw error
@@ -64,6 +65,26 @@ export default function CostAnalysis() {
   const [excludeMap, setExcludeMap] = useState({})  // {uid: bool} — 화면 임시 조작
   const [showQuote, setShowQuote] = useState(false)
 
+  // BOM 부품 중 어셈블리(projects 에 등록된 품번)인지 판별 — 하위 BOM 미등록 건을 찾기 위함
+  const { data: assyCodes } = useQuery({
+    queryKey: ['ca-assy-codes', projectId, bomRows.length],
+    enabled: bomRows.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const codes = [...new Set(bomRows.map(b => b.items?.std_code).filter(Boolean))]
+      const found = new Set()
+      for (let i = 0; i < codes.length; i += 200) {
+        const { data } = await supabase.from('projects')
+          .select('code').in('code', codes.slice(i, i + 200))
+        ;(data || []).forEach(p => found.add(p.code))
+      }
+      return found
+    },
+  })
+
+  // 하위 ASSY 만 보기 (BOM 미등록이라 원가에 안 잡히는 것들)
+  const [assyOnly, setAssyOnly] = useState(false)
+
   const exploded = useMemo(() => {
     const mapped = bomRows.map((b, i) => ({
       uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
@@ -71,17 +92,26 @@ export default function CostAnalysis() {
       // DB에 저장된 견적 제외 (고객 지급자재 등) — 새로고침해도 유지된다
       savedExcluded: !!b.quote_excluded,
       excludeMemo: b.exclude_memo || '',
-      std_code: b.items?.std_code || '', name: b.items?.name || '',
+      std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
       manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '',
       purchase_price: b.items?.purchase_price ?? null,
       vendor: b.items?.vendors?.name || '',
       registered: !!b.items,
     }))
     const ex = explodeBOM(mapped)
-    return ex.map(r => ({ ...r, excluded: excludeMap[r.uid] != null ? excludeMap[r.uid] : (r.savedExcluded || r.excluded) }))
-  }, [bomRows, excludeMap])
+    return ex.map(r => ({
+      ...r,
+      excluded: excludeMap[r.uid] != null ? excludeMap[r.uid] : (r.savedExcluded || r.excluded),
+      // 어셈블리 품번인데 하위 BOM 이 전개되지 않은 것 = BOM 미등록
+      isAssy: assyCodes ? assyCodes.has(r.std_code) : false,
+      assyNoBom: assyCodes ? (assyCodes.has(r.std_code) && !r.isParentNode) : false,
+    }))
+  }, [bomRows, excludeMap, assyCodes])
 
   const cost = useMemo(() => computeCost(exploded, cfg, {}, Number(laborKrw) || 0), [exploded, buyRate, laborKrw])
+
+  // BOM 전개가 수천 행이면 제외 체크 같은 조작이 밀린다. 합계는 전체 기준으로 유지된다.
+  const vis = useVisibleRows(cost.items, 300, [cost.items.length])
   const suggested = useMemo(() => suggestPrice(cost.items, cfg, Number(laborKrw) || 0), [cost, sellRate, laborKrw])
 
   const targetNum = parseFloat(targetUsd)
@@ -212,13 +242,14 @@ export default function CostAnalysis() {
                   <th className="px-2 py-2 text-left">제조사품번</th>
                   <th className="px-2 py-2 text-right">매입가</th>
                   <th className="px-2 py-2 text-right">전개수량</th>
+                  <th className="px-2 py-2 text-center">단위</th>
                   <th className="px-2 py-2 text-center">수입/국내</th>
                   <th className="px-2 py-2 text-right">소계(원)</th>
                   <th className="px-2 py-2 text-center">제외</th>
                 </tr>
               </thead>
               <tbody>
-                {cost.items.map(r => (
+                {vis.shown.map(r => (
                   <tr key={r.uid} className={`border-t border-slate-100 ${r.excluded ? 'opacity-40' : ''} ${r.status === 'noprice' ? 'bg-amber-50' : ''} ${r.status === 'unreg' ? 'bg-rose-50' : ''}`}>
                     <td className="px-2 py-1.5 text-slate-400">{r.level}</td>
                     <td className="px-2 py-1.5 font-mono text-xs" style={{ paddingLeft: `${8 + (Number(r.level) || 0) * 12}px` }}>{r.std_code || '—'}</td>
@@ -227,6 +258,7 @@ export default function CostAnalysis() {
                     <td className="px-2 py-1.5 font-mono text-xs text-slate-500 max-w-[150px] truncate" title={r.manufacturer_code}>{r.manufacturer_code || '-'}</td>
                     <td className="px-2 py-1.5 text-right">{r.buyKrw == null ? <span className="text-amber-500 text-xs">미등록가</span> : won(r.buyKrw)}</td>
                     <td className="px-2 py-1.5 text-right text-slate-500">{r.qty}</td>
+                    <td className="px-2 py-1.5 text-center text-slate-400 text-xs">{r.unit || '-'}</td>
                     <td className="px-2 py-1.5 text-center text-xs">{r.origin === 'imp' ? <span className="text-blue-500">수입</span> : <span className="text-slate-400">국내</span>}</td>
                     <td className="px-2 py-1.5 text-right font-semibold">{r.counted ? won(r.buyKrwTotal) : '—'}</td>
                     <td className="px-2 py-1.5 text-center">
@@ -238,6 +270,7 @@ export default function CostAnalysis() {
                 ))}
               </tbody>
             </table>
+            <MoreRows {...vis} />
           </div>
           <p className="text-xs text-slate-400">
             · L0(KIT 자체)·제외 품목은 합산에서 빠집니다 (상하위 중복 방지). · <span className="text-amber-500">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>.

@@ -7,6 +7,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -65,6 +66,8 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
     p_lines: lines.map(({ item_id, ...l }) => l), p_note: note || null, p_date: inboundDate,
   })
   if (error) throw error
+  logActivity('create', 'stock_movements', null,
+    `입고 처리 ${lines.length}건 · ${inboundDate}${note ? ` · ${note}` : ''}`)
   // 입고 시 확정/수정된 단가를 최근 매입단가로 items.purchase_price에 반영 (입고가 발주단가보다 우선)
   const seen = {}
   for (const l of lines) {

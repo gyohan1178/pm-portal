@@ -124,14 +124,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (proj) {
         const { data: rows } = await supabase
           .from('bom')
-          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, manufacturer, manufacturer_code, purchase_price, vendors(name))')
+          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, vendors(name))')
           .eq('customer_id', customerId).eq('project_id', proj.id)
           .eq('quote_excluded', false)   // 원가분석에서 제외 지정한 부품은 견적에서도 빠진다
           .order('seq').order('created_at')
 
         const mapped = (rows || []).map((b, i) => ({
           uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
-          std_code: b.items?.std_code || '', name: b.items?.name || '',
+          std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
           manufacturer: b.items?.manufacturer || '',
           manufacturer_code: b.items?.manufacturer_code || '',
           purchase_price: b.items?.purchase_price ?? null,
@@ -669,6 +669,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                               <th className="px-2 py-1.5 w-32 text-left">제조사품번</th>
                               <th className="px-2 py-1.5 w-24 text-right">매입가(원)</th>
                               <th className="px-2 py-1.5 w-16 text-right">수량</th>
+                              <th className="px-2 py-1.5 w-12 text-center">단위</th>
                               <th className="px-2 py-1.5 w-24 text-right">소계(원)</th>
                               <th className="px-2 py-1.5 w-14 text-center">구분</th>
                               <th className="px-2 py-1.5 w-28 text-left">구매처</th>
@@ -699,6 +700,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                     className="qi w-full text-right" />
                                 </td>
                                 <td className="px-2 py-1 text-right text-slate-500">{pt.qty}</td>
+                                <td className="px-2 py-1 text-center text-slate-400">{pt.unit || '-'}</td>
                                 <td className="px-2 py-1 text-right font-semibold">
                                   {pt.excluded || pt.buyKrw == null ? '—' : won(num(pt.buyKrw) * num(pt.qty))}
                                 </td>

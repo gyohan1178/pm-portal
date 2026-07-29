@@ -1,8 +1,25 @@
-import { useState } from 'react'
+import { useState, createContext, useContext } from 'react'
 import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { primaryCsCode } from '../../lib/customers'
+import { supabase } from '../../lib/supabase'
+
+// 즐겨찾기에 표시할 이름·아이콘
+const MENU_META = {
+  '/': ['🎯','관제탑'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
+  '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','부분 불출'],
+  '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
+  '/sales-quote': ['📤','매출견적'],
+  '/field-search': ['🔎','현장 검색'], '/production': ['🏭','생산 대시보드'],
+  '/production/AX': ['🔧','생산 관리'], '/board': ['🖥','생산 전광판'], '/drawings': ['📐','도면 조회'],
+  '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
+  '/sales': ['💼','매출 대시보드'], '/cost': ['💵','원가분석'],
+  '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'],
+  '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
+  '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
+  '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
+}
 
 const CUSTOMERS = [
   { id:'ax',  name:'AXCELIS', color:'#4F46E5' },
@@ -20,8 +37,19 @@ function usePersistOpen(key, defaultVal) {
   return [open, toggle]
 }
 
+// 메뉴 개인화 — 편집 모드일 때 각 항목에 ★·숨김 버튼이 나타난다.
+// 숨김은 권한이 아니라 본인 사이드바 정리 기능이다 (주소로 접근하면 열림).
+const MenuPrefsCtx = createContext(null)
+
 function MenuItem({ to, icon, children, end, onNavigate }) {
-  return (
+  const prefs = useContext(MenuPrefsCtx)
+  const fav = prefs?.favorites?.includes(to)
+  const hidden = prefs?.hidden?.includes(to)
+
+  // 편집 중이 아니면 숨긴 항목은 그리지 않는다
+  if (hidden && !prefs?.editing) return null
+
+  const link = (
     <NavLink to={to} end={end} onClick={onNavigate}
       className={({ isActive }) =>
         `flex items-center gap-2.5 px-4 py-[5px] text-[13px] font-medium relative transition-colors
@@ -30,6 +58,20 @@ function MenuItem({ to, icon, children, end, onNavigate }) {
           : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'}`}>
       <span className="text-sm w-4 text-center flex-shrink-0">{icon}</span>{children}
     </NavLink>
+  )
+
+  if (!prefs?.editing) return link
+
+  return (
+    <div className={`flex items-center group ${hidden ? 'opacity-40' : ''}`}>
+      <div className="flex-1 min-w-0">{link}</div>
+      <button onClick={() => prefs.toggleFav(to)} title={fav ? '즐겨찾기 해제' : '즐겨찾기'}
+        className={`px-1 text-xs ${fav ? 'text-amber-500' : 'text-slate-300 hover:text-amber-400'}`}>★</button>
+      <button onClick={() => prefs.toggleHide(to)} title={hidden ? '다시 표시' : '숨기기'}
+        className={`px-1.5 text-xs ${hidden ? 'text-slate-400' : 'text-slate-300 hover:text-rose-400'}`}>
+        {hidden ? '︎👁' : '✕'}
+      </button>
+    </div>
   )
 }
 
@@ -117,8 +159,30 @@ export default function Sidebar({ onNavigate, profile }) {
   const pcs = primaryCsCode(profile)
   const [showChangelog, setShowChangelog] = useState(false)
 
+  // 메뉴 개인화 — 프로필에 저장되어 어느 PC 에서 로그인해도 유지된다
+  const [editing, setEditing] = useState(false)
+  const [favorites, setFavorites] = useState(() => profile?.menu_favorites || [])
+  const [hidden, setHidden] = useState(() => profile?.menu_hidden || [])
+
+  async function savePrefs(fav, hid) {
+    try {
+      await supabase.rpc('pm_save_menu_prefs', { p_favorites: fav, p_hidden: hid })
+    } catch { /* 저장 실패해도 화면은 그대로 */ }
+  }
+  const toggleFav = (to) => {
+    const next = favorites.includes(to) ? favorites.filter(x => x !== to) : [...favorites, to]
+    setFavorites(next); savePrefs(next, hidden)
+  }
+  const toggleHide = (to) => {
+    const next = hidden.includes(to) ? hidden.filter(x => x !== to) : [...hidden, to]
+    setHidden(next); savePrefs(favorites, next)
+  }
+  const resetPrefs = () => { setFavorites([]); setHidden([]); savePrefs([], []) }
+
+  const prefs = { favorites, hidden, editing, toggleFav, toggleHide }
+
   return (
-    <>
+    <MenuPrefsCtx.Provider value={prefs}>
       <aside className="w-56 min-w-[224px] h-full bg-slate-50 border-r border-slate-200 flex flex-col overflow-y-auto">
         {/* 로고 */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
@@ -141,6 +205,35 @@ export default function Sidebar({ onNavigate, profile }) {
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
         </div>
+        )}
+
+        {/* ★ 즐겨찾기 — 자주 쓰는 메뉴를 위로 */}
+        {!editing && favorites.length > 0 && (
+          <div className="py-1 border-b border-slate-200">
+            <p className="px-4 py-1 text-[10px] font-bold text-amber-600 uppercase tracking-wide">★ 즐겨찾기</p>
+            {favorites.map(to => {
+              const [ic, label] = MENU_META[to] || ['📌', to]
+              return <MenuItem key={to} to={to} icon={ic} onNavigate={onNavigate}>{label}</MenuItem>
+            })}
+          </div>
+        )}
+
+        {/* 메뉴 정리 */}
+        <div className="px-4 py-1.5 flex items-center gap-2">
+          <button onClick={() => setEditing(v => !v)}
+            className={`text-[10px] font-bold px-2 py-0.5 rounded ${editing
+              ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-slate-600'}`}>
+            {editing ? '✓ 정리 완료' : '⚙ 메뉴 정리'}
+          </button>
+          {editing && (favorites.length > 0 || hidden.length > 0) && (
+            <button onClick={resetPrefs} className="text-[10px] text-slate-400 hover:text-rose-500">초기화</button>
+          )}
+        </div>
+        {editing && (
+          <p className="px-4 pb-2 text-[10px] text-slate-400 leading-relaxed">
+            ★ 자주 쓰는 메뉴 · ✕ 안 쓰는 메뉴 숨기기<br/>
+            설정은 계정에 저장됩니다.
+          </p>
         )}
 
         {/* 📦 자재 */}
@@ -211,6 +304,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
           <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
           <MenuItem to="/erp"    icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
+          {isAdmin && <MenuItem to="/activity" icon="🗂" onNavigate={onNavigate}>활동 이력 · 용량</MenuItem>}
           {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
         </CollapseSection>
         )}
@@ -248,6 +342,6 @@ export default function Sidebar({ onNavigate, profile }) {
       </aside>
 
       {showChangelog && <ChangelogModal onClose={() => setShowChangelog(false)} />}
-    </>
+    </MenuPrefsCtx.Provider>
   )
 }

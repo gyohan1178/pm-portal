@@ -103,7 +103,7 @@ export function sectionOfPath(pathname) {
   if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard'
       || pathname === '/sales' || pathname === '/cost'
       || pathname === '/what-if' || pathname === '/insights') return 'report'
-  if (pathname.startsWith('/master') || pathname === '/erp') return 'master'
+  if (pathname.startsWith('/master') || pathname === '/erp' || pathname === '/activity') return 'master'
   // 고객사 하위 경로: 마지막 세그먼트로 판정
   if (pathname.startsWith('/customer/')) {
     if (pathname.endsWith('/short')) return 'buy'   // 자재 상황판 — 부족 확인 후 발주로 이어지므로 구매

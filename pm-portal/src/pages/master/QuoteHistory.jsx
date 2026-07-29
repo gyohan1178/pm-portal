@@ -3,6 +3,7 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
@@ -133,6 +134,7 @@ export default function QuoteHistory() {
     if (!confirm(`${q.quote_no} 견적을 삭제할까요?\n\n· 견적 품목이 모두 삭제됩니다\n· 이 견적에서 기록된 작업비 이력도 삭제됩니다\n· 되돌릴 수 없습니다`)) return
     const { error } = await supabase.rpc('pm_delete_quote', { p_quote_id: q.id })
     if (error) { toastError('삭제 실패: ' + error.message); return }
+    logActivity('delete', 'pm_quotes', q.quote_no, `견적 삭제 · ${q.issued_to || ''} ${q.quote_date || ''}`)
     toastSuccess(`${q.quote_no} 삭제됨`)
     qc.invalidateQueries({ queryKey: ['quoteHistory'], exact: false })
     qc.invalidateQueries({ queryKey: ['quoteHistoryItems'], exact: false })

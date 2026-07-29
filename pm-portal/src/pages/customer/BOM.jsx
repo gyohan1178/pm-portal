@@ -8,6 +8,7 @@ import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { parseAxcelisReport } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
@@ -465,6 +466,8 @@ export default function BOM() {
       const total = done.reduce((a, r) => a + (r.rows_created || 0), 0)
       const repl = done.filter(r => r.replaced).length
       setSubBomResult({ count: done.length, total, list: done, replaced: repl })
+      logActivity('create', 'bom', selAssembly.code,
+        `하위 ASSY BOM ${done.length}건 생성 · 부품 ${total}행${repl ? ` (갱신 ${repl})` : ''}`, null, cs?.name)
       toastSuccess(`하위 어셈블리 ${done.length}건 · 부품 ${total}행${repl ? ` (갱신 ${repl}건)` : ''}`)
       qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
       qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
@@ -510,6 +513,10 @@ export default function BOM() {
       }
     },
     onSuccess: (_, v) => {
+      logActivity(v.action === 'delete' ? 'delete' : v.action === 'insert' ? 'create' : 'update',
+        'bom', selAssembly?.code,
+        `${v.action === 'delete' ? '행 삭제' : v.action === 'insert' ? '행 추가' : '행 수정'} ${v.row?.items?.std_code || ''}`,
+        null, cs?.name)
       qc.invalidateQueries({ queryKey: ['bomDetail'], exact: false })
       qc.invalidateQueries({ queryKey: ['ca-bom'], exact: false })
       setEditRow(null); setAddOpen(false); setPnHit(null)

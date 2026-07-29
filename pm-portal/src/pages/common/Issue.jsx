@@ -269,6 +269,7 @@ export default function Issue() {
       <td class="mono">${r.std_code || ''}</td>
       <td>${r.name || ''}</td>
       <td class="c b">${r.qty}</td>
+      <td class="c">${r.unit || ''}</td>
       <td class="chk"></td>
     </tr>`).join('')
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 불출표</title>
@@ -294,8 +295,8 @@ export default function Issue() {
     </div>
     <table>
       <thead><tr>
-        <th class="c" style="width:5%">No</th><th style="width:15%">제조사</th><th style="width:18%">제조사품번</th>
-        <th style="width:16%">기준코드</th><th style="width:31%">품명</th><th class="c" style="width:8%">수량</th><th class="chk" style="width:7%">키팅<br>확인</th>
+        <th class="c" style="width:5%">No</th><th style="width:14%">제조사</th><th style="width:17%">제조사품번</th>
+        <th style="width:15%">기준코드</th><th style="width:28%">품명</th><th class="c" style="width:7%">수량</th><th class="c" style="width:6%">단위</th><th class="chk" style="width:8%">키팅<br>확인</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
@@ -448,6 +449,7 @@ export default function Issue() {
               <th className="px-2 py-1.5 text-center w-8">No</th>
               <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
               <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
+              <th className="px-2 py-1.5 text-center w-12">단위</th>
               <th className="px-2 py-1.5 text-left">호기</th>
               <th className="px-2 py-1.5 text-right">총소요</th><th className="px-2 py-1.5 text-right">총불출</th><th className="px-2 py-1.5 text-right">총결품</th>
               <th className="px-2 py-1.5 text-center w-36" title="라벨 출력 단위 — 바꾸면 품목에 저장되어 다음에도 유지됩니다">라벨</th>
@@ -467,6 +469,7 @@ export default function Issue() {
                   <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>
                   <td className="px-2 py-1.5 text-slate-600 max-w-[150px] truncate">{a.name}</td>
+                  <td className="px-2 py-1.5 text-center text-slate-400">{a.unit || '-'}</td>
                   <td className="px-2 py-1.5 text-slate-400 max-w-[120px] truncate" title={[...a.srcs].join(', ')}>{[...a.srcs].join(', ')}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-slate-700">{a.qty}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-teal-600">{a.issue}</td>

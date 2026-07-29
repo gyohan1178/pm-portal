@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import { useDebounced } from '../../hooks/useDebounced'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -104,6 +105,7 @@ export default function Vendors() {
       return { done, skipped }
     },
     onSuccess: ({ done, skipped }) => {
+      logActivity('delete', 'vendors', null, `협력사 ${done}곳 삭제${skipped.length ? ` (${skipped.length}곳 건너뜀)` : ''}`)
       qc.invalidateQueries(['vendors'])
       setChecked({})
       if (skipped.length) {

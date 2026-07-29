@@ -5,6 +5,7 @@ import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -284,16 +285,28 @@ export default function PurchasePage() {
     onError:(e)=>alert('오류: '+e.message),
   })
   const deleteMut = useMutation({
-    mutationFn:async(id)=>{ const{error}=await supabase.from('purchase_orders').delete().eq('id',id); if(error) throw error },
+    mutationFn:async(id)=>{
+      const po = purchases.find(p=>p.id===id)
+      const{error}=await supabase.from('purchase_orders').delete().eq('id',id); if(error) throw error
+      logActivity('delete','purchase_orders', po?.po_number || id,
+        `${po?.items?.std_code||''} ${po?.vendors?.name||''} ${(po?.qty_ordered||0).toLocaleString()}개`, null, cs?.name)
+    },
     onSuccess:()=>qc.invalidateQueries(['purchase']),
   })
   const bulkPoMut = useMutation({
-    mutationFn:async({ids,poNo})=>{ const{error}=await supabase.from('purchase_orders').update({po_number:poNo}).in('id',ids); if(error) throw error },
+    mutationFn:async({ids,poNo})=>{
+      const{error}=await supabase.from('purchase_orders').update({po_number:poNo}).in('id',ids); if(error) throw error
+      logActivity('update','purchase_orders', poNo, `발주번호 일괄 부여 ${ids.length}건`, null, cs?.name)
+    },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkPo(''); setChecked({}) },
     onError:(e)=>alert('오류: '+e.message),
   })
   const bulkDateMut = useMutation({
-    mutationFn:async({ids,field,value})=>{ const{error}=await supabase.from('purchase_orders').update({[field]:value||null}).in('id',ids); if(error) throw error },
+    mutationFn:async({ids,field,value})=>{
+      const{error}=await supabase.from('purchase_orders').update({[field]:value||null}).in('id',ids); if(error) throw error
+      logActivity('update','purchase_orders', null,
+        `${field==='promise_date'?'납기':'발주일'} 일괄 변경 ${ids.length}건 → ${value||'(비움)'}`, null, cs?.name)
+    },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({}) },
     onError:(e)=>alert('오류: '+e.message),
   })
