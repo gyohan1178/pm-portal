@@ -24,7 +24,7 @@ async function fetchPurchases(csId) {
   const today = new Date().toISOString().split('T')[0]
   const data = await fetchAll(() => supabase
     .from('purchase_orders')
-    .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code), vendors(name,ecount_code), projects(code,name)')
+    .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code), vendors(name,ecount_code,payment_terms), projects(code,name)')
     .eq('customer_id', csId).eq('order_type','purchase').neq('status','완료')
     .order('promise_date', { ascending: true }))
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date && p.promise_date < today }))
@@ -477,7 +477,13 @@ export default function PurchasePage() {
 
   // ── 품의서 ──
   const PAYS = ['정기 결제','선급 결제','카드 결제','해외 송금']
-  const payOf = id => proposalMeta[id]?.pay || '카드 결제'
+  // 결제방식 우선순위: 품의서에서 직접 고른 값 > 협력사에 등록된 결제조건 > 카드 결제
+  const payOf = (id) => {
+    if (proposalMeta[id]?.pay) return proposalMeta[id].pay
+    const po = purchases.find(p => p.id === id)
+    const t = po?.vendors?.payment_terms
+    return PAYS.includes(t) ? t : '카드 결제'
+  }
   const noteOf = id => proposalMeta[id]?.note || ''
   const setMeta = (id,k,v) => setProposalMeta(prev=>({...prev,[id]:{...prev[id],[k]:v}}))
   const propMonths = [...new Set(checkedPOs.map(p=>(p.order_date||'').slice(0,7)).filter(Boolean))].sort()

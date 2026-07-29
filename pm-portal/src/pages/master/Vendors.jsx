@@ -6,9 +6,13 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
 
+// 품의서 결제방식과 값이 같아야 자동으로 이어진다
+export const PAY_TERMS = ['정기 결제', '선급 결제', '카드 결제', '해외 송금']
+
 const EMPTY = { name:'', category:'자재', contact:'', phone:'', email:'', payment_terms:'', ecount_code:'', memo:'' }
 
 const COLS = [
+  { key:'_chk',          label:'',             defaultWidth:36 },
   { key:'name',          label:'협력사명',     defaultWidth:150 },
   { key:'category',      label:'구분',         defaultWidth:64 },
   { key:'contact',       label:'담당자',       defaultWidth:90 },
@@ -30,6 +34,7 @@ async function fetchVendors(search) {
 export default function Vendors() {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
+  const [checked, setChecked] = useState({})   // 선택 삭제용
   // 타이핑 중 매 글자마다 조회되지 않게 입력이 멈춘 뒤 한 번만 조회
   const dq = useDebounced(search, 300)
   const [showForm, setShowForm] = useState(false)
@@ -41,6 +46,7 @@ export default function Vendors() {
   const { data: vendors = [], isLoading } = useQuery({
     queryKey: ['vendors', dq], queryFn: () => fetchVendors(dq),
   })
+  const checkedIds = Object.keys(checked).filter(k => checked[k])
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
@@ -71,6 +77,57 @@ export default function Vendors() {
       if (error) throw error
     },
     onSuccess: () => qc.invalidateQueries(['vendors']),
+    onError: (e) => toastError(e.message),
+  })
+
+  // 선택 삭제 — 참조가 있는 협력사는 건너뛰고 결과를 알려준다
+  const bulkDeleteMut = useMutation({
+    mutationFn: async (ids) => {
+      const skipped = []
+      let done = 0
+      for (const id of ids) {
+        const [po, qt, is, it] = await Promise.all([
+          supabase.from('purchase_orders').select('id', { count:'exact', head:true }).eq('vendor_id', id),
+          supabase.from('quotes').select('id', { count:'exact', head:true }).eq('vendor_id', id),
+          supabase.from('issues').select('id', { count:'exact', head:true }).eq('vendor_id', id),
+          supabase.from('items').select('id', { count:'exact', head:true }).eq('vendor_id', id),
+        ])
+        const used = (po.count||0) + (qt.count||0) + (is.count||0) + (it.count||0)
+        if (used > 0) {
+          skipped.push({ id, used })
+          continue
+        }
+        const { error } = await supabase.from('vendors').delete().eq('id', id)
+        if (error) throw error
+        done += 1
+      }
+      return { done, skipped }
+    },
+    onSuccess: ({ done, skipped }) => {
+      qc.invalidateQueries(['vendors'])
+      setChecked({})
+      if (skipped.length) {
+        toastError(`${done}곳 삭제 · ${skipped.length}곳은 발주·품목에 쓰여 있어 건너뜀`)
+      } else {
+        toastSuccess(`${done}곳 삭제 완료`)
+      }
+    },
+    onError: (e) => toastError(e.message),
+  })
+
+  // 선택한 협력사에 결제조건 일괄 지정 — 품의서 결제방식으로 바로 이어진다
+  const bulkTermsMut = useMutation({
+    mutationFn: async ({ ids, terms }) => {
+      const { error } = await supabase.from('vendors')
+        .update({ payment_terms: terms || null }).in('id', ids)
+      if (error) throw error
+      return ids.length
+    },
+    onSuccess: (n) => {
+      qc.invalidateQueries(['vendors'])
+      setChecked({})
+      toastSuccess(`${n}곳 결제조건 변경`)
+    },
     onError: (e) => toastError(e.message),
   })
 
@@ -177,6 +234,39 @@ export default function Vendors() {
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
           {importMut.isPending ? '반영 중...' : '📤 거래처정보 업로드'}
         </button>
+        {vendors.length > 0 && (
+          <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white cursor-pointer hover:bg-slate-50">
+            <input type="checkbox"
+              checked={checkedIds.length > 0 && checkedIds.length === vendors.length}
+              onChange={(e) => setChecked(e.target.checked
+                ? Object.fromEntries(vendors.map(v => [v.id, true])) : {})} />
+            전체 선택
+          </label>
+        )}
+        {checkedIds.length > 0 && (
+          <select defaultValue="" disabled={bulkTermsMut.isPending}
+            onChange={(e) => {
+              const t = e.target.value
+              e.target.value = ''
+              if (!t) return
+              if (!window.confirm(`선택한 ${checkedIds.length}곳의 결제조건을 '${t}' 로 바꿀까요?`)) return
+              bulkTermsMut.mutate({ ids: checkedIds, terms: t })
+            }}
+            className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50">
+            <option value="">결제조건 일괄 지정</option>
+            {PAY_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+        {checkedIds.length > 0 && (
+          <button onClick={() => {
+              if (!window.confirm(`선택한 ${checkedIds.length}곳을 삭제할까요?\n\n발주·품목·견적에 쓰인 협력사는 건너뜁니다.\n되돌릴 수 없습니다.`)) return
+              bulkDeleteMut.mutate(checkedIds)
+            }}
+            disabled={bulkDeleteMut.isPending}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 disabled:opacity-40">
+            {bulkDeleteMut.isPending ? '삭제 중...' : `🗑 선택 삭제 (${checkedIds.length})`}
+          </button>
+        )}
         <button onClick={() => { if (window.confirm('어디에도 연결 안 된 미사용 협력사를 모두 삭제할까요?\n(발주/견적/이슈에 쓰인 협력사는 안 지워집니다.)')) cleanupMut.mutate() }}
           disabled={cleanupMut.isPending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:border-red-300 hover:text-red-500 disabled:opacity-40">
@@ -209,8 +299,11 @@ export default function Vendors() {
               <input value={form.email} onChange={f('email')} placeholder="이메일"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">결제조건</label>
-              <input value={form.payment_terms} onChange={f('payment_terms')} placeholder="예: 월말정산 60일"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+              <select value={form.payment_terms} onChange={f('payment_terms')}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                <option value="">(미지정)</option>
+                {PAY_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">이카운트 코드</label>
               <input value={form.ecount_code} onChange={f('ecount_code')} placeholder="이카운트 코드"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
@@ -233,11 +326,15 @@ export default function Vendors() {
         {() => (
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={9} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+              <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
             ) : vendors.length === 0 ? (
-              <tr><td colSpan={9} className="text-center py-10 text-slate-400">협력사를 추가해주세요</td></tr>
+              <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">협력사를 추가해주세요</td></tr>
             ) : vendors.map(v => (
-              <tr key={v.id} className="border-b border-slate-100 hover:bg-slate-50 group">
+              <tr key={v.id} className={`border-b border-slate-100 hover:bg-slate-50 group ${checked[v.id] ? 'bg-rose-50/50' : ''}`}>
+                <td className="px-2 py-2 text-center">
+                  <input type="checkbox" checked={!!checked[v.id]}
+                    onChange={() => setChecked(p => ({ ...p, [v.id]: !p[v.id] }))} />
+                </td>
                 <td className="px-3 py-2 font-semibold text-slate-800 truncate" title={v.name}>{v.name}</td>
                 <td className="px-3 py-2">
                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold
