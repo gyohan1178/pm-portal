@@ -136,6 +136,18 @@ export default function Outbound() {
   const mtOf = (id) => makeTypes[id]?.make_type || 'normal'
   const noteOf = (id) => makeTypes[id]?.note || ''
 
+  // 대체품 — 비고에 적으면 제조사·제조사품번을 그것으로 대체한다.
+  //   "EATON FAZ-C10/1"  → 제조사 EATON / 품번 FAZ-C10/1
+  //   "FAZ-C10/1사용"    → 제조사 없음 / 품번 FAZ-C10/1사용 (공백 없으면 품번만)
+  function altOf(id) {
+    const t = (makeTypes[id]?.note || '').trim()
+    if (!t) return null
+    const i = t.indexOf(' ')
+    return i > 0
+      ? { maker: t.slice(0, i).trim(), makerPn: t.slice(i + 1).trim(), raw: t }
+      : { maker: '', makerPn: t, raw: t }
+  }
+
   // 제작구분/비고 저장 (upsert) — 하나 또는 여러 개
   async function saveMakeType(itemIds, make_type, note) {
     if (!selCustomer || !selProject) return
@@ -216,7 +228,18 @@ export default function Outbound() {
         && String(r.location||'').trim() !== '라벨'
         && labelModeOf(r) !== 'none'
         && Number(outQtys[r.item_id]||0) > 0)
-      .map(r => ({ ...r, qty: Number(outQtys[r.item_id]||0), no: noMap.get(r.item_id) }))
+      .map(r => {
+        // 대체품이 있으면 제조사·제조사품번을 그것으로 바꿔 라벨에 찍는다
+        const alt = altOf(r.item_id)
+        return {
+          ...r,
+          qty: Number(outQtys[r.item_id]||0),
+          no: noMap.get(r.item_id),
+          maker: alt ? alt.maker : r.maker,
+          makerPn: alt ? alt.makerPn : r.makerPn,
+          isAlt: !!alt,
+        }
+      })
     if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량 입력. 현장재고·하네스·라벨류·미출력 제외).'); return }
 
     const { labels, capped } = expandOutLabels(rows)
@@ -321,6 +344,8 @@ export default function Outbound() {
         cat: catOf(b.items) || '',   // 세부구분 (js_code 기준: 케이블/와이어/커넥터...)
         maker: b.items?.manufacturer || '',
         makerPn: b.items?.manufacturer_code || '',
+        // 비고에 대체품이 적혀 있으면 라벨·불출표에서 그것을 쓴다
+        altNote: noteOf(id) || '',
         location: locMeta[id] || '',
         // 라벨 출력 단위 — 행에 직접 담아야 새로고침 후에도 값이 살아난다
         label_mode: b.items?.label_mode ?? null,
@@ -374,6 +399,8 @@ export default function Outbound() {
       }
       no++
       const nw = (mt === 'field_stock' || mt === 'harness') ? ' nw' : ''   // 전장(현장재고)·하네스는 1줄 제한
+      // 비고에 대체품이 적혀 있으면 해당 행 아래에 한 줄 더 넣는다
+      const alt = (noteOf(r.item_id) || '').trim()
       return groupHdr + `<tr>
         <td class="c nw">${no}</td>
         <td class="loc">${r.location||'-'}</td>
@@ -385,7 +412,10 @@ export default function Outbound() {
         <td class="c b">${round2(qtyFn(r))}</td>
         <td class="c">${r.unit||''}</td>
         <td class="chk"></td>
-      </tr>`}).join('')
+      </tr>` + (alt ? `<tr class="alt">
+        <td></td>
+        <td colspan="9">↳ <b>대체품</b> ${alt}</td>
+      </tr>` : '')}).join('')
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
     .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
@@ -398,6 +428,7 @@ export default function Outbound() {
     .loc{font-weight:bold;font-family:consolas;white-space:nowrap}
     .code{font-family:consolas;white-space:nowrap;overflow:hidden;text-overflow:clip}
     .cat{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .alt td{background:#fff8e1;border-top:none;font-size:10.5px;color:#8a6100;padding:2px 4px}
     .nm{line-height:1.3;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
     td{max-height:34px}
     .nw{white-space:nowrap;overflow:hidden;text-overflow:clip}

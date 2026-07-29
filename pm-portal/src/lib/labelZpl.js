@@ -61,6 +61,14 @@ export function labelZpl(row) {
   const maker = raw(row.maker)
   const makerPn = raw(row.makerPn)
   const loc = esc(row.location)
+  const isAlt = !!row.isAlt          // 비고로 지정한 대체품
+
+  // 글자가 길면 폰트를 줄여 잘리지 않게 한다 (15자까지는 그대로, 최소 55%)
+  const fit = (text, base = 3.6, limit = 15) => {
+    const n = String(text || '').length
+    if (n <= limit) return mm(base)
+    return mm(Math.max(base * 0.55, base * limit / n))
+  }
 
   const out = [
     '^XA', '^CI28',
@@ -81,8 +89,25 @@ export function labelZpl(row) {
   ]
 
   // 3·4줄 — 제조사명 / 제조사품번 (각각 다른 줄이라 길어도 안 겹침)
-  if (maker) out.push(`^FO${X0},${MK_L1_Y}^A0N,${mm(3.6)},${mm(3.6)}^FB${MK_W},1,0,L^FD${maker}^FS`)
-  if (makerPn) out.push(`^FO${X0},${MK_L2_Y}^A0N,${mm(3.6)},${mm(3.6)}^FB${MK_W},1,0,L^FD${makerPn}^FS`)
+  // 대체품이면 MAKER 자리 옆에 배지를 찍어 현장에서 바로 구분되게 한다
+  if (isAlt) {
+    // 구분선 바로 위, 수량 왼쪽 빈 자리에 배지
+    const bw = mm(12), bh = mm(3.2)
+    const bx = X1 - QTY_W - bw - mm(2)
+    const by = DIV_Y - bh - mm(0.8)
+    out.push(
+      `^FO${bx},${by}^GB${bw},${bh},${bh}^FS`,
+      `^FO${bx},${by + mm(0.5)}^FR^A0N,${mm(2.2)},${mm(2.2)}^FB${bw},1,0,C^FD대체품^FS`,
+    )
+  }
+
+  // 제조사명 / 제조사품번을 각각 다른 줄에. 15자를 넘으면 폰트를 자동 축소.
+  if (maker) out.push(`^FO${X0},${MK_L1_Y}^A0N,${fit(maker)},${fit(maker)}^FB${MK_W},1,0,L^FD${maker}^FS`)
+  if (makerPn) {
+    // 제조사가 없으면(대체품 품번만) 위쪽 줄에 찍는다
+    const y = maker ? MK_L2_Y : MK_L1_Y
+    out.push(`^FO${X0},${y}^A0N,${fit(makerPn)},${fit(makerPn)}^FB${MK_W},1,0,L^FD${makerPn}^FS`)
+  }
   if (!maker && !makerPn) out.push(`^FO${X0},${MK_L1_Y}^A0N,${mm(3.6)},${mm(3.6)}^FB${MK_W},1,0,L^FD ^FS`)
 
   // LOC 박스 (검정) — 우측 고정
