@@ -409,6 +409,42 @@ export default function BOM() {
     queryFn: () => fetchDrawingRevs(bomDetail.map(b => b.items?.std_code)),
   })
 
+  // ── 하위 어셈블리 BOM 생성 ──────────────────────
+  // 리포트에는 다단 구조(LV1→LV2→LV3)가 들어오지만 하위 ASSY 는 자기 BOM 이 없다.
+  // 상위 BOM 의 모자관계를 떼어내 하위 BOM 을 만들면 하위 ASSY 단독 원가를 볼 수 있다.
+  const [subBomBusy, setSubBomBusy] = useState(false)
+  const [subBomResult, setSubBomResult] = useState(null)
+
+  // 이 어셈블리에 만들 대상이 몇 개인지 (버튼에 표시)
+  const { data: subPending = 0 } = useQuery({
+    queryKey: ['subBomPending', selAssembly?.code, bomDetail.length],
+    enabled: !!selAssembly?.code && bomDetail.length > 0,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_sub_bom_pending', { p_source_code: selAssembly.code })
+      if (error) return 0
+      return data || 0
+    },
+  })
+
+  async function buildSubBom() {
+    if (!selAssembly?.code) return
+    if (!confirm(`${selAssembly.code} 안의 하위 어셈블리 ${subPending}건에 BOM 을 생성합니다.\n\n· 상위 BOM 의 모자관계를 그대로 가져옵니다\n· 이미 BOM 이 있는 어셈블리는 건너뜁니다\n\n계속할까요?`)) return
+    setSubBomBusy(true); setSubBomResult(null)
+    try {
+      const { data, error } = await supabase.rpc('pm_build_sub_bom_for', { p_source_code: selAssembly.code })
+      if (error) throw error
+      const list = data || []
+      const total = list.reduce((a, r) => a + (r.rows_created || 0), 0)
+      setSubBomResult({ count: list.length, total, list })
+      toastSuccess(`하위 어셈블리 ${list.length}건 · 부품 ${total}행 생성`)
+      qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
+      qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
+    } catch (e) {
+      toastError('생성 실패: ' + e.message)
+    } finally { setSubBomBusy(false) }
+  }
+
   // ── BOM 행 편집 ─────────────────────────────────
   // 대체품 사용 등으로 등록 후 수정이 필요한 경우.
   // 재업로드하면 어셈블리 전체가 갈아끼워지므로, 여기서 고친 내용은
@@ -800,7 +836,30 @@ export default function BOM() {
                     ＋ 행 추가
                   </button>
                 )}
+                {canEdit && selAssembly && subPending > 0 && (
+                  <button onClick={buildSubBom} disabled={subBomBusy}
+                    title="이 BOM 안의 하위 어셈블리에 BOM 을 만들어 단독 원가를 볼 수 있게 합니다"
+                    className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+                    {subBomBusy ? '생성 중…' : `🧬 하위 ASSY BOM 생성 (${subPending})`}
+                  </button>
+                )}
               </div>
+              {subBomResult && (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                  <p className="font-bold">
+                    ✅ 하위 어셈블리 {subBomResult.count}건 · 부품 {subBomResult.total.toLocaleString()}행 생성
+                  </p>
+                  {!!subBomResult.list.length && (
+                    <p className="mt-1 text-[11px] text-emerald-700">
+                      {subBomResult.list.slice(0, 8).map(r => `${r.assy}(${r.rows_created})`).join(' · ')}
+                      {subBomResult.list.length > 8 && ` 외 ${subBomResult.list.length - 8}건`}
+                    </p>
+                  )}
+                  <p className="mt-1 text-[11px] text-emerald-600">
+                    이제 원가분석에서 이 어셈블리들을 골라 단독 원가를 볼 수 있습니다.
+                  </p>
+                </div>
+              )}
               <p className="text-[11px] text-slate-400">
                 대체품 사용 등으로 수정한 내용은 <b>같은 어셈블리의 리포트를 다시 업로드하면 사라집니다</b>
                 (업로드 시 어셈블리 전체가 새로 등록되기 때문).
