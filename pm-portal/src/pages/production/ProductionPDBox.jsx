@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, MAIN_PNS } from './mainPns'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -77,6 +78,8 @@ const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수'
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
+  // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
+  const dq = useDebounced(search, 250)
   const [showDone, setShowDone] = useState(false)
   const [view, setView] = useState('list') // list | model | kanban | load
   const [mainTab, setMainTab] = useState('main') // main=주요 관리 | sub
@@ -226,8 +229,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
     r = r.filter(x => isMainPn(x.pn) === (mainTab === 'main'))
-    if (search.trim()) {
-      const s = search.toLowerCase()
+    if (dq.trim()) {
+      const s = dq.toLowerCase()
       r = r.filter(x => (x.pn || '').toLowerCase().includes(s) || (x.name || '').toLowerCase().includes(s) || (x.hogi || '').toLowerCase().includes(s))
     }
     r.sort((a, b) => {
@@ -249,7 +252,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       out.push(x)
     }
     return out
-  }, [rows, showDone, search, mainTab])
+  }, [rows, showDone, dq, mainTab])
 
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {

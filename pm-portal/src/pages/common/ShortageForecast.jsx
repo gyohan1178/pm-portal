@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useRef, memo } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import * as XLSX from 'xlsx'
@@ -119,6 +120,9 @@ export default function ShortageForecast() {
   const navigate = useNavigate()
   const [csCode, setCsCode] = useState('ax')
   const [search, setSearch] = useState('')
+  // 수백 건을 한 글자마다 다시 거르고 그리면 입력이 멈춘다.
+  // 입력은 즉시 반영하되(타이핑 끊김 없음) 필터는 멈춘 뒤 한 번만.
+  const dq = useDebounced(search, 250)
   const [onlyRisk, setOnlyRisk] = useState(true)
   const [period, setPeriod] = useState('month')   // month | quarter
   const [metric, setMetric] = useState('stock')   // stock(예상재고) | demand(소요량)
@@ -228,8 +232,8 @@ export default function ShortageForecast() {
   const filtered = useMemo(() => {
     let list = onlyRisk ? items.filter(it => it.firstShortage) : items
     if (catSel.size) list = list.filter(it => catSel.has(getCategoryCode(it.js_code)))
-    if (search.trim()) {
-      const q = search.toLowerCase()
+    if (dq.trim()) {
+      const q = dq.toLowerCase()
       list = list.filter(it => it.std_code.toLowerCase().includes(q) || (it.name || '').toLowerCase().includes(q) || (it.manufacturer || '').toLowerCase().includes(q) || (it.manufacturer_code || '').toLowerCase().includes(q))
     }
     // 선발주 모드: 장납기(LT≥기준) + 부족 품목만, 발주 데드라인 임박순
@@ -239,7 +243,7 @@ export default function ShortageForecast() {
     }
     // 쇼티지 임박순
     return list.sort((a, b) => (a.firstShortage || '9999') < (b.firstShortage || '9999') ? -1 : 1)
-  }, [items, search, onlyRisk, catSel, preorder, ltThreshold])
+  }, [items, dq, onlyRisk, catSel, preorder, ltThreshold])
 
   // 선발주: 선택한 자재 + 그 자재가 들어간 ASSY (코드순)
   const selectedMats = useMemo(() => filtered.filter(it => selMat.has(it.item_id)), [filtered, selMat])

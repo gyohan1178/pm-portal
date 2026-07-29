@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -40,6 +41,9 @@ const TIER_META = {
 export default function ShortageMonthly({ csId }) {
   const [tierFilter, setTierFilter] = useState(null)
   const [search, setSearch] = useState('')
+  // 수백 건을 한 글자마다 다시 거르고 그리면 입력이 멈춘다.
+  // 입력은 즉시 반영하되(타이핑 끊김 없음) 필터는 멈춘 뒤 한 번만.
+  const dq = useDebounced(search, 250)
   const [urgentOnly, setUrgentOnly] = useState(false)
   const [checked, setChecked] = useState({})
   const qc = useQueryClient()
@@ -107,14 +111,14 @@ export default function ShortageMonthly({ csId }) {
   }, [rows])
 
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = dq.trim().toLowerCase()
     return items.filter(it => {
       if (urgentOnly && it.tier === '여유') return false
       if (tierFilter && it.tier !== tierFilter) return false
       if (q && ![it.std_code, it.name, it.manufacturer, it.manufacturer_code, it.vendor_name].some(x => (x || '').toLowerCase().includes(q))) return false
       return true
     })
-  }, [items, search, urgentOnly, tierFilter])
+  }, [items, dq, urgentOnly, tierFilter])
 
   if (isLoading) return <div className="text-center py-12 text-slate-400 text-sm">쇼티지 계산 중...</div>
   if (!items.length) return (

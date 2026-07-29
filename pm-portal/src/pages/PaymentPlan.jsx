@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useDebounced } from '../hooks/useDebounced'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
@@ -33,6 +34,8 @@ export default function PaymentPlan() {
   const [openPo, setOpenPo] = useState(null)
   const [rows, setRows] = useState([])        // 편집 중인 분할 행
   const [search, setSearch] = useState('')
+  // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
+  const dq = useDebounced(search, 250)
 
   // 발주서 묶음 (업체·발주일 기준)
   const { data: groups = [], isLoading } = useQuery({
@@ -55,12 +58,12 @@ export default function PaymentPlan() {
   })
 
   const shown = useMemo(() => {
-    const q = search.trim().toLowerCase()
+    const q = dq.trim().toLowerCase()
     if (!q) return groups.slice(0, 200)
     return groups.filter((g) =>
       [g.po_number, g.vendor_name].some((x) => String(x || '').toLowerCase().includes(q))
     ).slice(0, 200)
-  }, [groups, search])
+  }, [groups, dq])
 
   // 월별 합계 (고객사 무관, 전사 자금 계획)
   const byMonth = useMemo(() => {

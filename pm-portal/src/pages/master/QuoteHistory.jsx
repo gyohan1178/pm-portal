@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
@@ -61,6 +62,8 @@ export default function QuoteHistory() {
   const [kind, setKind] = useState('sales')
   const [view, setView] = useState('item')   // item = 품번별, quote = 견적별
   const [q, setQ] = useState('')
+  // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
+  const dq = useDebounced(q, 250)
   const [openId, setOpenId] = useState(null)
   // 마진율 계산용 판매환율 (외화 견적단가를 원화 원가와 비교)
   const [sellRate, setSellRate] = useState(() => {
@@ -210,7 +213,7 @@ export default function QuoteHistory() {
   }, [items, qMap])
 
   const codeRows = useMemo(() => {
-    const kw = q.trim().toLowerCase()
+    const kw = dq.trim().toLowerCase()
     let rows = Object.entries(byCode).map(([code, list]) => ({
       code, list, latest: list[0], count: list.length,
     }))
@@ -220,14 +223,14 @@ export default function QuoteHistory() {
         String(r.latest.description || '').toLowerCase().includes(kw))
     }
     return rows.sort((a, b) => a.code.localeCompare(b.code))
-  }, [byCode, q])
+  }, [byCode, dq])
 
   const quoteRows = useMemo(() => {
-    const kw = q.trim().toLowerCase()
+    const kw = dq.trim().toLowerCase()
     if (!kw) return quotes
     return quotes.filter((x) =>
       [x.quote_no, x.project_name, x.issued_to, x.memo].some((v) => String(v || '').toLowerCase().includes(kw)))
-  }, [quotes, q])
+  }, [quotes, dq])
 
   function exportXlsx() {
     const rows = buildExportRows()

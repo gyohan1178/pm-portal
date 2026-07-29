@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -58,6 +59,8 @@ export default function ProductionCustomer() {
   const nav = useNavigate()
   const [tab, setTab] = useState('list')
   const [search, setSearch] = useState('')
+  // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
+  const dq = useDebounced(search, 250)
   const [showDone, setShowDone] = useState(false)
   const qc = useQueryClient()
 
@@ -74,8 +77,8 @@ export default function ProductionCustomer() {
 
   const filtered = useMemo(() => {
     let list = showDone ? rows : rows.filter(r => r.status !== '완료')
-    if (search.trim()) {
-      const q = search.toLowerCase()
+    if (dq.trim()) {
+      const q = dq.toLowerCase()
       list = list.filter(r =>
         (r.pn || '').toLowerCase().includes(q) ||
         (r.name || '').toLowerCase().includes(q) ||
@@ -89,7 +92,7 @@ export default function ProductionCustomer() {
       const nb = parseInt(String(b.hogi || '').replace(/[^0-9]/g, '')) || 999
       return na - nb
     })
-  }, [rows, search, showDone])
+  }, [rows, dq, showDone])
 
   // 월별 구분 행 (납품일 기준 — AXCELIS 기본현황 방식)
   const grouped = useMemo(() => {

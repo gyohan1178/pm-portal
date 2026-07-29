@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useDebounced } from '../../hooks/useDebounced'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
@@ -104,6 +105,8 @@ export default function Inbound() {
   const [selVendor, setSelVendor] = useState('')
   const [checked, setChecked] = useState({})
   const [rowSearch, setRowSearch] = useState('')
+  // 발주 목록이 많으면 한 글자마다 다시 거르느라 입력이 멈춘다
+  const dRowSearch = useDebounced(rowSearch, 250)
   const [vendorText, setVendorText] = useState('')
   const [inboundData, setInboundData] = useState({})
   const [note, setNote] = useState('')
@@ -196,7 +199,7 @@ export default function Inbound() {
 
   // 미입고 발주를 "품목 행"으로 나열 (검색 + 헤더 정렬) + 제조사/품번/코드/품명 검색
   const rows = useMemo(() => {
-    const q = rowSearch.trim().toLowerCase()
+    const q = dRowSearch.trim().toLowerCase()
     const vq = vendorText.trim().toLowerCase()
     let list = !q ? pendingPOs : pendingPOs.filter(po => {
       const it = po.items || {}
@@ -213,7 +216,7 @@ export default function Inbound() {
       })
     }
     return list
-  }, [pendingPOs, rowSearch, vendorText, sort])
+  }, [pendingPOs, dRowSearch, vendorText, sort])
   function toggleRow(po) {
     setChecked(prev => ({ ...prev, [po.id]: !prev[po.id] }))
     setInboundData(prev => prev[po.id] ? prev : ({ ...prev, [po.id]: { qty: po.qty_remaining||0, unit_price: po.unit_price||'' } }))
