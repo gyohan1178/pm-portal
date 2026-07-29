@@ -415,29 +415,37 @@ export default function BOM() {
   const [subBomBusy, setSubBomBusy] = useState(false)
   const [subBomResult, setSubBomResult] = useState(null)
 
-  // 이 어셈블리에 만들 대상이 몇 개인지 (버튼에 표시)
-  const { data: subPending = 0 } = useQuery({
+  // 이 어셈블리에 만들 대상 — 신규 / 이미 있는 것(덮어쓰기 대상)
+  const [subOverwrite, setSubOverwrite] = useState(false)
+  const { data: subStat = { new_count: 0, existing_count: 0 } } = useQuery({
     queryKey: ['subBomPending', selAssembly?.code, bomDetail.length],
     enabled: !!selAssembly?.code && bomDetail.length > 0,
     staleTime: 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_sub_bom_pending', { p_source_code: selAssembly.code })
-      if (error) return 0
-      return data || 0
+      if (error) return { new_count: 0, existing_count: 0 }
+      return data?.[0] || { new_count: 0, existing_count: 0 }
     },
   })
+  const subPending = (subStat.new_count || 0) + (subOverwrite ? (subStat.existing_count || 0) : 0)
 
   async function buildSubBom() {
     if (!selAssembly?.code) return
-    if (!confirm(`${selAssembly.code} 안의 하위 어셈블리 ${subPending}건에 BOM 을 생성합니다.\n\n· 상위 BOM 의 모자관계를 그대로 가져옵니다\n· 이미 BOM 이 있는 어셈블리는 건너뜁니다\n\n계속할까요?`)) return
+    const msg = subOverwrite
+      ? `${selAssembly.code} 안의 하위 어셈블리 BOM 을 다시 만듭니다.\n\n· 신규 ${subStat.new_count}건\n· 기존 ${subStat.existing_count}건은 지우고 새로 생성\n\n⚠ 대체품 교체 등 직접 수정한 내용도 함께 사라집니다.\n되돌릴 수 없습니다. 계속할까요?`
+      : `${selAssembly.code} 안의 하위 어셈블리 ${subStat.new_count}건에 BOM 을 생성합니다.\n\n· 상위 BOM 의 모자관계를 그대로 가져옵니다\n· 이미 BOM 이 있는 어셈블리는 건너뜁니다\n\n계속할까요?`
+    if (!confirm(msg)) return
     setSubBomBusy(true); setSubBomResult(null)
     try {
-      const { data, error } = await supabase.rpc('pm_build_sub_bom_for', { p_source_code: selAssembly.code })
+      const { data, error } = await supabase.rpc('pm_build_sub_bom_for', {
+        p_source_code: selAssembly.code, p_overwrite: subOverwrite,
+      })
       if (error) throw error
       const list = data || []
       const total = list.reduce((a, r) => a + (r.rows_created || 0), 0)
-      setSubBomResult({ count: list.length, total, list })
-      toastSuccess(`하위 어셈블리 ${list.length}건 · 부품 ${total}행 생성`)
+      const repl = list.filter(r => r.replaced).length
+      setSubBomResult({ count: list.length, total, list, replaced: repl })
+      toastSuccess(`하위 어셈블리 ${list.length}건 · 부품 ${total}행${repl ? ` (갱신 ${repl}건)` : ''}`)
       qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
       qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
     } catch (e) {
@@ -836,18 +844,31 @@ export default function BOM() {
                     ＋ 행 추가
                   </button>
                 )}
-                {canEdit && selAssembly && subPending > 0 && (
-                  <button onClick={buildSubBom} disabled={subBomBusy}
-                    title="이 BOM 안의 하위 어셈블리에 BOM 을 만들어 단독 원가를 볼 수 있게 합니다"
-                    className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-                    {subBomBusy ? '생성 중…' : `🧬 하위 ASSY BOM 생성 (${subPending})`}
-                  </button>
+                {canEdit && selAssembly && (subStat.new_count > 0 || subStat.existing_count > 0) && (
+                  <>
+                    <button onClick={buildSubBom} disabled={subBomBusy || subPending === 0}
+                      title="이 BOM 안의 하위 어셈블리에 BOM 을 만들어 단독 원가를 볼 수 있게 합니다"
+                      className={`px-3 py-2 text-xs font-bold rounded-lg border disabled:opacity-40 ${subOverwrite
+                        ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100'
+                        : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}`}>
+                      {subBomBusy ? '생성 중…' : `🧬 하위 ASSY BOM ${subOverwrite ? '다시 생성' : '생성'} (${subPending})`}
+                    </button>
+                    {subStat.existing_count > 0 && (
+                      <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer"
+                        title="리포트를 새로 올렸다면 체크해서 기존 하위 BOM 도 갱신하세요">
+                        <input type="checkbox" checked={subOverwrite}
+                          onChange={e => setSubOverwrite(e.target.checked)} />
+                        기존 {subStat.existing_count}건도 갱신
+                      </label>
+                    )}
+                  </>
                 )}
               </div>
               {subBomResult && (
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                   <p className="font-bold">
-                    ✅ 하위 어셈블리 {subBomResult.count}건 · 부품 {subBomResult.total.toLocaleString()}행 생성
+                    ✅ 하위 어셈블리 {subBomResult.count}건 · 부품 {subBomResult.total.toLocaleString()}행
+                    {subBomResult.replaced > 0 && ` (갱신 ${subBomResult.replaced}건 포함)`}
                   </p>
                   {!!subBomResult.list.length && (
                     <p className="mt-1 text-[11px] text-emerald-700">
