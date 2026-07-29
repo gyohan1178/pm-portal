@@ -1,10 +1,12 @@
-export const APP_VERSION = 'v3.28.3'
+export const APP_VERSION = 'v3.28.4'
 
 export const CHANGELOG = [
   {
-    version: 'v3.28.3',
+    version: 'v3.28.4',
     date: '2026-07-29',
     changes: [
+      '하위 ASSY BOM 생성 타임아웃 해결 — 큰 BOM 에서 한 번에 처리하다 실패하던 것을 어셈블리 하나씩 나눠 처리하도록 변경. 진행률 막대로 어디까지 됐는지 확인 가능',
+      'SQL: pm_sub_bom_one.sql 선행 필요 (기존 pm_build_sub_bom_for 는 삭제됨)',
       '현장 검색의 BOM 조회를 BOM 화면과 같은 형태로 통일 — 레벨(LV)·REV 대조·구분이 빠져 있어 서로 다르게 보이던 문제. 이제 같은 컬럼·같은 순서로 표시되고 도면 REV 대조 배지도 동일하게 나옴',
       '하위 ASSY BOM 생성에 갱신 옵션 추가 — 리포트를 새로 올려도 이미 BOM 이 있는 하위 어셈블리는 건너뛰어 갱신되지 않던 문제. \'기존 N건도 갱신\' 을 체크하면 지우고 다시 만든다',
       '체크 시 버튼이 주황색으로 바뀌고, 확인 창에서 직접 수정한 내용도 사라진다는 점을 안내',

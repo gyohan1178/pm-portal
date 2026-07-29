@@ -429,28 +429,48 @@ export default function BOM() {
   })
   const subPending = (subStat.new_count || 0) + (subOverwrite ? (subStat.existing_count || 0) : 0)
 
+  const [subProgress, setSubProgress] = useState(null)   // {done, total}
+
+  // 하위 어셈블리를 하나씩 처리한다.
+  // 한 번에 모두 만들면 큰 BOM 에서 타임아웃이 나므로 순서대로 나눠 호출한다.
   async function buildSubBom() {
     if (!selAssembly?.code) return
     const msg = subOverwrite
       ? `${selAssembly.code} 안의 하위 어셈블리 BOM 을 다시 만듭니다.\n\n· 신규 ${subStat.new_count}건\n· 기존 ${subStat.existing_count}건은 지우고 새로 생성\n\n⚠ 대체품 교체 등 직접 수정한 내용도 함께 사라집니다.\n되돌릴 수 없습니다. 계속할까요?`
       : `${selAssembly.code} 안의 하위 어셈블리 ${subStat.new_count}건에 BOM 을 생성합니다.\n\n· 상위 BOM 의 모자관계를 그대로 가져옵니다\n· 이미 BOM 이 있는 어셈블리는 건너뜁니다\n\n계속할까요?`
     if (!confirm(msg)) return
-    setSubBomBusy(true); setSubBomResult(null)
+
+    setSubBomBusy(true); setSubBomResult(null); setSubProgress(null)
     try {
-      const { data, error } = await supabase.rpc('pm_build_sub_bom_for', {
-        p_source_code: selAssembly.code, p_overwrite: subOverwrite,
-      })
-      if (error) throw error
-      const list = data || []
-      const total = list.reduce((a, r) => a + (r.rows_created || 0), 0)
-      const repl = list.filter(r => r.replaced).length
-      setSubBomResult({ count: list.length, total, list, replaced: repl })
-      toastSuccess(`하위 어셈블리 ${list.length}건 · 부품 ${total}행${repl ? ` (갱신 ${repl}건)` : ''}`)
+      // ① 처리할 목록을 먼저 받는다
+      const { data: list, error: e1 } = await supabase.rpc('pm_sub_bom_list', { p_source_code: selAssembly.code })
+      if (e1) throw e1
+
+      const targets = (list || []).filter(x => subOverwrite || !x.has_bom)
+      if (!targets.length) { toastError('처리할 하위 어셈블리가 없습니다'); return }
+
+      // ② 하나씩 생성 (타임아웃 방지)
+      const done = []
+      for (let i = 0; i < targets.length; i++) {
+        setSubProgress({ done: i, total: targets.length, now: targets[i].assy_code })
+        const { data, error } = await supabase.rpc('pm_build_sub_bom_one', {
+          p_source_code: selAssembly.code,
+          p_assy_code: targets[i].assy_code,
+          p_overwrite: subOverwrite,
+        })
+        if (error) throw new Error(`${targets[i].assy_code}: ${error.message}`)
+        if (data?.[0]) done.push(data[0])
+      }
+
+      const total = done.reduce((a, r) => a + (r.rows_created || 0), 0)
+      const repl = done.filter(r => r.replaced).length
+      setSubBomResult({ count: done.length, total, list: done, replaced: repl })
+      toastSuccess(`하위 어셈블리 ${done.length}건 · 부품 ${total}행${repl ? ` (갱신 ${repl}건)` : ''}`)
       qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
       qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
     } catch (e) {
       toastError('생성 실패: ' + e.message)
-    } finally { setSubBomBusy(false) }
+    } finally { setSubBomBusy(false); setSubProgress(null) }
   }
 
   // ── BOM 행 편집 ─────────────────────────────────
@@ -851,7 +871,9 @@ export default function BOM() {
                       className={`px-3 py-2 text-xs font-bold rounded-lg border disabled:opacity-40 ${subOverwrite
                         ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100'
                         : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}`}>
-                      {subBomBusy ? '생성 중…' : `🧬 하위 ASSY BOM ${subOverwrite ? '다시 생성' : '생성'} (${subPending})`}
+                      {subBomBusy
+                        ? (subProgress ? `생성 중… ${subProgress.done}/${subProgress.total}` : '준비 중…')
+                        : `🧬 하위 ASSY BOM ${subOverwrite ? '다시 생성' : '생성'} (${subPending})`}
                     </button>
                     {subStat.existing_count > 0 && (
                       <label className="inline-flex items-center gap-1.5 text-[11px] text-slate-500 cursor-pointer"
@@ -864,6 +886,18 @@ export default function BOM() {
                   </>
                 )}
               </div>
+              {subProgress && (
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-bold">{subProgress.done} / {subProgress.total} 처리 중</span>
+                    <span className="font-mono text-[11px]">{subProgress.now}</span>
+                  </div>
+                  <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
+                    <div className="h-full bg-indigo-500 transition-all"
+                      style={{ width: `${Math.round(subProgress.done / subProgress.total * 100)}%` }} />
+                  </div>
+                </div>
+              )}
               {subBomResult && (
                 <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
                   <p className="font-bold">
