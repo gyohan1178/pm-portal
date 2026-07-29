@@ -51,8 +51,9 @@ async function fetchPurchaseHistory(csId, from, to) {
   }))
 }
 
-async function genPoNumber() {
-  const d = new Date()
+async function genPoNumber(dateStr) {
+  // 발주일 기준으로 번호를 만든다 (과거 날짜로 등록해도 그 날짜 번호가 나오도록)
+  const d = dateStr ? new Date(dateStr) : new Date()
   const yy = String(d.getFullYear()).slice(2)
   const mm = String(d.getMonth()+1).padStart(2,'0')
   const dd = String(d.getDate()).padStart(2,'0')
@@ -240,7 +241,22 @@ export default function PurchasePage() {
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
-      const poNum = data.po_number?.trim() || null
+      // 발주번호를 비워두면 자동 부여한다.
+      //   같은 업체·같은 발주일 건이 이미 있으면 그 번호를 재사용해 한 발주서로 묶는다.
+      //   (ecount 에 등록할 때 이 번호를 그대로 쓰면 양쪽이 맞춰진다)
+      let poNum = data.po_number?.trim() || null
+      if (!poNum && !editId && data.order_date) {
+        // 업체·발주일·납기가 모두 같으면 한 발주서로 보고 기존 번호를 재사용한다.
+        // 납기가 다르면 다른 발주서이므로 새 번호를 받는다.
+        let q = supabase.from('purchase_orders')
+          .select('po_number')
+          .eq('vendor_id', selVendor || null)
+          .eq('order_date', data.order_date)
+          .not('po_number', 'is', null)
+        q = data.promise_date ? q.eq('promise_date', data.promise_date) : q.is('promise_date', null)
+        const { data: same } = await q.limit(1)
+        poNum = same?.[0]?.po_number || await genPoNumber(data.order_date)
+      }
       const payload = { vendor_id:selVendor||null, po_number:poNum, type:data.type, qty_ordered:Number(data.qty_ordered), order_date:data.order_date||null, promise_date:data.promise_date||null, unit_price:data.unit_price?Number(data.unit_price):null, memo:data.memo||null }
       if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
       else { const{error}=await supabase.from('purchase_orders').insert({...payload,customer_id:cs?.id,item_id:selItem?.id,order_type:'purchase',qty_received:0,status:'진행중'}); if(error) throw error }

@@ -96,7 +96,7 @@ export function sectionOfPath(pathname) {
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search') return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
-  if (pathname === '/inbound' || pathname === '/quote') return 'buy'
+  if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
   // 영업 — 매출견적(+견적이력 내부 탭)
   if (pathname === '/sales-quote' || pathname === '/quote-history') return 'sales'
   // 분석 — 원가분석이 여기로 이동

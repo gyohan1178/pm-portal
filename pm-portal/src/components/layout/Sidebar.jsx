@@ -159,6 +159,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
           <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
           <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
+          <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
         </CollapseSection>
         )}
