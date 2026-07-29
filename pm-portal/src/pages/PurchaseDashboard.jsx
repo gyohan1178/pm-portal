@@ -20,8 +20,10 @@ async function fetchDashboard() {
   const year = new Date().getFullYear()
 
   // 확정매입 = ecount (회계 확정치)
-  // 예상매입 = 담당자 엑셀 입고예정(weekly plan) + 발주 미입고 잔량을 통합.
-  //   같은 달·같은 고객사에서 겹치면 큰 쪽을 취해 이중 계산을 막는다.
+  // 예상매입 = 결제(명세서) 기준.
+  //   분할 결제 건은 명세서를 월별로 끊어 받으므로 ecount 확정매입도 그 달에 잡힌다.
+  //   따라서 예상도 결제 계획이 있으면 그 달로 나눠야 확정과 대조가 맞는다.
+  //   계획이 없는 발주는 납기 기준, 담당자 엑셀 입고예정도 함께 본다.
   const [ecountRes, pendingRes] = await Promise.all([
     supabase.rpc('pm_ecount_monthly', { p_year: year }),
     supabase.rpc('pm_pending_purchase_monthly', { p_year: year }).then(r => r).catch(() => ({ data: [] })),
@@ -109,7 +111,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
-          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=담당자 엑셀 입고예정 + 발주 미입고 잔량 · 억원</p>
+          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
         </div>
       </div>
@@ -187,7 +189,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="rounded-xl border border-slate-200 overflow-x-auto">
         <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
           <p className="text-sm font-bold text-slate-700">월별 고객사별 매입 현황 (단위: 억원)</p>
-          <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=입고예정(엑셀+발주잔)</p>
+          <p className="text-xs text-slate-400 mt-0.5">확정=ecount · 예상=결제 기준</p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
