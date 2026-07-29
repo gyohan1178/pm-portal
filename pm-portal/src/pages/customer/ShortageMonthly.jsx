@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -120,6 +121,9 @@ export default function ShortageMonthly({ csId }) {
     })
   }, [items, dq, urgentOnly, tierFilter])
 
+  // 수천 건을 한 번에 그리면 검색·필터 조작이 밀린다
+  const vis = useVisibleRows(filtered, 200, [dq, urgentOnly, tierFilter])
+
   if (isLoading) return <div className="text-center py-12 text-slate-400 text-sm">쇼티지 계산 중...</div>
   if (!items.length) return (
     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center text-sm text-slate-400">
@@ -218,7 +222,7 @@ export default function ShortageMonthly({ csId }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(it => {
+              {vis.shown.map(it => {
                 const m = TIER_META[it.tier] || TIER_META['여유']
                 return (
                   <tr key={it.item_id} className="border-b border-slate-100 hover:bg-slate-50">
@@ -254,6 +258,7 @@ export default function ShortageMonthly({ csId }) {
               })}
             </tbody>
           </table>
+          <MoreRows {...vis} />
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import { quarterOf, fmt1 } from '../../lib/utils'
@@ -219,6 +220,9 @@ export default function Forecast() {
     return r.std_code.toLowerCase().includes(q) || (r.item_name || '').toLowerCase().includes(q)
   })
 
+  // 포캐스트가 수천 건이면 필터 조작이 밀린다
+  const vis = useVisibleRows(filtered, 200, [filtered.length])
+
   return (
     <div className="space-y-4">
       <CustomerTabs />
@@ -277,7 +281,7 @@ export default function Forecast() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((r, i) => (
+                    {vis.shown.map((r, i) => (
                       <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="px-3 py-2 sticky left-0 bg-white z-10">
                           <div className="font-mono text-indigo-600">{r.std_code}</div>
@@ -301,6 +305,7 @@ export default function Forecast() {
                     ))}
                   </tbody>
                 </table>
+                <MoreRows {...vis} />
               </div>
             </div>}
     </div>

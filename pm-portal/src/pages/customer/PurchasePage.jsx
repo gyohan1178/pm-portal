@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { useCustomer } from '../../hooks/useCustomers'
 import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
@@ -168,6 +168,9 @@ export default function PurchasePage() {
   const [filterOrderDate, setFilterOrderDate] = useState('')  // 발주일자 필터 (이카운트 발주서용)
   // 납기 필터 — 임박 건을 골라 일괄 이월할 때 쓴다
   const [dueFilter, setDueFilter] = useState('')       // '' | over | d7 | d14 | month | next | range
+  // 목록이 수백 건이면 폼에 글자 하나 칠 때마다 전부 다시 그려져 입력이 밀린다.
+  // 기본 200건만 그리고 '더 보기'로 늘린다.
+  const [visibleCount, setVisibleCount] = useState(200)
   const [dueFrom, setDueFrom] = useState('')
   const [dueTo, setDueTo] = useState('')
   const [showForm, setShowForm] = useState(false)
@@ -441,12 +444,36 @@ export default function PurchasePage() {
     setItemSearch(p.items?.name||''); setEditId(p.id); setShowForm(true)
     setTimeout(()=>document.getElementById('po-form')?.scrollIntoView({behavior:'smooth',block:'center'}), 60)
   }
+  // 품목 검색 — 한 글자마다 DB 를 때리면 타이핑이 밀린다.
+  // 입력은 즉시 반영하고, 조회는 입력이 멈춘 뒤 한 번만.
+  // 이전 요청이 늦게 도착해 결과를 덮어쓰지 않도록 순번으로 막는다.
+  const itemSearchTimer = useRef(null)
+  const itemSearchSeq = useRef(0)
   async function searchItems(val) {
     setItemSearch(val)
-    if(val.length<1){setItemResults([]);return}
-    const{data}=await supabase.from('items').select('id,std_code,name,type,lt_weeks,vendor_id,manufacturer,manufacturer_code,purchase_price,unit,vendors(name)').or(`name.ilike.%${val}%,std_code.ilike.%${val}%,manufacturer.ilike.%${val}%,manufacturer_code.ilike.%${val}%`).limit(8)
-    setItemResults(data||[])
+    clearTimeout(itemSearchTimer.current)
+    if (val.trim().length < 1) { setItemResults([]); return }
+    const seq = ++itemSearchSeq.current
+    itemSearchTimer.current = setTimeout(async () => {
+      const v = val.trim()
+      const { data } = await supabase.from('items')
+        .select('id,std_code,name,type,lt_weeks,vendor_id,manufacturer,manufacturer_code,purchase_price,unit,vendors(name)')
+        .or(`name.ilike.%${v}%,std_code.ilike.%${v}%,manufacturer.ilike.%${v}%,manufacturer_code.ilike.%${v}%`)
+        .limit(8)
+      if (seq !== itemSearchSeq.current) return   // 더 최근 입력이 있으면 버린다
+      setItemResults(data || [])
+    }, 250)
   }
+
+  // 구매처 드롭다운 — 매 렌더마다 전체를 거르지 않도록
+  const vendorFiltered = useMemo(() => {
+    const v = vendorSearch.trim().toLowerCase()
+    return v ? vendors.filter(x => x.name.toLowerCase().includes(v)) : vendors
+  }, [vendors, vendorSearch])
+
+  // 조회 조건이 바뀌면 표시 건수를 처음으로 되돌린다
+  useEffect(() => { setVisibleCount(200) },
+    [typeTab, dq, filterOrderDate, dueFilter, dueFrom, dueTo])
 
   const q = dq.trim().toLowerCase()
   const filtered = useMemo(() => purchases.filter(p => {
@@ -758,7 +785,7 @@ export default function PurchasePage() {
                         onFocus={()=>setVendorOpen(true)} onBlur={()=>setTimeout(()=>setVendorOpen(false),150)}
                         placeholder="구매처 검색·선택"
                         className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-                      {vendorOpen && (()=>{ const fv = vendors.filter(v=>!vendorSearch||v.name.toLowerCase().includes(vendorSearch.toLowerCase())); return (
+                      {vendorOpen && (()=>{ const fv = vendorFiltered; return (
                         <div className="absolute z-20 mt-1 w-full max-h-48 overflow-auto bg-white border border-slate-200 rounded-lg shadow-lg">
                           {fv.slice(0,50).map(v=>(
                             <button key={v.id} type="button"
@@ -959,7 +986,7 @@ export default function PurchasePage() {
                 <tbody>
                   {filtered.length===0
                     ? <tr><td colSpan={PO_COLS.length} className="text-center py-10 text-slate-400">구매 발주가 없습니다</td></tr>
-                    : sorted.map(p=>{
+                    : sorted.slice(0, visibleCount).map(p=>{
                       const diff=p.promise_date?Math.round((new Date(p.promise_date)-new Date(today))/86400000):null
                       const supply=Math.round((p.qty_ordered||0)*(p.unit_price||0))
                       return (
@@ -1000,6 +1027,21 @@ export default function PurchasePage() {
                 </tbody>
               )}
             </ResizableTable>
+          )}
+          {sorted.length > visibleCount && (
+            <div className="flex items-center justify-center gap-3 py-3">
+              <span className="text-xs text-slate-400">
+                {visibleCount.toLocaleString()} / {sorted.length.toLocaleString()}건 표시
+              </span>
+              <button onClick={()=>setVisibleCount(v=>v+200)}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
+                더 보기 (+200)
+              </button>
+              <button onClick={()=>setVisibleCount(sorted.length)}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">
+                전체 보기
+              </button>
+            </div>
           )}
         </>
       )}

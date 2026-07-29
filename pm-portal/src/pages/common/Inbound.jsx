@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -217,6 +218,9 @@ export default function Inbound() {
     }
     return list
   }, [pendingPOs, dRowSearch, vendorText, sort])
+
+  // 발주가 수천 건이면 검색·체크 조작이 밀린다
+  const vis = useVisibleRows(rows, 150, [dRowSearch, vendorText, sort])
   function toggleRow(po) {
     setChecked(prev => ({ ...prev, [po.id]: !prev[po.id] }))
     setInboundData(prev => prev[po.id] ? prev : ({ ...prev, [po.id]: { qty: po.qty_remaining||0, unit_price: po.unit_price||'' } }))
@@ -336,7 +340,7 @@ export default function Inbound() {
                         </tr>
                       </thead>
                       <tbody>
-                        {rows.map(po=>{
+                        {vis.shown.map(po=>{
                           const on = !!checked[po.id]
                           const delayed = po.promise_date && po.promise_date < today
                           return (
@@ -377,6 +381,7 @@ export default function Inbound() {
                         })}
                       </tbody>
                     </table>
+                    <MoreRows {...vis} />
                   </div>
 
                   <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap">

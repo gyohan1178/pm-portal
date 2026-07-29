@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
@@ -285,6 +286,9 @@ export default function ReqBOM() {
   })
   function toggleSort(key){ if(!key) return; if(sortKey===key) setSortDir(d=>d==='asc'?'desc':'asc'); else { setSortKey(key); setSortDir('desc') } }
 
+  // BOM 이 1만 건을 넘으면 검색·정렬 조작이 밀린다
+  const vis = useVisibleRows(filtered, 200, [filtered.length, sortKey])
+
   const needOrder = filtered.filter(r=>r.order_need>0)
   const checkedItems = filtered.filter(r=>checked[r.item_id]&&r.order_need>0)
   const allChecked = needOrder.length>0 && needOrder.every(r=>checked[r.item_id])
@@ -490,7 +494,7 @@ export default function ReqBOM() {
                   <tbody>
                     {filtered.length===0 ? (
                       <tr><td colSpan={COLS.length+1} className="text-center py-10 text-slate-400">데이터가 없습니다</td></tr>
-                    ) : filtered.map(r=>(
+                    ) : vis.shown.map(r=>(
                       <tr key={r.item_id} className={`border-b border-slate-100 hover:bg-slate-50 ${r.order_need>0?'bg-red-50/10':''}`}>
                         <td className="px-3 py-2">
                           {r.order_need>0&&<input type="checkbox" checked={!!checked[r.item_id]} onChange={e=>toggleCheck(r.item_id,e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600"/>}
@@ -520,6 +524,7 @@ export default function ReqBOM() {
                     ))}
                   </tbody>
                 </table>
+                <MoreRows {...vis} />
               </div>
             </div>
             <p className="text-xs text-slate-400">💡 헤더 클릭 → 정렬(다시 클릭 시 오름/내림 전환) · 헤더 오른쪽 끝 드래그 → 열 너비 조절 · 구분은 DB 등록값 기준</p>
