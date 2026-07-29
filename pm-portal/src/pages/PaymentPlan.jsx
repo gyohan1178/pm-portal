@@ -2,6 +2,20 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
+import { ResizableTable } from '../components/ResizableTable'
+
+// 표 열 너비 — 마우스로 조정 가능하며 브라우저에 저장된다
+const COLS = [
+  { key: 'po',      label: '발주번호',     defaultWidth: 130 },
+  { key: 'vendor',  label: '업체',         defaultWidth: 180 },
+  { key: 'odate',   label: '발주일',       defaultWidth: 100, align: 'center' },
+  { key: 'pdate',   label: '납기',         defaultWidth: 100, align: 'center' },
+  { key: 'cnt',     label: '품목',         defaultWidth: 60,  align: 'center' },
+  { key: 'total',   label: '발주액',       defaultWidth: 130, align: 'right' },
+  { key: 'remain',  label: '미입고 잔액',  defaultWidth: 130, align: 'right' },
+  { key: 'planned', label: '결제 계획',    defaultWidth: 130, align: 'right' },
+  { key: 'act',     label: '관리',         defaultWidth: 70,  align: 'center' },
+]
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 const eok = (v) => (Number(v) / 100000000).toFixed(2)
@@ -69,14 +83,19 @@ export default function PaymentPlan() {
   // 남은 금액을 n개월로 균등 분할
   function split(n) {
     const total = num(openPo?.total_amt)
-    if (!total || n < 1) return
+    if (!total) { toastError('발주액이 0원이라 분할할 수 없습니다. 단가·수량을 확인하세요.'); return }
+    if (n < 1) return
+
     const per = Math.round(total / n)
-    const base = new Date()
+    // 납기가 있으면 그 달부터, 없으면 다음 달부터 시작한다
+    const start = openPo?.promise_date ? new Date(openPo.promise_date) : new Date()
     const out = []
     for (let i = 0; i < n; i++) {
-      const d = new Date(base.getFullYear(), base.getMonth() + i + 1, 0)  // 각 달 말일
+      // 각 달 말일. toISOString 은 UTC 로 바뀌어 하루 밀릴 수 있으므로 직접 만든다
+      const d = new Date(start.getFullYear(), start.getMonth() + i + 1, 0)
+      const ymd = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
       out.push({
-        pay_date: d.toISOString().slice(0, 10),
+        pay_date: ymd,
         amount: i === n - 1 ? total - per * (n - 1) : per,   // 끝수는 마지막 달에
         memo: `${n}개월 분할 ${i + 1}/${n}`,
       })
@@ -151,23 +170,11 @@ export default function PaymentPlan() {
 
       {/* 발주서 묶음 */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
-        <table className="w-full text-xs min-w-[760px]">
-          <thead className="bg-slate-50 text-slate-400">
-            <tr>
-              <th className="px-3 py-2 text-left">발주번호</th>
-              <th className="px-3 py-2 text-left">업체</th>
-              <th className="px-3 py-2 text-center w-24">발주일</th>
-              <th className="px-3 py-2 text-center w-24">납기</th>
-              <th className="px-3 py-2 text-center w-16">품목</th>
-              <th className="px-3 py-2 text-right w-32">발주액</th>
-              <th className="px-3 py-2 text-right w-32">미입고 잔액</th>
-              <th className="px-3 py-2 text-right w-32">결제 계획</th>
-              <th className="px-3 py-2 text-center w-20">관리</th>
-            </tr>
-          </thead>
+        <ResizableTable cols={COLS} storageKey="payment_plan_cols">
+          {() => (
           <tbody>
             {isLoading && (
-              <tr><td colSpan={9} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
+              <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
             )}
             {shown.map((g) => {
               const has = num(g.planned_amt) > 0
@@ -179,7 +186,10 @@ export default function PaymentPlan() {
                   <td className="px-3 py-2 text-center text-slate-500">{g.order_date}</td>
                   <td className="px-3 py-2 text-center text-slate-500">{g.promise_date || '-'}</td>
                   <td className="px-3 py-2 text-center text-slate-500">{g.item_count}</td>
-                  <td className="px-3 py-2 text-right font-semibold">{won(g.total_amt)}</td>
+                  <td className={`px-3 py-2 text-right font-semibold ${num(g.total_amt) ? '' : 'text-rose-400'}`}
+                    title={num(g.total_amt) ? '' : '단가가 없어 발주액이 0원입니다'}>
+                    {won(g.total_amt)}
+                  </td>
                   <td className="px-3 py-2 text-right text-slate-500">{won(g.remain_amt)}</td>
                   <td className="px-3 py-2 text-right">
                     {has ? (
@@ -199,10 +209,11 @@ export default function PaymentPlan() {
               )
             })}
             {!isLoading && !shown.length && (
-              <tr><td colSpan={9} className="py-10 text-center text-slate-400">발주가 없습니다.</td></tr>
+              <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">발주가 없습니다.</td></tr>
             )}
           </tbody>
-        </table>
+          )}
+        </ResizableTable>
       </div>
 
       {/* 분할 입력 */}
