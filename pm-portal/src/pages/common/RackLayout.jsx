@@ -8,7 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 
-const GW = 68, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
+const GW = 80, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
 const ZOOMS = [11, 14, 18, 22]
 const pad = (v) => String(v).padStart(2, '0')
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
@@ -377,10 +377,10 @@ export default function RackLayout() {
                 const t = Number(r.cells_total) || 1
                 const u = Number(r.cells_used) || 0
                 const pct = Math.round(u / t * 100)
-                const col = pct === 0 ? { b: '#cbd5e1', g: '#f8fafc', f: '#94a3b8' }
-                  : pct < 40 ? { b: '#34d399', g: '#ecfdf5', f: '#065f46' }
-                  : pct < 75 ? { b: '#fbbf24', g: '#fffbeb', f: '#92400e' }
-                  : { b: '#fb7185', g: '#fff1f2', f: '#9f1239' }
+                const col = pct === 0 ? { b: '#94a3b8', g: '#f1f5f9', f: '#475569' }
+                  : pct < 40 ? { b: '#10b981', g: '#d1fae5', f: '#065f46' }
+                  : pct < 75 ? { b: '#f59e0b', g: '#fef3c7', f: '#92400e' }
+                  : { b: '#f43f5e', g: '#ffe4e6', f: '#9f1239' }
                 const gw = r.grid_w ?? 2, gh = r.grid_h ?? 8
                 const w = gw * CELL, h = gh * CELL
                 const vertical = h > w
@@ -394,16 +394,25 @@ export default function RackLayout() {
                       position: 'absolute', left: (r.grid_x ?? 0) * CELL, top: (r.grid_y ?? 0) * CELL,
                       width: w, height: h,
                       border: `2px solid ${col.b}`, background: col.g, color: col.f,
-                      borderRadius: 3, cursor: editing ? 'grab' : 'pointer',
+                      borderRadius: 4, boxShadow: '0 1px 2px rgba(15,23,42,.08)', cursor: editing ? 'grab' : 'pointer',
                       display: 'flex', flexDirection: vertical ? 'column' : 'row',
                       alignItems: 'center', justifyContent: 'center', gap: 2,
                       fontSize: 10, fontWeight: 700, overflow: 'hidden',
                     }}>
-                    <span style={{ fontFamily: 'ui-monospace,monospace',
-                      fontSize: Math.max(9, Math.round(CELL * 0.8)), fontWeight: 800,
-                      writingMode: vertical && gh >= 10 ? 'vertical-rl' : 'horizontal-tb' }}>{r.code}</span>
+                    <span style={{
+                      fontFamily: 'ui-monospace,Menlo,monospace',
+                      fontSize: Math.max(10, Math.round(CELL * 0.85)),
+                      fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px',
+                      writingMode: vertical && gh >= 10 ? 'vertical-rl' : 'horizontal-tb',
+                      textOrientation: 'mixed',
+                    }}>{r.code}</span>
                     {(vertical ? h : w) > CELL * 5 && (
-                      <span style={{ fontSize: Math.max(8, Math.round(CELL * 0.6)), opacity: .75 }}>{pct}%</span>
+                      <span style={{
+                        fontSize: Math.max(8, Math.round(CELL * 0.58)), fontWeight: 700,
+                        color: '#fff', background: col.b,
+                        padding: '0 3px', borderRadius: 3, lineHeight: 1.5,
+                        writingMode: 'horizontal-tb',
+                      }}>{pct}%</span>
                     )}
                     {editing && (
                       <span

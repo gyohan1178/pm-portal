@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.31.7'
+export const APP_VERSION = 'v3.31.8'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.31.8',
+    date: '2026-07-30',
+    changes: [
+      '배치도 격자 범위 확대 — 우측 랙(W8·P·N)이 격자를 벗어나 잘려 보이던 문제 수정',
+      '랙 이름을 진하게, 사용률은 색 배지로 표시해 구분이 쉬워짐. 랙 색상 대비도 강화',
+      'SQL: pm_rack_grid_fix2.sql 실행 (배치를 이미 편집·저장했다면 실행하지 마세요)',
+    ],
+  },
   {
     version: 'v3.31.7',
     date: '2026-07-30',
