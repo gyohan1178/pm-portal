@@ -24,13 +24,19 @@ export default function QrScanner({ onScan, onClose }) {
     return m ? m[1] : null
   }
 
+  // 한 번 인식하면 곧바로 멈춘다.
+  // ref 로 막는 이유: setState 는 다음 렌더에 반영되어
+  // 그 사이 프레임이 여러 번 돌며 중복 인식되기 때문이다.
+  const doneRef = useRef(false)
   const handleHit = useCallback((text) => {
+    if (doneRef.current) return
     const loc = parseLoc(text)
-    if (!loc || loc === last) return
+    if (!loc) return
+    doneRef.current = true
     setLast(loc)
     if (navigator.vibrate) navigator.vibrate(60)
     onScan(loc)
-  }, [last, onScan])
+  }, [onScan])
 
   useEffect(() => {
     let detector = null
@@ -73,7 +79,7 @@ export default function QrScanner({ onScan, onClose }) {
     }
 
     async function loop() {
-      if (stopped) return
+      if (stopped || doneRef.current) return
       const v = videoRef.current
       if (v && v.readyState === 4) {
         try {
@@ -146,10 +152,10 @@ export default function QrScanner({ onScan, onClose }) {
         </p>
         <div className="flex gap-2">
           <input value={manual} onChange={e => setManual(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && parseLoc(manual)) onScan(parseLoc(manual)) }}
+            onKeyDown={e => { const l = parseLoc(manual); if (e.key === 'Enter' && l && !doneRef.current) { doneRef.current = true; onScan(l) } }}
             placeholder="직접 입력 (예: A1-01-3)"
             className="flex-1 px-3 py-2.5 text-sm border border-slate-200 rounded-lg uppercase" />
-          <button onClick={() => { const l = parseLoc(manual); l ? onScan(l) : setErr('') }}
+          <button onClick={() => { const l = parseLoc(manual); if (l && !doneRef.current) { doneRef.current = true; onScan(l) } }}
             disabled={!parseLoc(manual)}
             className="px-4 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-30">
             이동

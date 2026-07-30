@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
+import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
@@ -21,6 +22,14 @@ export default function CellAudit() {
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
   const [scanOpen, setScanOpen] = useState(false)
+  // 이 칸에 없는 품목을 찾아 넣거나, 다른 칸에 있던 것을 옮긴다
+  const [addOpen, setAddOpen] = useState(false)
+  const [q, setQ] = useState('')
+  const [hits, setHits] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [addQty, setAddQty] = useState('')
+  const [picked, setPicked] = useState(null)
+  const searchTimer = useRef(null)
 
   const location = (loc || '').toUpperCase()
 
@@ -63,6 +72,60 @@ export default function CellAudit() {
   const filled = items.filter(it => counts[it.item_id] !== undefined && counts[it.item_id] !== '').length
   const diffCnt = items.filter(it => { const d = diffOf(it); return d !== null && d !== 0 }).length
 
+  // 품목 검색 — 입력이 멈춘 뒤 조회
+  function searchItems(v) {
+    setQ(v); setPicked(null)
+    clearTimeout(searchTimer.current)
+    if (v.trim().length < 2) { setHits([]); return }
+    setSearching(true)
+    searchTimer.current = setTimeout(async () => {
+      const t = v.trim()
+      const { data } = await supabase.from('items')
+        .select('id,std_code,name,unit,manufacturer,manufacturer_code, inventory(qty,location)')
+        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%`)
+        .limit(12)
+      setHits(data || []); setSearching(false)
+    }, 300)
+  }
+
+  // 이 칸에 품목을 넣는다. 다른 칸에 있던 것이면 위치가 옮겨진다.
+  async function addItem() {
+    if (!picked) return
+    const qty = Number(addQty)
+    if (!(qty >= 0)) { toastError('수량을 입력하세요'); return }
+    setBusy(true)
+    try {
+      const { error } = await supabase.from('inventory')
+        .upsert({ item_id: picked.id, qty, location }, { onConflict: 'item_id' })
+      if (error) throw error
+      const prevLoc = picked.inventory?.[0]?.location
+      logActivity('update', 'inventory', picked.std_code,
+        prevLoc && prevLoc !== location
+          ? `위치 이동 ${prevLoc} → ${location} · 수량 ${qty}`
+          : `${location} 에 등록 · 수량 ${qty}`)
+      toastSuccess(`${picked.std_code} → ${location}`)
+      setAddOpen(false); setQ(''); setHits([]); setPicked(null); setAddQty('')
+      qc.invalidateQueries({ queryKey: ['cellItems'] })
+    } catch (e) {
+      toastError('등록 실패: ' + e.message)
+    } finally { setBusy(false) }
+  }
+
+  // 이 칸에서 뺀다 (위치만 비우고 재고는 남긴다)
+  async function removeFromCell(it) {
+    if (!confirm(`${it.std_code} 를 이 칸에서 빼시겠습니까?\n\n재고 수량은 그대로 남고 위치만 비워집니다.`)) return
+    try {
+      const { error } = await supabase.from('inventory')
+        .update({ location: null }).eq('item_id', it.item_id)
+      if (error) throw error
+      logActivity('update', 'inventory', it.std_code, `${location} 에서 위치 해제`)
+      toastSuccess(`${it.std_code} 위치 해제`)
+      qc.invalidateQueries({ queryKey: ['cellItems'] })
+    } catch (e) {
+      toastError('실패: ' + e.message)
+    }
+  }
+
   async function save() {
     const rows = items
       .filter(it => counts[it.item_id] !== undefined && counts[it.item_id] !== '')
@@ -94,6 +157,91 @@ export default function CellAudit() {
 
   return (
     <div className="max-w-lg mx-auto space-y-4 pb-24">
+      {/* 품목 넣기 — 검색해서 이 칸에 등록하거나 다른 칸에서 옮긴다 */}
+      {addOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
+          onClick={() => setAddOpen(false)}>
+          <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-base font-bold text-slate-800">품목 넣기</h3>
+              <button onClick={() => setAddOpen(false)} className="text-slate-400 text-xl px-2">✕</button>
+            </div>
+            <p className="text-xs text-slate-400 mb-3">
+              <span className="font-mono font-bold text-indigo-600">{location}</span> 에 넣을 품목을 찾으세요.
+              다른 칸에 있던 품목이면 위치가 이곳으로 옮겨집니다.
+            </p>
+
+            <input value={q} onChange={e => searchItems(e.target.value)} autoFocus
+              placeholder="품번·품명·제조사품번 (2자 이상)"
+              className="w-full px-3 py-2.5 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500" />
+
+            {searching && <p className="text-xs text-slate-400 mt-2">찾는 중…</p>}
+
+            {!picked && hits.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {hits.map(h => {
+                  const inv = h.inventory?.[0]
+                  const here = inv?.location === location
+                  return (
+                    <button key={h.id} onClick={() => { setPicked(h); setAddQty(String(inv?.qty ?? '')) }}
+                      disabled={here}
+                      className={`w-full text-left px-3 py-2 rounded-lg border ${here
+                        ? 'border-slate-100 bg-slate-50 opacity-50'
+                        : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50'}`}>
+                      <p className="font-mono text-sm font-bold text-indigo-600">{h.std_code}</p>
+                      <p className="text-xs text-slate-600">{h.name}</p>
+                      <p className="text-[11px] text-slate-400">
+                        {h.manufacturer}{h.manufacturer && h.manufacturer_code ? ' · ' : ''}
+                        <span className="font-mono">{h.manufacturer_code}</span>
+                        {inv && (
+                          <span className={here ? 'ml-1.5 text-slate-400' : 'ml-1.5 text-amber-600 font-semibold'}>
+                            · 재고 {n(inv.qty)}{inv.location ? ` @ ${inv.location}` : ' (위치 없음)'}
+                            {here ? ' — 이미 이 칸' : ''}
+                          </span>
+                        )}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+
+            {!picked && !searching && q.trim().length >= 2 && !hits.length && (
+              <p className="text-xs text-slate-400 mt-3 text-center py-4">찾는 품목이 없습니다.</p>
+            )}
+
+            {picked && (
+              <div className="mt-3 rounded-xl border-2 border-indigo-200 bg-indigo-50 p-3">
+                <p className="font-mono text-sm font-bold text-indigo-700">{picked.std_code}</p>
+                <p className="text-xs text-slate-600">{picked.name}</p>
+                {picked.inventory?.[0]?.location && picked.inventory[0].location !== location && (
+                  <p className="text-[11px] text-amber-700 font-semibold mt-1">
+                    ⚠ {picked.inventory[0].location} 에서 {location} 으로 이동합니다
+                  </p>
+                )}
+                <div className="mt-2">
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">수량</label>
+                  <input type="number" inputMode="decimal" value={addQty} autoFocus
+                    onChange={e => setAddQty(e.target.value)}
+                    className="w-full px-3 py-2.5 text-lg font-bold text-right border-2 border-slate-200 rounded-lg" />
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => { setPicked(null); setAddQty('') }}
+                    className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white">
+                    다시 찾기
+                  </button>
+                  <button onClick={addItem} disabled={busy || addQty === ''}
+                    className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                    {busy ? '저장 중…' : `${location} 에 넣기`}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {scanOpen && (
         <QrScanner onClose={() => setScanOpen(false)}
           onScan={(l) => { setScanOpen(false); setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }} />
@@ -129,6 +277,10 @@ export default function CellAudit() {
             <button onClick={fillAllSame}
               className="ml-auto text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
               전부 장부와 같음
+            </button>
+            <button onClick={() => setAddOpen(true)}
+              className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+              ＋ 품목
             </button>
           </div>
 
@@ -174,7 +326,14 @@ export default function CellAudit() {
                       placeholder="차이 사유 (선택)"
                       className="w-full mt-2 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
                   )}
-                  <span className="text-[10px] text-slate-400">{it.unit}</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-slate-400">{it.unit}</span>
+                    <button onClick={() => removeFromCell(it)}
+                      title="이 칸에서 빼기 — 재고 수량은 남고 위치만 비워집니다"
+                      className="ml-auto text-[10px] px-2 py-0.5 rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500">
+                      이 칸에서 빼기
+                    </button>
+                  </div>
                 </div>
               )
             })}
