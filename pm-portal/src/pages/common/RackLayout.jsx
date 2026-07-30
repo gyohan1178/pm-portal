@@ -2,13 +2,14 @@ import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import QRCode from 'qrcode'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 
-const CELL = 11              // 격자 한 칸 화면 크기(px)
 const GW = 68, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
+const ZOOMS = [11, 14, 18, 22]
 const pad = (v) => String(v).padStart(2, '0')
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -32,6 +33,8 @@ export default function RackLayout() {
   const [sel, setSel] = useState((code || '').toUpperCase())
   const [qr, setQr] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
+  const [zoom, setZoom] = useState(2)      // ZOOMS 인덱스
+  const CELL = ZOOMS[zoom]
 
   // 편집 상태 — 저장 전까지 화면에만 반영된다
   const [editing, setEditing] = useState(false)
@@ -112,6 +115,23 @@ export default function RackLayout() {
     const b = boardRef.current.getBoundingClientRect()
     const cx = (e.touches ? e.touches[0].clientX : e.clientX) - b.left
     const cy = (e.touches ? e.touches[0].clientY : e.clientY) - b.top
+
+    // 크기 조정 — 우하단 손잡이를 끌면 폭·높이가 바뀐다
+    if (drag.mode === 'resize') {
+      let w = Math.max(1, Math.round(cx / CELL) - drag.x)
+      let h = Math.max(1, Math.round(cy / CELL) - drag.y)
+      w = Math.min(w, GW - drag.x); h = Math.min(h, GH - drag.y)
+      setDraft(d => {
+        if (!d) return d
+        if (drag.type === 'rack') {
+          return { ...d, racks: { ...d.racks, [drag.id]: { ...d.racks[drag.id], w, h } } }
+        }
+        return { ...d, objs: d.objs.map((o, i) => i === drag.id ? { ...o, grid_w: w, grid_h: h } : o) }
+      })
+      return
+    }
+
+    // 위치 이동
     let gx = Math.round(cx / CELL) - drag.ox
     let gy = Math.round(cy / CELL) - drag.oy
     gx = Math.max(0, Math.min(GW - drag.w, gx))
@@ -123,7 +143,7 @@ export default function RackLayout() {
       }
       return { ...d, objs: d.objs.map((o, i) => i === drag.id ? { ...o, grid_x: gx, grid_y: gy } : o) }
     })
-  }, [drag])
+  }, [drag, CELL])
 
   useEffect(() => {
     if (!drag) return
@@ -140,13 +160,14 @@ export default function RackLayout() {
     }
   }, [drag, onMove])
 
-  function grab(e, type, id, x, y, w, h) {
+  function grab(e, type, id, x, y, w, h, mode = 'move') {
     if (!editing) return
-    e.preventDefault()
+    e.preventDefault(); e.stopPropagation()
     const b = boardRef.current.getBoundingClientRect()
     const cx = (e.touches ? e.touches[0].clientX : e.clientX) - b.left
     const cy = (e.touches ? e.touches[0].clientY : e.clientY) - b.top
-    setDrag({ type, id, w, h, ox: Math.round(cx / CELL) - x, oy: Math.round(cy / CELL) - y })
+    setDrag({ type, id, w, h, x, y, mode,
+      ox: Math.round(cx / CELL) - x, oy: Math.round(cy / CELL) - y })
   }
 
   const rotate = (c) => setDraft(d => {
@@ -167,6 +188,51 @@ export default function RackLayout() {
 
   const total = racks.reduce((a, r) => a + (Number(r.cells_total) || 0), 0)
   const used = racks.reduce((a, r) => a + (Number(r.cells_used) || 0), 0)
+
+  // 배치도를 엑셀로 — 랙 목록·사용률·좌표. 보고나 공유용.
+  function exportLayout() {
+    try {
+      const rows = racks.map(r => {
+        const t = Number(r.cells_total) || 0
+        const u = Number(r.cells_used) || 0
+        return {
+          '랙코드': r.code,
+          '구역': r.zone,
+          '면': r.side,
+          '칸수': r.rows_cnt,
+          '층수': r.levels_cnt,
+          '총칸': t,
+          '사용칸': u,
+          '사용률(%)': t ? Math.round(u / t * 100) : 0,
+          '보관품목수': Number(r.item_count) || 0,
+          '비고': r.memo || '',
+          '배치X': r.grid_x ?? '',
+          '배치Y': r.grid_y ?? '',
+        }
+      })
+      const ws = XLSX.utils.json_to_sheet(rows)
+      ws['!cols'] = [{ wch: 8 }, { wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 },
+                     { wch: 7 }, { wch: 8 }, { wch: 10 }, { wch: 11 }, { wch: 18 }, { wch: 7 }, { wch: 7 }]
+
+      // 기둥·설비도 별도 시트로
+      const objRows = objs.map(o => ({
+        '종류': o.kind, '이름': o.label || '',
+        '위치X': o.grid_x, '위치Y': o.grid_y, '폭': o.grid_w, '높이': o.grid_h,
+      }))
+
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '랙 현황')
+      if (objRows.length) {
+        const ws2 = XLSX.utils.json_to_sheet(objRows)
+        ws2['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 7 }, { wch: 7 }, { wch: 6 }, { wch: 6 }]
+        XLSX.utils.book_append_sheet(wb, ws2, '기둥·설비')
+      }
+      XLSX.writeFile(wb, `창고배치도_${new Date().toISOString().split('T')[0]}.xlsx`)
+      toastSuccess(`랙 ${rows.length}면 내보냄`)
+    } catch (e) {
+      toastError('내보내기 실패: ' + (e?.message || e))
+    }
+  }
 
   function doPrint() {
     document.body.classList.add('printing-sheet')
@@ -198,6 +264,22 @@ export default function RackLayout() {
             className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800">
             📷 QR 스캔
           </button>
+          {tab === 'map' && (
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
+              <button onClick={() => setZoom(z => Math.max(0, z - 1))} disabled={zoom === 0}
+                title="축소" className="px-2.5 py-2 text-xs font-bold text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-30">−</button>
+              <span className="px-2 py-2 text-[11px] text-slate-400 border-x border-slate-200 bg-white">{Math.round(CELL / 18 * 100)}%</span>
+              <button onClick={() => setZoom(z => Math.min(ZOOMS.length - 1, z + 1))} disabled={zoom === ZOOMS.length - 1}
+                title="확대" className="px-2.5 py-2 text-xs font-bold text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-30">＋</button>
+            </div>
+          )}
+          {tab === 'map' && (
+            <button onClick={exportLayout}
+              title="랙 목록과 배치 좌표를 엑셀로"
+              className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
+              📊 엑셀
+            </button>
+          )}
           {tab === 'map' && canEdit && (editing ? (
             <>
               <button onClick={() => { setEditing(false); setDraft(null) }}
@@ -233,7 +315,8 @@ export default function RackLayout() {
           {editing && (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
               <p className="text-xs font-bold text-indigo-800">
-                편집 중 — 끌어서 옮기고, 랙을 클릭하면 방향(가로↔세로)이 바뀝니다
+                편집 중 — 끌어서 옮기고, <b>우하단 모서리</b>를 끌면 크기가 바뀝니다.
+                랙을 클릭하면 방향(가로↔세로)이 뒤바뀝니다
               </p>
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-slate-500">추가</span>
@@ -243,7 +326,7 @@ export default function RackLayout() {
                     + {k}
                   </button>
                 ))}
-                <span className="text-[11px] text-slate-400 ml-2">기둥·설비는 더블클릭하면 삭제</span>
+                <span className="text-[11px] text-slate-400 ml-2">기둥·설비는 더블클릭하면 삭제됩니다</span>
               </div>
             </div>
           )}
@@ -269,12 +352,23 @@ export default function RackLayout() {
                     style={{
                       position: 'absolute', left: o.grid_x * CELL, top: o.grid_y * CELL,
                       width: o.grid_w * CELL, height: o.grid_h * CELL,
-                      background: o.color || st.bg, color: st.fg, fontSize: 9,
+                      background: o.color || st.bg, color: st.fg, fontSize: Math.max(8, Math.round(CELL * 0.62)),
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       borderRadius: 2, cursor: editing ? 'grab' : 'default',
                       overflow: 'hidden', whiteSpace: 'nowrap',
                     }}>
-                    {o.grid_w >= 3 ? (o.label || o.kind) : ''}
+                    {o.grid_w >= 4 ? (o.label || o.kind) : ''}
+                    {editing && (
+                      <span
+                        onMouseDown={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h, 'resize')}
+                        onTouchStart={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h, 'resize')}
+                        title="크기 조정"
+                        style={{
+                          position: 'absolute', right: -1, bottom: -1, width: 11, height: 11,
+                          background: '#fff', border: '2px solid #4f46e5', borderRadius: 2,
+                          cursor: 'nwse-resize',
+                        }} />
+                    )}
                   </div>
                 )
               })}
@@ -305,9 +399,23 @@ export default function RackLayout() {
                       alignItems: 'center', justifyContent: 'center', gap: 2,
                       fontSize: 10, fontWeight: 700, overflow: 'hidden',
                     }}>
-                    <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 9,
+                    <span style={{ fontFamily: 'ui-monospace,monospace',
+                      fontSize: Math.max(9, Math.round(CELL * 0.8)), fontWeight: 800,
                       writingMode: vertical && gh >= 10 ? 'vertical-rl' : 'horizontal-tb' }}>{r.code}</span>
-                    {(vertical ? h : w) > 60 && <span style={{ fontSize: 8, opacity: .7 }}>{pct}%</span>}
+                    {(vertical ? h : w) > CELL * 5 && (
+                      <span style={{ fontSize: Math.max(8, Math.round(CELL * 0.6)), opacity: .75 }}>{pct}%</span>
+                    )}
+                    {editing && (
+                      <span
+                        onMouseDown={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh, 'resize')}
+                        onTouchStart={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh, 'resize')}
+                        title="크기 조정"
+                        style={{
+                          position: 'absolute', right: -1, bottom: -1, width: 11, height: 11,
+                          background: '#fff', border: `2px solid ${col.b}`, borderRadius: 2,
+                          cursor: 'nwse-resize',
+                        }} />
+                    )}
                   </div>
                 )
               })}
