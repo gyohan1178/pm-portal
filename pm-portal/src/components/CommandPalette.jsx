@@ -15,13 +15,13 @@ function buildCommands() {
   push('일일 업무', '재고현황', '/inventory', 'inventory jaego stock')
   push('일일 업무', '통합 검색', '/search', 'search tonghap')
   // 소요·부족
-  push('소요·부족', '소요 예측', '/forecast-shortage', 'forecast shortage soyo')
+  push('소요·부족', '소요예측 (포캐스트)', '/forecast-shortage', 'forecast shortage soyo 포캐스트')
   push('소요·부족', '결품 현황', '/missing', 'missing gyeolpum')
   // 고객사별
   CUSTOMERS.forEach(c => {
     push(c.name, `${c.name} · 구매발주`, `/customer/${c.id}/purchase`, `purchase balju ${c.id}`)
     push(c.name, `${c.name} · 소요량 조회`, `/customer/${c.id}/reqbom`, `reqbom soyoryang ${c.id}`)
-    push(c.name, `${c.name} · 부족자재`, `/customer/${c.id}/short`, `shortage bujok ${c.id}`)
+    push(c.name, `${c.name} · 부족자재 (PO 확정)`, `/customer/${c.id}/short`, `shortage bujok po ${c.id}`)
     push(c.name, `${c.name} · 고객사 PO`, `/customer/${c.id}/cpo`, `cpo ${c.id}`)
     push(c.name, `${c.name} · BOM`, `/customer/${c.id}/bom`, `bom ${c.id}`)
     push(c.name, `${c.name} · 포캐스트`, `/customer/${c.id}/forecast`, `forecast ${c.id}`)

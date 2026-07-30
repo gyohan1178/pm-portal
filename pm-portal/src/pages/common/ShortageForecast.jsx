@@ -7,6 +7,7 @@ import ShortageTabs from '../../components/ShortageTabs'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, fetchAllRows } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf } from '../../lib/utils'
 
 const CUSTOMERS = [
@@ -145,6 +146,25 @@ export default function ShortageForecast() {
     onError: (e) => toastError('재계산 오류: ' + e.message),
   })
   // 제외 처리 — 연속 클릭 지원. useCallback([])로 고정해 행 memo가 깨지지 않게 함
+  // 부족 품목을 구매발주로 일괄 생성 — 부족자재(PO 확정) 탭과 동일한 방식
+  const orderMut = useMutation({
+    mutationFn: async (selItems) => {
+      const payload = selItems.map(it => ({
+        customer_id: cs?.id, item_id: it.item_id, vendor_id: it.vendor_id || null,
+        qty_ordered: it.shortageQty, qty_received: 0, order_type: 'purchase', status: '진행중',
+      }))
+      const { error } = await supabase.from('purchase_orders').insert(payload)
+      if (error) throw error
+      logActivity('create', 'purchase_orders', null,
+        `소요예측에서 발주 생성 ${payload.length}건`, null, cs?.name)
+    },
+    onSuccess: () => {
+      qc.invalidateQueries(['purchase'])
+      toastSuccess('구매발주 생성 완료 — 구매발주 화면에서 발주번호·납기·단가를 채워주세요')
+    },
+    onError: (e) => toastError('오류: ' + e.message),
+  })
+
   const excludedRef = useRef(excluded)
   excludedRef.current = excluded
   const handleExclude = useCallback((itemId, stdCode) => {
@@ -428,6 +448,22 @@ export default function ShortageForecast() {
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
             {refreshMut.isPending ? '계산 중...' : '↻ 재계산'}
           </button>
+          {/* 화면에 걸린 필터 결과를 그대로 발주로 만든다 (부족자재 탭과 동일 방식) */}
+          {(() => {
+            const need = filtered.filter(it => Number(it.shortageQty) > 0 && !excluded.has(it.item_id))
+            if (!need.length) return null
+            return (
+              <button onClick={() => {
+                  if (!window.confirm(`현재 목록의 부족 품목 ${need.length}건을 구매발주로 만들까요?\n\n· 부족수량으로 생성됩니다\n· 발주번호·납기·단가는 구매발주 화면에서 채웁니다`)) return
+                  orderMut.mutate(need)
+                }}
+                disabled={orderMut.isPending}
+                title="지금 화면에 보이는 부족 품목을 발주로 생성합니다"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40">
+                {orderMut.isPending ? '생성 중…' : `🛒 발주 생성 (${need.length})`}
+              </button>
+            )
+          })()}
         </div>
       </div>
 

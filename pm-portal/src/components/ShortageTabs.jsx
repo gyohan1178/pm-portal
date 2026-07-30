@@ -3,8 +3,8 @@ import { NavLink } from 'react-router-dom'
 // 소요·부족 통합 서브탭 — 부족자재(PO) / 소요 예측(포캐스트) / 소요량 조회
 export default function ShortageTabs({ cs = 'ax' }) {
   const tabs = [
-    { to: `/customer/${cs}/short`, label: '부족자재', exact: false },
-    { to: '/forecast-shortage', label: '소요 예측', exact: false },
+    { to: `/customer/${cs}/short`, label: '부족자재 (PO 확정)', exact: false },
+    { to: '/forecast-shortage', label: '소요예측 (포캐스트)', exact: false },
     { to: `/customer/${cs}/reqbom`, label: '소요량 조회', exact: false },
   ]
   return (

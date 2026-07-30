@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState , useRef, useCallback } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { logActivity } from '../../lib/activityLog'
 import * as XLSX from 'xlsx'
 
 // 확정 고객사 PO 기준 월별 소요/부족 (RPC: get_shortage_monthly) — range 페이징
@@ -47,6 +48,27 @@ export default function ShortageMonthly({ csId }) {
   const dq = useDebounced(search, 250)
   const [urgentOnly, setUrgentOnly] = useState(false)
   const [checked, setChecked] = useState({})
+
+  // 관리대상 제외 — 재고관리하지 않을 품목을 부족 목록에서 뺀다.
+  // 소요예측(포캐스트) 탭과 같은 방식으로 items.stock_managed 를 끈다.
+  const [excluded, setExcluded] = useState(new Set())
+  const excludedRef = useRef(excluded)
+  excludedRef.current = excluded
+  const handleExclude = useCallback((itemId, stdCode) => {
+    if (excludedRef.current.has(itemId)) return
+    if (!window.confirm(`${stdCode}를 재고관리 제외할까요?\n부족 목록에서 빠집니다.`)) return
+    setExcluded(prev => new Set(prev).add(itemId))
+    supabase.from('items').update({ stock_managed: false }).eq('id', itemId)
+      .then(({ error }) => {
+        if (error) {
+          toastError('제외 실패: ' + error.message)
+          setExcluded(prev => { const n = new Set(prev); n.delete(itemId); return n })
+        } else {
+          logActivity('update', 'items', stdCode, '재고관리 제외 (부족자재 화면)')
+          toastSuccess(`${stdCode} 재고관리 제외`)
+        }
+      })
+  }, [])
   const qc = useQueryClient()
 
   const { data: rows = [], isLoading } = useQuery({
@@ -114,12 +136,13 @@ export default function ShortageMonthly({ csId }) {
   const filtered = useMemo(() => {
     const q = dq.trim().toLowerCase()
     return items.filter(it => {
+      if (excluded.has(it.item_id)) return false      // 관리대상 제외한 품목
       if (urgentOnly && it.tier === '여유') return false
       if (tierFilter && it.tier !== tierFilter) return false
       if (q && ![it.std_code, it.name, it.manufacturer, it.manufacturer_code, it.vendor_name].some(x => (x || '').toLowerCase().includes(q))) return false
       return true
     })
-  }, [items, dq, urgentOnly, tierFilter])
+  }, [items, dq, urgentOnly, tierFilter, excluded])
 
   // 수천 건을 한 번에 그리면 검색·필터 조작이 밀린다
   const vis = useVisibleRows(filtered, 200, [dq, urgentOnly, tierFilter])
@@ -218,6 +241,7 @@ export default function ShortageMonthly({ csId }) {
                 <th className="px-2 py-2 text-center font-bold">LT</th>
                 <th className="px-2 py-2 text-right font-bold">현재고</th>
                 <th className="px-2 py-2 text-right font-bold">발주필요</th>
+                <th className="px-2 py-2 text-center font-bold w-10" title="재고관리 제외 — 부족 목록에서 빠집니다">제외</th>
                 {months.map(m => <th key={m} className="px-2 py-2 text-right font-bold min-w-[58px]">{m.slice(2)}</th>)}
               </tr>
             </thead>
@@ -243,6 +267,11 @@ export default function ShortageMonthly({ csId }) {
                     <td className="px-2 py-2 text-center"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">{it.lt_weeks}W</span></td>
                     <td className={`px-2 py-2 text-right ${it.current_stock < 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{it.current_stock}</td>
                     <td className="px-2 py-2 text-right font-bold" style={{ color: it.orderNeed > 0 ? '#DC2626' : '#059669' }}>{it.orderNeed > 0 ? it.orderNeed : '충족'}</td>
+                    <td className="px-2 py-2 text-center">
+                      <button onClick={() => handleExclude(it.item_id, it.std_code)}
+                        title="재고관리 제외"
+                        className="text-slate-300 hover:text-rose-500 text-xs px-1">✕</button>
+                    </td>
                     {months.map(mo => {
                       const c = it.cells[mo]; const s = c?.shortage || 0
                       if (!c || (c.demand === 0 && s === 0)) return <td key={mo} className="px-2 py-2 text-right text-slate-200">·</td>
