@@ -18,7 +18,7 @@ const CUSTOMERS = [
 const cellColor = (p) => p < 0 ? 'bg-red-50 text-red-600 font-bold' : p < 5 ? 'bg-amber-50 text-amber-700' : 'text-slate-600'
 
 // 행 단위 메모이즈 — 제외 클릭 시 바뀐 행만 다시 그림(표 전체 재렌더 방지)
-const ForecastRow = memo(function ForecastRow({ it, months, cols, period, metric, isExcluded, onExclude }) {
+const ForecastRow = memo(function ForecastRow({ it, months, cols, period, metric, isExcluded, onExclude, isSelEx, onSelEx }) {
   return (
     <tr className={`border-b border-slate-100 hover:bg-slate-50 ${isExcluded ? 'opacity-40' : ''}`}>
       <td className="px-3 py-2 sticky left-0 bg-white z-10">
@@ -34,9 +34,15 @@ const ForecastRow = memo(function ForecastRow({ it, months, cols, period, metric
           {isExcluded ? (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-rose-50 text-rose-400" title="재계산 시 목록에서 빠집니다">제외됨 ✓ (재계산 대기)</span>
           ) : (
-            <button onClick={() => onExclude(it.item_id, it.std_code)}
-              className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 hover:bg-rose-100 hover:text-rose-500 transition-colors"
-              title="재고관리 대상에서 제외 (재계산 시 반영)">제외</button>
+            <>
+              <label className="inline-flex items-center cursor-pointer" title="선택해서 한 번에 제외">
+                <input type="checkbox" checked={!!isSelEx}
+                  onChange={() => onSelEx(it.item_id)} className="w-3 h-3 accent-rose-500" />
+              </label>
+              <button onClick={() => onExclude(it.item_id, it.std_code)}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-400 hover:bg-rose-100 hover:text-rose-500 transition-colors"
+                title="재고관리 대상에서 제외 (재계산 시 반영)">제외</button>
+            </>
           )}
         </div>
       </td>
@@ -164,6 +170,27 @@ export default function ShortageForecast() {
     },
     onError: (e) => toastError('오류: ' + e.message),
   })
+
+  // 여러 건을 한 번에 제외 (부족자재 탭과 동일)
+  const [selEx, setSelEx] = useState(() => new Set())
+  const toggleSelEx = useCallback((id) => setSelEx(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+  }), [])
+  async function bulkExclude() {
+    const ids = [...selEx]
+    const codes = filtered.filter(it => selEx.has(it.item_id)).map(it => it.std_code)
+    setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.add(i)); return n })
+    setSelEx(new Set())
+    const { error } = await supabase.from('items').update({ stock_managed: false }).in('id', ids)
+    if (error) {
+      toastError('제외 실패: ' + error.message)
+      setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.delete(i)); return n })
+      return
+    }
+    logActivity('update', 'items', null,
+      `재고관리 제외 ${ids.length}건 (소요예측) · ${codes.slice(0,5).join(', ')}${codes.length>5?' 외':''}`)
+    toastSuccess(`${ids.length}건 재고관리 제외 — 재계산하면 목록에서 빠집니다`)
+  }
 
   const excludedRef = useRef(excluded)
   excludedRef.current = excluded
@@ -521,6 +548,15 @@ export default function ShortageForecast() {
               className="w-14 px-1.5 py-1.5 text-right border border-slate-200 rounded" />주
           </label>
         )}
+        {selEx.size > 0 && (
+          <button onClick={() => {
+              if (!window.confirm(`선택한 ${selEx.size}건을 재고관리 제외할까요?\n재계산하면 목록에서 빠집니다.`)) return
+              bulkExclude()
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100">
+            ✕ 선택 제외 ({selEx.size})
+          </button>
+        )}
         <span className="text-xs text-slate-400 ml-auto">{filtered.length}건</span>
       </div>
 
@@ -613,7 +649,8 @@ export default function ShortageForecast() {
                   <tbody>
                     {filtered.map(it => (
                       <ForecastRow key={it.item_id} it={it} months={months} cols={period==='quarter' ? [...new Set(months.map(quarterOf))].sort() : months} period={period} metric={metric}
-                        isExcluded={excluded.has(it.item_id)} onExclude={handleExclude} />
+                        isExcluded={excluded.has(it.item_id)} onExclude={handleExclude}
+                        isSelEx={selEx.has(it.item_id)} onSelEx={toggleSelEx} />
                     ))}
                   </tbody>
                 </table>

@@ -4,6 +4,7 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf } from '../../lib/utils'
 import { logActivity } from '../../lib/activityLog'
 import * as XLSX from 'xlsx'
 
@@ -48,6 +49,11 @@ export default function ShortageMonthly({ csId }) {
   const dq = useDebounced(search, 250)
   const [urgentOnly, setUrgentOnly] = useState(false)
   const [checked, setChecked] = useState({})
+  // 소요예측(포캐스트) 탭과 같은 필터 — 어느 탭에서 보든 같은 조작이 되게
+  const [period, setPeriod] = useState('month')   // month | quarter
+  const [metric, setMetric] = useState('stock')   // stock | demand | all
+  const [catSel, setCatSel] = useState(() => new Set())
+  const [selEx, setSelEx] = useState(() => new Set())   // 다중선택 제외 대상
 
   // 관리대상 제외 — 재고관리하지 않을 품목을 부족 목록에서 뺀다.
   // 소요예측(포캐스트) 탭과 같은 방식으로 items.stock_managed 를 끈다.
@@ -75,6 +81,23 @@ export default function ShortageMonthly({ csId }) {
     queryKey: ['shortageMonthly', csId], queryFn: () => fetchMonthly(csId), enabled: !!csId,
   })
 
+  // 카테고리 필터용 js_code — RPC 반환에 없어 품목에서 따로 가져온다
+  const { data: jsMap = {} } = useQuery({
+    queryKey: ['shortJsCodes', csId, rows.length],
+    enabled: rows.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))]
+      const m = {}
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data } = await supabase.from('items').select('id,js_code').in('id', ids.slice(i, i + 300))
+        ;(data || []).forEach(x => { m[x.id] = x.js_code })
+      }
+      return m
+    },
+  })
+
+
   const orderMut = useMutation({
     mutationFn: async (selItems) => {
       const payload = selItems.map(it => ({
@@ -98,7 +121,7 @@ export default function ShortageMonthly({ csId }) {
         item_id: r.item_id, std_code: r.std_code, name: r.name, unit: r.unit, type: r.type,
         lt_weeks: Number(r.lt_weeks) || 0, dept: r.dept, manufacturer: r.manufacturer,
         manufacturer_code: r.manufacturer_code, vendor_name: r.vendor_name, vendor_id: r.vendor_id,
-        current_stock: Number(r.current_stock) || 0, cells: {},
+        current_stock: Number(r.current_stock) || 0, js_code: jsMap[r.item_id] || '', cells: {},
       }
       map[r.item_id].cells[r.year_month] = { demand: Number(r.demand) || 0, incoming: Number(r.incoming) || 0 }
     })
@@ -131,18 +154,64 @@ export default function ShortageMonthly({ csId }) {
       return b.orderNeed - a.orderNeed
     })
     return { items, months, counts }
-  }, [rows])
+  }, [rows, jsMap])
+
+  // 목록에 실제 존재하는 카테고리만 버튼으로 (소요예측 탭과 동일)
+  const availableCats = useMemo(() => {
+    const present = new Set(items.map(it => getCategoryCode(it.js_code)).filter(Boolean))
+    return ITEM_CATEGORIES.filter(c => present.has(c.code))
+  }, [items])
+  const toggleCat = (code) => setCatSel(prev => {
+    const n = new Set(prev); n.has(code) ? n.delete(code) : n.add(code); return n
+  })
+
+  // 여러 건을 한 번에 재고관리 제외
+  async function bulkExclude() {
+    const ids = [...selEx]
+    const codes = items.filter(it => selEx.has(it.item_id)).map(it => it.std_code)
+    setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.add(i)); return n })
+    setSelEx(new Set())
+    const { error } = await supabase.from('items').update({ stock_managed: false }).in('id', ids)
+    if (error) {
+      toastError('제외 실패: ' + error.message)
+      setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.delete(i)); return n })
+      return
+    }
+    logActivity('update', 'items', null, `재고관리 제외 ${ids.length}건 (부족자재) · ${codes.slice(0,5).join(', ')}${codes.length>5?' 외':''}`)
+    toastSuccess(`${ids.length}건 재고관리 제외`)
+  }
+
+  // 표시 기간 — 분기별이면 3개월씩 묶어 합산한다
+  const cols = useMemo(() => {
+    if (period === 'month') return months
+    return [...new Set(months.map(m => quarterOf(m)))]
+  }, [months, period])
+
+  // 한 칸의 값 — metric 에 따라 무엇을 보여줄지 바뀐다
+  const cellOf = (it, col) => {
+    const src = period === 'month'
+      ? [it.cells[col]].filter(Boolean)
+      : months.filter(m => quarterOf(m) === col).map(m => it.cells[m]).filter(Boolean)
+    if (!src.length) return null
+    return src.reduce((a, c) => ({
+      demand: a.demand + (Number(c.demand) || 0),
+      incoming: a.incoming + (Number(c.incoming) || 0),
+      shortage: a.shortage + (Number(c.shortage) || 0),
+      projected: Number(c.projected) || 0,   // 분기 말 기준
+    }), { demand: 0, incoming: 0, shortage: 0, projected: 0 })
+  }
 
   const filtered = useMemo(() => {
     const q = dq.trim().toLowerCase()
     return items.filter(it => {
       if (excluded.has(it.item_id)) return false      // 관리대상 제외한 품목
+      if (catSel.size && !catSel.has(getCategoryCode(it.js_code))) return false
       if (urgentOnly && it.tier === '여유') return false
       if (tierFilter && it.tier !== tierFilter) return false
       if (q && ![it.std_code, it.name, it.manufacturer, it.manufacturer_code, it.vendor_name].some(x => (x || '').toLowerCase().includes(q))) return false
       return true
     })
-  }, [items, dq, urgentOnly, tierFilter, excluded])
+  }, [items, dq, urgentOnly, tierFilter, excluded, catSel])
 
   // 수천 건을 한 번에 그리면 검색·필터 조작이 밀린다
   const vis = useVisibleRows(filtered, 200, [dq, urgentOnly, tierFilter])
@@ -206,8 +275,29 @@ export default function ShortageMonthly({ csId }) {
           <input type="checkbox" checked={urgentOnly} onChange={e => setUrgentOnly(e.target.checked)} className="accent-indigo-600" />긴급·임박만
         </label>
         {tierFilter && <button onClick={() => setTierFilter(null)} className="text-xs text-slate-400 hover:text-slate-600">필터 해제 ✕</button>}
+
+        {/* 소요예측(포캐스트) 탭과 같은 보기 전환 */}
+        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
+          <button onClick={()=>setPeriod('month')} className={`px-2.5 py-1.5 ${period==='month'?'bg-indigo-600 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>월별</button>
+          <button onClick={()=>setPeriod('quarter')} className={`px-2.5 py-1.5 ${period==='quarter'?'bg-indigo-600 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>분기별</button>
+        </div>
+        <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
+          <button onClick={()=>setMetric('stock')} className={`px-2.5 py-1.5 ${metric==='stock'?'bg-slate-700 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>부족수량</button>
+          <button onClick={()=>setMetric('demand')} className={`px-2.5 py-1.5 ${metric==='demand'?'bg-slate-700 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>소요량</button>
+          <button onClick={()=>setMetric('all')} className={`px-2.5 py-1.5 ${metric==='all'?'bg-slate-700 text-white':'bg-white text-slate-500 hover:bg-slate-50'}`}>소요·입고·과부족</button>
+        </div>
+
         <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length}건</span>
-        <button onClick={exportShortageExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📥 엑셀 추출</button>
+        <button onClick={exportShortageExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">📥 엑셀</button>
+        {selEx.size > 0 && (
+          <button onClick={() => {
+              if (!window.confirm(`선택한 ${selEx.size}건을 재고관리 제외할까요?\n부족 목록에서 빠집니다.`)) return
+              bulkExclude()
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 whitespace-nowrap">
+            ✕ 선택 제외 ({selEx.size})
+          </button>
+        )}
         {checkedItems.length > 0 && (
           <button onClick={() => { if (window.confirm(`${checkedItems.length}건 구매발주를 생성할까요? (발주필요 수량으로 생성)`)) orderMut.mutate(checkedItems) }}
             disabled={orderMut.isPending}
@@ -216,6 +306,24 @@ export default function ShortageMonthly({ csId }) {
           </button>
         )}
       </div>
+
+      {/* 카테고리 필터 */}
+      {availableCats.length > 0 && (
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[11px] font-semibold text-slate-400">카테고리</span>
+          {availableCats.map(c => (
+            <button key={c.code} onClick={() => toggleCat(c.code)} title={c.desc}
+              className={`px-2 py-1 text-[11px] font-semibold rounded-full border ${catSel.has(c.code)
+                ? 'border-indigo-500 bg-indigo-600 text-white'
+                : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+              {c.name}
+            </button>
+          ))}
+          {catSel.size > 0 && (
+            <button onClick={() => setCatSel(new Set())} className="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600">초기화</button>
+          )}
+        </div>
+      )}
 
       <div className="text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
         긴급도 = <b>첫 부족월 − LT</b> 기준 · 셀 = 그 달 <b className="text-red-600">부족수량</b>(현재고·입고예정 차감 누적) / 회색 = 충족 소요
@@ -241,8 +349,7 @@ export default function ShortageMonthly({ csId }) {
                 <th className="px-2 py-2 text-center font-bold">LT</th>
                 <th className="px-2 py-2 text-right font-bold">현재고</th>
                 <th className="px-2 py-2 text-right font-bold">발주필요</th>
-                <th className="px-2 py-2 text-center font-bold w-10" title="재고관리 제외 — 부족 목록에서 빠집니다">제외</th>
-                {months.map(m => <th key={m} className="px-2 py-2 text-right font-bold min-w-[58px]">{m.slice(2)}</th>)}
+                {cols.map(m => <th key={m} className="px-2 py-2 text-right font-bold min-w-[58px]">{period === 'month' ? m.slice(2) : m}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -260,25 +367,41 @@ export default function ShortageMonthly({ csId }) {
                       </div>
                       <div className="font-mono text-indigo-600 mt-0.5">{it.std_code}</div>
                       <div className="text-[11px] text-slate-400 max-w-[210px] truncate">{it.name}</div>
-                      <div className="text-[10px] text-slate-400 max-w-[210px] truncate">{it.manufacturer}{it.manufacturer && it.vendor_name ? ' · ' : ''}{it.vendor_name}</div>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="text-[10px] text-slate-400 max-w-[150px] truncate">{it.manufacturer}{it.manufacturer && it.vendor_name ? ' · ' : ''}{it.vendor_name}</span>
+                        <label className="inline-flex items-center gap-0.5 cursor-pointer" title="선택해서 한 번에 제외">
+                          <input type="checkbox" checked={selEx.has(it.item_id)}
+                            onChange={() => setSelEx(prev => { const n = new Set(prev); n.has(it.item_id) ? n.delete(it.item_id) : n.add(it.item_id); return n })}
+                            className="w-3 h-3 accent-rose-500" />
+                        </label>
+                        <button onClick={() => handleExclude(it.item_id, it.std_code)}
+                          title="재고관리 제외 — 부족 목록에서 빠집니다"
+                          className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500">
+                          제외
+                        </button>
+                      </div>
                     </td>
                     <td className="px-2 py-2 text-slate-600 max-w-[110px] truncate" title={it.manufacturer}>{it.manufacturer||'-'}</td>
                     <td className="px-2 py-2 font-mono text-[11px] text-slate-500 max-w-[120px] truncate" title={it.manufacturer_code}>{it.manufacturer_code||'-'}</td>
                     <td className="px-2 py-2 text-center"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">{it.lt_weeks}W</span></td>
                     <td className={`px-2 py-2 text-right ${it.current_stock < 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{it.current_stock}</td>
                     <td className="px-2 py-2 text-right font-bold" style={{ color: it.orderNeed > 0 ? '#DC2626' : '#059669' }}>{it.orderNeed > 0 ? it.orderNeed : '충족'}</td>
-                    <td className="px-2 py-2 text-center">
-                      <button onClick={() => handleExclude(it.item_id, it.std_code)}
-                        title="재고관리 제외"
-                        className="text-slate-300 hover:text-rose-500 text-xs px-1">✕</button>
-                    </td>
-                    {months.map(mo => {
-                      const c = it.cells[mo]; const s = c?.shortage || 0
+                    {cols.map(mo => {
+                      const c = cellOf(it, mo); const s = Math.round(c?.shortage || 0)
                       if (!c || (c.demand === 0 && s === 0)) return <td key={mo} className="px-2 py-2 text-right text-slate-200">·</td>
+                      const tip = `소요 ${Math.round(c.demand)}${c.incoming > 0 ? ` · 입고예정 ${Math.round(c.incoming)}` : ''} · 예상재고 ${Math.round(c.projected)}`
                       return (
-                        <td key={mo} className={`px-2 py-2 text-right ${s > 0 ? 'bg-red-50 text-red-700 font-bold' : 'text-slate-500'}`}
-                          title={`소요 ${Math.round(c.demand)}${c.incoming > 0 ? ` · 입고예정 ${Math.round(c.incoming)}` : ''} · 예상재고 ${Math.round(c.projected)}`}>
-                          {s > 0 ? `-${s}` : (c.demand > 0 ? Math.round(c.demand) : '·')}
+                        <td key={mo} className={`px-2 py-2 text-right ${s > 0 ? 'bg-red-50 text-red-700 font-bold' : 'text-slate-500'}`} title={tip}>
+                          {metric === 'demand'
+                            ? (c.demand > 0 ? Math.round(c.demand) : '·')
+                            : metric === 'all'
+                              ? <span className="text-[10px] leading-tight">
+                                  {Math.round(c.demand)}<span className="text-slate-300"> / </span>
+                                  <span className="text-sky-600">{Math.round(c.incoming)}</span>
+                                  <span className="text-slate-300"> / </span>
+                                  <span className={s > 0 ? 'text-red-600' : 'text-emerald-600'}>{s > 0 ? `-${s}` : Math.round(c.projected)}</span>
+                                </span>
+                              : (s > 0 ? `-${s}` : (c.demand > 0 ? Math.round(c.demand) : '·'))}
                         </td>
                       )
                     })}
