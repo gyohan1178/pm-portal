@@ -40,6 +40,7 @@ export default function RackLayout() {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(null)
   const [drag, setDrag] = useState(null)
+  const [pick, setPick] = useState(null)   // 편집 중 선택한 대상
   const boardRef = useRef(null)
 
   const { data: racks = [], isLoading } = useQuery({
@@ -104,7 +105,7 @@ export default function RackLayout() {
       toastSuccess('배치 저장 완료')
       qc.invalidateQueries({ queryKey: ['rackUsage'] })
       qc.invalidateQueries({ queryKey: ['floorObjects'] })
-      setEditing(false); setDraft(null)
+      setEditing(false); setDraft(null); setPick(null)
     } catch (e) {
       toastError('저장 실패: ' + e.message)
     }
@@ -282,7 +283,7 @@ export default function RackLayout() {
           )}
           {tab === 'map' && canEdit && (editing ? (
             <>
-              <button onClick={() => { setEditing(false); setDraft(null) }}
+              <button onClick={() => { setEditing(false); setDraft(null); setPick(null) }}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600">취소</button>
               <button onClick={saveLayout}
                 className="px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">배치 저장</button>
@@ -315,9 +316,34 @@ export default function RackLayout() {
           {editing && (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
               <p className="text-xs font-bold text-indigo-800">
-                편집 중 — 끌어서 옮기고, <b>우하단 모서리</b>를 끌면 크기가 바뀝니다.
-                랙을 클릭하면 방향(가로↔세로)이 뒤바뀝니다
+                편집 중 — <b>끌어서 이동</b> · <b>우하단 모서리</b>로 크기 조정 ·
+                <b>클릭해서 선택</b>하면 방향 바꾸기·삭제를 할 수 있습니다
               </p>
+              {/* 선택한 대상에 대한 작업 */}
+              {pick && (
+                <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-white border border-indigo-300 px-2.5 py-1.5">
+                  <span className="text-xs font-bold text-indigo-700">
+                    {pick.type === 'rack' ? pick.id : (draft?.objs[pick.id]?.label || draft?.objs[pick.id]?.kind || '선택')}
+                  </span>
+                  <button onClick={() => {
+                      if (pick.type === 'rack') rotate(pick.id)
+                      else setDraft(d => ({ ...d, objs: d.objs.map((o, i) =>
+                        i === pick.id ? { ...o, grid_w: o.grid_h, grid_h: o.grid_w } : o) }))
+                    }}
+                    className="px-2 py-1 text-[11px] font-bold rounded border border-slate-300 bg-white hover:bg-slate-50">
+                    ⟳ 방향 바꾸기
+                  </button>
+                  {pick.type === 'obj' && (
+                    <button onClick={() => { delObj(pick.id); setPick(null) }}
+                      className="px-2 py-1 text-[11px] font-bold rounded border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100">
+                      🗑 삭제
+                    </button>
+                  )}
+                  <button onClick={() => setPick(null)}
+                    className="px-2 py-1 text-[11px] text-slate-400 hover:text-slate-600">선택 해제</button>
+                </div>
+              )}
+
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-slate-500">추가</span>
                 {['기둥', '통로', '설비', '문서', '기타'].map(k => (
@@ -326,7 +352,7 @@ export default function RackLayout() {
                     + {k}
                   </button>
                 ))}
-                <span className="text-[11px] text-slate-400 ml-2">기둥·설비는 더블클릭하면 삭제됩니다</span>
+                
               </div>
             </div>
           )}
@@ -347,7 +373,7 @@ export default function RackLayout() {
                   <div key={i}
                     onMouseDown={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h)}
                     onTouchStart={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h)}
-                    onDoubleClick={() => editing && delObj(i)}
+                    onClick={() => editing && setPick({ type: 'obj', id: i })}
                     title={o.label || o.kind}
                     style={{
                       position: 'absolute', left: o.grid_x * CELL, top: o.grid_y * CELL,
@@ -355,6 +381,7 @@ export default function RackLayout() {
                       background: o.color || st.bg, color: st.fg, fontSize: Math.max(8, Math.round(CELL * 0.62)),
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       borderRadius: 2, cursor: editing ? 'grab' : 'default',
+                      outline: pick?.type === 'obj' && pick.id === i ? '3px solid #4f46e5' : 'none',
                       overflow: 'hidden', whiteSpace: 'nowrap',
                     }}>
                     {o.grid_w >= 4 ? (o.label || o.kind) : ''}
@@ -388,23 +415,23 @@ export default function RackLayout() {
                   <div key={r.code}
                     onMouseDown={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh)}
                     onTouchStart={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh)}
-                    onClick={() => { if (editing) rotate(r.code); else { setSel(r.code); setTab('sheet') } }}
+                    onClick={() => { if (editing) setPick({ type: 'rack', id: r.code }); else { setSel(r.code); setTab('sheet') } }}
                     title={`${r.code} · ${r.side} ${r.rows_cnt}칸 ${r.levels_cnt}층 · ${u}/${t} (${pct}%)${r.memo ? '\n' + r.memo : ''}`}
                     style={{
                       position: 'absolute', left: (r.grid_x ?? 0) * CELL, top: (r.grid_y ?? 0) * CELL,
                       width: w, height: h,
-                      border: `2px solid ${col.b}`, background: col.g, color: col.f,
-                      borderRadius: 4, boxShadow: '0 1px 2px rgba(15,23,42,.08)', cursor: editing ? 'grab' : 'pointer',
-                      display: 'flex', flexDirection: vertical ? 'column' : 'row',
-                      alignItems: 'center', justifyContent: 'center', gap: 2,
+                      border: pick?.type === 'rack' && pick.id === r.code ? '3px solid #4f46e5' : `2px solid ${col.b}`,
+                      background: col.g, color: col.f,
+                      borderRadius: 4, boxShadow: pick?.type === 'rack' && pick.id === r.code ? '0 0 0 3px rgba(79,70,229,.2)' : '0 1px 2px rgba(15,23,42,.08)', cursor: editing ? 'grab' : 'pointer',
+                      display: 'flex', flexDirection: 'column',
+                      alignItems: 'center', justifyContent: vertical ? 'flex-start' : 'center',
+                      paddingTop: vertical ? 3 : 0, gap: 1,
                       fontSize: 10, fontWeight: 700, overflow: 'hidden',
                     }}>
                     <span style={{
                       fontFamily: 'ui-monospace,Menlo,monospace',
                       fontSize: Math.max(10, Math.round(CELL * 0.85)),
                       fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px',
-                      writingMode: vertical && gh >= 10 ? 'vertical-rl' : 'horizontal-tb',
-                      textOrientation: 'mixed',
                     }}>{r.code}</span>
                     {(vertical ? h : w) > CELL * 5 && (
                       <span style={{
