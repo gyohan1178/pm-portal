@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import QRCode from 'qrcode'
+import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 
@@ -111,6 +112,34 @@ export default function RackTags() {
     } finally { setBusy(false); setProgress(null) }
   }
 
+  // 라벨 프로그램(아이라벨2 등)에서 불러 쓸 엑셀.
+  // QR 은 그 프로그램이 위치코드로 직접 만들므로 여기서 생성할 필요가 없다.
+  // 그래서 1,528칸도 즉시 나온다.
+  async function exportExcel() {
+    if (!cells.length) { toastError('내보낼 위치가 없습니다'); return }
+    setBusy(true)
+    try {
+      // 라벨에 쓸 것만 담는다. QR·문자 모두 위치코드 하나로 연결하면 되고,
+      // 랙·칸·층은 정렬이나 부분 출력에 쓸 수 있게 남긴다.
+      const rows = cells.map(c => ({
+        '위치코드': c.loc,
+        '랙': c.rack,
+        '칸': c.row,
+        '층': c.lv,
+      }))
+
+      const ws = XLSX.utils.json_to_sheet(rows)
+      ws['!cols'] = [{ wch: 14 }, { wch: 7 }, { wch: 5 }, { wch: 5 }]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '위치태그')
+      const name = allMode ? '전체' : (rack?.code || '')
+      XLSX.writeFile(wb, `위치태그_${name}_${cells.length}건_${new Date().toISOString().split('T')[0]}.xlsx`)
+      toastSuccess(`${cells.length.toLocaleString()}건 내보냄 — 라벨 프로그램에서 불러 쓰세요`)
+    } catch (e) {
+      toastError('내보내기 실패: ' + (e?.message || e))
+    } finally { setBusy(false) }
+  }
+
   function doPrint() {
     document.body.classList.add('printing-tags')
     const done = () => { document.body.classList.remove('printing-tags'); window.removeEventListener('afterprint', done) }
@@ -203,6 +232,11 @@ export default function RackTags() {
           )}
           {allMode && (
             <>
+              <button onClick={exportExcel} disabled={busy}
+                title="아이라벨2 등 라벨 프로그램에서 불러 쓸 엑셀. QR 은 그 프로그램이 위치코드로 직접 만듭니다"
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                📊 엑셀 내보내기 ({cells.length.toLocaleString()})
+              </button>
               <button onClick={buildQr} disabled={busy}
                 className="px-4 py-2 text-sm font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
                 {busy ? 'QR 생성 중…' : `🔳 전체 QR 만들기 (${cells.length.toLocaleString()})`}
@@ -215,6 +249,11 @@ export default function RackTags() {
           )}
           {!allMode && rack && (
             <>
+              <button onClick={exportExcel} disabled={busy || !cells.length}
+                title="라벨 프로그램(아이라벨2 등)에서 불러 쓸 엑셀"
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                📊 엑셀 ({cells.length})
+              </button>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">칸 범위</label>
                 <div className="flex items-center gap-1">
