@@ -4,6 +4,14 @@ import QRCode from 'qrcode'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 
+// 용지 규격. 라벨지는 자르고 코팅하는 과정이 없어 훨씬 편하다.
+const PAPERS = {
+  label65: { name: '라벨지 65칸 (38.2×21.1mm)', cols: 5, rows: 13, w: 38.2, h: 21.1,
+             mx: 5, my: 10.7, gapX: 0, gapY: 0, qr: 18, fs: 3.6, label: true },
+  a4x3:    { name: 'A4 일반 3열 (63×40mm)',      cols: 3, rows: 6,  w: 63,   h: 40,
+             mx: 8, my: 8,    gapX: 2, gapY: 2, qr: 30, fs: 6,   label: false },
+}
+
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const pad = (v) => String(v).padStart(2, '0')
 
@@ -13,6 +21,8 @@ const pad = (v) => String(v).padStart(2, '0')
 //   태그 크기: 세로 40mm · 2열 (A4 장당 12개)
 //   QR 내용: 실사 화면 주소 (https://…/cell/A1-05-1)
 export default function RackTags() {
+  // 용지 규격 — 라벨지를 쓰면 자르고 코팅하는 과정이 없어진다
+  const [paper, setPaper] = useState('label65')
   const [allMode, setAllMode] = useState(false)   // 전체 랙 한 번에
   const [progress, setProgress] = useState(null)
   const [rackSel, setRackSel] = useState('')
@@ -66,29 +76,27 @@ export default function RackTags() {
     return out
   }, [allMode, racks, rack, rowFrom, rowTo, lvFrom, lvTo])
 
-  // 칸별 재고 — 태그에 현재 보관 품목을 함께 찍는다
-  const { data: stockMap = {} } = useQuery({
-    queryKey: ['rackStock', rackSel],
-    enabled: !!rackSel && !allMode,
-    queryFn: async () => {
-      const { data, error } = await supabase.rpc('pm_rack_map', { p_rack: rackSel })
-      if (error) return {}
-      const m = {}
-      ;(data || []).forEach(r => { m[`${pad(r.row_no)}-${r.level_no}`] = r })
-      return m
-    },
-  })
+  const spec = PAPERS[paper]
+  const perPage = spec.cols * spec.rows
+
+  // 용지 단위로 쪼갠다
+  const pages = useMemo(() => {
+    const out = []
+    for (let i = 0; i < cells.length; i += perPage) out.push(cells.slice(i, i + perPage))
+    return out
+  }, [cells, perPage])
 
   // QR 생성 — 스캔하면 그 칸의 실사 화면이 열린다
   async function buildQr() {
     if (!cells.length) return
     setBusy(true); setProgress({ done: 0, total: cells.length })
     try {
-      const base = window.location.origin
       const m = {}
       for (let i = 0; i < cells.length; i++) {
-        m[cells[i].loc] = await QRCode.toDataURL(`${base}/cell/${cells[i].loc}`, {
-          width: 240, margin: 0, errorCorrectionLevel: 'M',
+        // 위치 코드만 넣는다. URL 을 넣으면 QR 이 29모듈로 촘촘해져
+        // 작은 라벨(18mm)에서 인식이 어렵다. 코드만이면 21모듈로 넉넉하다.
+        m[cells[i].loc] = await QRCode.toDataURL(cells[i].loc, {
+          width: 200, margin: 0, errorCorrectionLevel: 'M',
         })
         // 1,500개가 넘으면 시간이 걸리므로 진행률을 갱신하고 화면이 멈추지 않게 한다
         if (i % 40 === 0) {
@@ -135,6 +143,21 @@ export default function RackTags() {
 
       {/* 선택 */}
       <div className="no-print bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div>
+          <label className="block text-xs font-bold text-slate-500 mb-1">용지</label>
+          <select value={paper} onChange={e => { setPaper(e.target.value); setQrMap({}) }}
+            className="px-3 py-2 text-sm border border-slate-200 rounded-lg w-72">
+            {Object.entries(PAPERS).map(([k, v]) => (
+              <option key={k} value={k}>{v.name} · 장당 {v.cols * v.rows}개</option>
+            ))}
+          </select>
+          <p className="text-[11px] text-slate-400 mt-1">
+            {spec.label
+              ? '라벨지는 떼어 붙이면 되어 자르고 코팅할 필요가 없습니다. 인쇄 시 \'실제 크기\'·여백 없음으로 설정하세요.'
+              : '일반 용지는 잘라서 코팅한 뒤 붙입니다.'}
+          </p>
+        </div>
+
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
           {[[false, '랙 선택'], [true, `전체 (${racks.reduce((a,r)=>a+r.rows_cnt*r.levels_cnt,0).toLocaleString()}칸)`]].map(([v, l]) => (
             <button key={String(v)} onClick={() => { setAllMode(v); setQrMap({}) }}
@@ -146,7 +169,7 @@ export default function RackTags() {
 
         {allMode && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-            전체 {cells.length.toLocaleString()}칸 · A4 <b>{Math.ceil(cells.length / 12)}장</b>.
+            전체 {cells.length.toLocaleString()}칸 · <b>{pages.length}장</b>.
             QR 생성에 20~30초 걸리고 인쇄 미리보기도 느립니다. 코팅해서 한 번에 붙일 때 쓰세요.
           </div>
         )}
@@ -186,7 +209,7 @@ export default function RackTags() {
               </button>
               <button onClick={doPrint} disabled={!ready}
                 className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                🖨 인쇄 ({Math.ceil(cells.length / 12)}장)
+                🖨 인쇄 ({pages.length}장)
               </button>
             </>
           )}
@@ -222,7 +245,7 @@ export default function RackTags() {
               </button>
               <button onClick={doPrint} disabled={!ready}
                 className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                🖨 인쇄 ({Math.ceil(cells.length / 12)}장)
+                🖨 인쇄 ({pages.length}장)
               </button>
             </>
           )}
@@ -238,63 +261,64 @@ export default function RackTags() {
       {/* 미리보기 */}
       {ready && (
         <div className="no-print bg-white rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-bold text-slate-500 mb-3">미리보기 (처음 4개)</p>
-          <div className="grid grid-cols-2 gap-2 max-w-md">
-            {cells.slice(0, 4).map(c => (
-              <TagCard key={c.loc} loc={c.loc} qr={qrMap[c.loc]}
-                stock={stockMap[`${pad(c.row)}-${c.lv}`]} preview />
+          <p className="text-xs font-bold text-slate-500 mb-3">
+            미리보기 — 실제 크기 {spec.w}×{spec.h}mm (화면에서는 확대)
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {cells.slice(0, 3).map(c => (
+              <TagCard key={c.loc} loc={c.loc} qr={qrMap[c.loc]} spec={spec} preview />
             ))}
           </div>
         </div>
       )}
 
-      {/* 인쇄 영역 */}
+      {/* 인쇄 영역 — 용지 규격대로 배치 */}
       <div className="tag-print">
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '2mm' }}>
-          {cells.map(c => (
-            <TagCard key={c.loc} loc={c.loc} qr={qrMap[c.loc]}
-              stock={stockMap[`${pad(c.row)}-${c.lv}`]} />
-          ))}
-        </div>
+        <style>{`
+          @page { size: A4; margin: 0; }
+          .tag-sheet {
+            width: 210mm; height: 297mm;
+            padding: ${spec.my}mm ${spec.mx}mm;
+            box-sizing: border-box;
+            display: grid;
+            grid-template-columns: repeat(${spec.cols}, ${spec.w}mm);
+            grid-auto-rows: ${spec.h}mm;
+            column-gap: ${spec.gapX}mm;
+            row-gap: ${spec.gapY}mm;
+            page-break-after: always;
+          }
+        `}</style>
+        {pages.map((pg, i) => (
+          <div className="tag-sheet" key={i}>
+            {pg.map(c => <TagCard key={c.loc} loc={c.loc} qr={qrMap[c.loc]} spec={spec} />)}
+          </div>
+        ))}
       </div>
     </div>
   )
 }
 
-// 태그 하나 — 세로 40mm
-function TagCard({ loc, qr, stock, preview }) {
-  const [rack, row, lv] = loc.split('-')
+// 태그 하나 — QR + 위치 코드만 한 줄로
+function TagCard({ loc, qr, spec, preview }) {
+  const sc = preview ? 2.4 : 1   // 미리보기는 크게
   return (
     <div className="tag" style={{
-      height: preview ? 'auto' : '40mm',
-      border: '0.4mm solid #1e293b',
-      borderRadius: '1.5mm',
-      padding: '2mm',
-      display: 'flex',
-      gap: '2mm',
-      alignItems: 'center',
-      boxSizing: 'border-box',
-      background: '#fff',
+      width: `${spec.w * sc}mm`,
+      height: `${spec.h * sc}mm`,
+      border: spec.label ? 'none' : '0.3mm solid #1e293b',
+      borderRadius: spec.label ? 0 : '1.2mm',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      gap: `${1.5 * sc}mm`,
+      boxSizing: 'border-box', background: '#fff', overflow: 'hidden',
     }}>
-      {qr && <img src={qr} alt={loc} style={{ width: '30mm', height: '30mm', flexShrink: 0 }} />}
-      <div style={{ minWidth: 0, flex: 1 }}>
-        <div style={{ fontSize: '9mm', fontWeight: 800, lineHeight: 1, letterSpacing: '-0.3mm', fontFamily: 'ui-monospace,Menlo,monospace' }}>
-          {rack}
-        </div>
-        <div style={{ fontSize: '7mm', fontWeight: 700, lineHeight: 1.15, fontFamily: 'ui-monospace,Menlo,monospace' }}>
-          {row}<span style={{ fontSize: '4mm', fontWeight: 400, color: '#64748b' }}>칸</span>
-          {' '}
-          {lv}<span style={{ fontSize: '4mm', fontWeight: 400, color: '#64748b' }}>층</span>
-        </div>
-        {stock ? (
-          <div style={{ fontSize: '2.6mm', color: '#475569', marginTop: '1mm', lineHeight: 1.3,
-            overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
-            {stock.item_count}품목 · {stock.codes}
-          </div>
-        ) : (
-          <div style={{ fontSize: '2.8mm', color: '#cbd5e1', marginTop: '1mm' }}>빈 칸</div>
-        )}
-      </div>
+      {qr && <img src={qr} alt={loc}
+        style={{ width: `${spec.qr * sc}mm`, height: `${spec.qr * sc}mm`, flexShrink: 0 }} />}
+      <span style={{
+        fontSize: `${spec.fs * sc}mm`, fontWeight: 800, lineHeight: 1,
+        fontFamily: 'ui-monospace,Menlo,monospace', letterSpacing: '-0.1mm', whiteSpace: 'nowrap',
+      }}>
+        {loc}
+      </span>
     </div>
   )
 }

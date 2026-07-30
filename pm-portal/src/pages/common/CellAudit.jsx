@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import QrScanner from '../../components/QrScanner'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
@@ -19,6 +20,7 @@ export default function CellAudit() {
   const [memos, setMemos] = useState({})
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [scanOpen, setScanOpen] = useState(false)
 
   const location = (loc || '').toUpperCase()
 
@@ -92,6 +94,10 @@ export default function CellAudit() {
 
   return (
     <div className="max-w-lg mx-auto space-y-4 pb-24">
+      {scanOpen && (
+        <QrScanner onClose={() => setScanOpen(false)}
+          onScan={(l) => { setScanOpen(false); setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }} />
+      )}
       {/* 위치 */}
       <div className="rounded-2xl bg-slate-900 text-white p-5">
         <p className="text-xs text-slate-400">재고 실사 · 위치</p>
@@ -177,9 +183,10 @@ export default function CellAudit() {
           {/* 저장 — 화면 아래 고정 */}
           <div className="fixed bottom-0 left-0 right-0 p-3 bg-white border-t border-slate-200">
             <div className="max-w-lg mx-auto flex gap-2">
-              <button onClick={() => nav(-1)}
-                className="px-4 py-3 text-sm font-semibold rounded-xl border border-slate-200 text-slate-600">
-                뒤로
+              <button onClick={() => setScanOpen(true)}
+                title="다음 칸 스캔"
+                className="px-4 py-3 text-sm font-semibold rounded-xl bg-slate-900 text-white">
+                📷
               </button>
               <button onClick={save} disabled={busy || !filled}
                 className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">

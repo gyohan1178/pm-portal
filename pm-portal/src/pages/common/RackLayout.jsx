@@ -1,23 +1,43 @@
-import { useState, useMemo, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
+import QrScanner from '../../components/QrScanner'
+import { useCanEdit } from '../../hooks/useProfile'
 
-const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
+const CELL = 14              // 격자 한 칸 화면 크기(px)
+const GW = 52, GH = 32       // 격자 전체 크기
 const pad = (v) => String(v).padStart(2, '0')
+const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
-// 창고 배치도와 랙 구성표.
-//
-//   · 배치도  — 랙 위치를 한눈에. 사용률에 따라 색이 진해진다
-//   · 구성표  — 랙 앞에 붙일 격자표 (칸 번호 + 랙 전체 QR)
+const OBJ_STYLE = {
+  '기둥': { bg: '#1e293b', fg: '#fff' },
+  '통로': { bg: '#fef3c7', fg: '#92400e' },
+  '설비': { bg: '#fed7aa', fg: '#9a3412' },
+  '문서': { bg: '#e7e5e4', fg: '#57534e' },
+  '기타': { bg: '#f1f5f9', fg: '#64748b' },
+}
+
+// 창고 배치도. 기둥 때문에 랙 간격이 일정하지 않아
+// 격자 위에서 직접 끌어 옮기고 좌표를 저장하는 방식으로 만들었다.
 export default function RackLayout() {
   const nav = useNavigate()
-  const { code } = useParams()               // /rack/A1 로 들어오면 그 랙을 바로 보여준다
+  const { code } = useParams()
+  const qc = useQueryClient()
+  const canEdit = useCanEdit()
+
   const [tab, setTab] = useState(code ? 'sheet' : 'map')
   const [sel, setSel] = useState((code || '').toUpperCase())
   const [qr, setQr] = useState('')
+  const [scanOpen, setScanOpen] = useState(false)
+
+  // 편집 상태 — 저장 전까지 화면에만 반영된다
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(null)
+  const [drag, setDrag] = useState(null)
+  const boardRef = useRef(null)
 
   const { data: racks = [], isLoading } = useQuery({
     queryKey: ['rackUsage'],
@@ -29,12 +49,20 @@ export default function RackLayout() {
     staleTime: 60 * 1000,
   })
 
+  const { data: objs = [] } = useQuery({
+    queryKey: ['floorObjects'],
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_floor_object').select('*').order('id')
+      return data || []
+    },
+    staleTime: 60 * 1000,
+  })
+
   const { data: cells = [] } = useQuery({
     queryKey: ['rackMap', sel],
     enabled: !!sel,
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('pm_rack_map', { p_rack: sel })
-      if (error) return []
+      const { data } = await supabase.rpc('pm_rack_map', { p_rack: sel })
       return data || []
     },
   })
@@ -46,12 +74,99 @@ export default function RackLayout() {
     return m
   }, [cells])
 
-  // 랙 전체 QR — 스캔하면 그 랙 현황이 열린다
   useEffect(() => {
     if (!sel) { setQr(''); return }
     QRCode.toDataURL(`${window.location.origin}/rack/${sel}`, { width: 240, margin: 0 })
       .then(setQr).catch(() => setQr(''))
   }, [sel])
+
+  function startEdit() {
+    const m = {}
+    racks.forEach(r => {
+      m[r.code] = { x: r.grid_x ?? 0, y: r.grid_y ?? 0, w: r.grid_w ?? 2, h: r.grid_h ?? 8 }
+    })
+    setDraft({ racks: m, objs: objs.map(o => ({ ...o })) })
+    setEditing(true)
+  }
+
+  async function saveLayout() {
+    if (!draft) return
+    try {
+      const rackRows = Object.entries(draft.racks).map(([c, v]) => ({ code: c, x: v.x, y: v.y, w: v.w, h: v.h }))
+      const objRows = draft.objs.map(o => ({
+        kind: o.kind, label: o.label, x: o.grid_x, y: o.grid_y, w: o.grid_w, h: o.grid_h, color: o.color,
+      }))
+      const { error } = await supabase.rpc('pm_save_layout', { p_racks: rackRows, p_objects: objRows })
+      if (error) throw error
+      toastSuccess('배치 저장 완료')
+      qc.invalidateQueries({ queryKey: ['rackUsage'] })
+      qc.invalidateQueries({ queryKey: ['floorObjects'] })
+      setEditing(false); setDraft(null)
+    } catch (e) {
+      toastError('저장 실패: ' + e.message)
+    }
+  }
+
+  const onMove = useCallback((e) => {
+    if (!drag || !boardRef.current) return
+    const b = boardRef.current.getBoundingClientRect()
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - b.left
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - b.top
+    let gx = Math.round(cx / CELL) - drag.ox
+    let gy = Math.round(cy / CELL) - drag.oy
+    gx = Math.max(0, Math.min(GW - drag.w, gx))
+    gy = Math.max(0, Math.min(GH - drag.h, gy))
+    setDraft(d => {
+      if (!d) return d
+      if (drag.type === 'rack') {
+        return { ...d, racks: { ...d.racks, [drag.id]: { ...d.racks[drag.id], x: gx, y: gy } } }
+      }
+      return { ...d, objs: d.objs.map((o, i) => i === drag.id ? { ...o, grid_x: gx, grid_y: gy } : o) }
+    })
+  }, [drag])
+
+  useEffect(() => {
+    if (!drag) return
+    const up = () => setDrag(null)
+    window.addEventListener('mousemove', onMove)
+    window.addEventListener('touchmove', onMove)
+    window.addEventListener('mouseup', up)
+    window.addEventListener('touchend', up)
+    return () => {
+      window.removeEventListener('mousemove', onMove)
+      window.removeEventListener('touchmove', onMove)
+      window.removeEventListener('mouseup', up)
+      window.removeEventListener('touchend', up)
+    }
+  }, [drag, onMove])
+
+  function grab(e, type, id, x, y, w, h) {
+    if (!editing) return
+    e.preventDefault()
+    const b = boardRef.current.getBoundingClientRect()
+    const cx = (e.touches ? e.touches[0].clientX : e.clientX) - b.left
+    const cy = (e.touches ? e.touches[0].clientY : e.clientY) - b.top
+    setDrag({ type, id, w, h, ox: Math.round(cx / CELL) - x, oy: Math.round(cy / CELL) - y })
+  }
+
+  const rotate = (c) => setDraft(d => {
+    const r = d.racks[c]
+    return { ...d, racks: { ...d.racks, [c]: { ...r, w: r.h, h: r.w } } }
+  })
+  const addObj = (kind) => setDraft(d => ({
+    ...d, objs: [...d.objs, { kind, label: kind, grid_x: 2, grid_y: 2,
+      grid_w: kind === '기둥' ? 1 : 4, grid_h: 2 }],
+  }))
+  const delObj = (i) => setDraft(d => ({ ...d, objs: d.objs.filter((_, k) => k !== i) }))
+
+  const view = editing && draft
+    ? racks.map(r => ({ ...r, grid_x: draft.racks[r.code]?.x, grid_y: draft.racks[r.code]?.y,
+                        grid_w: draft.racks[r.code]?.w, grid_h: draft.racks[r.code]?.h }))
+    : racks
+  const viewObjs = editing && draft ? draft.objs : objs
+
+  const total = racks.reduce((a, r) => a + (Number(r.cells_total) || 0), 0)
+  const used = racks.reduce((a, r) => a + (Number(r.cells_used) || 0), 0)
 
   function doPrint() {
     document.body.classList.add('printing-sheet')
@@ -60,18 +175,8 @@ export default function RackLayout() {
     window.print()
   }
 
-  // 구역별로 묶어 배치도를 그린다
-  const zones = useMemo(() => {
-    const g = {}
-    racks.forEach(r => { (g[r.zone] = g[r.zone] || []).push(r) })
-    return Object.entries(g)
-  }, [racks])
-
-  const total = racks.reduce((a, r) => a + (Number(r.cells_total) || 0), 0)
-  const used = racks.reduce((a, r) => a + (Number(r.cells_used) || 0), 0)
-
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <style>{`
         @media print {
           body.printing-sheet > * { display: none !important; }
@@ -81,13 +186,38 @@ export default function RackLayout() {
         .sheet-print { display: none; }
       `}</style>
 
-      <div className="no-print">
-        <h1 className="text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
-        <p className="text-xs text-slate-400">
-          랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 사용 ({total ? Math.round(used / total * 100) : 0}%)
-          {' · '}랙을 누르면 구성표를 볼 수 있습니다
-        </p>
+      <div className="no-print flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
+          <p className="text-xs text-slate-400">
+            랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 사용 ({total ? Math.round(used / total * 100) : 0}%)
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setScanOpen(true)}
+            className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+            📷 QR 스캔
+          </button>
+          {tab === 'map' && canEdit && (editing ? (
+            <>
+              <button onClick={() => { setEditing(false); setDraft(null) }}
+                className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600">취소</button>
+              <button onClick={saveLayout}
+                className="px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">배치 저장</button>
+            </>
+          ) : (
+            <button onClick={startEdit}
+              className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+              ✏️ 배치 편집
+            </button>
+          ))}
+        </div>
       </div>
+
+      {scanOpen && (
+        <QrScanner onClose={() => setScanOpen(false)}
+          onScan={(loc) => { setScanOpen(false); nav(`/cell/${loc}`) }} />
+      )}
 
       <div className="no-print flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
         {[['map', '🗺 배치도'], ['sheet', '📋 랙 구성표']].map(([k, l]) => (
@@ -98,50 +228,101 @@ export default function RackLayout() {
         ))}
       </div>
 
-      {/* 배치도 */}
       {tab === 'map' && (
-        <div className="no-print space-y-4">
-          {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
-          {zones.map(([zone, list]) => (
-            <div key={zone} className="bg-white rounded-xl border border-slate-200 p-4">
-              <p className="text-xs font-bold text-slate-500 mb-3">{zone} · {list.length}면</p>
-              <div className="flex flex-wrap gap-2">
-                {list.map(r => {
-                  const t = Number(r.cells_total) || 1
-                  const u = Number(r.cells_used) || 0
-                  const pct = Math.round(u / t * 100)
-                  const bg = pct === 0 ? 'bg-slate-50 border-slate-200'
-                    : pct < 40 ? 'bg-emerald-50 border-emerald-200'
-                    : pct < 75 ? 'bg-amber-50 border-amber-300'
-                    : 'bg-rose-50 border-rose-300'
-                  return (
-                    <button key={r.code} onClick={() => { setSel(r.code); setTab('sheet') }}
-                      title={`${r.code} · ${r.rows_cnt}칸 ${r.levels_cnt}층 · ${u}/${t} 사용${r.memo ? `\n${r.memo}` : ''}`}
-                      className={`border-2 rounded-lg px-3 py-2 text-left transition-all hover:shadow-md ${bg}`}
-                      style={{ minWidth: '92px' }}>
-                      <p className="font-mono text-base font-bold text-slate-800">{r.code}</p>
-                      <p className="text-[10px] text-slate-500">{r.rows_cnt}칸 {r.levels_cnt}층</p>
-                      <div className="mt-1 h-1 bg-white/70 rounded-full overflow-hidden">
-                        <div className={`h-full ${pct < 40 ? 'bg-emerald-400' : pct < 75 ? 'bg-amber-400' : 'bg-rose-400'}`}
-                          style={{ width: `${pct}%` }} />
-                      </div>
-                      <p className="text-[10px] text-slate-400 mt-0.5">{u}/{t} · {pct}%</p>
-                    </button>
-                  )
-                })}
+        <div className="no-print space-y-2">
+          {editing && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50 p-3 space-y-2">
+              <p className="text-xs font-bold text-indigo-800">
+                편집 중 — 끌어서 옮기고, 랙을 클릭하면 방향(가로↔세로)이 바뀝니다
+              </p>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[11px] text-slate-500">추가</span>
+                {['기둥', '통로', '설비', '문서', '기타'].map(k => (
+                  <button key={k} onClick={() => addObj(k)}
+                    className="px-2 py-1 text-[11px] font-semibold rounded border border-slate-300 bg-white hover:bg-slate-50">
+                    + {k}
+                  </button>
+                ))}
+                <span className="text-[11px] text-slate-400 ml-2">기둥·설비는 더블클릭하면 삭제</span>
               </div>
             </div>
-          ))}
-          <div className="flex items-center gap-3 text-[11px] text-slate-400">
-            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded bg-slate-100 border border-slate-200 inline-block"/>빈 랙</span>
-            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded bg-emerald-100 border border-emerald-200 inline-block"/>여유</span>
-            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded bg-amber-100 border border-amber-300 inline-block"/>보통</span>
-            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded bg-rose-100 border border-rose-300 inline-block"/>포화</span>
+          )}
+
+          {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
+
+          <div className="bg-white rounded-xl border-2 border-slate-300 p-3 overflow-auto">
+            <div ref={boardRef} className="relative"
+              style={{
+                width: GW * CELL, height: GH * CELL,
+                backgroundImage: 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)',
+                backgroundSize: `${CELL}px ${CELL}px`,
+                cursor: drag ? 'grabbing' : 'default',
+              }}>
+              {viewObjs.map((o, i) => {
+                const st = OBJ_STYLE[o.kind] || OBJ_STYLE['기타']
+                return (
+                  <div key={i}
+                    onMouseDown={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h)}
+                    onTouchStart={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h)}
+                    onDoubleClick={() => editing && delObj(i)}
+                    title={o.label || o.kind}
+                    style={{
+                      position: 'absolute', left: o.grid_x * CELL, top: o.grid_y * CELL,
+                      width: o.grid_w * CELL, height: o.grid_h * CELL,
+                      background: o.color || st.bg, color: st.fg, fontSize: 9,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      borderRadius: 2, cursor: editing ? 'grab' : 'default',
+                      overflow: 'hidden', whiteSpace: 'nowrap',
+                    }}>
+                    {o.grid_w >= 3 ? (o.label || o.kind) : ''}
+                  </div>
+                )
+              })}
+
+              {view.map(r => {
+                const t = Number(r.cells_total) || 1
+                const u = Number(r.cells_used) || 0
+                const pct = Math.round(u / t * 100)
+                const col = pct === 0 ? { b: '#cbd5e1', g: '#f8fafc', f: '#94a3b8' }
+                  : pct < 40 ? { b: '#34d399', g: '#ecfdf5', f: '#065f46' }
+                  : pct < 75 ? { b: '#fbbf24', g: '#fffbeb', f: '#92400e' }
+                  : { b: '#fb7185', g: '#fff1f2', f: '#9f1239' }
+                const gw = r.grid_w ?? 2, gh = r.grid_h ?? 8
+                const w = gw * CELL, h = gh * CELL
+                const vertical = h > w
+                return (
+                  <div key={r.code}
+                    onMouseDown={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh)}
+                    onTouchStart={e => grab(e, 'rack', r.code, r.grid_x ?? 0, r.grid_y ?? 0, gw, gh)}
+                    onClick={() => { if (editing) rotate(r.code); else { setSel(r.code); setTab('sheet') } }}
+                    title={`${r.code} · ${r.side} ${r.rows_cnt}칸 ${r.levels_cnt}층 · ${u}/${t} (${pct}%)${r.memo ? '\n' + r.memo : ''}`}
+                    style={{
+                      position: 'absolute', left: (r.grid_x ?? 0) * CELL, top: (r.grid_y ?? 0) * CELL,
+                      width: w, height: h,
+                      border: `2px solid ${col.b}`, background: col.g, color: col.f,
+                      borderRadius: 3, cursor: editing ? 'grab' : 'pointer',
+                      display: 'flex', flexDirection: vertical ? 'column' : 'row',
+                      alignItems: 'center', justifyContent: 'center', gap: 2,
+                      fontSize: 10, fontWeight: 700, overflow: 'hidden',
+                    }}>
+                    <span style={{ fontFamily: 'ui-monospace,monospace' }}>{r.code}</span>
+                    {(vertical ? h : w) > 54 && <span style={{ fontSize: 8, opacity: .7 }}>{pct}%</span>}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 text-[11px] text-slate-400 flex-wrap">
+            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded border-2 border-slate-300 bg-slate-50 inline-block"/>빈 랙</span>
+            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded border-2 border-emerald-400 bg-emerald-50 inline-block"/>여유</span>
+            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded border-2 border-amber-400 bg-amber-50 inline-block"/>보통</span>
+            <span className="inline-flex items-center gap-1"><i className="w-3 h-3 rounded border-2 border-rose-400 bg-rose-50 inline-block"/>포화</span>
+            <span className="ml-1">격자 1칸 ≈ 0.5m · 랙을 누르면 구성표로 이동</span>
           </div>
         </div>
       )}
 
-      {/* 랙 구성표 */}
       {tab === 'sheet' && (
         <>
           <div className="no-print bg-white rounded-xl border border-slate-200 p-4 flex flex-wrap items-end gap-3">
@@ -151,9 +332,7 @@ export default function RackLayout() {
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg w-56">
                 <option value="">선택하세요</option>
                 {racks.map(r => (
-                  <option key={r.code} value={r.code}>
-                    {r.code} · {r.zone} {r.rows_cnt}칸 {r.levels_cnt}층
-                  </option>
+                  <option key={r.code} value={r.code}>{r.code} · {r.zone} {r.rows_cnt}칸 {r.levels_cnt}층</option>
                 ))}
               </select>
             </div>
@@ -248,5 +427,28 @@ function SheetBody({ rack, cellMap, qr, print }) {
         노란 칸 = 재고 있음 · 칸마다 붙인 QR 을 스캔하면 실사 화면이 열립니다 · 위치 표기 {rack.code}-칸-층
       </p>
     </div>
+  )
+}
+
+// 배치도의 랙 하나. 사용률에 따라 색이 진해진다.
+function RackBox({ r, onPick, wide, tall }) {
+  const t = Number(r.cells_total) || 1
+  const u = Number(r.cells_used) || 0
+  const pct = Math.round(u / t * 100)
+  const cls = pct === 0 ? 'bg-slate-50 border-slate-300 text-slate-400'
+    : pct < 40 ? 'bg-emerald-50 border-emerald-400 text-emerald-800'
+    : pct < 75 ? 'bg-amber-50 border-amber-400 text-amber-800'
+    : 'bg-rose-50 border-rose-400 text-rose-800'
+  const size = wide ? { minWidth: 78, height: 40 } : tall ? { width: 38, height: 116 } : { minWidth: 60, height: 48 }
+
+  return (
+    <button onClick={() => onPick(r.code)}
+      title={`${r.code} · ${r.side} ${r.rows_cnt}칸 ${r.levels_cnt}층 · ${u}/${t} 사용 (${pct}%)${r.memo ? `\n${r.memo}` : ''}`}
+      className={`border-2 rounded transition-all hover:shadow-md hover:scale-[1.03] flex flex-col items-center justify-center ${cls}`}
+      style={size}>
+      <span className="font-mono text-xs font-bold leading-none">{r.code}</span>
+      <span className="text-[9px] opacity-70 leading-tight mt-0.5">{r.rows_cnt}×{r.levels_cnt}</span>
+      {pct > 0 && <span className="text-[9px] font-bold leading-none mt-0.5">{pct}%</span>}
+    </button>
   )
 }
