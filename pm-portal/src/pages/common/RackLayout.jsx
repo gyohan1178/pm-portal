@@ -201,8 +201,10 @@ export default function RackLayout() {
     const size = kind === '기둥' ? [2, 2]
       : kind === '출입구' ? [4, 2]
       : kind === '벽' ? [10, 1]
-      : [6, 2]
-    return { ...d, objs: [...d.objs, { kind, label: kind, grid_x: 2, grid_y: 2, grid_w: size[0], grid_h: size[1] }] }
+      : [8, 3]
+    // 설비·기타는 이름을 직접 넣어 쓰므로 기본값을 비워둔다
+    const label = (kind === '설비' || kind === '기타') ? '' : kind
+    return { ...d, objs: [...d.objs, { kind, label, grid_x: 2, grid_y: 2, grid_w: size[0], grid_h: size[1] }] }
   })
   const delObj = (i) => setDraft(d => ({ ...d, objs: d.objs.filter((_, k) => k !== i) }))
 
@@ -347,9 +349,19 @@ export default function RackLayout() {
               {/* 선택한 대상에 대한 작업 */}
               {pick && (
                 <div className="flex flex-wrap items-center gap-1.5 rounded-lg bg-white border border-indigo-300 px-2.5 py-1.5">
-                  <span className="text-xs font-bold text-indigo-700">
-                    {pick.type === 'rack' ? pick.id : (draft?.objs[pick.id]?.label || draft?.objs[pick.id]?.kind || '선택')}
-                  </span>
+                  {pick.type === 'rack' ? (
+                    <span className="text-xs font-bold text-indigo-700">{pick.id}</span>
+                  ) : (
+                    <>
+                      <span className="text-[11px] font-bold text-slate-500">{draft?.objs[pick.id]?.kind}</span>
+                      <input
+                        value={draft?.objs[pick.id]?.label ?? ''}
+                        onChange={e => setDraft(d => ({ ...d, objs: d.objs.map((o, i) =>
+                          i === pick.id ? { ...o, label: e.target.value } : o) }))}
+                        placeholder="이름 (예: 파렛트 적재구역)"
+                        className="px-2 py-1 text-xs border border-slate-200 rounded w-44 focus:outline-none focus:border-indigo-400" />
+                    </>
+                  )}
                   <button onClick={() => {
                       if (pick.type === 'rack') rotate(pick.id)
                       else setDraft(d => ({ ...d, objs: d.objs.map((o, i) =>
@@ -408,8 +420,10 @@ export default function RackLayout() {
                       borderRadius: 2, cursor: editing ? 'grab' : 'default',
                       outline: pick?.type === 'obj' && pick.id === i ? '3px solid #4f46e5' : 'none',
                       overflow: 'hidden', whiteSpace: 'nowrap',
+                      padding: '0 2px', textOverflow: 'ellipsis',
+                      fontWeight: o.kind === '기둥' || o.kind === '벽' ? 400 : 700,
                     }}>
-                    {o.grid_w >= 4 ? (o.label || o.kind) : ''}
+                    {o.grid_w >= 3 && o.kind !== '기둥' && o.kind !== '벽' ? (o.label || o.kind) : ''}
                     {editing && (
                       <span
                         onMouseDown={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h, 'resize')}

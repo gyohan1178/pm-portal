@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v3.32.1'
+export const APP_VERSION = 'v3.32.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.32.2',
+    date: '2026-07-30',
+    changes: [
+      '★ 배치 저장 오류 해결 — Supabase 가 WHERE 절 없는 DELETE 를 막는 것이 원인이었습니다',
+      '★ 설비·기타 요소에 이름 직접 입력 — 선택하면 이름 칸이 나타나 \'파렛트 적재구역\', \'자재 Kitting\' 처럼 자유롭게 넣을 수 있습니다',
+      '기둥·벽은 이름을 표시하지 않아 배치도가 깔끔해짐',
+      'SQL: pm_save_layout_v3.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.32.1',
     date: '2026-07-30',
