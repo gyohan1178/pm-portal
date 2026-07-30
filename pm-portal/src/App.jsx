@@ -40,6 +40,8 @@ const WeeklyUpload = lazy(() => import('./pages/WeeklyUpload'))
 const EcountUpload = lazy(() => import('./pages/EcountUpload'))
 const PaymentPlan = lazy(() => import('./pages/PaymentPlan'))
 const ActivityLog = lazy(() => import('./pages/admin/ActivityLog'))
+const RackTags = lazy(() => import('./pages/common/RackTags'))
+const CellAudit = lazy(() => import('./pages/common/CellAudit'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
 const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
@@ -153,6 +155,8 @@ export default function App() {
         <Route path="ecount" element={<EcountUpload />} />
         <Route path="payment-plan" element={<PaymentPlan />} />
         <Route path="activity" element={<ActivityLog />} />
+        <Route path="rack-tags" element={<RackTags />} />
+        <Route path="cell/:loc" element={<CellAudit />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />
         <Route path="sales" element={<SalesDashboard />} />
         <Route path="sales/upload" element={<SalesUpload />} />

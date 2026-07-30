@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/rack-tags': ['🏷','랙 위치 태그'],
   '/': ['🎯','관제탑'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
   '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','부분 불출'],
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
@@ -243,6 +244,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>부분 불출 (호기별 키팅)</MenuItem>
+          <MenuItem to="/rack-tags" icon="🏷" onNavigate={onNavigate}>랙 위치 태그</MenuItem>
         </CollapseSection>
         )}
 
