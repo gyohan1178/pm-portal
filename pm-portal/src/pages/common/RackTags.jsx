@@ -13,6 +13,8 @@ const pad = (v) => String(v).padStart(2, '0')
 //   태그 크기: 세로 40mm · 2열 (A4 장당 12개)
 //   QR 내용: 실사 화면 주소 (https://…/cell/A1-05-1)
 export default function RackTags() {
+  const [allMode, setAllMode] = useState(false)   // 전체 랙 한 번에
+  const [progress, setProgress] = useState(null)
   const [rackSel, setRackSel] = useState('')
   const [lvFrom, setLvFrom] = useState(1)
   const [lvTo, setLvTo] = useState(3)
@@ -42,20 +44,32 @@ export default function RackTags() {
 
   // 인쇄할 위치 목록 — 층 위→아래, 칸 좌→우 (현장에서 보는 순서)
   const cells = useMemo(() => {
+    // 전체 모드 — 모든 랙의 모든 칸 (코팅해서 한 번에 붙일 때)
+    if (allMode) {
+      const out = []
+      racks.forEach(rk => {
+        for (let lv = rk.levels_cnt; lv >= 1; lv--) {
+          for (let r = 1; r <= rk.rows_cnt; r++) {
+            out.push({ loc: `${rk.code}-${pad(r)}-${lv}`, row: r, lv, rack: rk.code })
+          }
+        }
+      })
+      return out
+    }
     if (!rack) return []
     const out = []
     for (let lv = Number(lvTo); lv >= Number(lvFrom); lv--) {
       for (let r = Number(rowFrom); r <= Number(rowTo); r++) {
-        out.push({ loc: `${rack.code}-${pad(r)}-${lv}`, row: r, lv })
+        out.push({ loc: `${rack.code}-${pad(r)}-${lv}`, row: r, lv, rack: rack.code })
       }
     }
     return out
-  }, [rack, rowFrom, rowTo, lvFrom, lvTo])
+  }, [allMode, racks, rack, rowFrom, rowTo, lvFrom, lvTo])
 
   // 칸별 재고 — 태그에 현재 보관 품목을 함께 찍는다
   const { data: stockMap = {} } = useQuery({
     queryKey: ['rackStock', rackSel],
-    enabled: !!rackSel,
+    enabled: !!rackSel && !allMode,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_rack_map', { p_rack: rackSel })
       if (error) return {}
@@ -68,20 +82,25 @@ export default function RackTags() {
   // QR 생성 — 스캔하면 그 칸의 실사 화면이 열린다
   async function buildQr() {
     if (!cells.length) return
-    setBusy(true)
+    setBusy(true); setProgress({ done: 0, total: cells.length })
     try {
       const base = window.location.origin
       const m = {}
-      for (const c of cells) {
-        m[c.loc] = await QRCode.toDataURL(`${base}/cell/${c.loc}`, {
+      for (let i = 0; i < cells.length; i++) {
+        m[cells[i].loc] = await QRCode.toDataURL(`${base}/cell/${cells[i].loc}`, {
           width: 240, margin: 0, errorCorrectionLevel: 'M',
         })
+        // 1,500개가 넘으면 시간이 걸리므로 진행률을 갱신하고 화면이 멈추지 않게 한다
+        if (i % 40 === 0) {
+          setProgress({ done: i, total: cells.length })
+          await new Promise(r => setTimeout(r, 0))
+        }
       }
       setQrMap(m)
       toastSuccess(`${cells.length}개 태그 준비 완료`)
     } catch (e) {
       toastError('QR 생성 실패: ' + e.message)
-    } finally { setBusy(false) }
+    } finally { setBusy(false); setProgress(null) }
   }
 
   function doPrint() {
@@ -116,7 +135,36 @@ export default function RackTags() {
 
       {/* 선택 */}
       <div className="no-print bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+          {[[false, '랙 선택'], [true, `전체 (${racks.reduce((a,r)=>a+r.rows_cnt*r.levels_cnt,0).toLocaleString()}칸)`]].map(([v, l]) => (
+            <button key={String(v)} onClick={() => { setAllMode(v); setQrMap({}) }}
+              className={`px-3 py-1.5 text-xs font-bold rounded-md ${allMode === v ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {allMode && (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+            전체 {cells.length.toLocaleString()}칸 · A4 <b>{Math.ceil(cells.length / 12)}장</b>.
+            QR 생성에 20~30초 걸리고 인쇄 미리보기도 느립니다. 코팅해서 한 번에 붙일 때 쓰세요.
+          </div>
+        )}
+
+        {progress && (
+          <div>
+            <div className="flex justify-between text-xs text-slate-500 mb-1">
+              <span>QR 생성 {progress.done.toLocaleString()} / {progress.total.toLocaleString()}</span>
+              <span>{Math.round(progress.done / progress.total * 100)}%</span>
+            </div>
+            <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
+              <div className="h-full bg-indigo-500 transition-all" style={{ width: `${progress.done / progress.total * 100}%` }} />
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap items-end gap-3">
+          {!allMode && (
           <div>
             <label className="block text-xs font-bold text-slate-500 mb-1">랙</label>
             <select value={rackSel} onChange={e => { setRackSel(e.target.value); setQrMap({}) }}
@@ -129,7 +177,20 @@ export default function RackTags() {
               ))}
             </select>
           </div>
-          {rack && (
+          )}
+          {allMode && (
+            <>
+              <button onClick={buildQr} disabled={busy}
+                className="px-4 py-2 text-sm font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
+                {busy ? 'QR 생성 중…' : `🔳 전체 QR 만들기 (${cells.length.toLocaleString()})`}
+              </button>
+              <button onClick={doPrint} disabled={!ready}
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                🖨 인쇄 ({Math.ceil(cells.length / 12)}장)
+              </button>
+            </>
+          )}
+          {!allMode && rack && (
             <>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">칸 범위</label>
