@@ -7,8 +7,8 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 
-const CELL = 14              // 격자 한 칸 화면 크기(px)
-const GW = 52, GH = 32       // 격자 전체 크기
+const CELL = 11              // 격자 한 칸 화면 크기(px)
+const GW = 68, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
 const pad = (v) => String(v).padStart(2, '0')
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -305,8 +305,9 @@ export default function RackLayout() {
                       alignItems: 'center', justifyContent: 'center', gap: 2,
                       fontSize: 10, fontWeight: 700, overflow: 'hidden',
                     }}>
-                    <span style={{ fontFamily: 'ui-monospace,monospace' }}>{r.code}</span>
-                    {(vertical ? h : w) > 54 && <span style={{ fontSize: 8, opacity: .7 }}>{pct}%</span>}
+                    <span style={{ fontFamily: 'ui-monospace,monospace', fontSize: 9,
+                      writingMode: vertical && gh >= 10 ? 'vertical-rl' : 'horizontal-tb' }}>{r.code}</span>
+                    {(vertical ? h : w) > 60 && <span style={{ fontSize: 8, opacity: .7 }}>{pct}%</span>}
                   </div>
                 )
               })}
