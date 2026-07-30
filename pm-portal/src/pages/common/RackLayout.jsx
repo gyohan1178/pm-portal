@@ -15,6 +15,8 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
 const OBJ_STYLE = {
   '기둥': { bg: '#1e293b', fg: '#fff' },
+  '출입구': { bg: '#22c55e', fg: '#fff' },
+  '벽': { bg: '#475569', fg: '#fff' },
   '통로': { bg: '#fef3c7', fg: '#92400e' },
   '설비': { bg: '#fed7aa', fg: '#9a3412' },
   '문서': { bg: '#e7e5e4', fg: '#57534e' },
@@ -85,6 +87,15 @@ export default function RackLayout() {
   }, [sel])
 
   function startEdit() {
+    // 저장하지 못하고 나간 작업이 있으면 이어서 할지 묻는다
+    try {
+      const saved = sessionStorage.getItem('rackDraft')
+      if (saved && confirm('저장하지 않은 편집 내용이 있습니다.\n이어서 하시겠습니까?\n\n(취소하면 현재 저장된 배치부터 시작합니다)')) {
+        setDraft(JSON.parse(saved)); setEditing(true); return
+      }
+      sessionStorage.removeItem('rackDraft')
+    } catch { /* 파싱 실패 시 아래로 */ }
+
     const m = {}
     racks.forEach(r => {
       m[r.code] = { x: r.grid_x ?? 0, y: r.grid_y ?? 0, w: r.grid_w ?? 2, h: r.grid_h ?? 8 }
@@ -92,6 +103,13 @@ export default function RackLayout() {
     setDraft({ racks: m, objs: objs.map(o => ({ ...o })) })
     setEditing(true)
   }
+
+  // 편집 내용을 브라우저에 임시 보관한다.
+  // 저장이 실패하거나 실수로 새로고침해도 작업이 날아가지 않게.
+  useEffect(() => {
+    if (!editing || !draft) return
+    try { sessionStorage.setItem('rackDraft', JSON.stringify(draft)) } catch { /* 용량 초과 등은 무시 */ }
+  }, [editing, draft])
 
   async function saveLayout() {
     if (!draft) return
@@ -101,13 +119,17 @@ export default function RackLayout() {
         kind: o.kind, label: o.label, x: o.grid_x, y: o.grid_y, w: o.grid_w, h: o.grid_h, color: o.color,
       }))
       const { error } = await supabase.rpc('pm_save_layout', { p_racks: rackRows, p_objects: objRows })
-      if (error) throw error
+      if (error) throw error   // error 객체에 details·hint 가 담겨 있다
+      try { sessionStorage.removeItem('rackDraft') } catch { /* 무시 */ }
       toastSuccess('배치 저장 완료')
       qc.invalidateQueries({ queryKey: ['rackUsage'] })
       qc.invalidateQueries({ queryKey: ['floorObjects'] })
       setEditing(false); setDraft(null); setPick(null)
     } catch (e) {
-      toastError('저장 실패: ' + e.message)
+      // PostgREST 는 오류를 details·hint 에 나눠 담는 경우가 있다
+      const msg = [e?.message, e?.details, e?.hint].filter(Boolean).join(' · ')
+      toastError('저장 실패: ' + (msg || '알 수 없는 오류'))
+      console.error('pm_save_layout 오류', e)
     }
   }
 
@@ -175,10 +197,13 @@ export default function RackLayout() {
     const r = d.racks[c]
     return { ...d, racks: { ...d.racks, [c]: { ...r, w: r.h, h: r.w } } }
   })
-  const addObj = (kind) => setDraft(d => ({
-    ...d, objs: [...d.objs, { kind, label: kind, grid_x: 2, grid_y: 2,
-      grid_w: kind === '기둥' ? 1 : 4, grid_h: 2 }],
-  }))
+  const addObj = (kind) => setDraft(d => {
+    const size = kind === '기둥' ? [2, 2]
+      : kind === '출입구' ? [4, 2]
+      : kind === '벽' ? [10, 1]
+      : [6, 2]
+    return { ...d, objs: [...d.objs, { kind, label: kind, grid_x: 2, grid_y: 2, grid_w: size[0], grid_h: size[1] }] }
+  })
   const delObj = (i) => setDraft(d => ({ ...d, objs: d.objs.filter((_, k) => k !== i) }))
 
   const view = editing && draft
@@ -346,7 +371,7 @@ export default function RackLayout() {
 
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[11px] text-slate-500">추가</span>
-                {['기둥', '통로', '설비', '문서', '기타'].map(k => (
+                {['기둥', '벽', '출입구', '통로', '설비', '문서', '기타'].map(k => (
                   <button key={k} onClick={() => addObj(k)}
                     className="px-2 py-1 text-[11px] font-semibold rounded border border-slate-300 bg-white hover:bg-slate-50">
                     + {k}
