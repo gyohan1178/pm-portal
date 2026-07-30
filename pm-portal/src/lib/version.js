@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.31.8'
+export const APP_VERSION = 'v3.31.9'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.31.9',
+    date: '2026-07-30',
+    changes: [
+      '빈 칸을 스캔했을 때 품목을 넣을 수 없던 문제 수정 — 재고가 없는 칸에서도 \'＋ 품목 넣기\' 로 바로 등록할 수 있습니다',
+      '실사 화면에 배치도 이동 버튼 추가 — 폰에서 다른 화면으로 넘어가기 쉽게',
+    ],
+  },
   {
     version: 'v3.31.8',
     date: '2026-07-30',

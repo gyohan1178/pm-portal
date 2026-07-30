@@ -247,7 +247,11 @@ export default function CellAudit() {
           onScan={(l) => { setScanOpen(false); setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }} />
       )}
       {/* 위치 */}
-      <div className="rounded-2xl bg-slate-900 text-white p-5">
+      <div className="rounded-2xl bg-slate-900 text-white p-5 relative">
+        <button onClick={() => nav('/rack-layout')} title="창고 배치도"
+          className="absolute top-3 right-3 px-2.5 py-1.5 text-[11px] font-semibold rounded-lg bg-white/10 text-slate-300 hover:bg-white/20">
+          🗺 배치도
+        </button>
         <p className="text-xs text-slate-400">재고 실사 · 위치</p>
         <p className="text-4xl font-bold font-mono tracking-tight mt-1">{location}</p>
         <p className="text-xs text-slate-400 mt-1">
@@ -261,10 +265,17 @@ export default function CellAudit() {
       {!isLoading && !items.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
           <p className="text-sm text-slate-400">이 칸에 등록된 재고가 없습니다.</p>
-          <button onClick={() => nav('/inventory')}
-            className="mt-3 px-4 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-            재고현황에서 위치 지정하기
-          </button>
+          <p className="text-xs text-slate-400 mt-1">품목을 찾아 이 칸에 넣을 수 있습니다.</p>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center mt-4">
+            <button onClick={() => setAddOpen(true)}
+              className="px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+              ＋ 품목 넣기
+            </button>
+            <button onClick={() => setScanOpen(true)}
+              className="px-5 py-2.5 text-sm font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+              📷 다른 칸 스캔
+            </button>
+          </div>
         </div>
       )}
 
