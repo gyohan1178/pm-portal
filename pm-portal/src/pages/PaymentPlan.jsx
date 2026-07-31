@@ -39,12 +39,17 @@ export default function PaymentPlan() {
 
   // 발주서 묶음 (업체·발주일 기준)
   const { data: groups = [], isLoading } = useQuery({
-    queryKey: ['poGroups'],
+    // 검색어를 DB 로 넘겨 전체에서 찾는다.
+    // 화면에서 받은 것만 거르면 목록 밖의 건이 검색되지 않는다.
+    queryKey: ['poGroups', dq],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('pm_po_groups', { p_from: null, p_to: null })
+      const { data, error } = await supabase.rpc('pm_po_groups', {
+        p_from: null, p_to: null, p_q: dq.trim() || null, p_limit: 300,
+      })
       if (error) throw error
       return data || []
     },
+    keepPreviousData: true,
   })
 
   // 월별 결제 계획 요약
@@ -57,13 +62,8 @@ export default function PaymentPlan() {
     },
   })
 
-  const shown = useMemo(() => {
-    const q = dq.trim().toLowerCase()
-    if (!q) return groups.slice(0, 200)
-    return groups.filter((g) =>
-      [g.po_number, g.vendor_name].some((x) => String(x || '').toLowerCase().includes(q))
-    ).slice(0, 200)
-  }, [groups, dq])
+  // DB 에서 이미 검색·제한을 마쳤으므로 그대로 쓴다
+  const shown = groups
 
   // 월별 합계 (고객사 무관, 전사 자금 계획)
   const byMonth = useMemo(() => {
@@ -167,9 +167,16 @@ export default function PaymentPlan() {
         </div>
       )}
 
-      <input value={search} onChange={(e) => setSearch(e.target.value)}
-        placeholder="발주번호·업체 검색"
-        className="w-full sm:w-80 px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+      <div className="flex items-center gap-2 flex-wrap">
+        <input value={search} onChange={(e) => setSearch(e.target.value)}
+          placeholder="발주번호·업체 검색"
+          className="w-full sm:w-80 px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+        <span className="text-xs text-slate-400">
+          {isLoading ? '조회 중…' : `${shown.length}건`}
+          {shown.length >= 300 && ' (상위 300건 · 검색으로 좁혀주세요)'}
+        </span>
+        <span className="text-xs text-slate-400 ml-auto">입고가 끝난 발주는 표시되지 않습니다</span>
+      </div>
 
       {/* 발주서 묶음 */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">

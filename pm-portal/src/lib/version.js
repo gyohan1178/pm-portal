@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v3.36.0'
+export const APP_VERSION = 'v3.36.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.36.1',
+    date: '2026-07-31',
+    changes: [
+      '★ 결제 계획에서 입고가 끝난 발주가 계속 보이던 문제 수정 — 미입고 잔량이 있는 건만 표시합니다',
+      '★ 결제 계획 검색이 일부만 걸리던 문제 수정 — 화면에 불러온 건 안에서만 찾다 보니 그 밖의 발주가 검색되지 않았습니다. 이제 전체에서 찾습니다',
+      '검색 결과 건수와 안내 문구 표시',
+      'SQL: pm_po_groups_v2.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.36.0',
     date: '2026-07-31',
