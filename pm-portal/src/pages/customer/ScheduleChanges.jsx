@@ -2,6 +2,7 @@ import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { MAIN_PNS } from '../production/mainPns'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
@@ -18,8 +19,12 @@ const dday = (d) => {
 export default function ScheduleChanges() {
   const [days, setDays] = useState(60)
   const [open, setOpen] = useState(null)   // 이력을 펼친 행
+  const [pdOnly, setPdOnly] = useState(false)   // 생산관리 대상(PD BOX)만
 
-  const { data: rows = [], isLoading } = useQuery({
+  // 생산관리 대상 판별 — std_code 는 'AX-110153030' 형태라 접두를 벗겨 대조한다
+  const isPdBox = (code) => MAIN_PNS.has(String(code || '').replace(/^AX-/i, '').trim())
+
+  const { data: allRows = [], isLoading } = useQuery({
     queryKey: ['scheduleChanges', days],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_schedule_changes', { p_days: days })
@@ -27,6 +32,9 @@ export default function ScheduleChanges() {
       return data || []
     },
   })
+
+  const rows = pdOnly ? allRows.filter(r => isPdBox(r.std_code)) : allRows
+  const pdCount = allRows.filter(r => isPdBox(r.std_code)).length
 
   // 당겨진 건과 밀린 건을 나눈다 — 대응이 다르기 때문
   const earlier = rows.filter(r => r.from_date && r.to_date && r.to_date < r.from_date)
@@ -40,6 +48,7 @@ export default function ScheduleChanges() {
       const data = rows.map(r => ({
         'PO번호': r.po_number || '',
         '오더/DEL': [r.order_line, r.del_line].filter(Boolean).join('-'),
+        '구분': isPdBox(r.std_code) ? 'PD BOX' : '',
         '기준코드': r.std_code || '',
         '품명': r.item_name || '',
         '수량': Number(r.qty) || 0,
@@ -55,12 +64,12 @@ export default function ScheduleChanges() {
         '고객사': r.customer || '',
       }))
       const ws = XLSX.utils.json_to_sheet(data)
-      ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 32 }, { wch: 7 },
+      ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 9 }, { wch: 16 }, { wch: 32 }, { wch: 7 },
                      { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 9 }, { wch: 12 }, { wch: 9 },
                      { wch: 11 }, { wch: 7 }, { wch: 11 }, { wch: 10 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '일정변경')
-      XLSX.writeFile(wb, `납품일정변경_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      XLSX.writeFile(wb, `납품일정변경${pdOnly ? '_PDBOX' : ''}_${new Date().toISOString().slice(0, 10)}.xlsx`)
       toastSuccess(`${rows.length}건 내보냄`)
     } catch (e) {
       toastError('내보내기 실패: ' + (e?.message || e))
@@ -73,10 +82,17 @@ export default function ScheduleChanges() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">📅 납품 일정 변경</h1>
           <p className="text-xs text-slate-400">
-            고객사 PO 업로드 시 납기가 바뀐 건입니다. 가장 최근 업로드에서 바뀐 것만 표시됩니다.
+            고객사 PO 업로드 시 납기가 바뀐 건입니다.{pdOnly && ' 생산관리 대상 PD BOX 품번만 표시 중입니다.'}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setPdOnly(v => !v)}
+            title="생산관리 대상 PD BOX 품번만 (16종)"
+            className={`px-3 py-2 text-xs font-bold rounded-lg border whitespace-nowrap ${pdOnly
+              ? 'border-indigo-500 bg-indigo-600 text-white'
+              : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+            🏭 PD BOX만 {pdCount > 0 && `(${pdCount})`}
+          </button>
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {[[30, '1개월'], [60, '2개월'], [90, '3개월']].map(([d, l]) => (
               <button key={d} onClick={() => setDays(d)}
@@ -149,7 +165,12 @@ export default function ScheduleChanges() {
                     {[r.order_line, r.del_line].filter(Boolean).join('-') || '-'}
                   </td>
                   <td className="px-3 py-2">
-                    <p className="font-mono text-indigo-600">{r.std_code}</p>
+                    <p className="font-mono text-indigo-600">
+                      {r.std_code}
+                      {isPdBox(r.std_code) && (
+                        <span className="ml-1.5 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 text-[9px] font-bold">PD</span>
+                      )}
+                    </p>
                     <p className="text-slate-500 max-w-[240px] truncate">{r.item_name}</p>
                   </td>
                   <td className="px-3 py-2 text-right font-semibold text-slate-700">{n(r.qty)}</td>

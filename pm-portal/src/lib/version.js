@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.35.1'
+export const APP_VERSION = 'v3.35.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.35.2',
+    date: '2026-07-30',
+    changes: [
+      '납품 일정 변경에 \'PD BOX만\' 필터 추가 — 생산관리 대상 16개 품번만 골라 볼 수 있습니다. 목록에도 PD 배지가 표시되고, 엑셀에 구분 열이 들어갑니다',
+      '생산관리 대상 품번 목록(mainPns)을 그대로 사용하므로 품번 추가·제거 시 함께 반영됩니다',
+    ],
+  },
   {
     version: 'v3.35.1',
     date: '2026-07-30',
