@@ -93,7 +93,7 @@ export function canAccessSection(profile, key) {
 // 경로 → 섹션 매핑 (라우트 가드용)
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
-  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings') return 'floor'
+  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-tags' || pathname === '/rack-layout' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'

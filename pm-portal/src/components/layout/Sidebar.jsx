@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
   '/rack-tags': ['🏷','랙 위치 태그'],
@@ -276,6 +277,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'floor') && (
         <CollapseSection label="🏭 현장" sKey="floor">
           <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
+          <MenuItem to="/schedule-changes" icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>

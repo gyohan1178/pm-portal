@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { buildPurchaseReport } from '../lib/purchaseReport'
 import AnalysisTabs from '../components/AnalysisTabs'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
@@ -76,6 +77,20 @@ async function fetchDashboard() {
 const CS_LIST = ['에드워드','VM','CSK','엑셀리스','하네스','기타']
 const fmt = v => (v/10000).toFixed(2)
 
+// 보고서 파일로 저장 — 링크나 계정 없이 전달할 수 있게 한 파일로 만든다
+function downloadReport(d, year) {
+  const html = buildPurchaseReport({
+    months: d.months, csChart: d.csChart, year, csList: CS_LIST,
+  })
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `매입현황_${year}년${new Date().getMonth() + 1}월_${new Date().toISOString().slice(0, 10)}.html`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function PurchaseDashboard({ embed = false }) {
   // 숫자를 누르면 근거를 펼친다 — "이 달 매입이 왜 이 금액인가" 를 바로 확인
   const [detail, setDetail] = useState(null)   // { month, cs }
@@ -114,6 +129,13 @@ export default function PurchaseDashboard({ embed = false }) {
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
           <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
+          {!embed && (
+            <button onClick={() => downloadReport(d, new Date().getFullYear())}
+              title="보고서 형식 HTML 파일로 저장 — 링크 없이 전달할 수 있습니다"
+              className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+              📄 보고서 저장
+            </button>
+          )}
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
         </div>
       </div>

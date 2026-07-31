@@ -934,7 +934,7 @@ export default function BOM() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
-                          {['LV','코드','품명','REV 대조','구분','단위','제조사','제조사코드','소요량','수정'].map(h => (
+                          {['LV','기준코드','품명','REV 대조','구분','제조사','제조사품번','단위','소요량','수정'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -975,9 +975,9 @@ export default function BOM() {
                             <td className="px-3 py-2">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
                             </td>
-                            <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
                             <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
                             <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
+                            <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
                             <td className="px-3 py-2 text-right font-bold text-slate-900">{b.qty_per_unit}</td>
                             <td className="px-3 py-2 text-center whitespace-nowrap">
                               {canEdit ? (
