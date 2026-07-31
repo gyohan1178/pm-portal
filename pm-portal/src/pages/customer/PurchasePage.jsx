@@ -1003,7 +1003,14 @@ export default function PurchasePage() {
                       const diff=p.promise_date?Math.round((new Date(p.promise_date)-new Date(today))/86400000):null
                       const supply=Math.round((p.qty_ordered||0)*(p.unit_price||0))
                       return (
-                        <tr key={p.id} className={`border-b border-slate-100 hover:bg-slate-50 group ${p.isDelayed?'bg-red-50/30':''}`}>
+                        <tr key={p.id}
+                          onClick={e=>{
+                            // 버튼·입력·링크를 누른 경우는 선택으로 보지 않는다
+                            if (e.target.closest('button,input,select,textarea,a')) return
+                            setChecked(prev=>({...prev,[p.id]:!prev[p.id]}))
+                          }}
+                          className={`border-b border-slate-100 group cursor-pointer ${
+                            checked[p.id] ? 'bg-indigo-50' : p.isDelayed ? 'bg-red-50/30 hover:bg-red-50/50' : 'hover:bg-slate-50'}`}>
                           <td className="px-3 py-2"><input type="checkbox" checked={!!checked[p.id]} onChange={e=>setChecked(prev=>({...prev,[p.id]:e.target.checked}))} className="w-3.5 h-3.5 accent-indigo-600"/></td>
                           <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{p.po_number||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{p.order_date||'-'}</td>

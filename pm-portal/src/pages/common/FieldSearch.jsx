@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
+import { fetchAll } from '../../lib/paginate'
 import AutoInput from '../../components/AutoInput'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
@@ -65,10 +66,12 @@ async function fetchBOMByCode(code) {
   const { data: projs } = await supabase.from('projects').select('id,customer_id,code,rev').eq('code', code.trim()).limit(1)
   const proj = projs && projs[0]
   if (!proj) return { rows: [], assembly: null }
-  const { data } = await supabase.from('bom')
+  // 대형 어셈블리는 하위 품목까지 1,000행을 넘어 기본 조회로는 잘린다.
+  // 기초자료 BOM 화면과 같은 방식으로 전부 가져온다.
+  const data = await fetchAll(() => supabase.from('bom')
     .select('seq,level,item_rev,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,category,unit,manufacturer,manufacturer_code)')
     .eq('customer_id', proj.customer_id).eq('project_id', proj.id)
-    .order('seq').order('created_at')
+    .order('seq').order('created_at'))
   return { rows: data || [], assembly: proj }
 }
 
