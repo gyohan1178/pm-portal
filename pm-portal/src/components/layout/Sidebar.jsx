@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
   '/rack-tags': ['🏷','랙 위치 태그'],
   '/': ['🎯','관제탑'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
@@ -206,6 +207,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {!fieldOnly && profile?.role !== 'viewer' && (
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
+          <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>
         </div>
         )}
 

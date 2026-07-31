@@ -1,4 +1,5 @@
 import { useMemo } from 'react'
+import TodoPanel from '../../components/TodoPanel'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -39,9 +40,13 @@ export default function ControlTower({ scope = 'ax' }) {
   const nav = useNavigate()
   const isMaster = scope === 'all'
 
+  // 수시로 열어두는 화면이므로 5분마다 조용히 갱신하고,
+  // 다른 창을 보다 돌아왔을 때도 최신값을 가져온다.
   const { data, isLoading } = useQuery({
     queryKey: ['controlTower', scope],
     queryFn: () => fetchControlTowerData(scope),
+    refetchInterval: 5 * 60 * 1000,
+    refetchOnWindowFocus: true,
   })
 
   const ct = useMemo(() => {
@@ -75,6 +80,7 @@ export default function ControlTower({ scope = 'ax' }) {
   return (
     <div className="space-y-5">
       <AnalysisTabs />
+
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
@@ -123,44 +129,47 @@ export default function ControlTower({ scope = 'ax' }) {
         </div>
       )}
 
-      {/* 🔴 즉시 대응 */}
-      <div>
-        <p className="text-xs font-bold text-red-500 mb-2 flex items-center gap-1.5">🔴 즉시 대응 <span className="text-slate-300 font-normal">— 지금 안 하면 터집니다</span></p>
-        <div className="grid grid-cols-3 gap-3">
-          <KpiCard tone="red" label="발주 필요" value={k.orderNeeded} sub="LT 고려 시 지금 발주" onClick={() => goLink({ link: 'short' })} />
-          <KpiCard tone="red" label="재고 음수 임박" value={k.negSoon} sub="3개월 내 바닥" onClick={() => goLink({ link: 'short' })} />
-          <KpiCard tone="red" label="생산 지연" value={k.prodDelay} sub="납기 D-7 내 미완료" onClick={() => goLink({ link: 'production' })} />
-        </div>
+      {/* KPI — 한눈에 보이게 한 줄로 압축.
+          수시로 여는 화면이므로 스크롤 없이 상태가 파악되어야 한다. */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+        {[
+          { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short' },
+          { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'red',    link: 'short' },
+          { v: k.prodDelay,   l: '생산 지연',  s: 'D-7 미완료',  t: 'red',    link: 'production' },
+          { v: k.poSoon,      l: '납품 임박',  s: '14일 내',     t: 'yellow', link: 'cpo' },
+          { v: k.lateArrival, l: '미입고',     s: '예정일 지남', t: 'yellow', link: 'production' },
+          { v: k.harnessNeed, l: '하네스 불출', s: '30일 미불출', t: 'yellow', link: 'production' },
+          { v: k.newPO,       l: '신규 PO',    s: '3일 내',      t: 'green',  link: 'cpo' },
+          { v: k.inProgress,  l: '진행 생산',  s: '',            t: 'green',  link: 'production' },
+        ].map((x, i) => {
+          const tone = x.v === 0
+            ? 'border-slate-200 bg-white text-slate-300'
+            : x.t === 'red' ? 'border-rose-300 bg-rose-50 text-rose-700'
+            : x.t === 'yellow' ? 'border-amber-300 bg-amber-50 text-amber-700'
+            : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+          return (
+            <button key={i} onClick={() => goLink({ link: x.link })}
+              className={`rounded-xl border-2 p-2.5 text-left transition-all hover:shadow-md ${tone}`}>
+              <p className="text-[10px] font-bold opacity-70 leading-tight">{x.l}</p>
+              <p className="text-2xl font-bold leading-none mt-0.5">{x.v}</p>
+              {x.s && <p className="text-[9px] opacity-60 mt-0.5 leading-tight">{x.s}</p>}
+            </button>
+          )
+        })}
       </div>
 
-      {/* 🟡 이번 주 챙길 것 */}
-      <div>
-        <p className="text-xs font-bold text-amber-600 mb-2 flex items-center gap-1.5">🟡 이번 주 챙길 것 <span className="text-slate-300 font-normal">— 곧 챙겨야 합니다</span></p>
-        <div className="grid grid-cols-3 gap-3">
-          <KpiCard tone="yellow" label="납품 임박 PO" value={k.poSoon} sub="14일 내 납기" onClick={() => goLink({ link: 'cpo' })} />
-          <KpiCard tone="yellow" label="미입고 가공물" value={k.lateArrival} sub="입고예정 지남" onClick={() => goLink({ link: 'production' })} />
-          <KpiCard tone="yellow" label="하네스 불출 필요" value={k.harnessNeed} sub="입고 30일 내 미불출" onClick={() => goLink({ link: 'production' })} />
-        </div>
-      </div>
+      {/* 오늘 할 일 · 급한 건 — 넓은 화면에서는 나란히 */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <TodoPanel compact />
 
-      {/* 🟢 모니터 */}
       <div>
-        <p className="text-xs font-bold text-emerald-600 mb-2 flex items-center gap-1.5">🟢 흐름 모니터 <span className="text-slate-300 font-normal">— 참고</span></p>
-        <div className="grid grid-cols-2 gap-3">
-          <KpiCard tone="green" label="신규 PO (3일 내)" value={k.newPO} onClick={() => goLink({ link: 'cpo' })} />
-          <KpiCard tone="green" label="진행 중 생산" value={k.inProgress} onClick={() => goLink({ link: 'production' })} />
-        </div>
-      </div>
-
-      {/* ⚡ 급한 TOP 10 */}
-      <div>
-        <p className="text-xs font-bold text-slate-700 mb-2">⚡ 지금 가장 급한 TOP 10</p>
+        <p className="text-xs font-bold text-slate-700 mb-2">⚡ 지금 가장 급한 건</p>
         <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
           {ct.top.length === 0
             ? <div className="text-center py-8 text-slate-300 text-sm">긴급 항목이 없습니다 👍</div>
-            : ct.top.map((item, i) => (
+            : ct.top.slice(0, 6).map((item, i) => (
               <div key={i} onClick={() => goLink(item)}
-                className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer">
+                className="flex items-center gap-2.5 px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer text-xs">
                 <span className="text-xs font-bold text-slate-300 w-5">{i + 1}</span>
                 <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${item.kind === 'order' ? 'bg-red-100 text-red-600' : item.kind === 'prodDelay' ? 'bg-orange-100 text-orange-600' : item.kind === 'neg' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
                   {item.kind === 'order' ? '발주' : item.kind === 'prodDelay' ? '생산지연' : item.kind === 'neg' ? '재고음수' : '미입고'}
@@ -171,6 +180,7 @@ export default function ControlTower({ scope = 'ax' }) {
               </div>
             ))}
         </div>
+      </div>
       </div>
     </div>
   )

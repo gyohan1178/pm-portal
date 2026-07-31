@@ -77,6 +77,8 @@ const CS_LIST = ['에드워드','VM','CSK','엑셀리스','하네스','기타']
 const fmt = v => (v/10000).toFixed(2)
 
 export default function PurchaseDashboard({ embed = false }) {
+  // 숫자를 누르면 근거를 펼친다 — "이 달 매입이 왜 이 금액인가" 를 바로 확인
+  const [detail, setDetail] = useState(null)   // { month, cs }
   const { data: d, isLoading } = useQuery({ queryKey:['purchaseDash'], queryFn: fetchDashboard, staleTime: 0, refetchOnMount: 'always' })
 
   if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
@@ -218,10 +220,16 @@ export default function PurchaseDashboard({ embed = false }) {
                     </td>
                     {CS_LIST.map(cs=>(
                       <td key={cs} className="px-3 py-1.5 text-right">
-                        {(row[cs]||0)>0
-                          ? <span className={`font-semibold ${csColor(cs).text}`}>{((row[cs]||0)/10000).toFixed(2)}</span>
-                          : <span className="text-slate-300">-</span>}
-                        {(row[cs+'Pend']||0)>0 && <span className="text-amber-400 ml-1">+{((row[cs+'Pend']||0)/10000).toFixed(2)}</span>}
+                        {((row[cs]||0)>0 || (row[cs+'Pend']||0)>0) ? (
+                          <button onClick={()=>setDetail({ month: ri+1, cs })}
+                            title="눌러서 이 숫자의 근거 보기"
+                            className="hover:underline decoration-dotted underline-offset-2">
+                            {(row[cs]||0)>0
+                              ? <span className={`font-semibold ${csColor(cs).text}`}>{((row[cs]||0)/10000).toFixed(2)}</span>
+                              : <span className="text-slate-300">-</span>}
+                            {(row[cs+'Pend']||0)>0 && <span className="text-amber-400 ml-1">+{((row[cs+'Pend']||0)/10000).toFixed(2)}</span>}
+                          </button>
+                        ) : <span className="text-slate-300">-</span>}
                       </td>
                     ))}
                     <td className="px-3 py-1.5 text-right font-bold text-slate-800">
@@ -250,6 +258,89 @@ export default function PurchaseDashboard({ embed = false }) {
               </tr>
             </tbody>
           </table>
+        </div>
+      </div>
+      {detail && <BreakdownModal {...detail} onClose={()=>setDetail(null)} />}
+
+    </div>
+  )
+}
+
+
+// 숫자의 근거 — 확정(ecount)·결제계획·발주잔을 나눠 보여준다.
+// 어느 항목이 얼마인지 보이면 "왜 이 금액인가" 를 바로 알 수 있다.
+function BreakdownModal({ month, cs, onClose }) {
+  const year = new Date().getFullYear()
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['purchaseBreakdown', year, month, cs],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_purchase_breakdown',
+        { p_year: year, p_month: month, p_customer: cs })
+      if (error) throw error
+      return data || []
+    },
+  })
+
+  const bySource = {}
+  rows.forEach(r => { (bySource[r.source] = bySource[r.source] || []).push(r) })
+  const total = rows.reduce((a, r) => a + Number(r.amount || 0), 0)
+  const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
+
+  const SRC = {
+    '확정(ecount)': { c: 'border-emerald-300 bg-emerald-50', t: 'text-emerald-700', d: '회계 확정 · ecount 기준' },
+    '결제계획':      { c: 'border-violet-300 bg-violet-50',  t: 'text-violet-700',  d: '분할 결제로 이 달에 배분된 금액' },
+    '발주잔':        { c: 'border-amber-300 bg-amber-50',    t: 'text-amber-700',   d: '미입고 발주 · 납기 기준' },
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e=>e.stopPropagation()}>
+        <div className="sticky top-0 bg-white border-b border-slate-200 px-5 py-3.5 flex items-center justify-between">
+          <div>
+            <p className="text-xs text-slate-400">{year}년 {month}월 · {cs}</p>
+            <p className="text-xl font-bold text-slate-900">{won(total)}원</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 text-xl px-2">✕</button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          {isLoading && <p className="text-center py-8 text-sm text-slate-400">불러오는 중…</p>}
+          {!isLoading && !rows.length && (
+            <p className="text-center py-8 text-sm text-slate-400">해당 내역이 없습니다.</p>
+          )}
+
+          {Object.entries(bySource).map(([src, list]) => {
+            const st = SRC[src] || { c: 'border-slate-200 bg-slate-50', t: 'text-slate-600', d: '' }
+            const sum = list.reduce((a, r) => a + Number(r.amount || 0), 0)
+            return (
+              <div key={src} className={`rounded-xl border-2 ${st.c} p-3`}>
+                <div className="flex items-baseline justify-between mb-1">
+                  <span className={`text-sm font-bold ${st.t}`}>{src}</span>
+                  <span className="text-sm font-bold text-slate-800">{won(sum)}원</span>
+                </div>
+                {st.d && <p className="text-[11px] text-slate-500 mb-2">{st.d}</p>}
+                <div className="space-y-1">
+                  {list.slice(0, 12).map((r, i) => (
+                    <div key={i} className="flex items-baseline justify-between text-xs">
+                      <span className="text-slate-600 truncate max-w-[62%]" title={r.label}>
+                        {r.label || '(미지정)'}
+                        {r.cnt > 1 && <span className="text-slate-400"> · {r.cnt}건</span>}
+                      </span>
+                      <span className="font-semibold text-slate-700">{won(r.amount)}</span>
+                    </div>
+                  ))}
+                  {list.length > 12 && (
+                    <p className="text-[11px] text-slate-400 pt-1">외 {list.length - 12}건</p>
+                  )}
+                </div>
+                {list.some(r => r.note) && (
+                  <p className="mt-2 text-[11px] text-amber-700">
+                    {[...new Set(list.map(r => r.note).filter(Boolean))].join(' · ')}
+                  </p>
+                )}
+              </div>
+            )
+          })}
         </div>
       </div>
     </div>
