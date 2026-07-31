@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.35.3'
+export const APP_VERSION = 'v3.35.4'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.35.4',
+    date: '2026-07-31',
+    changes: [
+      '매입 보고서 저장 시 모든 금액이 0.00 으로 나오던 문제 수정 — 단위 환산이 잘못되어 있었습니다. 이제 화면에 보이는 숫자와 동일하게 출력됩니다',
+    ],
+  },
   {
     version: 'v3.35.3',
     date: '2026-07-31',

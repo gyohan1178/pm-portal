@@ -4,9 +4,8 @@
 //   무엇을 봐야 하는지 요약을 앞에 둔다.
 //   파일 하나로 열리므로 링크나 계정 없이 전달할 수 있다.
 
-const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
-const eok = (v) => (Number(v) / 100000000).toFixed(2)
-const man = (v) => Math.round(Number(v) / 10000).toLocaleString('ko-KR')
+// 대시보드 데이터는 만원 단위로 들어온다 (화면도 /10000 으로 억원 표시).
+const eok = (v) => ((Number(v) || 0) / 10000).toFixed(2)
 
 // 전월 대비 증감을 문장으로
 function trendText(months, cs) {
