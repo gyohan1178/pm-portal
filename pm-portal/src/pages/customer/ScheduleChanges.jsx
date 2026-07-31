@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
@@ -17,6 +17,7 @@ const dday = (d) => {
 //   여기 목록을 그대로 엑셀로 뽑아 공유할 수 있다.
 export default function ScheduleChanges() {
   const [days, setDays] = useState(60)
+  const [open, setOpen] = useState(null)   // 이력을 펼친 행
 
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['scheduleChanges', days],
@@ -30,6 +31,8 @@ export default function ScheduleChanges() {
   // 당겨진 건과 밀린 건을 나눈다 — 대응이 다르기 때문
   const earlier = rows.filter(r => r.from_date && r.to_date && r.to_date < r.from_date)
   const later = rows.filter(r => r.from_date && r.to_date && r.to_date > r.from_date)
+  // 반복해서 밀린 건 — 한 번 밀린 것보다 위험 신호가 크다
+  const repeated = rows.filter(r => (Number(r.chg_count) || 0) >= 3)
 
   function exportExcel() {
     if (!rows.length) { toastError('내보낼 내역이 없습니다'); return }
@@ -43,6 +46,9 @@ export default function ScheduleChanges() {
         '변경 전 납기': r.from_date || '',
         '변경 후 납기': r.to_date || '',
         '변경 방향': r.to_date < r.from_date ? '당겨짐' : r.to_date > r.from_date ? '밀림' : '-',
+        '변경 횟수': Number(r.chg_count) || 1,
+        '최초 납기': r.first_date || '',
+        '총 변동일': r.total_shift ?? '',
         '현재 납기': r.promise_date || '',
         'D-day': dday(r.promise_date) ?? '',
         '변경일': r.changed_at || '',
@@ -50,7 +56,8 @@ export default function ScheduleChanges() {
       }))
       const ws = XLSX.utils.json_to_sheet(data)
       ws['!cols'] = [{ wch: 14 }, { wch: 10 }, { wch: 16 }, { wch: 32 }, { wch: 7 },
-                     { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 11 }, { wch: 7 }, { wch: 11 }, { wch: 10 }]
+                     { wch: 12 }, { wch: 12 }, { wch: 9 }, { wch: 9 }, { wch: 12 }, { wch: 9 },
+                     { wch: 11 }, { wch: 7 }, { wch: 11 }, { wch: 10 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '일정변경')
       XLSX.writeFile(wb, `납품일정변경_${new Date().toISOString().slice(0, 10)}.xlsx`)
@@ -86,7 +93,7 @@ export default function ScheduleChanges() {
       </div>
 
       {/* 요약 */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-[11px] font-bold text-slate-400">전체</p>
           <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>
@@ -100,6 +107,11 @@ export default function ScheduleChanges() {
           <p className="text-[11px] font-bold text-sky-500">밀림</p>
           <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>
         </div>
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
+          <p className="text-[11px] font-bold text-amber-600">반복 변경</p>
+          <p className="text-2xl font-bold text-amber-700">{n(repeated.length)}</p>
+          <p className="text-[10px] text-amber-500">3회 이상</p>
+        </div>
       </div>
 
       {/* 목록 */}
@@ -112,16 +124,17 @@ export default function ScheduleChanges() {
               <th className="px-3 py-2 text-left font-bold">기준코드 · 품명</th>
               <th className="px-3 py-2 text-right font-bold">수량</th>
               <th className="px-3 py-2 text-center font-bold">납기 변경</th>
+              <th className="px-3 py-2 text-center font-bold">변경 이력</th>
               <th className="px-3 py-2 text-center font-bold">D-day</th>
               <th className="px-3 py-2 text-left font-bold">변경일</th>
             </tr>
           </thead>
           <tbody>
             {isLoading && (
-              <tr><td colSpan={7} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
+              <tr><td colSpan={8} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
             )}
             {!isLoading && !rows.length && (
-              <tr><td colSpan={7} className="py-12 text-center text-slate-400">
+              <tr><td colSpan={8} className="py-12 text-center text-slate-400">
                 최근 변경된 납품 일정이 없습니다.
               </td></tr>
             )}
@@ -129,7 +142,8 @@ export default function ScheduleChanges() {
               const d = dday(r.promise_date)
               const pulled = r.to_date < r.from_date
               return (
-                <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+              <Fragment key={i}>
+                <tr className={`border-t border-slate-100 hover:bg-slate-50 ${open === i ? 'bg-amber-50/40' : ''}`}>
                   <td className="px-3 py-2 font-mono text-indigo-600">{r.po_number || '-'}</td>
                   <td className="px-3 py-2 text-slate-500">
                     {[r.order_line, r.del_line].filter(Boolean).join('-') || '-'}
@@ -146,6 +160,23 @@ export default function ScheduleChanges() {
                     </span>
                     <span className={`font-bold ${pulled ? 'text-rose-700' : 'text-sky-700'}`}>{r.to_date}</span>
                   </td>
+                  <td className="px-3 py-2 text-center whitespace-nowrap">
+                    {(Number(r.chg_count) || 1) > 1 ? (
+                      <button onClick={() => setOpen(open === i ? null : i)}
+                        title="눌러서 전체 이력 보기"
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${
+                          (Number(r.chg_count) || 0) >= 3
+                            ? 'border-amber-400 bg-amber-100 text-amber-800'
+                            : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
+                        🔁 {r.chg_count}회
+                        {r.total_shift != null && (
+                          <span className={r.total_shift > 0 ? 'text-rose-600' : 'text-sky-600'}>
+                            {r.total_shift > 0 ? '+' : ''}{r.total_shift}일
+                          </span>
+                        )}
+                      </button>
+                    ) : <span className="text-slate-300 text-[11px]">1회</span>}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     {d === null ? '-' : (
                       <span className={`font-bold ${d <= 7 ? 'text-rose-600' : d <= 30 ? 'text-amber-600' : 'text-slate-500'}`}>
@@ -155,6 +186,15 @@ export default function ScheduleChanges() {
                   </td>
                   <td className="px-3 py-2 text-slate-400">{r.changed_at}</td>
                 </tr>
+                {open === i && (
+                  <tr className="bg-amber-50/60">
+                    <td colSpan={8} className="px-6 py-3">
+                      <HistoryRows po={r.po_number} code={r.std_code}
+                        order={r.order_line} del={r.del_line} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
               )
             })}
           </tbody>
@@ -167,6 +207,53 @@ export default function ScheduleChanges() {
           엑셀로 내보내 제조팀에 공유할 수 있습니다.
         </p>
       )}
+    </div>
+  )
+}
+
+
+// 한 건의 전체 납기 변경 이력.
+// 몇 번 밀렸는지, 언제부터 밀리기 시작했는지 보인다.
+function HistoryRows({ po, code, order, del }) {
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['scheduleHistory', po, code, order, del],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_schedule_history',
+        { p_po: po, p_code: code, p_order: order, p_del: del })
+      if (error) throw error
+      return data || []
+    },
+  })
+
+  if (isLoading) return <p className="text-[11px] text-slate-400">불러오는 중…</p>
+  if (!rows.length) return <p className="text-[11px] text-slate-400">이력이 없습니다.</p>
+
+  return (
+    <div>
+      <p className="text-[11px] font-bold text-amber-700 mb-2">납기 변경 이력</p>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="px-2 py-1 rounded bg-white border border-slate-200 text-[11px] font-mono font-bold text-slate-500">
+          {rows[0].from_date}
+        </span>
+        {rows.map((h, k) => {
+          const sh = Number(h.shift_days)
+          return (
+            <span key={k} className="inline-flex items-center gap-1.5">
+              <span className={`text-xs ${sh > 0 ? 'text-rose-400' : 'text-sky-400'}`}>→</span>
+              <span title={`${h.changed_at} 변경`}
+                className={`px-2 py-1 rounded border text-[11px] font-mono font-bold ${
+                  sh > 0 ? 'border-rose-200 bg-rose-50 text-rose-700'
+                         : 'border-sky-200 bg-sky-50 text-sky-700'}`}>
+                {h.to_date}
+                {!isNaN(sh) && <span className="ml-1 opacity-70">{sh > 0 ? '+' : ''}{sh}</span>}
+              </span>
+            </span>
+          )
+        })}
+      </div>
+      <p className="text-[10px] text-slate-400 mt-2">
+        각 상자 위에 마우스를 올리면 변경일이 표시됩니다 · 숫자는 직전 대비 변동일
+      </p>
     </div>
   )
 }

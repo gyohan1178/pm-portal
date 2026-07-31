@@ -227,23 +227,14 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
             patch[x.field] = x.to
           }
         }
-        // 직전 업로드에서 바뀐 것만 남긴다.
-        // 누적하면 몇 달 전 변경까지 계속 '변경 이력' 에 걸려
-        // 지금 무엇이 바뀌었는지 알 수 없게 된다.
-        patch.changes = c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now }))
+        // 이력은 누적해 남긴다. 한 건이 몇 번이나 밀렸는지가
+        // 제조 일정 판단에 중요하기 때문이다.
+        // 화면에서는 기본적으로 최근 변경만 보여주고,
+        // 반복 변경은 별도 배지로 표시한다.
+        patch.changes = [...(c.prevChanges || []),
+                         ...c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now }))]
         const { error } = await supabase.from('purchase_orders').update(patch).eq('id', c.id)
         if (error) throw error
-      }
-
-      // 이번에 바뀌지 않은 건의 옛 변경 이력을 비운다.
-      // 이렇게 해야 '변경 이력만' 필터에 이번 변경분만 남는다.
-      if (diff.sames.length) {
-        const sameIds = diff.sames.filter(x => x.hadChanges).map(x => x.id).filter(Boolean)
-        for (let i = 0; i < sameIds.length; i += 200) {
-          await supabase.from('purchase_orders')
-            .update({ changes: [] })
-            .in('id', sameIds.slice(i, i + 200))
-        }
       }
 
       // 신규 insert (품목 없으면 자동 생성)
