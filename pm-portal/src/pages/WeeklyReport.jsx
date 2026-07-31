@@ -147,6 +147,24 @@ function ItemTable({ items, cols }) {
 
 
 const DAYS_KO = ['월','화','수','목','금','토','일']
+
+// 주간 일정 그리드의 고객사 구분.
+// 요일별로 나누면 어느 날에 했는지 애매한 건이 많아 고객사 기준으로 바꿨다.
+const CAL_CS = ['AXCELIS', 'Edwards', 'VM', 'CSK', '기타']
+const CS_TONE = {
+  AXCELIS: 'text-indigo-600', Edwards: 'text-rose-600',
+  VM: 'text-emerald-600', CSK: 'text-amber-600', 기타: 'text-slate-500',
+}
+// 입력된 고객사명을 5개 칸 중 하나로 맞춘다 (표기 차이 흡수)
+function csBucket(v) {
+  const t = String(v || '').trim().toLowerCase()
+  if (!t) return '기타'
+  if (t.includes('axcelis') || t.includes('엑셀리스') || t === 'ax') return 'AXCELIS'
+  if (t.includes('edward') || t.includes('에드워드')) return 'Edwards'
+  if (t.includes('csk')) return 'CSK'
+  if (t.includes('vm') || t.includes('브이엠')) return 'VM'
+  return '기타'
+}
 const CUSTOMERS_CAL = ['AXCELIS','Edwards','VM','CSK']
 const CS_COLORS = {
   AXCELIS:  { bg:'bg-indigo-500', light:'bg-indigo-50', border:'border-indigo-200', text:'text-indigo-700', hex:'#6366f1' },
@@ -460,104 +478,68 @@ export default function WeeklyReport() {
 
           return (
             <div className="rounded-xl border border-slate-200 overflow-x-auto">
-              {/* 이번 주 */}
-              <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-700">이번 주</span>
-                <span className="text-xs text-slate-400">{week.label}</span>
-              </div>
-              {/* 이번주 날짜 헤더 */}
-              <div className="flex border-b border-slate-100">
-                {thisWeekDays.map(date=>{
-                  const isToday=date===todayStr; const di=new Date(date).getDay()
-                  return <div key={date} className={`w-1/5 border-r border-slate-100 last:border-0 px-2 py-1 ${isToday?'bg-indigo-100/50':''}`}>
-                    <span className={`text-xs font-bold ${isToday?'text-indigo-600':'text-slate-600'}`}>{DAYS_KO[di===0?6:di-1]} {date.slice(8)}</span>
+              {/* 주 단위 · 고객사별.
+                  어느 요일에 했는지 애매한 건이 많아 요일 구분을 없앴다.
+                  항목의 target_date 는 그대로 두고 주 범위로 묶어 보여준다. */}
+              {[
+                { label: '이번 주', wk: week, days: thisWeekDays, cur: true },
+                { label: '다음 주', wk: nextWeek, days: nextWeekDays, cur: false },
+              ].map(({ label, wk, days, cur }) => (
+                <div key={label}>
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-700">{label}</span>
+                    <span className="text-xs text-slate-400">{wk.label}</span>
                   </div>
-                })}
-              </div>
-              {/* 이번주 불출 행 */}
-              <div className="flex border-b border-slate-100">
-                {thisWeekDays.map(date=>{
-                  const items=calItems.filter(r=>r.target_date===date&&r.category==='schedule_outbound')
-                  const isToday=date===todayStr
-                  return <div key={date} onDragOver={e=>e.preventDefault()}
-                    onDrop={e=>{e.preventDefault();const id=e.dataTransfer.getData('itemId');if(id)moveCalMut.mutate({id,newDate:date})}}
-                    className={`w-1/5 border-r border-slate-100 last:border-0 ${isToday?'bg-indigo-50/20':''}`}>
-                    <div className="flex items-center justify-between px-1.5 py-0.5 bg-purple-50/50">
-                      <span className="text-xs font-bold text-purple-500">불출</span>
-                      <button onClick={()=>{setCalModal({date,type:'outbound'});setCalForm({customer:'AXCELIS',project:'',name:'',qty:'',note:'',_customCs:false})}} className="text-xs text-purple-400 hover:text-purple-600 font-bold no-print">＋</button>
-                    </div>
-                    <div className="p-1 space-y-0.5 min-h-[36px]">
-                      {items.map(item=><DayCol key={item.id} item={item}/>)}
-                    </div>
+
+                  {/* 고객사 헤더 */}
+                  <div className="flex border-b border-slate-100">
+                    {CAL_CS.map(cs => (
+                      <div key={cs} className="w-1/5 border-r border-slate-100 last:border-0 px-2 py-1">
+                        <span className={`text-xs font-bold ${CS_TONE[cs] || 'text-slate-600'}`}>{cs}</span>
+                      </div>
+                    ))}
                   </div>
-                })}
-              </div>
-              {/* 이번주 사급 행 */}
-              <div className="flex border-b border-slate-200">
-                {thisWeekDays.map(date=>{
-                  const items=calItems.filter(r=>r.target_date===date&&r.category==='schedule_consignment')
-                  const isToday=date===todayStr
-                  return <div key={date} onDragOver={e=>e.preventDefault()}
-                    onDrop={e=>{e.preventDefault();const id=e.dataTransfer.getData('itemId');if(id)moveCalMut.mutate({id,newDate:date})}}
-                    className={`w-1/5 border-r border-slate-100 last:border-0 ${isToday?'bg-indigo-50/20':''}`}>
-                    <div className="flex items-center justify-between px-1.5 py-0.5 bg-amber-50/50">
-                      <span className="text-xs font-bold text-amber-500">사급</span>
-                      <button onClick={()=>{setCalModal({date,type:'consignment'});setCalForm({customer:'AXCELIS',project:'',name:'',qty:'',note:'',_customCs:false})}} className="text-xs text-amber-400 hover:text-amber-600 font-bold no-print">＋</button>
+
+                  {/* 불출 · 사급 */}
+                  {[
+                    { cat: 'schedule_outbound', name: '불출', type: 'outbound',
+                      bg: 'bg-purple-50/50', tx: 'text-purple-500', btn: 'text-purple-400 hover:text-purple-600', min: 36 },
+                    { cat: 'schedule_consignment', name: '사급', type: 'consignment',
+                      bg: 'bg-amber-50/50', tx: 'text-amber-500', btn: 'text-amber-400 hover:text-amber-600', min: 24 },
+                  ].map((row, ri) => (
+                    <div key={row.cat} className={`flex ${ri === 0 ? 'border-b border-slate-100' : cur ? 'border-b border-slate-200' : ''}`}>
+                      {CAL_CS.map(cs => {
+                        const items = calItems.filter(r =>
+                          days.includes(r.target_date) &&
+                          r.category === row.cat &&
+                          csBucket(r.customer) === cs)
+                        return (
+                          <div key={cs} onDragOver={e => e.preventDefault()}
+                            onDrop={e => {
+                              e.preventDefault()
+                              const id = e.dataTransfer.getData('itemId')
+                              // 고객사 칸으로 옮기면 그 주 월요일 날짜로 이동한다
+                              if (id) moveCalMut.mutate({ id, newDate: days[0] })
+                            }}
+                            className="w-1/5 border-r border-slate-100 last:border-0">
+                            <div className={`flex items-center justify-between px-1.5 py-0.5 ${row.bg}`}>
+                              <span className={`text-xs font-bold ${row.tx}`}>{row.name}</span>
+                              <button onClick={() => {
+                                  setCalModal({ date: days[0], type: row.type })
+                                  setCalForm({ customer: cs === '기타' ? '' : cs, project: '', name: '', qty: '', note: '', _customCs: cs === '기타' })
+                                }}
+                                className={`text-xs font-bold no-print ${row.btn}`}>＋</button>
+                            </div>
+                            <div className="p-1 space-y-0.5" style={{ minHeight: row.min }}>
+                              {items.map(item => <DayCol key={item.id} item={item} />)}
+                            </div>
+                          </div>
+                        )
+                      })}
                     </div>
-                    <div className="p-1 space-y-0.5 min-h-[24px]">
-                      {items.map(item=><DayCol key={item.id} item={item}/>)}
-                    </div>
-                  </div>
-                })}
-              </div>
-              {/* 다음 주 */}
-              <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
-                <span className="text-xs font-bold text-slate-700">다음 주</span>
-                <span className="text-xs text-slate-400">{nextWeek.label}</span>
-              </div>
-              {/* 다음주 날짜 헤더 */}
-              <div className="flex border-b border-slate-100">
-                {nextWeekDays.map(date=>{
-                  const di=new Date(date).getDay()
-                  return <div key={date} className="w-1/5 border-r border-slate-100 last:border-0 px-2 py-1">
-                    <span className="text-xs font-bold text-slate-600">{DAYS_KO[di===0?6:di-1]} {date.slice(8)}</span>
-                  </div>
-                })}
-              </div>
-              {/* 다음주 불출 행 */}
-              <div className="flex border-b border-slate-100">
-                {nextWeekDays.map(date=>{
-                  const items=calItems.filter(r=>r.target_date===date&&r.category==='schedule_outbound')
-                  return <div key={date} onDragOver={e=>e.preventDefault()}
-                    onDrop={e=>{e.preventDefault();const id=e.dataTransfer.getData('itemId');if(id)moveCalMut.mutate({id,newDate:date})}}
-                    className="w-1/5 border-r border-slate-100 last:border-0">
-                    <div className="flex items-center justify-between px-1.5 py-0.5 bg-purple-50/50">
-                      <span className="text-xs font-bold text-purple-500">불출</span>
-                      <button onClick={()=>{setCalModal({date,type:'outbound'});setCalForm({customer:'AXCELIS',project:'',name:'',qty:'',note:'',_customCs:false})}} className="text-xs text-purple-400 hover:text-purple-600 font-bold no-print">＋</button>
-                    </div>
-                    <div className="p-1 space-y-0.5 min-h-[36px]">
-                      {items.map(item=><DayCol key={item.id} item={item}/>)}
-                    </div>
-                  </div>
-                })}
-              </div>
-              {/* 다음주 사급 행 */}
-              <div className="flex">
-                {nextWeekDays.map(date=>{
-                  const items=calItems.filter(r=>r.target_date===date&&r.category==='schedule_consignment')
-                  return <div key={date} onDragOver={e=>e.preventDefault()}
-                    onDrop={e=>{e.preventDefault();const id=e.dataTransfer.getData('itemId');if(id)moveCalMut.mutate({id,newDate:date})}}
-                    className="w-1/5 border-r border-slate-100 last:border-0">
-                    <div className="flex items-center justify-between px-1.5 py-0.5 bg-amber-50/50">
-                      <span className="text-xs font-bold text-amber-500">사급</span>
-                      <button onClick={()=>{setCalModal({date,type:'consignment'});setCalForm({customer:'AXCELIS',project:'',name:'',qty:'',note:'',_customCs:false})}} className="text-xs text-amber-400 hover:text-amber-600 font-bold no-print">＋</button>
-                    </div>
-                    <div className="p-1 space-y-0.5 min-h-[24px]">
-                      {items.map(item=><DayCol key={item.id} item={item}/>)}
-                    </div>
-                  </div>
-                })}
-              </div>
+                  ))}
+                </div>
+              ))}
             </div>
           )
         })()}

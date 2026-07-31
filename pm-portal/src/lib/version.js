@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.35.4'
+export const APP_VERSION = 'v3.36.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.36.0',
+    date: '2026-07-31',
+    changes: [
+      '★ 주간업무보고 일정표를 요일별에서 고객사별로 변경 — 어느 요일에 했는지 애매한 건이 많아 주 단위로 합치고 AXCELIS·Edwards·VM·CSK·기타 5칸으로 나눴습니다',
+      '기존 데이터는 그대로 유지되며, 고객사명 표기가 달라도(엑셀리스/AX 등) 같은 칸으로 묶입니다',
+      '＋ 버튼을 누르면 해당 고객사가 자동 선택됩니다',
+    ],
+  },
   {
     version: 'v3.35.4',
     date: '2026-07-31',
