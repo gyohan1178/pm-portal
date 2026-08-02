@@ -26,11 +26,13 @@ export default function ScheduleChanges() {
 
   const { data: allRows = [], isLoading } = useQuery({
     queryKey: ['scheduleChanges', days],
+    staleTime: 5 * 60 * 1000,   // PO 업로드 시에만 바뀐다
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_schedule_changes', { p_days: days })
       if (error) throw error
       return data || []
     },
+    staleTime: 3 * 60 * 1000,   // PO 업로드 때만 바뀌므로 자주 조회할 필요가 없다
   })
 
   const rows = pdOnly ? allRows.filter(r => isPdBox(r.std_code)) : allRows
@@ -238,12 +240,14 @@ export default function ScheduleChanges() {
 function HistoryRows({ po, code, order, del }) {
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['scheduleHistory', po, code, order, del],
+    staleTime: 10 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_schedule_history',
         { p_po: po, p_code: code, p_order: order, p_del: del })
       if (error) throw error
       return data || []
     },
+    staleTime: 10 * 60 * 1000,
   })
 
   if (isLoading) return <p className="text-[11px] text-slate-400">불러오는 중…</p>

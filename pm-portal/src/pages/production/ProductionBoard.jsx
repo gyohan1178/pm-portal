@@ -62,6 +62,24 @@ export default function ProductionBoard() {
   })
   const meta = rows._meta || {}
 
+  // 자재 부족·일정 변경 — 현장에서 바로 알아야 하는 두 가지
+  const { data: shortJobs = [] } = useQuery({
+    queryKey: ['boardShort'],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_floor_jobs', { p_zone: '전장', p_limit: 30 })
+      return (data || []).filter(j => Number(j.short_count) > 0)
+    },
+    staleTime: 3 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
+  })
+  const { data: schChg = [] } = useQuery({
+    queryKey: ['boardChanges'],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_schedule_changes', { p_days: 30 })
+      return (data || []).slice(0, 4)
+    },
+    staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
+  })
+
   const view = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
     const main = rows.filter(r => isMainPn(r.pn) && r.req_date)
@@ -134,15 +152,19 @@ export default function ProductionBoard() {
     </div>
   )}
 
+  // 좁은 화면(태블릿·폰)에서는 칸 수를 줄이고 글자를 키운다
+  const narrow = typeof window !== 'undefined' && window.innerWidth < 900
+  const cols = narrow ? (window.innerWidth < 600 ? 1 : 2) : 4
+
   return (
     <div style={{ minHeight: '100vh', background: '#020617', color: '#cbd5e1', padding: 16, userSelect: 'none', fontFamily: "'Malgun Gothic',sans-serif" }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '2px solid #334155', paddingBottom: 10, marginBottom: 12 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: '2px solid #334155', paddingBottom: 10, marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1 style={{ fontSize: 34, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>🏭 AXCELIS PD PRODUCTION STATUS</h1>
+          <h1 style={{ fontSize: narrow ? 20 : 34, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>🏭 AXCELIS PD PRODUCTION STATUS</h1>
           <span style={{ fontSize: 15, color: '#94a3b8' }}>진행 {view.total}대 · 오늘출하 <b style={{ color: '#6ee7b7' }}>{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontFamily: 'monospace', fontSize: 30, fontWeight: 800, color: '#fff' }}>
+          <div style={{ fontFamily: 'monospace', fontSize: narrow ? 18 : 30, fontWeight: 800, color: '#fff' }}>
             {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
           </div>
           <button onClick={() => navigate(-1)} title="뒤로가기" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 12px', cursor: 'pointer' }}>← 뒤로</button>
@@ -159,10 +181,70 @@ export default function ProductionBoard() {
         <span style={{ marginLeft: 'auto', fontSize: 13, color: '#64748b' }}>전장 완료예정일 기준 · 🟥지남 🟧임박 🟨이번주 · 진행바: 가공·하네스·전장·품질</span>
       </div>
 
+      {/* 자재 부족 · 납기 변경 — 현장에서 즉시 알아야 하는 것 */}
+      {(shortJobs.length > 0 || schChg.length > 0) && (
+        <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 10, marginBottom: 14 }}>
+          {shortJobs.length > 0 && (
+            <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.35)', borderRadius: 12, padding: 12 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#fca5a5', marginBottom: 8 }}>
+                📦 자재 부족 {shortJobs.length}건 — 착수 불가
+              </div>
+              {shortJobs.slice(0, 4).map(j => (
+                <div key={j.id} style={{ marginBottom: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 800, color: '#fff' }}>
+                      {j.unit_no || j.pn}
+                    </span>
+                    <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {j.item_name}
+                    </span>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>
+                      {j.ready_count}/{j.total_count} · 부족 {j.short_count}종
+                    </span>
+                  </div>
+                  {j.short_items && (
+                    <div style={{ fontSize: 12, color: '#f87171', lineHeight: 1.4 }}>{j.short_items}</div>
+                  )}
+                </div>
+              ))}
+              {shortJobs.length > 4 && (
+                <div style={{ fontSize: 12, color: '#64748b' }}>외 {shortJobs.length - 4}건…</div>
+              )}
+            </div>
+          )}
+
+          {schChg.length > 0 && (
+            <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 12, padding: 12 }}>
+              <div style={{ fontSize: 16, fontWeight: 800, color: '#fcd34d', marginBottom: 8 }}>
+                ⚠ 납기 변경 {schChg.length}건 — 작업지시서 확인
+              </div>
+              {schChg.map((c, i) => {
+                const pulled = c.to_date < c.from_date
+                return (
+                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 5 }}>
+                    <span style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 800, color: '#fff' }}>{c.po_number}</span>
+                    <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {c.item_name}
+                    </span>
+                    <span style={{ fontFamily: 'monospace', fontSize: 14 }}>
+                      <span style={{ color: '#64748b' }}>{c.from_date}</span>
+                      <span style={{ margin: '0 5px', fontWeight: 800, color: pulled ? '#fca5a5' : '#7dd3fc' }}>
+                        {pulled ? '◀' : '▶'}
+                      </span>
+                      <span style={{ fontWeight: 800, color: pulled ? '#fca5a5' : '#7dd3fc' }}>{c.to_date}</span>
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {massGroups.length > 0 && (
         <>
           <div style={{ fontSize: 17, fontWeight: 800, color: '#7dd3fc', margin: '8px 0 8px' }}>🔵 양산품</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 10 }}>
             {massGroups.map(g => <Card key={g.pn} g={g} />)}
           </div>
         </>
@@ -170,17 +252,17 @@ export default function ProductionBoard() {
       {protoGroups.length > 0 && (
         <>
           <div style={{ fontSize: 17, fontWeight: 800, color: '#fbbf24', margin: '16px 0 8px' }}>🟡 초도품 · 신규</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 10 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 10 }}>
             {protoGroups.map(g => <Card key={g.pn} g={g} />)}
           </div>
         </>
       )}
       {view.groups.length === 0 && <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>표시할 호기가 없습니다 (전장완료 예정 {RANGE_DAYS}일 이내)</div>}
 
-      <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
+      <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
         {['PO접수', '자재발주', '제작중', '품질검수', '납품대기'].map(st => (
-          <div key={st} style={{ flex: 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 12, textAlign: 'center' }}>
-            <b style={{ display: 'block', fontSize: 32, fontWeight: 900, color: '#fff' }}>{view.byStatus[st] || 0}</b>
+          <div key={st} style={{ flex: narrow ? '1 1 30%' : 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 12, textAlign: 'center' }}>
+            <b style={{ display: 'block', fontSize: narrow ? 24 : 32, fontWeight: 900, color: '#fff' }}>{view.byStatus[st] || 0}</b>
             <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 700 }}>{st === 'PO접수' ? '미불출(PO접수)' : st}</span>
           </div>
         ))}

@@ -67,6 +67,7 @@ export default function RackLayout() {
   const { data: cells = [] } = useQuery({
     queryKey: ['rackMap', sel],
     enabled: !!sel,
+    staleTime: 2 * 60 * 1000,
     queryFn: async () => {
       const { data } = await supabase.rpc('pm_rack_map', { p_rack: sel })
       return data || []

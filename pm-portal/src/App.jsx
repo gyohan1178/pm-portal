@@ -44,6 +44,7 @@ const RackTags = lazy(() => import('./pages/common/RackTags'))
 const RackLayout = lazy(() => import('./pages/common/RackLayout'))
 const UnifiedUpload = lazy(() => import('./pages/UnifiedUpload'))
 const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
+const MaterialRequest = lazy(() => import('./pages/common/MaterialRequest'))
 const CellAudit = lazy(() => import('./pages/common/CellAudit'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
@@ -116,7 +117,8 @@ export default function App() {
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
-        <Route index element={(allowedSections(profile) === null && profile?.role !== 'viewer') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
+        {/* 관제탑은 menu_scope 에 'home' 이 있는 계정만 볼 수 있다 */}
+        <Route index element={canAccessPath(profile, '/') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
         <Route path="search"    element={<CommonSearch />} />
         <Route path="field-search" element={<FieldSearch />} />
         <Route path="forecast-shortage" element={<ShortageForecast />} />
@@ -161,6 +163,7 @@ export default function App() {
         <Route path="rack-layout" element={<RackLayout />} />
         <Route path="upload" element={<UnifiedUpload />} />
         <Route path="schedule-changes" element={<ScheduleChanges />} />
+        <Route path="material-request" element={<MaterialRequest />} />
         <Route path="rack-tags" element={<RackTags />} />
         <Route path="rack/:code" element={<RackLayout />} />
         <Route path="cell/:loc" element={<CellAudit />} />

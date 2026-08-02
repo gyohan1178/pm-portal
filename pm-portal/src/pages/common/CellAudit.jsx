@@ -41,6 +41,7 @@ export default function CellAudit() {
       if (error) throw error
       return data || []
     },
+    staleTime: 30 * 1000,   // 실사 중 반복 조회를 줄인다
   })
 
   // 오늘 이 칸을 이미 실사했는지

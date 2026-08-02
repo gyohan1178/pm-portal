@@ -69,6 +69,8 @@ export function canEdit(profile) {
 // ── 상위메뉴(섹션)별 접근 권한 ──
 // menu_scope(jsonb 배열)로 사용자별 허용 섹션 지정. 비어있으면 전체 접근(admin/editor/viewer 기본)
 export const SECTIONS = [
+  // 관제탑은 전사 현황이 보이므로 지정한 인원만 허용한다
+  { key: 'home',   label: '🎯 관제탑' },
   { key: 'floor',  label: '🏭 현장' },
   { key: 'mat',    label: '📦 자재' },
   { key: 'buy',    label: '🛒 구매' },
@@ -93,7 +95,7 @@ export function canAccessSection(profile, key) {
 // 경로 → 섹션 매핑 (라우트 가드용)
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
-  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes') return 'floor'
+  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes' || pathname === '/material-request') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-tags' || pathname === '/rack-layout' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
@@ -119,18 +121,24 @@ const SECTION_LANDING = { floor: '/field-search', mat: '/search', buy: '/inbound
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
   const a = allowedSections(profile)
-  if (a !== null) return SECTION_LANDING[a[0]] || '/production'  // 메뉴 제한 계정: 허용된 첫 섹션으로 (viewer보다 우선!)
+  if (a !== null) {
+    // 관제탑(home) 이 허용되면 홈으로, 아니면 허용된 첫 섹션으로.
+    // 현장 검색은 모두가 볼 수 있는 화면이라 기본 도착지로 둔다.
+    if (a.includes('home')) return '/'
+    return SECTION_LANDING[a.find(x => x !== 'home')] || '/field-search'
+  }
   if (profile?.role === 'viewer') return '/search'   // 제한 없는 조회 계정: 통합검색
-  return '/'          // 전체 접근
+  return '/'          // 전체 접근 (menu_scope 없음)
 }
 
 // 특정 경로 접근 가능? (섹션 제한 계정 대응)
 export function canAccessPath(profile, pathname) {
   const sec = sectionOfPath(pathname)
   if (sec === 'home') {
-    // 홈/관제탑: 현장 전용·조회 계정은 차단(→ landingPath로), 나머지는 허용
+    // 관제탑은 지정한 사람만 본다.
+    // menu_scope 에 'home' 이 있어야 하며, 없으면 landingPath 로 보낸다.
     if (isFieldOnly(profile) || profile?.role === 'viewer') return false
-    return true
+    return canAccessSection(profile, 'home')
   }
   return canAccessSection(profile, sec)
 }

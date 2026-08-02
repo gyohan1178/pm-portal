@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/material-request': ['🙋','자재 요청'],
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
@@ -205,7 +206,7 @@ export default function Sidebar({ onNavigate, profile }) {
         </div>
 
         {/* 홈 — 현장·조회 계정은 숨김 */}
-        {!fieldOnly && profile?.role !== 'viewer' && (
+        {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>
@@ -245,6 +246,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'mat') && (
         <CollapseSection label="📦 자재" sKey="mat">
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
+          <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate}>자재 요청</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>부분 불출 (호기별 키팅)</MenuItem>
