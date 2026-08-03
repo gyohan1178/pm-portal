@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { useCanEdit } from '../../hooks/useProfile'
+import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => new Date().toISOString().slice(0, 10)
@@ -29,7 +29,8 @@ const emptyRow = () => ({
 //   담당자는 재고를 보고 불출할지 발주할지 판단한다.
 export default function MaterialRequest() {
   const qc = useQueryClient()
-  const canEdit = useCanEdit()
+  const canEdit = useCanEdit()        // 처리(불출·발주·반려)
+  const canReq = useCanRequest()      // 요청 등록 — 조회 계정도 가능
   const [tab, setTab] = useState('list')      // list | new
   const [filter, setFilter] = useState(null)  // null=미완료
   const [mine, setMine] = useState(false)      // 내가 등록한 것만
@@ -262,11 +263,13 @@ export default function MaterialRequest() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">🙋 자재 요청</h1>
           <p className="text-xs text-slate-400">
-            필요한 자재를 요청하면 구매자재팀에 전달됩니다. 담당자가 재고를 확인해 불출하거나 발주합니다.
+            {canEdit
+              ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
+              : '필요한 자재를 요청하면 구매자재팀에 전달됩니다. 처리 상황은 이 목록에서 확인할 수 있습니다.'}
           </p>
         </div>
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
-          {[['list', '📋 요청 목록'], ['new', '＋ 새 요청']].map(([k, l]) => (
+          {[['list', '📋 요청 목록'], ...(canReq ? [['new', '＋ 새 요청']] : [])].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
               {l}
@@ -278,8 +281,35 @@ export default function MaterialRequest() {
       {/* ───────── 새 요청 ───────── */}
       {tab === 'new' && (
         <div className="space-y-3">
+          {/* 사용법 — 처음 쓰는 사람이 무엇을 적어야 할지 바로 알게 한다 */}
+          <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 p-4">
+            <p className="text-sm font-bold text-indigo-800 mb-2">📝 이렇게 적어주세요</p>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <div className="rounded-lg bg-white p-3">
+                <p className="text-[11px] font-bold text-slate-400 mb-1">낱개 부품이 필요할 때</p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  <b className="text-slate-800">목적</b> LEB PD 조립 중 케이블 파손<br />
+                  <b className="text-slate-800">품목</b> 🔍 로 찾기 · <b>AX-5101788</b> 2EA<br />
+                  <b className="text-slate-800">사유</b> 기존품 단선
+                </p>
+              </div>
+              <div className="rounded-lg bg-white p-3">
+                <p className="text-[11px] font-bold text-slate-400 mb-1">ASSY 자재 일체가 필요할 때</p>
+                <p className="text-xs text-slate-600 leading-relaxed">
+                  <b className="text-indigo-700">🧬 ASSY 로 불러오기</b> 를 누르고<br />
+                  ASSY 번호 → <b>전장</b> 또는 <b>하네스</b> 선택<br />
+                  부품을 하나씩 고를 필요 없습니다
+                </p>
+              </div>
+            </div>
+            <p className="text-[11px] text-indigo-600 mt-2">
+              품목을 못 찾아도 괜찮습니다 — 품명만 적어 요청할 수 있습니다.
+              등록하면 구매자재팀에 바로 전달됩니다.
+            </p>
+          </div>
+
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-            <p className="text-xs font-bold text-slate-500">무엇을 만들기 위해</p>
+            <p className="text-xs font-bold text-slate-500">① 무엇을 만들기 위해</p>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">사용 목적 · 작업 내용 *</label>
@@ -326,7 +356,7 @@ export default function MaterialRequest() {
           {/* 품목 */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs font-bold text-slate-500">무엇이 얼마나</p>
+              <p className="text-xs font-bold text-slate-500">② 무엇이 얼마나</p>
               <div className="flex items-center gap-1.5">
                 <button onClick={() => setAssyOpen(true)}
                   title="ASSY 번호로 그 BOM 부품을 한꺼번에 가져옵니다"
@@ -609,7 +639,20 @@ export default function MaterialRequest() {
           {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
           {!isLoading && !list.length && (
             <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
-              <p className="text-sm text-slate-400">요청이 없습니다.</p>
+              <p className="text-3xl mb-2">🙋</p>
+              <p className="text-sm font-bold text-slate-600">요청이 없습니다</p>
+              {canReq && (
+                <>
+                  <p className="text-xs text-slate-400 mt-1 leading-relaxed">
+                    필요한 자재가 있으면 요청해 주세요.<br />
+                    구매자재팀이 재고를 확인해 불출하거나 발주합니다.
+                  </p>
+                  <button onClick={() => setTab('new')}
+                    className="mt-4 px-5 py-2.5 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700">
+                    ＋ 자재 요청하기
+                  </button>
+                </>
+              )}
             </div>
           )}
 

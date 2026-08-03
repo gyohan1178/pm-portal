@@ -274,6 +274,13 @@ export default function Sidebar({ onNavigate, profile }) {
         </CollapseSection>
         )}
 
+        {/* 자재 요청 — 현장 섹션 권한이 없어도 보이게 (누구나 요청 가능) */}
+        {!canAccessSection(profile, 'floor') && (
+          <div className="py-1 border-b border-slate-200">
+            <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate}>자재 요청</MenuItem>
+          </div>
+        )}
+
         {/* 🏭 현장 */}
         {canAccessSection(profile, 'floor') && (
         <CollapseSection label="🏭 현장" sKey="floor">

@@ -59,6 +59,24 @@ export function useCanEdit() {
   return data ? canEdit(data) : true
 }
 
+// 자재 요청 등록 권한.
+//   요청은 현장 누구나 낼 수 있어야 한다. 조회 계정도 등록만은 가능하게 한다.
+//   (처리 — 불출·발주·반려 — 는 편집 권한자만 할 수 있다)
+export function useCanRequest() {
+  const { data } = useQuery({
+    queryKey: ['myRoleLite'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
+      return p
+    },
+  })
+  if (!data) return true
+  return data.status === 'active' || !data.status   // 승인된 계정이면 누구나
+}
+
 // 편집 권한 여부 (editor·admin, 또는 현장수정)
 export function canEdit(profile) {
   if (profile?.role === 'field_edit') return true
@@ -133,6 +151,10 @@ export function landingPath(profile) {
 
 // 특정 경로 접근 가능? (섹션 제한 계정 대응)
 export function canAccessPath(profile, pathname) {
+  // 자재 요청은 누구나 접근한다 — 현장에서 요청을 내야 하기 때문이다.
+  // 처리(불출·발주)는 화면 안에서 편집 권한으로 다시 가린다.
+  if (pathname === '/material-request') return true
+
   const sec = sectionOfPath(pathname)
   if (sec === 'home') {
     // 관제탑은 지정한 사람만 본다.
