@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.40.1'
+export const APP_VERSION = 'v3.40.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.40.2',
+    date: '2026-08-01',
+    changes: [
+      '★ 전광판 자재 부족 표시를 미불출 항목 기준으로 변경 — BOM 전체를 재고와 대조하면 다른 호기용 재고 등으로 실제와 어긋나므로, 생산관리에서 직접 적어둔 미불출 자재만 보여줍니다',
+      '미불출 자재마다 입고예정일과 발주 상태를 함께 표시 — 발주가 없는 건은 \'⚠ 발주 없음\' 으로 앞에 나옵니다. 아무도 챙기지 않는 상태이기 때문입니다',
+      'SQL: pm_floor_missing.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.40.1',
     date: '2026-08-01',

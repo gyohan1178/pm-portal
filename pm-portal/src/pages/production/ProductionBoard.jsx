@@ -63,11 +63,13 @@ export default function ProductionBoard() {
   const meta = rows._meta || {}
 
   // 자재 부족·일정 변경 — 현장에서 바로 알아야 하는 두 가지
-  const { data: shortJobs = [] } = useQuery({
-    queryKey: ['boardShort'],
+  // 담당자가 생산관리에서 직접 적어둔 미불출 항목만 본다.
+  // BOM 전체 대조는 실제와 어긋날 수 있어(다른 호기용 재고 등) 쓰지 않는다.
+  const { data: missing = [] } = useQuery({
+    queryKey: ['boardMissing'],
     queryFn: async () => {
-      const { data } = await supabase.rpc('pm_floor_jobs', { p_zone: '전장', p_limit: 30 })
-      return (data || []).filter(j => Number(j.short_count) > 0)
+      const { data } = await supabase.rpc('pm_floor_missing', { p_limit: 30 })
+      return data || []
     },
     staleTime: 3 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
@@ -182,36 +184,64 @@ export default function ProductionBoard() {
       </div>
 
       {/* 자재 부족 · 납기 변경 — 현장에서 즉시 알아야 하는 것 */}
-      {(shortJobs.length > 0 || schChg.length > 0) && (
+      {/* 미불출 자재 · 납기 변경 — 현장에서 즉시 알아야 하는 것 */}
+      {(missing.length > 0 || schChg.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 10, marginBottom: 14 }}>
-          {shortJobs.length > 0 && (
-            <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.35)', borderRadius: 12, padding: 12 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: '#fca5a5', marginBottom: 8 }}>
-                📦 자재 부족 {shortJobs.length}건 — 착수 불가
-              </div>
-              {shortJobs.slice(0, 4).map(j => (
-                <div key={j.id} style={{ marginBottom: 6 }}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 800, color: '#fff' }}>
-                      {j.unit_no || j.pn}
+          {missing.length > 0 && (() => {
+            const noPo = missing.filter(m => !m.has_po)
+            return (
+              <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.35)', borderRadius: 12, padding: 12 }}>
+                <div style={{ fontSize: 16, fontWeight: 800, color: '#fca5a5', marginBottom: 8 }}>
+                  📦 미불출 자재 {missing.length}건
+                  {noPo.length > 0 && (
+                    <span style={{ marginLeft: 8, fontSize: 13, color: '#f87171' }}>
+                      · 발주 없음 {noPo.length}건
                     </span>
-                    <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {j.item_name}
-                    </span>
-                    <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>
-                      {j.ready_count}/{j.total_count} · 부족 {j.short_count}종
-                    </span>
-                  </div>
-                  {j.short_items && (
-                    <div style={{ fontSize: 12, color: '#f87171', lineHeight: 1.4 }}>{j.short_items}</div>
                   )}
                 </div>
-              ))}
-              {shortJobs.length > 4 && (
-                <div style={{ fontSize: 12, color: '#64748b' }}>외 {shortJobs.length - 4}건…</div>
-              )}
-            </div>
-          )}
+                {missing.slice(0, 6).map((m, i) => (
+                  <div key={i} style={{ marginBottom: 7, paddingBottom: 6,
+                    borderBottom: i < Math.min(missing.length, 6) - 1 ? '1px solid rgba(148,163,184,.12)' : 'none' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 800, color: '#fff' }}>
+                        {m.pn} {m.unit_no}
+                      </span>
+                      <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#fca5a5' }}>
+                        {m.part_pn}
+                      </span>
+                      <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {m.part_name}
+                      </span>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>{m.part_qty}개</span>
+                    </div>
+                    <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                      {m.eta ? (
+                        <span style={{ color: '#7dd3fc' }}>
+                          입고예정 <b style={{ fontFamily: 'monospace' }}>{m.eta}</b>
+                        </span>
+                      ) : (
+                        <span style={{ color: '#64748b' }}>입고예정 미정</span>
+                      )}
+                      {m.has_po ? (
+                        <span style={{ color: '#94a3b8' }}>
+                          발주 {m.po_promise || '납기미정'}{m.po_vendor ? ` · ${m.po_vendor}` : ''}
+                        </span>
+                      ) : (
+                        <span style={{ color: '#f87171', fontWeight: 800 }}>⚠ 발주 없음</span>
+                      )}
+                      {Number(m.stock_qty) > 0 && (
+                        <span style={{ color: '#6ee7b7' }}>재고 {m.stock_qty}</span>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {missing.length > 6 && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>외 {missing.length - 6}건…</div>
+                )}
+              </div>
+            )
+          })()}
 
           {schChg.length > 0 && (
             <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 12, padding: 12 }}>
