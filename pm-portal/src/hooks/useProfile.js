@@ -74,7 +74,8 @@ export function useCanRequest() {
     },
   })
   if (!data) return true
-  return data.status === 'active' || !data.status   // 승인된 계정이면 누구나
+  // 거절·대기 계정만 막는다. 그 외에는 역할과 무관하게 요청할 수 있다.
+  return data.status !== 'rejected' && data.status !== 'pending'
 }
 
 // 편집 권한 여부 (editor·admin, 또는 현장수정)

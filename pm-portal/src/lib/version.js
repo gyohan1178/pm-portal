@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.41.0'
+export const APP_VERSION = 'v3.41.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.41.1',
+    date: '2026-08-01',
+    changes: [
+      '자재 요청에서 \'＋ 새 요청\' 탭이 사라지던 문제 수정 — 계정 상태 값을 잘못 비교해 승인된 계정이 모두 걸러졌습니다',
+    ],
+  },
   {
     version: 'v3.41.0',
     date: '2026-08-01',
