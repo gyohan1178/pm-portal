@@ -1,6 +1,23 @@
-export const APP_VERSION = 'v3.42.0'
+export const APP_VERSION = 'v3.42.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.42.2',
+    date: '2026-08-03',
+    changes: [
+      '전광판 미불출 자재를 호기별로 묶어 표시 — 한 프로젝트에 여러 자재가 빠진 경우가 많아 흩어져 보이던 것을 정리했습니다. 납기가 급한 호기가 위로 옵니다',
+      'SQL: pm_floor_missing_v2.sql 실행 필요 (정렬 포함)',
+    ],
+  },
+  {
+    version: 'v3.42.1',
+    date: '2026-08-03',
+    changes: [
+      '전광판 미불출 자재를 간략하게 — 어느 호기에 무엇이 몇 개 언제 들어오는지만 표시합니다. 발주 유무·재고는 사무실에서 볼 정보라 현장 화면에서 뺐습니다',
+      '전광판 납기 변경을 PD BOX 품번만 표시 — 현장에서 만드는 것이 그것뿐이기 때문입니다',
+      'SQL: pm_floor_missing_v2.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.42.0',
     date: '2026-08-03',

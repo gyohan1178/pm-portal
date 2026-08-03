@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
+import { MAIN_PNS } from './mainPns'
 import { isMainPn } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
 
@@ -73,11 +74,15 @@ export default function ProductionBoard() {
     },
     staleTime: 3 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
+  // 납기 변경 — 생산관리 대상 PD BOX 품번만 본다.
+  // 현장에서 만드는 것이 그것뿐이라 나머지는 볼 이유가 없다.
   const { data: schChg = [] } = useQuery({
     queryKey: ['boardChanges'],
     queryFn: async () => {
       const { data } = await supabase.rpc('pm_schedule_changes', { p_days: 30 })
-      return (data || []).slice(0, 4)
+      return (data || [])
+        .filter(c => MAIN_PNS.has(String(c.std_code || '').replace(/^AX-/i, '').trim()))
+        .slice(0, 5)
     },
     staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
@@ -188,56 +193,50 @@ export default function ProductionBoard() {
       {(missing.length > 0 || schChg.length > 0) && (
         <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 10, marginBottom: 14 }}>
           {missing.length > 0 && (() => {
-            const noPo = missing.filter(m => !m.has_po)
+            // 같은 호기끼리 묶는다. 한 프로젝트에 여러 자재가 빠진 경우가 많다.
+            const byJob = []
+            missing.forEach(m => {
+              const key = `${m.pn}|${m.unit_no || ''}`
+              let g = byJob.find(x => x.key === key)
+              if (!g) { g = { key, pn: m.pn, unit_no: m.unit_no, req_date: m.req_date, items: [] }; byJob.push(g) }
+              g.items.push(m)
+            })
             return (
               <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.35)', borderRadius: 12, padding: 12 }}>
                 <div style={{ fontSize: 16, fontWeight: 800, color: '#fca5a5', marginBottom: 8 }}>
-                  📦 미불출 자재 {missing.length}건
-                  {noPo.length > 0 && (
-                    <span style={{ marginLeft: 8, fontSize: 13, color: '#f87171' }}>
-                      · 발주 없음 {noPo.length}건
-                    </span>
-                  )}
+                  📦 미불출 자재 — {byJob.length}개 호기 · {missing.length}건
                 </div>
-                {missing.slice(0, 6).map((m, i) => (
-                  <div key={i} style={{ marginBottom: 7, paddingBottom: 6,
-                    borderBottom: i < Math.min(missing.length, 6) - 1 ? '1px solid rgba(148,163,184,.12)' : 'none' }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 800, color: '#fff' }}>
-                        {m.pn} {m.unit_no}
+                {byJob.slice(0, 5).map((g, gi) => (
+                  <div key={g.key} style={{ marginBottom: 8,
+                    paddingBottom: gi < Math.min(byJob.length, 5) - 1 ? 8 : 0,
+                    borderBottom: gi < Math.min(byJob.length, 5) - 1 ? '1px solid rgba(148,163,184,.15)' : 'none' }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 }}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 800, color: '#fff' }}>
+                        {g.pn} {g.unit_no}
                       </span>
-                      <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700, color: '#fca5a5' }}>
-                        {m.part_pn}
-                      </span>
-                      <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0,
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {m.part_name}
-                      </span>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>{m.part_qty}개</span>
-                    </div>
-                    <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
-                      {m.eta ? (
-                        <span style={{ color: '#7dd3fc' }}>
-                          입고예정 <b style={{ fontFamily: 'monospace' }}>{m.eta}</b>
-                        </span>
-                      ) : (
-                        <span style={{ color: '#64748b' }}>입고예정 미정</span>
-                      )}
-                      {m.has_po ? (
-                        <span style={{ color: '#94a3b8' }}>
-                          발주 {m.po_promise || '납기미정'}{m.po_vendor ? ` · ${m.po_vendor}` : ''}
-                        </span>
-                      ) : (
-                        <span style={{ color: '#f87171', fontWeight: 800 }}>⚠ 발주 없음</span>
-                      )}
-                      {Number(m.stock_qty) > 0 && (
-                        <span style={{ color: '#6ee7b7' }}>재고 {m.stock_qty}</span>
+                      <span style={{ fontSize: 13, color: '#f87171', fontWeight: 700 }}>{g.items.length}건</span>
+                      {g.req_date && (
+                        <span style={{ fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>납기 {g.req_date}</span>
                       )}
                     </div>
+                    {g.items.map((m, i) => (
+                      <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline',
+                        paddingLeft: 12, marginBottom: 2 }}>
+                        <span style={{ fontSize: 14, color: '#e2e8f0', flex: 1, minWidth: 0,
+                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {m.part_name || m.part_pn}
+                        </span>
+                        <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>{m.part_qty}개</span>
+                        <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700,
+                          color: m.eta ? '#7dd3fc' : '#64748b', minWidth: 90, textAlign: 'right' }}>
+                          {m.eta || '예정 미정'}
+                        </span>
+                      </div>
+                    ))}
                   </div>
                 ))}
-                {missing.length > 6 && (
-                  <div style={{ fontSize: 12, color: '#64748b' }}>외 {missing.length - 6}건…</div>
+                {byJob.length > 5 && (
+                  <div style={{ fontSize: 12, color: '#64748b' }}>외 {byJob.length - 5}개 호기…</div>
                 )}
               </div>
             )
