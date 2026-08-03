@@ -28,3 +28,22 @@ export function catStyle(cat) {
 // 하위 레벨 들여쓰기 — 구조가 눈에 들어오게 한다
 // 기초자료 BOM 과 동일한 간격 (레벨당 22px)
 export const indentOf = (lv) => 10 + Math.max((Number(lv) || 1) - 1, 0) * 22
+
+
+// 관리부서 배지 — 하네스팀 / 지원본부
+// BOM 조회·불출 화면에서 어느 팀이 관리하는 자재인지 바로 보이게 한다.
+export function deptStyle(dept) {
+  const d = String(dept || '')
+  if (d.includes('하네스')) return 'bg-violet-100 text-violet-700'
+  if (d.includes('지원')) return 'bg-teal-100 text-teal-700'
+  return 'bg-slate-100 text-slate-400'
+}
+
+// 배지에 넣을 짧은 이름
+export function deptShort(dept) {
+  const d = String(dept || '').trim()
+  if (!d) return ''
+  if (d.includes('하네스')) return '하네스'
+  if (d.includes('지원')) return '지원'
+  return d.slice(0, 4)
+}

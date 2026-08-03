@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { fetchAll } from '../../lib/paginate'
-import { levelCls, catStyle, indentOf } from '../../lib/bomStyle'
+import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
 import AutoInput from '../../components/AutoInput'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
@@ -70,7 +70,7 @@ async function fetchBOMByCode(code) {
   // 대형 어셈블리는 하위 품목까지 1,000행을 넘어 기본 조회로는 잘린다.
   // 기초자료 BOM 화면과 같은 방식으로 전부 가져온다.
   const data = await fetchAll(() => supabase.from('bom')
-    .select('seq,level,item_rev,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,category,unit,manufacturer,manufacturer_code)')
+    .select('seq,level,item_rev,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,category,unit,manufacturer,manufacturer_code,dept)')
     .eq('customer_id', proj.customer_id).eq('project_id', proj.id)
     .order('seq').order('created_at'))
   return { rows: data || [], assembly: proj }
@@ -337,6 +337,11 @@ export default function FieldSearch() {
                                   <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(it.category || it.type)}`}>
                                     {it.category || it.type || '-'}
                                   </span>
+                                  {it.dept && (
+                                    <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(it.dept)}`}>
+                                      {deptShort(it.dept)}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
                                 <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}</td>

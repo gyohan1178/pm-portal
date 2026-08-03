@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.43.1'
+export const APP_VERSION = 'v3.44.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.44.0',
+    date: '2026-08-03',
+    changes: [
+      '재고 실사 붙여넣기 저장 오류 수정 — 기존 재고 유무를 확인해 update/insert 로 나눠 처리합니다',
+      '★ BOM 조회에 관리부서 배지 표시 — 기초자료 BOM·현장 검색·자재 불출표에서 하네스팀/지원본부를 구분해 볼 수 있습니다',
+      '불출표 인쇄물에도 부서 열 추가 (폭 재배분, 100% 유지)',
+    ],
+  },
   {
     version: 'v3.43.1',
     date: '2026-08-03',

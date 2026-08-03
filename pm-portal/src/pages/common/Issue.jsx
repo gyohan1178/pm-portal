@@ -3,6 +3,7 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { buildLabelZpl } from '../../lib/labelZpl'
+import { deptStyle, deptShort } from '../../lib/bomStyle'
 
 const today = () => new Date().toISOString().split('T')[0]
 
@@ -160,7 +161,7 @@ export default function Issue() {
     enabled: metaIds.length > 0,
     queryFn: async () => {
       const { data } = await supabase.from('items')
-        .select('id,name,manufacturer,manufacturer_code,label_mode,pack_qty').in('id', metaIds)
+        .select('id,name,manufacturer,manufacturer_code,label_mode,pack_qty,dept').in('id', metaIds)
       return Object.fromEntries((data || []).map(i => [i.id, i]))
     },
   })
@@ -241,6 +242,7 @@ export default function Issue() {
       ...a,
       maker: itemMeta[a.item_id]?.manufacturer || '',
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
+      dept: itemMeta[a.item_id]?.dept || '',
       // 장바구니 담을 당시 품명이 비어 있던 건은 품목 마스터에서 보충
       name: a.name || itemMeta[a.item_id]?.name || '',
       location: locMeta[a.item_id] || '',
@@ -264,6 +266,7 @@ export default function Issue() {
     const today = new Date().toLocaleDateString('ko-KR')
     const body = rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
+      <td class="c">${deptShort(r.dept) || '-'}</td>
       <td>${r.maker || '-'}</td>
       <td class="mono">${r.makerPn || '-'}</td>
       <td class="mono">${r.std_code || ''}</td>
@@ -295,8 +298,8 @@ export default function Issue() {
     </div>
     <table>
       <thead><tr>
-        <th class="c" style="width:5%">No</th><th style="width:14%">제조사</th><th style="width:17%">제조사품번</th>
-        <th style="width:15%">기준코드</th><th style="width:28%">품명</th><th class="c" style="width:7%">수량</th><th class="c" style="width:6%">단위</th><th class="chk" style="width:8%">키팅<br>확인</th>
+        <th class="c" style="width:5%">No</th><th class="c" style="width:6%">부서</th><th style="width:13%">제조사</th><th style="width:16%">제조사품번</th>
+        <th style="width:14%">기준코드</th><th style="width:25%">품명</th><th class="c" style="width:7%">수량</th><th class="c" style="width:6%">단위</th><th class="chk" style="width:8%">키팅<br>확인</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
@@ -447,6 +450,7 @@ export default function Issue() {
           <table className="w-full text-xs min-w-[900px]">
             <thead><tr className="bg-slate-50 text-slate-400">
               <th className="px-2 py-1.5 text-center w-8">No</th>
+              <th className="px-2 py-1.5 text-center w-12">부서</th>
               <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
               <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
               <th className="px-2 py-1.5 text-center w-12">단위</th>
@@ -465,6 +469,11 @@ export default function Issue() {
                 return (
                 <tr key={a.std_code} className={`border-t border-slate-100 ${ex ? 'opacity-40 bg-slate-50' : a.short > 0 ? 'bg-red-50/40' : ''}`}>
                   <td className="px-2 py-1.5 text-center text-slate-400">{sheetNo ?? '—'}</td>
+                  <td className="px-2 py-1.5 text-center">
+                    {a.dept
+                      ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(a.dept)}`}>{deptShort(a.dept)}</span>
+                      : <span className="text-slate-300">—</span>}
+                  </td>
                   <td className="px-2 py-1.5 text-slate-500 max-w-[90px] truncate">{a.maker || '—'}</td>
                   <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>

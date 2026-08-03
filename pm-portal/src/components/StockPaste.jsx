@@ -111,11 +111,28 @@ export default function StockPaste({ onClose }) {
 
     setBusy(true)
     try {
-      for (let i = 0; i < target.length; i += 100) {
-        const chunk = target.slice(i, i + 100)
+      // 기존 재고 행이 있으면 update, 없으면 insert.
+      // upsert 는 item_id 유니크 제약에 기대는데 환경에 따라 실패해
+      // 확실한 방식으로 나눠 처리한다.
+      const ids = target.map(r => r.item_id)
+      const have = new Set()
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data } = await supabase.from('inventory')
+          .select('item_id').in('item_id', ids.slice(i, i + 300))
+        ;(data || []).forEach(r => have.add(r.item_id))
+      }
+
+      const toUpdate = target.filter(r => have.has(r.item_id))
+      const toInsert = target.filter(r => !have.has(r.item_id))
+
+      for (const r of toUpdate) {
         const { error } = await supabase.from('inventory')
-          .upsert(chunk.map(r => ({ item_id: r.item_id, qty: r.qty })),
-                  { onConflict: 'item_id' })
+          .update({ qty: r.qty }).eq('item_id', r.item_id)
+        if (error) throw error
+      }
+      if (toInsert.length) {
+        const { error } = await supabase.from('inventory')
+          .insert(toInsert.map(r => ({ item_id: r.item_id, qty: r.qty })))
         if (error) throw error
       }
       logActivity('update', 'inventory', null,

@@ -8,7 +8,7 @@ import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { parseAxcelisReport } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
-import { levelCls, catStyle, indentOf } from '../../lib/bomStyle'
+import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
 import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -49,7 +49,7 @@ async function fetchBOMDetail(customerId, projectId) {
   if (!projectId) return []
   const data = await fetchAll(() => supabase
     .from('bom')
-    .select('*, items!bom_item_id_fkey(std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code)')
+    .select('*, items!bom_item_id_fkey(std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code, dept)')
     .eq('customer_id', customerId)
     .eq('project_id', projectId)
     .order('seq')
@@ -961,6 +961,11 @@ export default function BOM() {
                             </td>
                             <td className="px-3 py-2">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
+                              {b.items?.dept && (
+                                <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(b.items.dept)}`}>
+                                  {deptShort(b.items.dept)}
+                                </span>
+                              )}
                             </td>
                             <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
                             <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
