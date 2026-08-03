@@ -214,7 +214,7 @@ export default function ShortageMonthly({ csId }) {
   }, [items, dq, urgentOnly, tierFilter, excluded, catSel])
 
   // 수천 건을 한 번에 그리면 검색·필터 조작이 밀린다
-  const vis = useVisibleRows(filtered, 200, [dq, urgentOnly, tierFilter])
+  const vis = useVisibleRows(filtered, 300, [dq, urgentOnly, tierFilter, catSel, excluded])
 
   if (isLoading) return <div className="text-center py-12 text-slate-400 text-sm">쇼티지 계산 중...</div>
   if (!items.length) return (
@@ -233,7 +233,7 @@ export default function ShortageMonthly({ csId }) {
           '긴급도': it.tier || '', '첫부족월': it.firstShort || '',
           '기준코드': it.std_code || '', '제조사': it.manufacturer || '', '제조사품번': it.manufacturer_code || '',
           '품명': it.name || '', '구매처': it.vendor_name || '',
-          'LT(주)': it.lt_weeks || 0, '현재고': it.current_stock ?? '', '발주필요': it.orderNeed > 0 ? it.orderNeed : 0,
+          'LT(주)': it.lt_weeks || 0, '현재고': it.current_stock ?? '', '입고예정': it.pending || 0, '발주필요': it.orderNeed > 0 ? it.orderNeed : 0,
         }
         months.forEach(mo => {
           const c = it.cells[mo]
@@ -242,7 +242,7 @@ export default function ShortageMonthly({ csId }) {
         return row
       })
       const ws = XLSX.utils.json_to_sheet(data)
-      ws['!cols'] = [{ wch: 7 }, { wch: 8 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 30 }, { wch: 14 }, { wch: 6 }, { wch: 7 }, { wch: 8 }, ...months.map(() => ({ wch: 7 }))]
+      ws['!cols'] = [{ wch: 7 }, { wch: 8 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 30 }, { wch: 14 }, { wch: 6 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, ...months.map(() => ({ wch: 7 }))]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '쇼티지통합')
       XLSX.writeFile(wb, `쇼티지통합_${new Date().toISOString().split('T')[0]}.xlsx`)
@@ -348,6 +348,7 @@ export default function ShortageMonthly({ csId }) {
                 <th className="px-2 py-2 text-left font-bold">제조사품번</th>
                 <th className="px-2 py-2 text-center font-bold">LT</th>
                 <th className="px-2 py-2 text-right font-bold">현재고</th>
+                <th className="px-2 py-2 text-right font-bold" title="미입고 발주 잔량 — 발주필요 계산에 이미 반영된 값입니다">입고예정</th>
                 <th className="px-2 py-2 text-right font-bold">발주필요</th>
                 {cols.map(m => <th key={m} className="px-2 py-2 text-right font-bold min-w-[58px]">{period === 'month' ? m.slice(2) : m}</th>)}
               </tr>
@@ -385,6 +386,11 @@ export default function ShortageMonthly({ csId }) {
                     <td className="px-2 py-2 font-mono text-[11px] text-slate-500 max-w-[120px] truncate" title={it.manufacturer_code}>{it.manufacturer_code||'-'}</td>
                     <td className="px-2 py-2 text-center"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-semibold">{it.lt_weeks}W</span></td>
                     <td className={`px-2 py-2 text-right ${it.current_stock < 0 ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{it.current_stock}</td>
+                    <td className="px-2 py-2 text-right">
+                      {it.pending > 0
+                        ? <span className="font-semibold text-sky-600">{it.pending}</span>
+                        : <span className="text-slate-300">-</span>}
+                    </td>
                     <td className="px-2 py-2 text-right font-bold" style={{ color: it.orderNeed > 0 ? '#DC2626' : '#059669' }}>{it.orderNeed > 0 ? it.orderNeed : '충족'}</td>
                     {cols.map(mo => {
                       const c = cellOf(it, mo); const s = Math.round(c?.shortage || 0)
