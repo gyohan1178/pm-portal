@@ -108,7 +108,11 @@ export default function MaterialRequest() {
     }, 300)
   }, [])
 
-  // ASSY 부품을 제작구분별로 가져와 요청 목록에 채운다
+  // ASSY 자재 요청 — 부품을 낱개로 펼치지 않고 한 건으로 등록한다.
+  //
+  //   "어느 ASSY 의 전장(또는 하네스) 자재가 필요하다" 만 전달하면
+  //   담당자가 BOM 을 보고 불출하므로, 요청자가 47줄을 확인할 필요가 없다.
+  //   부품 종수와 부족 수만 참고로 보여준다.
   async function loadAssyParts(a, type, qty) {
     setBusy(true)
     try {
@@ -117,20 +121,27 @@ export default function MaterialRequest() {
       })
       if (error) throw error
       if (!data?.length) { toastError('해당 구분의 부품이 없습니다'); return }
-      setRows(data.map(d => ({
+
+      const short = data.filter(d => Number(d.stock_qty) < Number(d.qty_need))
+      const label = type === 'harness' ? '하네스' : '전장'
+
+      setRows([{
         key: Math.random().toString(36).slice(2),
-        item_id: d.item_id, std_code: d.std_code, item_name: d.item_name,
-        maker: d.maker || '', maker_code: d.maker_code || '',
-        qty: String(d.qty_need), unit: d.unit || 'EA', reason: '',
-        _stock: Number(d.stock_qty) || 0, _loc: d.stock_loc || '',
-      })))
+        item_id: null,
+        std_code: a.code,
+        item_name: `${a.name || a.code} — ${label} 자재 일체`,
+        maker: '', maker_code: '',
+        qty: String(Number(qty) || 1), unit: '대분', reason: '',
+        _assy: true, _parts: data.length, _short: short.length,
+        _shortList: short.slice(0, 8).map(d => d.std_code).join(', '),
+      }])
       setHead(h => ({
         ...h,
         product_code: a.code,
         product_name: a.name || '',
-        purpose: h.purpose || `${a.code} ${type === 'harness' ? '하네스' : '전장'} 자재 요청`,
+        purpose: h.purpose || `${a.code} ${label} 자재 요청`,
       }))
-      toastSuccess(`${data.length}건 불러옴 — 수량을 확인하고 등록하세요`)
+      toastSuccess(`${a.code} ${label} 자재 — 부품 ${data.length}종`)
     } catch (e) {
       toastError('불러오기 실패: ' + e.message)
     } finally { setBusy(false) }
@@ -345,7 +356,27 @@ export default function MaterialRequest() {
               <div key={r.key} className="rounded-lg border border-slate-200 p-3 space-y-2">
                 <div className="flex items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    {r.std_code ? (
+                    {r._assy ? (
+                      <>
+                        <p className="font-mono text-sm font-bold text-indigo-600">{r.std_code}</p>
+                        <p className="text-xs font-bold text-slate-700">{r.item_name}</p>
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          부품 {n(r._parts)}종
+                          {r._short > 0 ? (
+                            <span className="ml-2 font-semibold text-rose-500">
+                              · 재고 부족 {n(r._short)}종
+                            </span>
+                          ) : (
+                            <span className="ml-2 font-semibold text-emerald-600">· 재고 충분</span>
+                          )}
+                        </p>
+                        {r._short > 0 && r._shortList && (
+                          <p className="text-[11px] text-rose-400 mt-0.5 leading-snug">
+                            {r._shortList}{r._short > 8 ? ' …' : ''}
+                          </p>
+                        )}
+                      </>
+                    ) : r.std_code ? (
                       <>
                         <p className="font-mono text-sm font-bold text-indigo-600">{r.std_code}</p>
                         <p className="text-xs text-slate-600">{r.item_name}</p>
@@ -382,8 +413,10 @@ export default function MaterialRequest() {
                   className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
 
                 {r.std_code && (
-                  <button onClick={() => setRows(v => v.map((x, k) => k === i ? { ...emptyRow(), key: x.key, qty: x.qty, reason: x.reason } : x))}
-                    className="text-[11px] text-slate-400 hover:text-slate-600">품목 다시 고르기</button>
+                  <button onClick={() => { setRows(v => v.map((x, k) => k === i ? { ...emptyRow(), key: x.key } : x)); if (r._assy) setAssy(null) }}
+                    className="text-[11px] text-slate-400 hover:text-slate-600">
+                    {r._assy ? 'ASSY 해제' : '품목 다시 고르기'}
+                  </button>
                 )}
               </div>
             ))}
@@ -617,6 +650,11 @@ export default function MaterialRequest() {
                         {r.item_name}
                         <span className="ml-1.5 text-slate-500">{n(r.qty)}{r.unit}</span>
                       </p>
+                      {!r.item_id && r.unit === '대분' && (
+                        <p className="text-[11px] text-indigo-500 font-semibold mt-0.5">
+                          🧬 ASSY 자재 일체 — BOM 을 보고 불출해 주세요
+                        </p>
+                      )}
 
                       <p className="text-xs text-slate-500 mt-0.5">{r.purpose}</p>
                       {(r.product_code || r.unit_no) && (
