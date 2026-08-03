@@ -54,15 +54,15 @@ export default function ScheduleChanges() {
         '기준코드': r.std_code || '',
         '품명': r.item_name || '',
         '수량': Number(r.qty) || 0,
-        '변경 전 납기': r.from_date || '',
-        '변경 후 납기': r.to_date || '',
+        '전주월요일 납기': r.from_date || '',
+        '현재 납기': r.to_date || '',
         '변경 방향': r.to_date < r.from_date ? '당겨짐' : r.to_date > r.from_date ? '밀림' : '-',
-        '변경 횟수': Number(r.chg_count) || 1,
-        '최초 납기': r.first_date || '',
-        '총 변동일': r.total_shift ?? '',
+        '이번주 변경횟수': Number(r.chg_count) || 0,
+        
+        '변동일': r.total_shift ?? '',
         '현재 납기': r.promise_date || '',
         'D-day': dday(r.promise_date) ?? '',
-        '변경일': r.changed_at || '',
+        '기준일': r.changed_at || '',
         '고객사': r.customer || '',
       }))
       const ws = XLSX.utils.json_to_sheet(data)
@@ -84,7 +84,7 @@ export default function ScheduleChanges() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">📅 납품 일정 변경</h1>
           <p className="text-xs text-slate-400">
-            고객사 PO 업로드 시 납기가 바뀐 건입니다.{pdOnly && ' 생산관리 대상 PD BOX 품번만 표시 중입니다.'}
+            전주 월요일 시점과 비교해 납기가 바뀐 건입니다. 매주 월요일에 기준이 갱신됩니다.{pdOnly && ' (PD BOX 만)'}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -126,7 +126,7 @@ export default function ScheduleChanges() {
           <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>
         </div>
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
-          <p className="text-[11px] font-bold text-amber-600">반복 변경</p>
+          <p className="text-[11px] font-bold text-amber-600">이번 주 3회+</p>
           <p className="text-2xl font-bold text-amber-700">{n(repeated.length)}</p>
           <p className="text-[10px] text-amber-500">3회 이상</p>
         </div>
@@ -141,10 +141,10 @@ export default function ScheduleChanges() {
               <th className="px-3 py-2 text-left font-bold">오더/DEL</th>
               <th className="px-3 py-2 text-left font-bold">기준코드 · 품명</th>
               <th className="px-3 py-2 text-right font-bold">수량</th>
-              <th className="px-3 py-2 text-center font-bold">납기 변경</th>
-              <th className="px-3 py-2 text-center font-bold">변경 이력</th>
+              <th className="px-3 py-2 text-center font-bold">전주 월요일 → 현재</th>
+              <th className="px-3 py-2 text-center font-bold">이번 주 변경</th>
               <th className="px-3 py-2 text-center font-bold">D-day</th>
-              <th className="px-3 py-2 text-left font-bold">변경일</th>
+              <th className="px-3 py-2 text-left font-bold">기준일</th>
             </tr>
           </thead>
           <tbody>
@@ -186,7 +186,7 @@ export default function ScheduleChanges() {
                   <td className="px-3 py-2 text-center whitespace-nowrap">
                     {(Number(r.chg_count) || 1) > 1 ? (
                       <button onClick={() => setOpen(open === i ? null : i)}
-                        title="눌러서 전체 이력 보기"
+                        title="눌러서 전체 이력 보기 (이번 주 변경 횟수)"
                         className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold border ${
                           (Number(r.chg_count) || 0) >= 3
                             ? 'border-amber-400 bg-amber-100 text-amber-800'
@@ -198,7 +198,7 @@ export default function ScheduleChanges() {
                           </span>
                         )}
                       </button>
-                    ) : <span className="text-slate-300 text-[11px]">1회</span>}
+                    ) : <span className="text-slate-300 text-[11px]">변경 없음</span>}
                   </td>
                   <td className="px-3 py-2 text-center">
                     {d === null ? '-' : (
@@ -227,7 +227,7 @@ export default function ScheduleChanges() {
       {!!rows.length && (
         <p className="text-[11px] text-slate-400">
           <span className="text-rose-500 font-bold">◀ 당겨짐</span> 은 납기가 앞당겨져 제조 일정을 확인해야 하는 건입니다.
-          엑셀로 내보내 제조팀에 공유할 수 있습니다.
+          전주 월요일과 비교하므로 매주 월요일에 목록이 새로 잡힙니다.
         </p>
       )}
     </div>

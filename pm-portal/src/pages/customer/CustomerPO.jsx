@@ -121,6 +121,21 @@ export default function CustomerPO() {
   })
 
   // 도면 최신 REV 맵 (PO 목록의 품번만 1회 조회)
+  // 전주 월요일 대비 납기 변동 — 이번 주에 얼마나 움직였는지
+  const { data: shifts = [] } = useQuery({
+    queryKey: ['promiseShift'],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_promise_shift', { p_days: 180 })
+      return data || []
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+  const shiftMap = useMemo(() => {
+    const m = {}
+    shifts.forEach(x => { if (x.po_id) m[x.po_id] = x })
+    return m
+  }, [shifts])
+
   const { data: revMap = {} } = useQuery({
     queryKey: ['cpoDrawings', cs?.id, showAll],
     enabled: !!cs?.id && pos.length > 0,
@@ -405,7 +420,21 @@ export default function CustomerPO() {
                   </td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-400">{p.projects?.code||'-'}</td>
                   <td className="px-3 py-2 text-right font-bold text-slate-900">{p.qty_ordered}</td>
-                  <td className="px-3 py-2 text-slate-500">{p.promise_date||p.required_date||'-'}</td>
+                  <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                    {p.promise_date||p.required_date||'-'}
+                    {(() => {
+                      const sh = shiftMap[p.id]
+                      if (!sh || sh.shift_days == null || sh.shift_days === 0) return null
+                      const d = Number(sh.shift_days)
+                      return (
+                        <span title={`전주 월요일 시점 ${sh.base_date} → 현재 ${p.promise_date}`}
+                          className={`ml-1.5 px-1 py-0.5 rounded text-[10px] font-bold ${
+                            d > 0 ? 'bg-sky-100 text-sky-700' : 'bg-rose-100 text-rose-700'}`}>
+                          {d > 0 ? '+' : ''}{d}
+                        </span>
+                      )
+                    })()}
+                  </td>
                   <td className="px-3 py-2 text-center">
                     {Array.isArray(p.changes)&&p.changes.length>0
                       ? <button onClick={()=>setChgModal(p)} title="변경 이력 보기"

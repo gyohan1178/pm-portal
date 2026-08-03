@@ -128,6 +128,31 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     onError: (e) => toastError('일괄 수정 오류: ' + e.message),
   })
 
+  // 미불출 자재 한 줄 수정
+  const setMP = (i, patch) => setEdit(s => ({
+    ...s,
+    missing_parts: (s.missing_parts || []).map((m, k) => k === i ? { ...m, ...patch } : m),
+  }))
+
+  // 품번을 넣으면 품명·제조사를 채워준다.
+  // AX- 접두가 없어도 찾도록 양쪽을 확인한다.
+  async function lookupPart(i, pn) {
+    const v = String(pn || '').trim()
+    if (!v) return
+    const codes = v.toUpperCase().startsWith('AX-') ? [v] : [`AX-${v}`, v]
+    const { data } = await supabase.from('items')
+      .select('std_code,name,manufacturer,manufacturer_code')
+      .in('std_code', codes).limit(1)
+    const it = data?.[0]
+    if (!it) return
+    setMP(i, {
+      pn: it.std_code.replace(/^AX-/, ''),
+      name: it.name || '',
+      maker: it.manufacturer || '',
+      makerPn: it.manufacturer_code || '',
+    })
+  }
+
   // 저장 (신규/편집) — 완료상태는 건드리지 않음
   const saveMut = useMutation({
     mutationFn: async (rec) => {
@@ -563,6 +588,70 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 </div>
               </div>
               <Field label="담당자"><input value={edit.manager || ''} onChange={e => setEdit(s => ({ ...s, manager: e.target.value }))} placeholder="담당자명" className="inp" /></Field>
+
+              {/* 미불출 자재 — 불출했으나 빠진 품목을 직접 적어둔다.
+                  여기 적은 것이 생산 전광판에 부족 자재로 표시된다. */}
+              <div className="rounded-lg bg-rose-50 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold text-rose-600">
+                    ⚠ 미불출 자재
+                    {Array.isArray(edit.missing_parts) && edit.missing_parts.length > 0 &&
+                      <span className="ml-1.5 font-normal text-rose-400">{edit.missing_parts.length}건</span>}
+                  </p>
+                  <button onClick={() => setEdit(s => ({
+                      ...s,
+                      missing_parts: [...(s.missing_parts || []),
+                        { pn: '', name: '', maker: '', makerPn: '', qty: '', date: '' }],
+                    }))}
+                    className="px-2 py-0.5 text-[11px] font-bold rounded border border-rose-300 text-rose-600 bg-white hover:bg-rose-100">
+                    ＋ 추가
+                  </button>
+                </div>
+
+                {(edit.missing_parts || []).map((mp, i) => (
+                  <div key={i} className="rounded border border-rose-200 bg-white p-2 space-y-1.5">
+                    <div className="flex items-start gap-1.5">
+                      <input value={mp.pn || ''}
+                        onChange={e => setMP(i, { pn: e.target.value })}
+                        onBlur={e => lookupPart(i, e.target.value)}
+                        placeholder="품번"
+                        className="w-32 px-2 py-1 text-xs font-mono border border-slate-200 rounded" />
+                      <input value={mp.name || ''}
+                        onChange={e => setMP(i, { name: e.target.value })}
+                        placeholder="품명 (자동 조회)"
+                        className="flex-1 min-w-0 px-2 py-1 text-xs border border-slate-200 rounded" />
+                      <button onClick={() => setEdit(s => ({
+                          ...s, missing_parts: (s.missing_parts || []).filter((_, k) => k !== i),
+                        }))}
+                        className="text-slate-300 hover:text-rose-500 px-1 text-sm">✕</button>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <input value={mp.maker || ''}
+                        onChange={e => setMP(i, { maker: e.target.value })}
+                        placeholder="제조사"
+                        className="w-28 px-2 py-1 text-[11px] border border-slate-200 rounded" />
+                      <input value={mp.makerPn || ''}
+                        onChange={e => setMP(i, { makerPn: e.target.value })}
+                        placeholder="제조사품번"
+                        className="flex-1 min-w-0 px-2 py-1 text-[11px] font-mono border border-slate-200 rounded" />
+                      <input value={mp.qty || ''} type="number"
+                        onChange={e => setMP(i, { qty: e.target.value })}
+                        placeholder="수량"
+                        className="w-16 px-2 py-1 text-xs text-right font-bold border border-slate-200 rounded" />
+                      <input value={mp.date || ''} type="date"
+                        onChange={e => setMP(i, { date: e.target.value })}
+                        title="입고 예정일"
+                        className="w-32 px-1.5 py-1 text-[11px] border border-slate-200 rounded" />
+                    </div>
+                  </div>
+                ))}
+
+                {(!edit.missing_parts || edit.missing_parts.length === 0) && (
+                  <p className="text-[11px] text-rose-400">
+                    불출 시 빠진 자재를 적어두면 생산 전광판에 표시됩니다.
+                  </p>
+                )}
+              </div>
             </div>
             <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2 sticky bottom-0 bg-white">
               <button onClick={() => setEdit(null)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
