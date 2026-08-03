@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.41.1'
+export const APP_VERSION = 'v3.41.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.41.2',
+    date: '2026-08-01',
+    changes: [
+      '현장 검색 BOM 을 기초자료 BOM 과 같은 모습으로 통일 — 레벨을 L1·L2 배지로, 구분을 종류별 색상으로, 하위 품목은 └ 로 들여쓰기하여 구조가 보이게 했습니다',
+      '두 화면이 같은 표시 규칙을 쓰도록 공용화 — 한쪽만 바뀌어 어긋나는 일이 없습니다',
+    ],
+  },
   {
     version: 'v3.41.1',
     date: '2026-08-01',

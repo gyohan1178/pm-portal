@@ -8,6 +8,7 @@ import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { parseAxcelisReport } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
+import { levelCls, catStyle, indentOf } from '../../lib/bomStyle'
 import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
@@ -24,19 +25,6 @@ function parseBomQty(v) {
 }
 
 // 세부구분별 색상 (BOM 조회 뱃지)
-function catStyle(cat) {
-  const c = String(cat || '')
-  if (c.includes('부품')) return 'bg-blue-50 text-blue-600'
-  if (c.includes('와이어') || c.includes('케이블')) return 'bg-amber-50 text-amber-700'
-  if (c.includes('문서')) return 'bg-slate-100 text-slate-500'
-  if (c.includes('라벨')) return 'bg-pink-50 text-pink-600'
-  if (c.includes('도면')) return 'bg-indigo-50 text-indigo-600'
-  if (c.includes('KIT')) return 'bg-emerald-50 text-emerald-600'
-  if (c.includes('회로')) return 'bg-purple-50 text-purple-600'
-  if (c === '가공') return 'bg-indigo-50 text-indigo-600'
-  return 'bg-slate-50 text-slate-500'
-}
-
 
 // 등록된 어셈블리 목록 (projects + BOM 품목수, RPC 한 방)
 async function fetchAssemblies(customerId) {
@@ -364,7 +352,6 @@ async function saveBOM({ rows, customerId, projectCode, projectName, rev }) {
   return { saved, skipped }
 }
 
-const LEVEL_COLOR = { 1:'bg-indigo-50 text-indigo-700', 2:'bg-blue-50 text-blue-600', 3:'bg-emerald-50 text-emerald-700', 4:'bg-amber-50 text-amber-700' }
 
 export default function BOM() {
   const { customerId: csCode } = useParams()
@@ -752,7 +739,7 @@ export default function BOM() {
                   return (
                     <tr key={i} className="border-b border-slate-100">
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{parent}</td>
-                      <td className="px-3 py-1.5"><span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${LEVEL_COLOR[lv]||'bg-slate-100 text-slate-500'}`}>L{lv}</span></td>
+                      <td className="px-3 py-1.5"><span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(lv)}`}>L{lv}</span></td>
                       <td className="px-3 py-1.5 font-mono text-xs text-indigo-600">AX-{pn}</td>
                       <td className="px-3 py-1.5 text-slate-700 max-w-[200px] truncate">{r['Description'] ?? r['품명'] ?? ''}</td>
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{r['MFG PN'] ?? r['제조사품번'] ?? ''}</td>
@@ -951,9 +938,9 @@ export default function BOM() {
                         }).map(b => (
                           <tr key={b.id} className={`border-b border-slate-100 hover:bg-indigo-50/40 ${(b.level||1)>=4?'bg-slate-200/50':(b.level||1)===3?'bg-slate-100/60':(b.level||1)===2?'bg-slate-50':''}`}>
                             <td className="px-3 py-2">
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${LEVEL_COLOR[b.level]||'bg-slate-100 text-slate-500'}`}>L{b.level}</span>
+                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(b.level)}`}>L{b.level}</span>
                             </td>
-                            <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${10+Math.max((b.level||1)-1,0)*22}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${indentOf(b.level)}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}</td>
                             <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
                             <td className="px-3 py-2 text-center whitespace-nowrap">
                               {(() => {

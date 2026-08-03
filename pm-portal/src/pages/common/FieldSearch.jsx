@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { fetchAll } from '../../lib/paginate'
+import { levelCls, catStyle, indentOf } from '../../lib/bomStyle'
 import AutoInput from '../../components/AutoInput'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
@@ -296,7 +297,7 @@ export default function FieldSearch() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs whitespace-nowrap">
                         <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
-                          {['No', 'LV', '기준코드', '품명', 'REV 대조', '구분', '제조사', '제조사품번', '단위', '소요량'].map(h =>
+                          {['LV', '기준코드', '품명', 'REV 대조', '구분', '제조사', '제조사품번', '단위', '소요량'].map(h =>
                             <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
                         </tr></thead>
                         <tbody>
@@ -304,9 +305,16 @@ export default function FieldSearch() {
                             const it = r.items || {}
                             return (
                               <tr key={i} className="border-b border-slate-100 hover:bg-slate-50">
-                                <td className="px-3 py-2 text-center text-slate-400">{i + 1}</td>
-                                <td className="px-3 py-2 text-center text-slate-400">{r.level ?? '-'}</td>
-                                <td className="px-3 py-2 font-mono text-indigo-600">{it.std_code || '-'}</td>
+                                <td className="px-3 py-2">
+                                  <span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(r.level)}`}>
+                                    L{r.level ?? '-'}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-2 font-mono text-xs text-indigo-600"
+                                  style={{ paddingLeft: `${indentOf(r.level)}px` }}>
+                                  {Number(r.level) > 1 && <span className="text-slate-300 select-none mr-0.5">└</span>}
+                                  {it.std_code || '-'}
+                                </td>
                                 <td className="px-3 py-2 text-slate-700 max-w-[220px] truncate">{it.name || '-'}</td>
                                 <td className="px-3 py-2 whitespace-nowrap">
                                   {(() => {
@@ -325,7 +333,11 @@ export default function FieldSearch() {
                                     )
                                   })()}
                                 </td>
-                                <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${(it.category || it.type) === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.category || it.type || '-'}</span></td>
+                                <td className="px-3 py-2">
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(it.category || it.type)}`}>
+                                    {it.category || it.type || '-'}
+                                  </span>
+                                </td>
                                 <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
                                 <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}</td>
                                 <td className="px-3 py-2 text-slate-500">{it.unit || '-'}</td>
