@@ -3,6 +3,7 @@ import { PROC_CATS, catOf } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
+import StockPaste from '../../components/StockPaste'
 import { useNavigate } from 'react-router-dom'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -55,6 +56,7 @@ export default function Inventory() {
   const [brandFilter, setBrandFilter] = useState('전체')
   const [appliedSearch, setAppliedSearch] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
+  const [pasteOpen, setPasteOpen] = useState(false)
   const navTo = useNavigate()
   const [showNeg, setShowNeg] = useState(false)
   const [hideExcluded, setHideExcluded] = useState(true)   // 재고관리 제외 품목 숨김(기본)
@@ -174,6 +176,8 @@ export default function Inventory() {
 
   return (
     <div className="space-y-4">
+      {pasteOpen && <StockPaste onClose={()=>setPasteOpen(false)} />}
+
       {scanOpen && (
         <QrScanner onClose={()=>setScanOpen(false)}
           onScan={(loc)=>{ setScanOpen(false); navTo(`/cell/${loc}`) }} />
@@ -185,6 +189,10 @@ export default function Inventory() {
           className="w-full sm:w-72 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
         <button onClick={()=>setAppliedSearch(search)} className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">검색</button>
         {appliedSearch&&<button onClick={()=>{setSearch('');setAppliedSearch('')}} className="text-xs text-slate-400 hover:text-slate-600">✕ 초기화</button>}
+        <button onClick={()=>setPasteOpen(true)} title="엑셀에서 품번·수량을 복사해 붙여넣어 실사 결과를 반영합니다"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
+          📋 실사 붙여넣기
+        </button>
         <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
           📷 QR 스캔
