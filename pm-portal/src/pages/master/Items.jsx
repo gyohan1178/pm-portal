@@ -1,9 +1,10 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useCallback } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { catOf } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import VendorPicker from '../../components/VendorPicker'
 import * as XLSX from 'xlsx'
@@ -116,6 +117,18 @@ export default function Items() {
   const [bulkMode, setBulkMode] = useState(false)
   const [visibleCount, setVisibleCount] = useState(300)
   const [selected, setSelected] = useState(() => new Set())
+
+  // 훅은 객체({id:true})로 다루므로 Set 과 이어준다
+  const setSelObj = useCallback((updater) => {
+    setSelected(prev => {
+      const obj = {}; prev.forEach(id => { obj[id] = true })
+      const next = typeof updater === 'function' ? updater(obj) : updater
+      const out = new Set()
+      Object.entries(next).forEach(([k, v]) => { if (v) out.add(k) })
+      return out
+    })
+  }, [])
+  const { rowProps } = useRowSelect(setSelObj)
   const [bulkForm, setBulkForm] = useState({ lt_weeks:'', safety_stock:'', dept:'', prod_managed:'', stock_managed:'' })
 
   const { data: items=[], isLoading } = useQuery({
@@ -624,7 +637,8 @@ export default function Items() {
                 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">품목을 추가해주세요</td></tr>
                 : shown.slice(0, visibleCount).map(item=>(
                   <tr key={item.id} onDoubleClick={()=>handleEdit(item)}
-                    className={`border-b border-slate-100 hover:bg-slate-50 group cursor-pointer ${selected.has(item.id)?'bg-amber-50':''}`}>
+                    {...(bulkMode ? rowProps(item.id, selected.has(item.id)) : {})}
+                    className={`border-b border-slate-100 hover:bg-slate-50 group cursor-pointer ${bulkMode?'select-none':''} ${selected.has(item.id)?'bg-amber-50':''}`}>
                     {/* 1. 기준코드 */}
                     <td className="px-3 py-2 font-mono text-xs font-semibold text-indigo-600 overflow-hidden truncate">
                       {bulkMode && <input type="checkbox" checked={selected.has(item.id)} onChange={()=>toggleSel(item.id)} onClick={e=>e.stopPropagation()} className="mr-2 align-middle"/>}

@@ -1,6 +1,17 @@
-export const APP_VERSION = 'v3.44.0'
+export const APP_VERSION = 'v3.45.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.45.0',
+    date: '2026-08-03',
+    changes: [
+      '★ 표에서 행을 눌러 선택하고, 끌어서 여러 줄을 한 번에 고를 수 있습니다 — 기준코드 DB(일괄 모드)·구매발주·입고에 적용했습니다',
+      '첫 행이 선택되면 지나간 행도 선택되고, 해제로 시작하면 함께 해제됩니다',
+      '버튼·입력란을 누른 경우는 선택되지 않아 수정·삭제는 그대로 동작합니다',
+      '입고는 행을 고를 때 입고 수량 기본값(잔량)이 함께 채워집니다',
+      'SQL: get_shortage_monthly 의 part_issue 조건 수정본 실행 권장 (false 인 건이 잘못 제외되던 문제)',
+    ],
+  },
   {
     version: 'v3.44.0',
     date: '2026-08-03',

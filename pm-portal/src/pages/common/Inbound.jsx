@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
 import { refreshProcurement } from '../../lib/refresh'
@@ -7,6 +7,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { logActivity } from '../../lib/activityLog'
 import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
@@ -224,6 +225,28 @@ export default function Inbound() {
 
   // 발주가 수천 건이면 검색·체크 조작이 밀린다
   const vis = useVisibleRows(rows, 150, [dRowSearch, vendorText, sort])
+  // 행을 끌어 여러 건을 한 번에 고를 수 있게 한다.
+  // 선택될 때 입고 수량 기본값(잔량)을 함께 채운다.
+  const { rowProps } = useRowSelect(useCallback((updater) => {
+    setChecked(prev => {
+      const next = typeof updater === 'function' ? updater(prev) : updater
+      const added = Object.keys(next).filter(id => next[id] && !prev[id])
+      if (added.length) {
+        setInboundData(d => {
+          const nd = { ...d }
+          added.forEach(id => {
+            if (!nd[id]) {
+              const po = rows.find(r => r.id === id)
+              if (po) nd[id] = { qty: po.qty_remaining || 0, unit_price: po.unit_price || '' }
+            }
+          })
+          return nd
+        })
+      }
+      return next
+    })
+  }, [rows]))
+
   function toggleRow(po) {
     setChecked(prev => ({ ...prev, [po.id]: !prev[po.id] }))
     setInboundData(prev => prev[po.id] ? prev : ({ ...prev, [po.id]: { qty: po.qty_remaining||0, unit_price: po.unit_price||'' } }))
@@ -347,8 +370,8 @@ export default function Inbound() {
                           const on = !!checked[po.id]
                           const delayed = po.promise_date && po.promise_date < today
                           return (
-                            <tr key={po.id} onClick={()=>toggleRow(po)}
-                              className={`border-b border-slate-100 cursor-pointer ${on?'bg-indigo-50':'hover:bg-slate-50'}`}>
+                            <tr key={po.id} {...rowProps(po.id, on)}
+                              className={`border-b border-slate-100 cursor-pointer select-none ${on?'bg-indigo-50':'hover:bg-slate-50'}`}>
                               <td className="px-2 py-2 text-center" onClick={e=>e.stopPropagation()}>
                                 <input type="checkbox" checked={on} onChange={()=>toggleRow(po)} />
                               </td>

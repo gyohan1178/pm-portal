@@ -5,6 +5,7 @@ import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
@@ -217,6 +218,8 @@ export default function PurchasePage() {
     queryFn:()=>fetchPurchaseHistory(cs?.id, hQuery.from, hQuery.to),
     enabled:!!cs?.id && tab==='history',
   })
+  const { rowProps } = useRowSelect(setChecked)
+
   const propItemIds = useMemo(()=>[...new Set(purchases.filter(p=>checked[p.id]).map(p=>p.item_id).filter(Boolean))], [purchases, checked])
   const { data: projHist={} } = useQuery({
     queryKey:['projHist', propItemIds.slice().sort().join(',')],
@@ -1003,13 +1006,8 @@ export default function PurchasePage() {
                       const diff=p.promise_date?Math.round((new Date(p.promise_date)-new Date(today))/86400000):null
                       const supply=Math.round((p.qty_ordered||0)*(p.unit_price||0))
                       return (
-                        <tr key={p.id}
-                          onClick={e=>{
-                            // 버튼·입력·링크를 누른 경우는 선택으로 보지 않는다
-                            if (e.target.closest('button,input,select,textarea,a')) return
-                            setChecked(prev=>({...prev,[p.id]:!prev[p.id]}))
-                          }}
-                          className={`border-b border-slate-100 group cursor-pointer ${
+                        <tr key={p.id} {...rowProps(p.id, !!checked[p.id])}
+                          className={`border-b border-slate-100 group cursor-pointer select-none ${
                             checked[p.id] ? 'bg-indigo-50' : p.isDelayed ? 'bg-red-50/30 hover:bg-red-50/50' : 'hover:bg-slate-50'}`}>
                           <td className="px-3 py-2"><input type="checkbox" checked={!!checked[p.id]} onChange={e=>setChecked(prev=>({...prev,[p.id]:e.target.checked}))} className="w-3.5 h-3.5 accent-indigo-600"/></td>
                           <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{p.po_number||'-'}</td>
