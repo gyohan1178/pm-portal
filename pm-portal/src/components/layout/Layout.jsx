@@ -63,6 +63,9 @@ export default function Layout({ profile }) {
 
   async function handleLogout() { await supabase.auth.signOut() }
 
+  // 인쇄할 때는 사이드바·상단바가 종이에 나오지 않게 한다.
+  // 화면마다 따로 처리하면 빠뜨리기 쉬워 여기서 한 번에 막는다.
+
   return (
     <div className="flex h-screen overflow-hidden bg-white">
       {/* 모바일 오버레이 */}
@@ -72,7 +75,7 @@ export default function Layout({ profile }) {
       )}
 
       {/* 사이드바 - 모바일: fixed overlay, 데스크탑: static */}
-      <div className={`
+      <div className={`no-print 
         fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out
         lg:relative lg:transform-none lg:z-auto
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}

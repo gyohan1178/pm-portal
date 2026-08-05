@@ -298,8 +298,20 @@ export default function RackLayout() {
           body.printing-sheet > * { display: none !important; }
           body.printing-sheet .sheet-print { display: block !important; }
 
-          /* 배치도 인쇄 — 화면 요소를 숨기고 배치도만 종이에 맞춘다 */
-          body.printing-map .no-print { display: none !important; }
+          /* 배치도 인쇄 — 배치도만 남기고 나머지를 숨긴다.
+             상단 바·사이드바는 Layout 안에 있어 no-print 만으로는 안 걸러지므로
+             배치도를 화면 맨 위로 끌어올려 단독으로 출력한다. */
+          body.printing-map .no-print,
+          body.printing-map header,
+          body.printing-map nav,
+          body.printing-map aside { display: none !important; }
+
+          body.printing-map .map-wrap {
+            position: absolute !important;
+            top: 0 !important; left: 0 !important;
+            width: 100% !important;
+            z-index: 9999;
+          }
           body.printing-map .map-wrap {
             overflow: visible !important;
             border: none !important;
