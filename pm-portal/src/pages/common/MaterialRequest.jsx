@@ -666,97 +666,144 @@ export default function MaterialRequest() {
           )}
 
           <div className="space-y-2">
-            {list.map(r => {
-              const st = ST[r.status] || ST['요청']
-              const d = dday(r.need_date)
-              return (
-                <div key={r.id}
-                  onClick={() => canEdit && setSel(s => ({ ...s, [r.id]: !s[r.id] }))}
-                  className={`rounded-xl border p-3.5 transition-all ${canEdit ? 'cursor-pointer' : ''} ${
-                    sel[r.id] ? 'border-indigo-400 bg-indigo-50/50 ring-1 ring-indigo-200' : 'border-slate-200 bg-white hover:shadow-sm'}`}>
-                  <div className="flex items-start gap-3">
-                    <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${st.dot}`} />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${st.cls}`}>{r.status}</span>
-                        {r.urgency === '긴급' && (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white">긴급</span>
-                        )}
-                        <span className="font-mono text-[11px] text-slate-400">{r.req_no}</span>
-                        {r.is_mine && (
-                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">내 요청</span>
-                        )}
-                        {r.customer_code && (
-                          <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">{r.customer_code}</span>
-                        )}
-                        {d !== null && (
-                          <span className={`text-[11px] font-bold ${d < 0 ? 'text-rose-600' : d <= 3 ? 'text-amber-600' : 'text-slate-400'}`}>
-                            필요일 {r.need_date} (D{d >= 0 ? '-' : '+'}{Math.abs(d)})
-                          </span>
-                        )}
-                      </div>
+            {(() => {
+              // 같은 요청번호끼리 묶는다. 한 번에 여러 품목을 요청하면
+              // 낱개로 흩어져 보여 어느 요청인지 알기 어렵기 때문이다.
+              const groups = []
+              list.forEach(r => {
+                const key = r.req_no || `_${r.id}`
+                let g = groups.find(x => x.key === key)
+                if (!g) { g = { key, head: r, items: [] }; groups.push(g) }
+                g.items.push(r)
+              })
 
-                      <p className="text-sm font-bold text-slate-800 mt-1">
-                        {r.std_code && <span className="font-mono text-indigo-600 mr-1.5">{r.std_code}</span>}
-                        {r.item_name}
-                        <span className="ml-1.5 text-slate-500">{n(r.qty)}{r.unit}</span>
-                      </p>
-                      {(r.maker || r.maker_code) && (
-                        <p className="text-xs text-slate-500">
-                          {r.maker}
-                          {r.maker && r.maker_code ? ' · ' : ''}
-                          <span className="font-mono">{r.maker_code}</span>
-                        </p>
-                      )}
-                      {!r.item_id && r.unit === '대분' && (
-                        <p className="text-[11px] text-indigo-500 font-semibold mt-0.5">
-                          🧬 ASSY 자재 일체 — BOM 을 보고 불출해 주세요
-                        </p>
-                      )}
+              return groups.map(g => {
+                const h = g.head
+                const st = ST[h.status] || ST['요청']
+                const d = dday(h.need_date)
+                const allOn = g.items.every(x => sel[x.id])
+                const someOn = g.items.some(x => sel[x.id])
 
-                      <p className="text-xs text-slate-500 mt-0.5">{r.purpose}</p>
-                      {(r.product_code || r.unit_no) && (
-                        <p className="text-[11px] text-slate-400">
-                          {r.product_code && <span className="font-mono">{r.product_code}</span>}
-                          {r.product_code && r.unit_no ? ' · ' : ''}{r.unit_no}
-                        </p>
-                      )}
-                      {r.reason && <p className="text-[11px] text-slate-400 mt-0.5">사유 · {r.reason}</p>}
+                return (
+                  <div key={g.key}
+                    className={`rounded-xl border transition-all ${
+                      someOn ? 'border-indigo-400 bg-indigo-50/40 ring-1 ring-indigo-200'
+                             : 'border-slate-200 bg-white hover:shadow-sm'}`}>
 
-                      <div className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5 flex-wrap">
-                        <span className="font-semibold text-slate-500">요청 {r.requester}</span>
-                        <span>{r.req_date}</span>
-                        {r.handler && (
-                          <>
-                            <span className="text-slate-300">→</span>
-                            <span className="font-semibold text-slate-500">처리 {r.handler}</span>
-                            {r.handle_type && (
-                              <span className={`px-1.5 py-0.5 rounded font-bold ${
-                                r.handle_type === '불출' ? 'bg-emerald-100 text-emerald-700'
-                                : r.handle_type === '발주' ? 'bg-indigo-100 text-indigo-700'
-                                : 'bg-slate-100 text-slate-500'}`}>{r.handle_type}</span>
+                    {/* 요청 머리 — 목적·필요일·요청자 */}
+                    <div
+                      onClick={() => canEdit && setSel(s2 => {
+                        const next = { ...s2 }
+                        g.items.forEach(x => { next[x.id] = !allOn })
+                        return next
+                      })}
+                      className={`p-3.5 ${canEdit ? 'cursor-pointer' : ''} ${g.items.length > 1 ? 'border-b border-slate-100' : ''}`}>
+                      <div className="flex items-start gap-3">
+                        <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${st.dot}`} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${st.cls}`}>{h.status}</span>
+                            {h.urgency === '긴급' && (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-500 text-white">긴급</span>
                             )}
-                          </>
-                        )}
-                        {r.handle_memo && <span className="text-slate-400">· {r.handle_memo}</span>}
+                            <span className="font-mono text-[11px] text-slate-400">{h.req_no}</span>
+                            {g.items.length > 1 && (
+                              <span className="px-1.5 py-0.5 rounded bg-indigo-100 text-[10px] font-bold text-indigo-700">
+                                {n(g.items.length)}품목
+                              </span>
+                            )}
+                            {h.is_mine && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">내 요청</span>
+                            )}
+                            {h.customer_code && (
+                              <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">{h.customer_code}</span>
+                            )}
+                            {d !== null && (
+                              <span className={`text-[11px] font-bold ${d < 0 ? 'text-rose-600' : d <= 3 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                필요일 {h.need_date} (D{d >= 0 ? '-' : '+'}{Math.abs(d)})
+                              </span>
+                            )}
+                          </div>
+
+                          <p className="text-sm font-bold text-slate-800 mt-1">{h.purpose}</p>
+                          {(h.product_code || h.unit_no) && (
+                            <p className="text-[11px] text-slate-400">
+                              {h.product_code && <span className="font-mono">{h.product_code}</span>}
+                              {h.product_code && h.unit_no ? ' · ' : ''}{h.unit_no}
+                            </p>
+                          )}
+
+                          <div className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5 flex-wrap">
+                            <span className="font-semibold text-slate-500">요청 {h.requester}</span>
+                            <span>{h.req_date}</span>
+                            {h.handler && (
+                              <>
+                                <span className="text-slate-300">→</span>
+                                <span className="font-semibold text-slate-500">처리 {h.handler}</span>
+                                {h.handle_type && (
+                                  <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                    h.handle_type === '불출' ? 'bg-emerald-100 text-emerald-700'
+                                    : h.handle_type === '발주' ? 'bg-indigo-100 text-indigo-700'
+                                    : 'bg-slate-100 text-slate-500'}`}>{h.handle_type}</span>
+                                )}
+                              </>
+                            )}
+                            {h.handle_memo && <span className="text-slate-400">· {h.handle_memo}</span>}
+                          </div>
+                        </div>
+                        <div className="flex flex-col items-end gap-1.5">
+                          {canEdit && (
+                            <input type="checkbox" checked={allOn} readOnly
+                              className="w-4 h-4 accent-indigo-600 mt-1 pointer-events-none" />
+                          )}
+                          {h.is_mine && ['요청','확인'].includes(h.status) && (
+                            <button onClick={e => { e.stopPropagation(); cancelMine(h.id) }}
+                              className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 whitespace-nowrap">
+                              취소
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
-                    <div className="flex flex-col items-end gap-1.5">
-                      {canEdit && (
-                        <input type="checkbox" checked={!!sel[r.id]} readOnly
-                          className="w-4 h-4 accent-indigo-600 mt-1 pointer-events-none" />
-                      )}
-                      {r.is_mine && ['요청','확인'].includes(r.status) && (
-                        <button onClick={e => { e.stopPropagation(); cancelMine(r.id) }}
-                          className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 whitespace-nowrap">
-                          취소
-                        </button>
-                      )}
+
+                    {/* 품목 — 한 줄씩 */}
+                    <div className={g.items.length > 1 ? 'divide-y divide-slate-50' : ''}>
+                      {g.items.map(r => (
+                        <div key={r.id}
+                          onClick={() => canEdit && setSel(s2 => ({ ...s2, [r.id]: !s2[r.id] }))}
+                          className={`px-3.5 py-2 flex items-center gap-2 text-xs ${canEdit ? 'cursor-pointer' : ''} ${
+                            sel[r.id] ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}`}>
+                          {canEdit && (
+                            <input type="checkbox" checked={!!sel[r.id]} readOnly
+                              className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none flex-shrink-0" />
+                          )}
+                          <span className="font-mono font-bold text-indigo-600 w-32 flex-shrink-0 truncate">
+                            {r.std_code || '-'}
+                          </span>
+                          <span className="text-slate-600 flex-1 min-w-0 truncate">{r.item_name}</span>
+                          <span className="text-slate-400 w-24 flex-shrink-0 truncate text-right">{r.maker || ''}</span>
+                          <span className="font-mono text-slate-400 w-28 flex-shrink-0 truncate text-right">{r.maker_code || ''}</span>
+                          <span className="font-bold text-slate-700 w-16 flex-shrink-0 text-right">
+                            {n(r.qty)}<span className="font-normal text-slate-400 ml-0.5">{r.unit}</span>
+                          </span>
+                          {r.status !== h.status && (
+                            <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex-shrink-0 ${(ST[r.status] || ST['요청']).cls}`}>
+                              {r.status}
+                            </span>
+                          )}
+                        </div>
+                      ))}
                     </div>
+
+                    {g.items.some(r => !r.item_id && r.unit === '대분') && (
+                      <p className="px-3.5 pb-2.5 text-[11px] text-indigo-500 font-semibold">
+                        🧬 ASSY 자재 일체 — BOM 을 보고 불출해 주세요
+                      </p>
+                    )}
                   </div>
-                </div>
-              )
-            })}
+                )
+              })
+            })()}
           </div>
         </>
       )}
