@@ -26,7 +26,7 @@ const emptyRow = () => ({
 //
 //   제조팀이 "무엇을 만들기 위해 무엇이 얼마나 언제까지 왜 필요한지" 를 등록하면
 //   관제탑 알림으로 구매자재팀에 전달된다.
-//   담당자는 재고를 보고 불출할지 발주할지 판단한다.
+//   재고·발주 정보는 화면에 표시하지 않는다 (팀 내부 정보).
 export default function MaterialRequest() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()        // 처리(불출·발주·반려)
@@ -82,7 +82,7 @@ export default function MaterialRequest() {
       const t = v.trim()
       // 품번·품명·제조사품번 어느 쪽으로도 찾을 수 있게 한다
       const { data } = await supabase.from('items')
-        .select('id,std_code,name,unit,manufacturer,manufacturer_code, inventory(qty,location)')
+        .select('id,std_code,name,unit,manufacturer,manufacturer_code')
         .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
         .limit(15)
       setHits(data || [])
@@ -94,7 +94,6 @@ export default function MaterialRequest() {
       ...r, item_id: it.id, std_code: it.std_code, item_name: it.name,
       maker: it.manufacturer || '', maker_code: it.manufacturer_code || '',
       unit: it.unit || 'EA',
-      _stock: it.inventory?.[0]?.qty ?? 0, _loc: it.inventory?.[0]?.location || '',
     } : r))
     setSearchIdx(null); setQ(''); setHits([])
   }
@@ -123,7 +122,6 @@ export default function MaterialRequest() {
       if (error) throw error
       if (!data?.length) { toastError('해당 구분의 부품이 없습니다'); return }
 
-      const short = data.filter(d => Number(d.stock_qty) < Number(d.qty_need))
       const label = type === 'harness' ? '하네스' : '전장'
 
       setRows([{
@@ -133,8 +131,7 @@ export default function MaterialRequest() {
         item_name: `${a.name || a.code} — ${label} 자재 일체`,
         maker: '', maker_code: '',
         qty: String(Number(qty) || 1), unit: '대분', reason: '',
-        _assy: true, _parts: data.length, _short: short.length,
-        _shortList: short.slice(0, 8).map(d => d.std_code).join(', '),
+        _assy: true, _parts: data.length,
       }])
       setHead(h => ({
         ...h,
@@ -185,19 +182,22 @@ export default function MaterialRequest() {
     qc.invalidateQueries({ queryKey: ['todoList'] })
   }
 
-  // 불출 — 재고에서 실제로 빼고 출고 이력을 남긴다
-  async function doIssue() {
+  // 불출 — 재고에서 실제로 빼고 출고 이력을 남긴다.
+  //   force 는 장부에 없어도 진행한다. 실물은 있는데 입고 처리가
+  //   안 됐거나 실사가 안 맞는 경우가 있어 필요하다. 재고는 음수가 된다.
+  async function doIssue(force = false) {
     if (!checked.length) return
-    const short = checked.filter(r => Number(r.stock_qty) < Number(r.qty))
-    const msg = short.length
-      ? `재고가 부족한 건이 ${short.length}건 있습니다.\n부족한 건은 처리되지 않습니다.\n\n계속할까요?`
-      : `${checked.length}건을 불출 처리합니다.\n재고에서 차감되고 출고 이력이 남습니다.`
+    const msg = force
+      ? `${checked.length}건을 강제 불출합니다.\n\n재고가 모자라도 진행하며, 재고가 음수가 됩니다.\n나중에 입고나 실사로 바로잡아야 합니다.\n\n계속할까요?`
+      : `${checked.length}건을 불출 처리합니다.\n\n재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.`
     if (!confirm(msg)) return
     try {
       const { data, error } = await supabase.rpc('pm_request_issue',
-        { p_ids: checked.map(r => r.id) })
+        { p_ids: checked.map(r => r.id), p_force: force })
       if (error) throw error
-      report(Array.isArray(data) ? data[0] : data, '불출 완료')
+      const r = Array.isArray(data) ? data[0] : data
+      const forced = Number(r?.forced ?? 0)
+      report(r, forced > 0 ? `불출 완료 (강제 ${forced}건)` : '불출 완료')
       qc.invalidateQueries({ queryKey: ['inventory'] })
     } catch (e) { toastError('불출 실패: ' + e.message) }
   }
@@ -213,6 +213,24 @@ export default function MaterialRequest() {
       report(Array.isArray(data) ? data[0] : data, '발주 생성')
       qc.invalidateQueries({ queryKey: ['purchase'] })
     } catch (e) { toastError('발주 생성 실패: ' + e.message) }
+  }
+
+  // 반려 취소 — 잘못 반려한 건을 요청 상태로 되돌린다
+  async function undoReject() {
+    if (!checked.length) return
+    if (!confirm(`${checked.length}건을 요청 상태로 되돌립니다.\n\n이미 불출·발주된 건은 되돌아가지 않습니다.`)) return
+    try {
+      const { data, error } = await supabase.rpc('pm_request_undo',
+        { p_ids: checked.map(r => r.id) })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      const done = Number(r?.done ?? 0), skip = Number(r?.skipped ?? 0)
+      if (skip > 0) toastError(`${n(done)}건 되돌림 · ${r?.note || ''}`)
+      else toastSuccess(`${n(done)}건 요청 상태로 되돌림`)
+      setSel({})
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
+    } catch (e) { toastError('되돌리기 실패: ' + e.message) }
   }
 
   // 요청자 본인 취소
@@ -392,19 +410,9 @@ export default function MaterialRequest() {
                         <p className="text-xs font-bold text-slate-700">{r.item_name}</p>
                         <p className="text-[11px] text-slate-400 mt-0.5">
                           부품 {n(r._parts)}종
-                          {r._short > 0 ? (
-                            <span className="ml-2 font-semibold text-rose-500">
-                              · 재고 부족 {n(r._short)}종
-                            </span>
-                          ) : (
-                            <span className="ml-2 font-semibold text-emerald-600">· 재고 충분</span>
-                          )}
+
                         </p>
-                        {r._short > 0 && r._shortList && (
-                          <p className="text-[11px] text-rose-400 mt-0.5 leading-snug">
-                            {r._shortList}{r._short > 8 ? ' …' : ''}
-                          </p>
-                        )}
+
                       </>
                     ) : r.std_code ? (
                       <>
@@ -413,11 +421,7 @@ export default function MaterialRequest() {
                         <p className="text-[11px] text-slate-400">
                           {r.maker}{r.maker && r.maker_code ? ' · ' : ''}
                           <span className="font-mono">{r.maker_code}</span>
-                          {r._stock !== undefined && (
-                            <span className={`ml-2 font-semibold ${r._stock > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                              재고 {n(r._stock)}{r._loc ? ` @ ${r._loc}` : ''}
-                            </span>
-                          )}
+
                         </p>
                       </>
                     ) : (
@@ -563,7 +567,6 @@ export default function MaterialRequest() {
               className="w-full px-3 py-2.5 text-sm border-2 border-slate-200 rounded-lg focus:outline-none focus:border-indigo-500" />
             <div className="mt-2 space-y-1">
               {hits.map(h => {
-                const inv = h.inventory?.[0]
                 return (
                   <button key={h.id} onClick={() => pickItem(h)}
                     className="w-full text-left px-3 py-2 rounded-lg border border-slate-200 hover:border-indigo-300 hover:bg-indigo-50">
@@ -572,11 +575,7 @@ export default function MaterialRequest() {
                     <p className="text-[11px] text-slate-400">
                       {h.manufacturer}{h.manufacturer && h.manufacturer_code ? ' · ' : ''}
                       <span className="font-mono">{h.manufacturer_code}</span>
-                      {inv && (
-                        <span className={`ml-2 font-semibold ${inv.qty > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
-                          재고 {n(inv.qty)}{inv.location ? ` @ ${inv.location}` : ''}
-                        </span>
-                      )}
+
                     </p>
                   </button>
                 )
@@ -624,14 +623,24 @@ export default function MaterialRequest() {
                 <span className="text-xs font-bold text-indigo-600">{checked.length}건 선택</span>
                 <button onClick={() => changeStatus('확인')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">확인</button>
-                <button onClick={doIssue}
+                <button onClick={() => doIssue(false)}
                   title="재고에서 실제로 차감하고 출고 이력을 남깁니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">불출 처리</button>
+                <button onClick={() => doIssue(true)}
+                  title="장부에 재고가 없어도 진행합니다 — 실물은 있는데 입고 처리가 안 된 경우"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">강제 불출</button>
                 <button onClick={doOrder}
                   title="해당 고객사 구매발주에 실제로 생성합니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50">발주 생성</button>
                 <button onClick={() => changeStatus('반려')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">반려</button>
+                {checked.some(r => r.status === '반려') && (
+                  <button onClick={undoReject}
+                    title="반려를 취소하고 요청 상태로 되돌립니다"
+                    className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50">
+                    ↩ 반려 취소
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -660,7 +669,6 @@ export default function MaterialRequest() {
             {list.map(r => {
               const st = ST[r.status] || ST['요청']
               const d = dday(r.need_date)
-              const enough = Number(r.stock_qty) >= Number(r.qty)
               return (
                 <div key={r.id}
                   onClick={() => canEdit && setSel(s => ({ ...s, [r.id]: !s[r.id] }))}
@@ -693,6 +701,13 @@ export default function MaterialRequest() {
                         {r.item_name}
                         <span className="ml-1.5 text-slate-500">{n(r.qty)}{r.unit}</span>
                       </p>
+                      {(r.maker || r.maker_code) && (
+                        <p className="text-xs text-slate-500">
+                          {r.maker}
+                          {r.maker && r.maker_code ? ' · ' : ''}
+                          <span className="font-mono">{r.maker_code}</span>
+                        </p>
+                      )}
                       {!r.item_id && r.unit === '대분' && (
                         <p className="text-[11px] text-indigo-500 font-semibold mt-0.5">
                           🧬 ASSY 자재 일체 — BOM 을 보고 불출해 주세요
@@ -707,22 +722,6 @@ export default function MaterialRequest() {
                         </p>
                       )}
                       {r.reason && <p className="text-[11px] text-slate-400 mt-0.5">사유 · {r.reason}</p>}
-
-                      {/* 담당자 판단 근거 */}
-                      {r.item_id && (
-                        <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-                          <span className={`px-2 py-0.5 rounded text-[11px] font-bold ${enough
-                            ? 'bg-emerald-100 text-emerald-700' : 'bg-rose-100 text-rose-700'}`}>
-                            재고 {n(r.stock_qty)}{r.stock_loc ? ` @ ${r.stock_loc}` : ''}
-                            {enough ? ' · 불출 가능' : ' · 부족'}
-                          </span>
-                          {Number(r.po_pending) > 0 && (
-                            <span className="px-2 py-0.5 rounded text-[11px] font-bold bg-sky-100 text-sky-700">
-                              발주 잔량 {n(r.po_pending)}
-                            </span>
-                          )}
-                        </div>
-                      )}
 
                       <div className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5 flex-wrap">
                         <span className="font-semibold text-slate-500">요청 {r.requester}</span>
