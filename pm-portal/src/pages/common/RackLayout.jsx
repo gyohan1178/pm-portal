@@ -36,6 +36,27 @@ export default function RackLayout() {
   const [qr, setQr] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
   const [zoom, setZoom] = useState(2)      // ZOOMS 인덱스
+  const [printMode, setPrintMode] = useState(false)   // 인쇄용 — 코드를 크게, 색은 최소로
+  const [printScale, setPrintScale] = useState(1)
+
+  // 배치도 인쇄 — 인쇄 모드로 바꾼 뒤 출력하고 원래대로 돌린다
+  function printMap() {
+    // A4 가로(297×210mm, 여백 8mm)에 한 장으로 들어가도록 배율을 정한다
+    const PW = 1062, PH = 700
+    const w = GW * CELL, h = GH * CELL
+    setPrintScale(Math.min(PW / w, PH / h, 1))
+    setPrintMode(true)
+    document.body.classList.add('printing-map')
+    setTimeout(() => {
+      const done = () => {
+        document.body.classList.remove('printing-map')
+        setPrintMode(false)
+        window.removeEventListener('afterprint', done)
+      }
+      window.addEventListener('afterprint', done)
+      window.print()
+    }, 120)   // 상태가 반영된 뒤 인쇄한다
+  }
   const CELL = ZOOMS[zoom]
 
   // 편집 상태 — 저장 전까지 화면에만 반영된다
@@ -276,9 +297,25 @@ export default function RackLayout() {
         @media print {
           body.printing-sheet > * { display: none !important; }
           body.printing-sheet .sheet-print { display: block !important; }
-          @page { size: A4 landscape; margin: 10mm; }
+
+          /* 배치도 인쇄 — 화면 요소를 숨기고 배치도만 종이에 맞춘다 */
+          body.printing-map .no-print { display: none !important; }
+          body.printing-map .map-wrap {
+            overflow: visible !important;
+            border: none !important;
+            background: #fff !important;
+            padding: 0 !important;
+            max-height: none !important;
+          }
+          body.printing-map .map-canvas {
+            transform-origin: top left;
+            background-image: none !important;   /* 격자 배경 제거 */
+          }
+          body.printing-map .print-title { display: block !important; }
+          @page { size: A4 landscape; margin: 8mm; }
         }
         .sheet-print { display: none; }
+        .print-title { display: none; }
       `}</style>
 
       <div className="no-print flex items-start justify-between gap-3 flex-wrap">
@@ -305,8 +342,15 @@ export default function RackLayout() {
           {tab === 'map' && (
             <button onClick={exportLayout}
               title="랙 목록과 배치 좌표를 엑셀로"
-              className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
+              className="no-print px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
               📊 엑셀
+            </button>
+          )}
+          {tab === 'map' && !editing && (
+            <button onClick={printMap}
+              title="배치도를 인쇄합니다 — 랙 코드를 크게 표시하고 사용률 색은 뺍니다"
+              className="no-print px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50">
+              🖨 배치도 인쇄
             </button>
           )}
           {tab === 'map' && canEdit && (editing ? (
@@ -397,10 +441,18 @@ export default function RackLayout() {
 
           {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
 
-          <div className="bg-white rounded-xl border-2 border-slate-300 p-3 overflow-auto">
-            <div ref={boardRef} className="relative"
+          <div className="map-wrap bg-white rounded-xl border-2 border-slate-300 p-3 overflow-auto">
+            {/* 인쇄물 제목 — 종이에만 나온다 */}
+            <div className="print-title" style={{ marginBottom: 8 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#0f172a' }}>진선테크 창고 배치도</div>
+              <div style={{ fontSize: 10, color: '#64748b' }}>
+                랙 {racks.length}면 · {n(total)}칸 · 출력 {new Date().toLocaleDateString('ko-KR')}
+              </div>
+            </div>
+            <div ref={boardRef} className="map-canvas relative"
               style={{
                 width: GW * CELL, height: GH * CELL,
+                ...(printMode ? { transform: `scale(${printScale})`, transformOrigin: 'top left' } : {}),
                 backgroundImage: 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)',
                 backgroundSize: `${CELL}px ${CELL}px`,
                 cursor: drag ? 'grabbing' : 'default',
@@ -444,7 +496,11 @@ export default function RackLayout() {
                 const t = Number(r.cells_total) || 1
                 const u = Number(r.cells_used) || 0
                 const pct = Math.round(u / t * 100)
-                const col = pct === 0 ? { b: '#94a3b8', g: '#f1f5f9', f: '#475569' }
+                // 인쇄용은 사용률 색을 빼고 코드가 잘 보이게 한다.
+                // 종이에 랙 위치를 적어 쓰는 용도이기 때문이다.
+                const col = printMode
+                  ? { b: '#1e293b', g: '#ffffff', f: '#0f172a' }
+                  : pct === 0 ? { b: '#94a3b8', g: '#f1f5f9', f: '#475569' }
                   : pct < 40 ? { b: '#10b981', g: '#d1fae5', f: '#065f46' }
                   : pct < 75 ? { b: '#f59e0b', g: '#fef3c7', f: '#92400e' }
                   : { b: '#f43f5e', g: '#ffe4e6', f: '#9f1239' }
@@ -470,16 +526,24 @@ export default function RackLayout() {
                     }}>
                     <span style={{
                       fontFamily: 'ui-monospace,Menlo,monospace',
-                      fontSize: Math.max(10, Math.round(CELL * 0.85)),
+                      fontSize: Math.max(printMode ? 13 : 10, Math.round(CELL * (printMode ? 1.05 : 0.85))),
                       fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px',
                     }}>{r.code}</span>
                     {(vertical ? h : w) > CELL * 5 && (
-                      <span style={{
-                        fontSize: Math.max(8, Math.round(CELL * 0.58)), fontWeight: 700,
-                        color: '#fff', background: col.b,
-                        padding: '0 3px', borderRadius: 3, lineHeight: 1.5,
-                        writingMode: 'horizontal-tb',
-                      }}>{pct}%</span>
+                      printMode ? (
+                        // 인쇄물에는 사용률 대신 규격을 적는다. 위치를 손으로 쓸 때 참고가 된다
+                        <span style={{
+                          fontSize: Math.max(8, Math.round(CELL * 0.5)), fontWeight: 600,
+                          color: '#64748b', lineHeight: 1.4,
+                        }}>{r.rows_cnt}×{r.levels_cnt}</span>
+                      ) : (
+                        <span style={{
+                          fontSize: Math.max(8, Math.round(CELL * 0.58)), fontWeight: 700,
+                          color: '#fff', background: col.b,
+                          padding: '0 3px', borderRadius: 3, lineHeight: 1.5,
+                          writingMode: 'horizontal-tb',
+                        }}>{pct}%</span>
+                      )
                     )}
                     {editing && (
                       <span
