@@ -9,7 +9,9 @@ import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 
 const GW = 80, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
-const ZOOMS = [11, 14, 18, 22]
+// 배치도 확대 단계. 13px 이 기본(18px 대비 약 70%)이며,
+// 좁은 화면에서는 더 작은 단계에서 시작한다.
+const ZOOMS = [9, 11, 13, 16, 18, 22]
 const pad = (v) => String(v).padStart(2, '0')
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -35,7 +37,13 @@ export default function RackLayout() {
   const [sel, setSel] = useState((code || '').toUpperCase())
   const [qr, setQr] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
-  const [zoom, setZoom] = useState(2)      // ZOOMS 인덱스
+  const [zoom, setZoom] = useState(() => {
+    // 폰은 가장 작게, 태블릿은 한 단계 위, 그 외는 13px(70%)
+    if (typeof window === 'undefined') return 2
+    if (window.innerWidth < 640) return 0
+    if (window.innerWidth < 1024) return 1
+    return 2
+  })
   const [printMode, setPrintMode] = useState(false)   // 인쇄용 — 코드를 크게, 색은 최소로
   const CELL = ZOOMS[zoom]
 
@@ -324,17 +332,17 @@ export default function RackLayout() {
         .print-title { display: none; }
       `}</style>
 
-      <div className="no-print flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
-          <p className="text-xs text-slate-400">
-            랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 사용 ({total ? Math.round(used / total * 100) : 0}%)
+      <div className="no-print flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
+          <h1 className="text-base sm:text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
+          <p className="text-[11px] sm:text-xs text-slate-400">
+            랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 ({total ? Math.round(used / total * 100) : 0}%)
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setScanOpen(true)}
-            className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800">
-            📷 QR 스캔
+            className="px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
+            📷<span className="hidden sm:inline"> QR 스캔</span>
           </button>
           {tab === 'map' && (
             <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden">
@@ -348,15 +356,15 @@ export default function RackLayout() {
           {tab === 'map' && (
             <button onClick={exportLayout}
               title="랙 목록과 배치 좌표를 엑셀로"
-              className="no-print px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
-              📊 엑셀
+              className="no-print px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
+              📊<span className="hidden sm:inline"> 엑셀</span>
             </button>
           )}
           {tab === 'map' && !editing && (
             <button onClick={printMap}
               title="배치도를 인쇄합니다 — 랙 코드를 크게 표시하고 사용률 색은 뺍니다"
-              className="no-print px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50">
-              🖨 배치도 인쇄
+              className="no-print px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 whitespace-nowrap">
+              🖨<span className="hidden sm:inline"> 배치도 인쇄</span>
             </button>
           )}
           {tab === 'map' && canEdit && (editing ? (
@@ -368,8 +376,8 @@ export default function RackLayout() {
             </>
           ) : (
             <button onClick={startEdit}
-              className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
-              ✏️ 배치 편집
+              className="px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 whitespace-nowrap">
+              ✏️<span className="hidden sm:inline"> 배치 편집</span>
             </button>
           ))}
         </div>
@@ -447,7 +455,11 @@ export default function RackLayout() {
 
           {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
 
-          <div className="map-wrap bg-white rounded-xl border-2 border-slate-300 p-3 overflow-auto">
+          <p className="no-print sm:hidden text-[11px] text-slate-400 mb-1.5">
+            좌우로 밀어 보세요 · 랙을 누르면 칸별 현황이 열립니다
+          </p>
+          <div className="map-wrap bg-white rounded-xl border-2 border-slate-300 p-1.5 sm:p-3 overflow-auto"
+            style={{ WebkitOverflowScrolling: 'touch' }}>
             {/* 인쇄물 제목 — 종이에만 나온다 */}
             <div className="print-title" style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: '#0f172a' }}>진선테크 창고 배치도</div>
