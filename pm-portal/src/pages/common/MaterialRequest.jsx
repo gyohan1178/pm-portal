@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
 
@@ -35,12 +36,14 @@ export default function MaterialRequest() {
   const [filter, setFilter] = useState(null)  // null=미완료
   const [mine, setMine] = useState(false)      // 내가 등록한 것만
   const [csFilter, setCsFilter] = useState(null)
+  const [deptFilter, setDeptFilter] = useState(null)
   const [sel, setSel] = useState({})
 
   // 요청 입력
   const [head, setHead] = useState({
     urgency: '보통', purpose: '', product_code: '', product_name: '',
     unit_no: '', need_date: '',
+    requester_name: '', check_dept: '', customer_code: '',
   })
   const [rows, setRows] = useState([emptyRow()])
   // ASSY 로 요청 — 그 BOM 부품을 제작구분별로 한꺼번에 가져온다
@@ -54,10 +57,10 @@ export default function MaterialRequest() {
   const [busy, setBusy] = useState(false)
 
   const { data: list = [], isLoading } = useQuery({
-    queryKey: ['materialRequests', filter, mine, csFilter],
+    queryKey: ['materialRequests', filter, mine, csFilter, deptFilter],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_request_list',
-        { p_status: filter, p_days: 90, p_mine: mine, p_customer: csFilter })
+        { p_status: filter, p_days: 90, p_mine: mine, p_customer: csFilter, p_dept: deptFilter })
       if (error) throw error
       return data || []
     },
@@ -149,10 +152,14 @@ export default function MaterialRequest() {
     const valid = rows.filter(r => (r.std_code || r.item_name) && Number(r.qty) > 0)
     if (!valid.length) { toastError('품목과 수량을 입력하세요'); return }
     if (!head.purpose.trim()) { toastError('사용 목적을 입력하세요'); return }
+    if (!head.requester_name.trim()) { toastError('요청자를 입력하세요'); return }
+    if (!head.check_dept) { toastError('확인부서를 선택하세요'); return }
     setBusy(true)
     try {
       const payload = valid.map(r => ({
         urgency: head.urgency, purpose: head.purpose,
+        requester_name: head.requester_name, check_dept: head.check_dept,
+        customer_code: head.customer_code,
         product_code: head.product_code, product_name: head.product_name,
         unit_no: head.unit_no, need_date: head.need_date || null,
         item_id: r.item_id, std_code: r.std_code, item_name: r.item_name,
@@ -163,7 +170,7 @@ export default function MaterialRequest() {
       if (error) throw error
       toastSuccess(`${n(data)}건 요청 등록 — 구매자재팀에 전달됩니다`)
       setRows([emptyRow()])
-      setHead({ urgency: '보통', purpose: '', product_code: '', product_name: '', unit_no: '', need_date: '' })
+      setHead({ urgency: '보통', purpose: '', product_code: '', product_name: '', unit_no: '', need_date: '', requester_name: '', check_dept: '', customer_code: '' })
       setTab('list')
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['todoList'] })
@@ -213,6 +220,62 @@ export default function MaterialRequest() {
       report(Array.isArray(data) ? data[0] : data, '발주 생성')
       qc.invalidateQueries({ queryKey: ['purchase'] })
     } catch (e) { toastError('발주 생성 실패: ' + e.message) }
+  }
+
+  // 이력 엑셀 — 기간을 지정해 전체를 뽑는다.
+  //   목록은 90일·미완료 위주라 이력 조회에는 맞지 않아 별도로 조회한다.
+  const [xlBusy, setXlBusy] = useState(false)
+  async function exportHistory() {
+    const from = prompt('시작일 (YYYY-MM-DD)\n비워두면 전체', 
+      new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10))
+    if (from === null) return
+    setXlBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_request_history', {
+        p_from: from.trim() || null, p_to: null,
+        p_dept: deptFilter, p_customer: csFilter,
+      })
+      if (error) throw error
+      if (!data?.length) { toastError('해당 기간에 요청이 없습니다'); return }
+
+      const rows = data.map(r => ({
+        '요청번호': r.req_no || '',
+        '요청일': r.req_date || '',
+        '상태': r.status || '',
+        '긴급도': r.urgency || '',
+        '확인부서': r.check_dept || '',
+        '고객사': r.customer_code || '',
+        '요청자': r.requester || '',
+        '사용목적': r.purpose || '',
+        '대상제품': r.product_code || '',
+        '호기': r.unit_no || '',
+        '기준코드': r.std_code || '',
+        '품명': r.item_name || '',
+        '제조사': r.maker || '',
+        '제조사품번': r.maker_code || '',
+        '요청수량': Number(r.qty) || 0,
+        '단위': r.unit || '',
+        '필요일': r.need_date || '',
+        '사유': r.reason || '',
+        '처리자': r.handler || '',
+        '처리유형': r.handle_type || '',
+        '처리일시': r.handled_at ? String(r.handled_at).slice(0, 16).replace('T', ' ') : '',
+        '불출수량': r.issued_qty ?? '',
+        '처리메모': r.handle_memo || '',
+      }))
+      const ws = XLSX.utils.json_to_sheet(rows)
+      ws['!cols'] = [{ wch: 14 }, { wch: 11 }, { wch: 8 }, { wch: 7 }, { wch: 11 }, { wch: 9 },
+                     { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 10 },
+                     { wch: 16 }, { wch: 32 }, { wch: 16 }, { wch: 18 },
+                     { wch: 9 }, { wch: 6 }, { wch: 11 }, { wch: 20 },
+                     { wch: 10 }, { wch: 9 }, { wch: 17 }, { wch: 9 }, { wch: 20 }]
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, ws, '자재요청이력')
+      XLSX.writeFile(wb, `자재요청이력_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      toastSuccess(`${n(rows.length)}건 내보냄`)
+    } catch (e) {
+      toastError('내보내기 실패: ' + e.message)
+    } finally { setXlBusy(false) }
   }
 
   // 반려 취소 — 잘못 반려한 건을 요청 상태로 되돌린다
@@ -327,7 +390,46 @@ export default function MaterialRequest() {
           </div>
 
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-            <p className="text-xs font-bold text-slate-500">① 무엇을 만들기 위해</p>
+            <p className="text-xs font-bold text-slate-500">① 누가 · 어느 부서</p>
+            <div className="grid sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">요청자 *</label>
+                <input value={head.requester_name}
+                  onChange={e => setHead(h => ({ ...h, requester_name: e.target.value }))}
+                  placeholder="이름"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">확인부서 *</label>
+                <div className="flex gap-1">
+                  {['하네스팀', '구매자재팀'].map(d => (
+                    <button key={d} onClick={() => setHead(h => ({ ...h, check_dept: d }))}
+                      className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border whitespace-nowrap ${
+                        head.check_dept === d
+                          ? 'border-indigo-500 bg-indigo-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-500'}`}>
+                      {d}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">고객사</label>
+                <select value={head.customer_code}
+                  onChange={e => setHead(h => ({ ...h, customer_code: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white">
+                  <option value="">자동 판별</option>
+                  <option value="AX">AXCELIS</option>
+                  <option value="ED">Edwards</option>
+                  <option value="VM">VM</option>
+                  <option value="CSK">CSK</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+            <p className="text-xs font-bold text-slate-500">② 무엇을 만들기 위해</p>
             <div className="grid sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">사용 목적 · 작업 내용 *</label>
@@ -374,7 +476,7 @@ export default function MaterialRequest() {
           {/* 품목 */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs font-bold text-slate-500">② 무엇이 얼마나</p>
+              <p className="text-xs font-bold text-slate-500">③ 무엇이 얼마나</p>
               <div className="flex items-center gap-1.5">
                 <button onClick={() => setAssyOpen(true)}
                   title="ASSY 번호로 그 BOM 부품을 한꺼번에 가져옵니다"
@@ -616,6 +718,23 @@ export default function MaterialRequest() {
                 : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
               🙋 내 요청만
             </button>
+
+            {/* 확인부서 */}
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+              {[[null, '전부서'], ['하네스팀', '하네스'], ['구매자재팀', '구매자재']].map(([d, l]) => (
+                <button key={l} onClick={() => { setDeptFilter(d); setSel({}) }}
+                  className={`px-2.5 py-1.5 text-xs font-bold rounded-md whitespace-nowrap ${
+                    deptFilter === d ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+                  {l}
+                </button>
+              ))}
+            </div>
+
+            <button onClick={exportHistory} disabled={xlBusy}
+              title="기간을 지정해 요청 이력을 엑셀로 내려받습니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
+              {xlBusy ? '…' : '📥 이력 엑셀'}
+            </button>
             <span className="text-xs text-slate-400">{n(list.length)}건</span>
 
             {canEdit && checked.length > 0 && (
@@ -717,6 +836,12 @@ export default function MaterialRequest() {
                             )}
                             {h.customer_code && (
                               <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">{h.customer_code}</span>
+                            )}
+                            {h.check_dept && (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                h.check_dept.includes('하네스') ? 'bg-violet-100 text-violet-700' : 'bg-teal-100 text-teal-700'}`}>
+                                {h.check_dept}
+                              </span>
                             )}
                             {d !== null && (
                               <span className={`text-[11px] font-bold ${d < 0 ? 'text-rose-600' : d <= 3 ? 'text-amber-600' : 'text-slate-400'}`}>
