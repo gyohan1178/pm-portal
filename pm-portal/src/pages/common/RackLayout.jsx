@@ -37,27 +37,47 @@ export default function RackLayout() {
   const [scanOpen, setScanOpen] = useState(false)
   const [zoom, setZoom] = useState(2)      // ZOOMS 인덱스
   const [printMode, setPrintMode] = useState(false)   // 인쇄용 — 코드를 크게, 색은 최소로
-  const [printScale, setPrintScale] = useState(1)
-
-  // 배치도 인쇄 — 인쇄 모드로 바꾼 뒤 출력하고 원래대로 돌린다
-  function printMap() {
-    // A4 가로(297×210mm, 여백 8mm)에 한 장으로 들어가도록 배율을 정한다
-    const PW = 1062, PH = 700
-    const w = GW * CELL, h = GH * CELL
-    setPrintScale(Math.min(PW / w, PH / h, 1))
-    setPrintMode(true)
-    document.body.classList.add('printing-map')
-    setTimeout(() => {
-      const done = () => {
-        document.body.classList.remove('printing-map')
-        setPrintMode(false)
-        window.removeEventListener('afterprint', done)
-      }
-      window.addEventListener('afterprint', done)
-      window.print()
-    }, 120)   // 상태가 반영된 뒤 인쇄한다
-  }
   const CELL = ZOOMS[zoom]
+
+  // 배치도 인쇄.
+  //
+  //   화면 요소를 숨기는 방식은 Layout 의 overflow 구조에 걸려
+  //   빈 종이가 나온다. 배치도 부분만 새 창에 복사해 인쇄한다.
+  function printMap() {
+    if (!boardRef.current) { toastError('배치도를 찾을 수 없습니다'); return }
+    // 인쇄 모양(코드 크게·색 없음)이 반영된 뒤 복사해야 한다
+    setPrintMode(true)
+    setTimeout(() => { doPrintMap(); setPrintMode(false) }, 150)
+  }
+
+  function doPrintMap() {
+    const el = boardRef.current
+    if (!el) return
+    const w = GW * CELL, h = GH * CELL
+    const scale = Math.min(1062 / w, 700 / h, 1)   // A4 가로 한 장
+
+    const win = window.open('', '_blank', 'width=1200,height=800')
+    if (!win) { toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
+
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>창고 배치도</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;padding:10px;font-family:-apple-system,'Malgun Gothic',sans-serif;background:#fff}
+  .ttl{font-size:15px;font-weight:800;color:#0f172a}
+  .sub{font-size:10px;color:#64748b;margin-bottom:8px}
+  .canvas{position:relative;transform:scale(${scale});transform-origin:top left;
+          width:${w}px;height:${h}px}
+  @page{size:A4 landscape;margin:8mm}
+  @media print{body{padding:0}}
+</style></head><body>
+  <div class="ttl">진선테크 창고 배치도</div>
+  <div class="sub">랙 ${racks.length}면 · ${n(total)}칸 · 출력 ${new Date().toLocaleDateString('ko-KR')}</div>
+  <div class="canvas">${el.innerHTML}</div>
+</body></html>`)
+    win.document.close()
+    win.onload = () => { win.focus(); win.print() }
+  }
 
   // 편집 상태 — 저장 전까지 화면에만 반영된다
   const [editing, setEditing] = useState(false)
@@ -298,32 +318,6 @@ export default function RackLayout() {
           body.printing-sheet > * { display: none !important; }
           body.printing-sheet .sheet-print { display: block !important; }
 
-          /* 배치도 인쇄 — 배치도만 남기고 나머지를 숨긴다.
-             상단 바·사이드바는 Layout 안에 있어 no-print 만으로는 안 걸러지므로
-             배치도를 화면 맨 위로 끌어올려 단독으로 출력한다. */
-          body.printing-map .no-print,
-          body.printing-map header,
-          body.printing-map nav,
-          body.printing-map aside { display: none !important; }
-
-          body.printing-map .map-wrap {
-            position: absolute !important;
-            top: 0 !important; left: 0 !important;
-            width: 100% !important;
-            z-index: 9999;
-          }
-          body.printing-map .map-wrap {
-            overflow: visible !important;
-            border: none !important;
-            background: #fff !important;
-            padding: 0 !important;
-            max-height: none !important;
-          }
-          body.printing-map .map-canvas {
-            transform-origin: top left;
-            background-image: none !important;   /* 격자 배경 제거 */
-          }
-          body.printing-map .print-title { display: block !important; }
           @page { size: A4 landscape; margin: 8mm; }
         }
         .sheet-print { display: none; }
@@ -464,7 +458,6 @@ export default function RackLayout() {
             <div ref={boardRef} className="map-canvas relative"
               style={{
                 width: GW * CELL, height: GH * CELL,
-                ...(printMode ? { transform: `scale(${printScale})`, transformOrigin: 'top left' } : {}),
                 backgroundImage: 'linear-gradient(#e2e8f0 1px, transparent 1px), linear-gradient(90deg, #e2e8f0 1px, transparent 1px)',
                 backgroundSize: `${CELL}px ${CELL}px`,
                 cursor: drag ? 'grabbing' : 'default',

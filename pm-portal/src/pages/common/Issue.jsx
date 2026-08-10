@@ -205,6 +205,17 @@ export default function Issue() {
     },
   })
 
+  // 랙 규격 — 불출표에 창고 동선 격자를 그리기 위해 필요하다
+  const { data: racks = [] } = useQuery({
+    queryKey: ['issueRacks'],
+    staleTime: 30 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_rack')
+        .select('code,rows_cnt,levels_cnt,zone').order('sort_no')
+      return data || []
+    },
+  })
+
   // 제작구분(make_type) 메타 — 라벨은 '전장(normal)'만 출력, 현장재고·하네스·미대상 제외
   const { data: mtMeta = {} } = useQuery({
     queryKey: ['issueMtMeta', metaIds.join(',')],
@@ -275,6 +286,50 @@ export default function Issue() {
       <td class="c">${r.unit || ''}</td>
       <td class="chk"></td>
     </tr>`).join('')
+
+    // ── 창고 동선 격자 ──
+    //   가져올 자재가 어느 칸에 있는지 랙별로 표시한다.
+    //   칸 안의 번호는 위 목록의 No 와 같아 대조할 수 있다.
+    const locMap = {}          // 'A1' → { '05-1': [3, 7] }
+    const noLoc = []           // 위치가 지정되지 않은 자재
+    rows.forEach((r, i) => {
+      const loc = String(r.location || '').trim()
+      const m = loc.match(/^([A-Z]+\d*)-(\d+)-(\d+)$/i)
+      if (!m) { noLoc.push(i + 1); return }
+      const [, rack, cell, lv] = m
+      const key = `${parseInt(cell, 10)}-${parseInt(lv, 10)}`
+      if (!locMap[rack]) locMap[rack] = {}
+      if (!locMap[rack][key]) locMap[rack][key] = []
+      locMap[rack][key].push(i + 1)
+    })
+
+    // 자재가 있는 랙만 그린다
+    const usedRacks = racks.filter(rk => locMap[rk.code])
+    const gridHtml = usedRacks.length === 0 ? '' : `
+    <div class="grid-sec">
+      <div class="grid-ttl">창고 동선 — 아래 칸에서 가져오세요</div>
+      ${usedRacks.map(rk => {
+        const cells = []
+        for (let lv = rk.levels_cnt; lv >= 1; lv--) {
+          const row = []
+          for (let c = 1; c <= rk.rows_cnt; c++) {
+            const hit = locMap[rk.code][`${c}-${lv}`]
+            row.push(hit
+              ? `<td class="hit">${hit.join(',')}</td>`
+              : `<td></td>`)
+          }
+          cells.push(`<tr><th class="lv">${lv}층</th>${row.join('')}</tr>`)
+        }
+        const head = []
+        for (let c = 1; c <= rk.rows_cnt; c++) head.push(`<th>${c}</th>`)
+        return `<div class="rack">
+          <div class="rack-name">${rk.code}<span class="rack-sub">${rk.rows_cnt}칸 ${rk.levels_cnt}층</span></div>
+          <table class="grid"><tr><th class="lv"></th>${head.join('')}</tr>${cells.join('')}</table>
+        </div>`
+      }).join('')}
+      ${noLoc.length ? `<div class="noloc">⚠ 위치 미지정 — 목록 번호 ${noLoc.join(', ')} 은 직접 찾아야 합니다</div>` : ''}
+    </div>`
+
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 불출표</title>
     <style>
       *{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}
@@ -287,6 +342,19 @@ export default function Issue() {
       th{background:#f0f0f0;font-size:11px}
       .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}
       .chk{width:44px;text-align:center}
+      /* 창고 동선 격자 */
+      .grid-sec{margin-top:14px;page-break-inside:avoid}
+      .grid-ttl{font-size:13px;font-weight:bold;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:8px}
+      .rack{display:inline-block;vertical-align:top;margin:0 14px 12px 0}
+      .rack-name{font-size:12px;font-weight:bold;margin-bottom:2px}
+      .rack-sub{font-size:9px;color:#777;font-weight:normal;margin-left:5px}
+      table.grid{border-collapse:collapse;margin:0}
+      table.grid th,table.grid td{border:1px solid #bbb;width:19px;height:19px;
+        text-align:center;font-size:8px;padding:0;color:#999}
+      table.grid th{background:#f5f5f5;font-weight:normal}
+      table.grid th.lv{width:26px;font-size:8px}
+      table.grid td.hit{background:#333;color:#fff;font-weight:bold;font-size:9px}
+      .noloc{font-size:11px;color:#b00;margin-top:6px}
       tr{page-break-inside:avoid}
       .sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
       .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
@@ -303,6 +371,7 @@ export default function Issue() {
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
+    ${gridHtml}
     <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
     </body></html>`
     const w = window.open('', '_blank')
