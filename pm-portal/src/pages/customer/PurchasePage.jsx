@@ -879,6 +879,7 @@ export default function PurchasePage() {
                     {showBulk && (
                       <div className="mt-2 space-y-2">
                         <p className="text-[11px] text-slate-400">엑셀에서 <b>기준코드 · 수량 · 단가(선택)</b> 열을 복사해 붙여넣기 (탭/쉼표 구분, 한 줄에 한 품목). 단가 비우면 등록단가 자동.</p>
+                        <p className="text-[11px] text-indigo-500 font-semibold">위 구매처를 비워두면 품목별 기본 구매처로 자동 배정되어, 업체별로 나뉘어 발주됩니다.</p>
                         <textarea value={bulkText} onChange={e=>setBulkText(e.target.value)} rows={5}
                           placeholder={"AX-510000540\t100\nAX-500001501\t50\t1200"}
                           className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
@@ -955,10 +956,37 @@ export default function PurchasePage() {
               {!editId && lines.length>0 && (
                 <div className="rounded-lg border border-indigo-200 bg-white p-2 space-y-1">
                   <p className="text-xs font-bold text-indigo-600">담은 품목 {lines.length}건</p>
+                  {/* 업체별 요약 — 저장하면 업체 수만큼 발주가 나뉜다 */}
+                  {(() => {
+                    const by = {}
+                    lines.forEach(ln => {
+                      const k = vendors.find(v => v.id === ln.vendor_id)?.name || '(업체없음)'
+                      by[k] = (by[k] || 0) + 1
+                    })
+                    const keys = Object.keys(by)
+                    if (keys.length < 2) return null
+                    return (
+                      <div className="flex flex-wrap gap-1 pb-1 border-b border-slate-100">
+                        {keys.sort().map(k => (
+                          <span key={k}
+                            className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                              k === '(업체없음)' ? 'bg-rose-50 text-rose-600' : 'bg-indigo-50 text-indigo-700'}`}>
+                            {k} {by[k]}
+                          </span>
+                        ))}
+                      </div>
+                    )
+                  })()}
                   {lines.map((ln,i)=>(
                     <div key={i} className="flex items-center gap-2 text-xs border-b border-slate-50 last:border-0 py-1">
                       <span className="font-mono text-indigo-600 w-24 shrink-0 truncate">{ln.std_code||'-'}</span>
                       <span className="text-slate-700 flex-1 truncate">{ln.name}</span>
+                      {(() => {
+                        const vn = vendors.find(v => v.id === ln.vendor_id)?.name
+                        return vn
+                          ? <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-600 shrink-0 max-w-[90px] truncate" title={vn}>{vn}</span>
+                          : <span className="px-1.5 py-0.5 rounded bg-rose-50 text-[10px] font-bold text-rose-500 shrink-0">업체없음</span>
+                      })()}
                       <label className="flex items-center gap-1 text-slate-400">수량
                         <input type="number" min="0" value={ln.qty_ordered} onChange={e=>updateLine(i,'qty_ordered',Number(e.target.value))}
                           className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded text-slate-700"/>
