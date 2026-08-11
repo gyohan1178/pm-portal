@@ -37,14 +37,23 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   // movement_date가 null인 경우 created_at 기준으로 대체 조회
   // po_id로 발주(purchase_orders)를 조인해 발주 당시 구매처(vendor)를 가져옴
   // (item의 기본 vendor가 아니라, 실제 발주한 구매처를 표시하기 위함)
-  const { data, error } = await supabase.from('stock_movements')
-    .select('*, items(std_code,name,unit), customers(name,code), purchase_orders(po_number, vendors(name), projects(code))')
-    .eq('movement_type','입고')
-    .gte('movement_date', from)
-    .lte('movement_date', to)
-    .order('movement_date', { ascending: false })
-    .limit(500)
-  if (error) throw error
+  // 500건에서 잘리던 것을 5,000건까지 넓혔다.
+  // 그 이상은 기간을 좁히는 것이 맞고, 화면 표시는 '더 보기'로 나눈다.
+  const CAP = 5000
+  const PAGE = 1000
+  let data = []
+  for (let off = 0; off < CAP; off += PAGE) {
+    const { data: batch, error } = await supabase.from('stock_movements')
+      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, vendors(name), projects(code))')
+      .eq('movement_type','입고')
+      .gte('movement_date', from)
+      .lte('movement_date', to)
+      .order('movement_date', { ascending: false })
+      .range(off, off + PAGE - 1)
+    if (error) throw error
+    data = data.concat(batch || [])
+    if (!batch || batch.length < PAGE) break
+  }
   let rows = (data||[]).map(r=>({
     ...r,
     movement_date: r.movement_date,
@@ -125,6 +134,9 @@ export default function Inbound() {
   const [hVendor, setHVendor] = useState('')
   const [hVendorText, setHVendorText] = useState('')
   const [hItem, setHItem] = useState('')
+  // 입력이 멈춘 뒤 거른다 — 한 글자마다 전체를 훑으면 느려진다
+  const dHVendor = useDebounced(hVendorText, 250)
+  const dHItem = useDebounced(hItem, 250)
   const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayStr(), customerId:'', vendorId:'' })
   const [selHist, setSelHist] = useState(new Set())
 
@@ -265,15 +277,26 @@ export default function Inbound() {
 
   const checkedRows = rows.filter(r => checked[r.id])
   const hasInput = checkedRows.some(r => inboundData[r.id]?.qty && Number(inboundData[r.id].qty) > 0)
-  const histShown = (history||[]).filter(r => {
-    const vq = hVendorText.trim().toLowerCase()
-    const iq = hItem.trim().toLowerCase()
-    const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
-    if (vq && !vname.includes(vq)) return false
-    if (iq && !`${r.items?.std_code||''} ${r.items?.name||''}`.toLowerCase().includes(iq)) return false
-    return true
-  })
+  // 검색은 디바운스된 값으로 거른다.
+  // 한 글자마다 전체를 훑으면 건수가 많을 때 입력이 밀린다.
+  const histShown = useMemo(() => {
+    const vq = dHVendor.trim().toLowerCase()
+    const iq = dHItem.trim().toLowerCase()
+    if (!vq && !iq) return history || []
+    return (history || []).filter(r => {
+      const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
+      if (vq && !vname.includes(vq)) return false
+      if (iq) {
+        // 기준코드·품명뿐 아니라 제조사·제조사품번으로도 찾는다
+        const hay = `${r.items?.std_code || ''} ${r.items?.name || ''} ${r.items?.manufacturer || ''} ${r.items?.manufacturer_code || ''}`.toLowerCase()
+        if (!hay.includes(iq)) return false
+      }
+      return true
+    })
+  }, [history, dHVendor, dHItem])
   const histTotal = histShown.reduce((a,r)=>a+r.qty,0)
+  // 화면에는 200건씩 그린다. 수천 건을 한 번에 그리면 검색이 밀린다.
+  const hVis = useVisibleRows(histShown, 200, [dHVendor, dHItem, hQuery])
 
   function exportHistory() {
     const data = histShown.map(r=>({
@@ -534,7 +557,7 @@ export default function Inbound() {
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">품번 검색</label>
-              <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명"
+              <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명·제조사·제조사품번"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer,vendorId:null})}
@@ -588,7 +611,7 @@ export default function Inbound() {
                   <tbody>
                     {histShown.length===0
                       ? <tr><td colSpan={11} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
-                      : histShown.map(r=>(
+                      : hVis.shown.map(r=>(
                         <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${selHist.has(r.id)?'bg-red-50/40':''}`}>
                           <td className="px-3 py-2 text-center">
                             <input type="checkbox" checked={selHist.has(r.id)}
@@ -609,6 +632,7 @@ export default function Inbound() {
                     }
                   </tbody>
                 </table>
+                <MoreRows {...hVis} />
               </div>
             </div>
           )}

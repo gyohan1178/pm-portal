@@ -8,7 +8,8 @@ async function fetchPriceHistory(search) {
     .from('price_history')
     .select('*, items(std_code, name, type), vendors(name)')
     .order('year', { ascending: false })
-  const { data } = await q.limit(200)
+  // 이력은 계속 쌓인다. 조회는 넉넉히 하고 화면 표시는 더 보기로 나눈다.
+  const { data } = await q.limit(2000)
   if (!search) return data || []
   return (data || []).filter(r =>
     r.items?.name?.includes(search) || r.items?.std_code?.includes(search)

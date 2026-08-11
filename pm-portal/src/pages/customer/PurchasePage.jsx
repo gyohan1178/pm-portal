@@ -39,7 +39,7 @@ async function fetchPurchaseHistory(csId, from, to) {
     .gte('movement_date', from)
     .lte('movement_date', to)
     .order('movement_date', { ascending: false })
-    .limit(300)
+    .limit(2000)   // 발주가 쌓이므로 넉넉히. 화면 표시는 더 보기로 나눈다
   if (error) throw error
   // customer_id 필터 (purchase_orders 통해서)
   const poIds = (data||[]).filter(r=>r.purchase_orders).map(r=>r.purchase_orders)
