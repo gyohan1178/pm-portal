@@ -85,7 +85,8 @@ export default function Outbound() {
   }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
-  const [sortBy, setSortBy] = useState('maker')         // maker | location | code
+  // 위치순이 기본. 창고를 돌며 꺼내는 순서와 같아 동선이 짧아진다.
+  const [sortBy, setSortBy] = useState('location')      // maker | location | code
   const [harnessUnits, setHarnessUnits] = useState(10)  // 하네스 불출 대수
   // 출고 처리
   const [selCustomer, setSelCustomer] = useState('')
@@ -357,7 +358,14 @@ export default function Outbound() {
     const rank = { normal: 0, field_stock: 1, harness: 2, exclude: 3 }
     const cmp = {
       maker: (a,b)=> String(a.maker).localeCompare(String(b.maker),'ko') || String(a.makerPn).localeCompare(String(b.makerPn),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
-      location: (a,b)=> String(a.location||'힣').localeCompare(String(b.location||'힣'),'ko') || String(a.std_code).localeCompare(String(b.std_code)),
+      // 위치 미지정은 맨 뒤로. 한글 '힣' 은 localeCompare 에서 알파벳보다 앞이라
+      // 문자로 채우지 않고 그룹을 나눠 판단한다.
+      location: (a,b)=> {
+        const ax = a.location ? 0 : 1, bx = b.location ? 0 : 1
+        if (ax !== bx) return ax - bx
+        return String(a.location||'').localeCompare(String(b.location||''),'ko')
+            || String(a.std_code).localeCompare(String(b.std_code))
+      },
       code: (a,b)=> String(a.std_code).localeCompare(String(b.std_code)),
     }
     return rows.sort((a,b)=>

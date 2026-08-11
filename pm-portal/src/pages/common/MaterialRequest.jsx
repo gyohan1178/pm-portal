@@ -10,7 +10,8 @@ const today = () => new Date().toISOString().slice(0, 10)
 const dday = (d) => d ? Math.ceil((new Date(d) - new Date(new Date().toDateString())) / 86400000) : null
 
 const ST = {
-  '요청':   { cls: 'border-amber-300 bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
+  '요청':     { cls: 'border-amber-300 bg-amber-50 text-amber-700', dot: 'bg-amber-500' },
+  '코드대기': { cls: 'border-orange-400 bg-orange-50 text-orange-700', dot: 'bg-orange-500' },
   '확인':   { cls: 'border-sky-300 bg-sky-50 text-sky-700', dot: 'bg-sky-500' },
   '처리중': { cls: 'border-indigo-300 bg-indigo-50 text-indigo-700', dot: 'bg-indigo-500' },
   '완료':   { cls: 'border-emerald-200 bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
@@ -37,6 +38,18 @@ export default function MaterialRequest() {
   const [mine, setMine] = useState(false)      // 내가 등록한 것만
   const [csFilter, setCsFilter] = useState(null)
   const [deptFilter, setDeptFilter] = useState(null)
+  const [codeForm, setCodeForm] = useState(null)   // 코드 부여 중인 항목
+
+  // 코드 부여 대기 — 같은 품명끼리 묶여 나온다
+  const { data: pendingCodes = [] } = useQuery({
+    queryKey: ['pendingCodes'],
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_pending_codes')
+      return data || []
+    },
+    enabled: canEdit,
+    staleTime: 60 * 1000,
+  })
   const [sel, setSel] = useState({})
 
   // 요청 입력
@@ -278,6 +291,140 @@ export default function MaterialRequest() {
     } finally { setXlBusy(false) }
   }
 
+  // 요청서 출력.
+  //   선택한 요청을 종이로 뽑아 창고를 돌 때 쓴다.
+  //   위치순으로 나오고 확인칸이 있어 꺼내면서 표시할 수 있다.
+  async function printRequest() {
+    if (!checked.length) { toastError('출력할 요청을 선택하세요'); return }
+    try {
+      const { data, error } = await supabase.rpc('pm_request_print',
+        { p_ids: checked.map(r => r.id) })
+      if (error) throw error
+      if (!data?.length) { toastError('출력할 내용이 없습니다'); return }
+
+      const h = data[0]
+      const today = new Date().toLocaleDateString('ko-KR')
+      const body = data.map((r, i) => `<tr>
+        <td class="c">${i + 1}</td>
+        <td class="c mono b">${r.location || '<span class="no">미지정</span>'}</td>
+        <td class="mono">${r.std_code || '-'}</td>
+        <td>${r.item_name || ''}</td>
+        <td>${r.maker || '-'}</td>
+        <td class="mono">${r.maker_code || '-'}</td>
+        <td class="c b">${Number(r.qty).toLocaleString('ko-KR')}</td>
+        <td class="c">${r.unit || ''}</td>
+        <td class="chk"></td>
+      </tr>`).join('')
+
+      // 요청 머리 — 여러 요청을 함께 뽑으면 요청번호를 모두 적는다
+      const reqNos = [...new Set(data.map(r => r.req_no))].join(', ')
+      const purposes = [...new Set(data.map(r => r.purpose).filter(Boolean))]
+      const needs = [...new Set(data.map(r => r.need_date).filter(Boolean))].sort()
+
+      const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 요청서</title>
+<style>
+  *{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}
+  body{padding:24px;color:#111}
+  .head{display:flex;justify-content:space-between;align-items:flex-end;
+        border-bottom:2px solid #333;padding-bottom:8px;margin-bottom:6px}
+  h1{font-size:20px;margin:0}
+  .meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
+  .info{font-size:12px;margin:8px 0;line-height:1.7}
+  .info b{display:inline-block;width:60px;color:#555}
+  table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
+  th,td{border:1px solid #999;padding:5px 6px;text-align:left}
+  th{background:#f0f0f0;font-size:11px}
+  .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}
+  .chk{width:44px;text-align:center}
+  .no{color:#b00;font-weight:normal;font-size:10px}
+  .urgent{background:#c00;color:#fff;padding:1px 6px;border-radius:3px;font-size:11px}
+  .sign{display:flex;gap:40px;margin-top:24px;font-size:12px}
+  .sign span{border-top:1px solid #999;padding-top:4px;width:120px;text-align:center}
+  @page{size:A4;margin:12mm}
+</style></head><body>
+  <div class="head">
+    <h1>자재 요청서${data.some(r => r.urgency === '긴급') ? ' <span class="urgent">긴급</span>' : ''}</h1>
+    <div class="meta">
+      요청번호 ${reqNos}<br>
+      출력일 ${today}
+    </div>
+  </div>
+  <div class="info">
+    <b>요청자</b> ${h.requester || '-'}
+    &nbsp;&nbsp;<b>확인부서</b> ${h.check_dept || '-'}
+    ${h.customer_code ? `&nbsp;&nbsp;<b>고객사</b> ${h.customer_code}` : ''}<br>
+    <b>필요일</b> ${needs.join(', ') || '-'}
+    ${h.product_code ? `&nbsp;&nbsp;<b>대상</b> ${h.product_code} ${h.unit_no || ''}` : ''}<br>
+    <b>목적</b> ${purposes.join(' / ') || '-'}
+  </div>
+  <table>
+    <thead><tr>
+      <th class="c" style="width:5%">No</th>
+      <th class="c" style="width:11%">보관위치</th>
+      <th style="width:15%">기준코드</th>
+      <th style="width:27%">품명</th>
+      <th style="width:13%">제조사</th>
+      <th style="width:16%">제조사품번</th>
+      <th class="c" style="width:6%">수량</th>
+      <th class="c" style="width:5%">단위</th>
+      <th class="chk">확인</th>
+    </tr></thead>
+    <tbody>${body}</tbody>
+  </table>
+  <div class="sign"><span>요청</span><span>불출</span><span>확인</span></div>
+</body></html>`
+
+      const win = window.open('', '_blank')
+      if (!win) { toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
+      win.document.write(html); win.document.close()
+      win.onload = () => { win.focus(); win.print() }
+    } catch (e) {
+      toastError('출력 실패: ' + e.message)
+    }
+  }
+
+  // 코드 부여 — 품목을 만들고 요청에 연결한다
+  async function assignCode() {
+    const f = codeForm
+    if (!f?.std_code?.trim()) { toastError('기준코드를 입력하세요'); return }
+    try {
+      const { data, error } = await supabase.rpc('pm_assign_code', {
+        p_ids: f.ids, p_std_code: f.std_code.trim(),
+        p_name: f.item_name, p_maker: f.maker, p_maker_code: f.maker_code,
+        p_unit: f.unit || 'EA', p_dept: f.dept || null,
+      })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      toastSuccess(r?.note || '코드 부여 완료')
+      setCodeForm(null)
+      qc.invalidateQueries({ queryKey: ['pendingCodes'] })
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
+    } catch (e) { toastError('실패: ' + e.message) }
+  }
+
+  // 코드 부여 요청.
+  //   품명만 적힌 건은 기준코드가 없어 불출·발주가 되지 않는다.
+  //   '등록 없이 완료' 를 허용하면 그쪽이 기본 경로가 되어 이력이 쌓이지 않으므로,
+  //   코드를 부여받는 흐름으로만 처리한다.
+  async function needCode() {
+    if (!checked.length) return
+    if (!confirm(`${checked.length}건에 기준코드 부여를 요청합니다.\n\n관제탑에 표시되며, 코드가 부여되면 다시 처리할 수 있습니다.`)) return
+    try {
+      const { data, error } = await supabase.rpc('pm_request_need_code',
+        { p_ids: checked.map(r => r.id) })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      const done = Number(r?.done ?? 0), skip = Number(r?.skipped ?? 0)
+      if (skip > 0) toastError(`${n(done)}건 요청 · ${r?.note || ''}`)
+      else toastSuccess(`${n(done)}건 코드 부여 요청`)
+      setSel({})
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['pendingCodes'] })
+    } catch (e) { toastError('실패: ' + e.message) }
+  }
+
   // 반려 취소 — 잘못 반려한 건을 요청 상태로 되돌린다
   async function undoReject() {
     if (!checked.length) return
@@ -350,7 +497,10 @@ export default function MaterialRequest() {
           </p>
         </div>
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
-          {[['list', '📋 요청 목록'], ...(canReq ? [['new', '＋ 새 요청']] : [])].map(([k, l]) => (
+          {[['list', '📋 요청 목록'],
+            ...(canReq ? [['new', '＋ 새 요청']] : []),
+            ...(canEdit && pendingCodes.length ? [['code', `🏷 코드 부여 ${pendingCodes.length}`]] : []),
+           ].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
               {l}
@@ -701,6 +851,130 @@ export default function MaterialRequest() {
       )}
 
       {/* ───────── 목록 ───────── */}
+      {/* ───────── 코드 부여 ───────── */}
+      {tab === 'code' && canEdit && (
+        <div className="space-y-3">
+          <div className="rounded-xl border-2 border-orange-200 bg-orange-50 p-4">
+            <p className="text-sm font-bold text-orange-800 mb-1">🏷 기준코드가 없는 요청</p>
+            <p className="text-xs text-orange-700 leading-relaxed">
+              품명만 적혀 온 요청입니다. 코드를 부여해야 불출·발주를 진행할 수 있습니다.<br />
+              같은 품명끼리 묶여 있어 한 번 부여하면 관련 요청이 모두 연결됩니다.
+            </p>
+          </div>
+
+          {pendingCodes.map((p2, i) => (
+            <div key={i} className="rounded-xl border border-slate-200 bg-white p-4">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-slate-800">{p2.item_name}</p>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {p2.maker}
+                    {p2.maker && p2.maker_code ? ' · ' : ''}
+                    <span className="font-mono">{p2.maker_code}</span>
+                  </p>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    요청 {n(p2.req_count)}건 · 합계 {n(p2.total_qty)}{p2.unit || ''}
+                    {' · '}{p2.req_nos}
+                  </p>
+                  <p className="text-[11px] text-slate-400">
+                    최초 {p2.first_req} · 요청자 {p2.requesters}
+                  </p>
+                </div>
+                <button onClick={() => setCodeForm({
+                    ids: p2.ids, item_name: p2.item_name, maker: p2.maker || '',
+                    maker_code: p2.maker_code || '', unit: p2.unit || 'EA',
+                    std_code: '', dept: '',
+                  })}
+                  className="px-3 py-2 text-xs font-bold rounded-lg bg-orange-600 text-white hover:bg-orange-700 whitespace-nowrap">
+                  코드 부여
+                </button>
+              </div>
+            </div>
+          ))}
+
+          {!pendingCodes.length && (
+            <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
+              <p className="text-2xl mb-1">✓</p>
+              <p className="text-sm text-slate-400">코드 부여를 기다리는 요청이 없습니다.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 코드 입력 */}
+      {codeForm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setCodeForm(null)}>
+          <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3"
+            onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-bold text-slate-800">기준코드 부여</h3>
+              <button onClick={() => setCodeForm(null)} className="text-slate-400 text-xl px-2">✕</button>
+            </div>
+            <p className="text-xs text-slate-500">
+              요청 {n(codeForm.ids.length)}건에 연결됩니다. 이미 있는 코드를 넣으면 그 품목에 연결만 합니다.
+            </p>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">기준코드 *</label>
+              <input value={codeForm.std_code} autoFocus
+                onChange={e => setCodeForm(f => ({ ...f, std_code: e.target.value.toUpperCase() }))}
+                placeholder="예: AX-5101788"
+                className="w-full px-3 py-2.5 text-sm font-mono border-2 border-slate-200 rounded-lg focus:outline-none focus:border-orange-500" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">품명</label>
+              <input value={codeForm.item_name}
+                onChange={e => setCodeForm(f => ({ ...f, item_name: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">제조사</label>
+                <input value={codeForm.maker}
+                  onChange={e => setCodeForm(f => ({ ...f, maker: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">제조사품번</label>
+                <input value={codeForm.maker_code}
+                  onChange={e => setCodeForm(f => ({ ...f, maker_code: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg" />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">단위</label>
+                <input value={codeForm.unit}
+                  onChange={e => setCodeForm(f => ({ ...f, unit: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">관리부서</label>
+                <select value={codeForm.dept}
+                  onChange={e => setCodeForm(f => ({ ...f, dept: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white">
+                  <option value="">미지정</option>
+                  <option value="지원본부">지원본부</option>
+                  <option value="하네스">하네스</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setCodeForm(null)}
+                className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600">
+                취소
+              </button>
+              <button onClick={assignCode}
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-orange-600 text-white hover:bg-orange-700">
+                부여하고 연결
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {tab === 'list' && (
         <>
           <div className="flex items-center gap-2 flex-wrap">
@@ -740,6 +1014,11 @@ export default function MaterialRequest() {
             {canEdit && checked.length > 0 && (
               <div className="flex items-center gap-1.5 ml-auto flex-wrap">
                 <span className="text-xs font-bold text-indigo-600">{checked.length}건 선택</span>
+                <button onClick={printRequest}
+                  title="선택한 요청을 출력합니다 — 보관 위치순으로 나오고 확인칸이 있습니다"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white">
+                  🖨 출력
+                </button>
                 <button onClick={() => changeStatus('확인')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">확인</button>
                 <button onClick={() => doIssue(false)}
@@ -751,6 +1030,13 @@ export default function MaterialRequest() {
                 <button onClick={doOrder}
                   title="해당 고객사 구매발주에 실제로 생성합니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50">발주 생성</button>
+                {checked.some(r => !r.item_id) && (
+                  <button onClick={needCode}
+                    title="기준코드가 없어 처리할 수 없는 건입니다. 코드 부여를 요청합니다"
+                    className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-orange-400 text-orange-700 bg-orange-50">
+                    🏷 코드 부여 요청
+                  </button>
+                )}
                 <button onClick={() => changeStatus('반려')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">반려</button>
                 {checked.some(r => r.status === '반려') && (

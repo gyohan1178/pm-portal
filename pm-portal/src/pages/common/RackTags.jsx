@@ -59,6 +59,8 @@ export default function RackTags() {
     if (allMode) {
       const out = []
       racks.forEach(rk => {
+        // 높은 층부터 한 줄씩. 현장에서 한 층을 쭉 붙이고 아래로 내려가는 것이
+        // 칸마다 층을 오르내리는 것보다 훨씬 빠르다.
         for (let lv = rk.levels_cnt; lv >= 1; lv--) {
           for (let r = 1; r <= rk.rows_cnt; r++) {
             out.push({ loc: `${rk.code}-${pad(r)}-${lv}`, row: r, lv, rack: rk.code })
