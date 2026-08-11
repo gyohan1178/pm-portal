@@ -44,6 +44,19 @@ export default function StockFinder() {
     inputRef.current?.focus()
   }
 
+  // 외부 검색 — 제조사품번이 있으면 그것으로, 없으면 품명으로 찾는다.
+  //   사진이나 사양을 확인해야 할 때 쓴다. 이미지를 직접 보관하지 않아
+  //   용량 부담이 없고 항상 최신 정보를 본다.
+  function outLink(h, kind) {
+    const key = (h.manufacturer_code || '').trim()
+      ? `${h.manufacturer || ''} ${h.manufacturer_code}`.trim()
+      : (h.name || h.std_code)
+    const q = encodeURIComponent(key)
+    return kind === 'img'
+      ? `https://www.google.com/search?tbm=isch&q=${q}`
+      : `https://www.google.com/search?q=${q}`
+  }
+
   // 위치를 랙·칸·층으로 나눈다
   function parseLoc(loc) {
     const m = String(loc || '').match(/^([A-Z]+\d*)-(\d+)-(\d+)$/i)
@@ -104,6 +117,18 @@ export default function StockFinder() {
                   <p className={`text-base font-bold mt-2 ${qty > 0 ? 'text-emerald-600' : 'text-rose-500'}`}>
                     재고 {n(qty)} {h.unit || 'EA'}
                   </p>
+                  <div className="flex gap-1.5 mt-2.5">
+                    <a href={outLink(h, 'img')} target="_blank" rel="noopener noreferrer"
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300
+                        text-slate-600 bg-white hover:bg-slate-50">
+                      🖼 사진 검색
+                    </a>
+                    <a href={outLink(h, 'web')} target="_blank" rel="noopener noreferrer"
+                      className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300
+                        text-slate-600 bg-white hover:bg-slate-50">
+                      🔎 사양 검색
+                    </a>
+                  </div>
                 </div>
 
                 {/* 위치 — 가장 크게 */}

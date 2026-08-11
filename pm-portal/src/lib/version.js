@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.52.0'
+export const APP_VERSION = 'v3.52.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.52.1',
+    date: '2026-08-13',
+    changes: [
+      '자재 위치 찾기에 사진·사양 검색 버튼 추가 — 제조사품번으로 구글에서 찾아 새 창으로 엽니다. 이미지를 직접 보관하지 않아 용량 부담 없이 항상 최신 정보를 봅니다',
+    ],
+  },
   {
     version: 'v3.52.0',
     date: '2026-08-13',
