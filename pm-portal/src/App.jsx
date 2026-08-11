@@ -40,8 +40,8 @@ const WeeklyUpload = lazy(() => import('./pages/WeeklyUpload'))
 const EcountUpload = lazy(() => import('./pages/EcountUpload'))
 const PaymentPlan = lazy(() => import('./pages/PaymentPlan'))
 const ActivityLog = lazy(() => import('./pages/admin/ActivityLog'))
-const RackTags = lazy(() => import('./pages/common/RackTags'))
 const RackLayout = lazy(() => import('./pages/common/RackLayout'))
+const StockFinder = lazy(() => import('./pages/common/StockFinder'))
 const UnifiedUpload = lazy(() => import('./pages/UnifiedUpload'))
 const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
 const MaterialRequest = lazy(() => import('./pages/common/MaterialRequest'))
@@ -161,10 +161,10 @@ export default function App() {
         <Route path="payment-plan" element={<PaymentPlan />} />
         <Route path="activity" element={<ActivityLog />} />
         <Route path="rack-layout" element={<RackLayout />} />
+        <Route path="finder" element={<StockFinder />} />
         <Route path="upload" element={<UnifiedUpload />} />
         <Route path="schedule-changes" element={<ScheduleChanges />} />
         <Route path="material-request" element={<MaterialRequest />} />
-        <Route path="rack-tags" element={<RackTags />} />
         <Route path="rack/:code" element={<RackLayout />} />
         <Route path="cell/:loc" element={<CellAudit />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />

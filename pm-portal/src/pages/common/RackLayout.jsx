@@ -58,11 +58,80 @@ export default function RackLayout() {
     setTimeout(() => { doPrintMap(); setPrintMode(false) }, 150)
   }
 
+  // 랙 안내판 인쇄.
+  //
+  //   랙 앞면에 붙여 칸 번호를 세지 않고도 위치를 찾게 한다.
+  //   품목은 적지 않는다 — 한 랙에 여러 브랜드·품목이 섞여 있어
+  //   적어두면 금방 낡고 오히려 헷갈리기 때문이다.
+  function printRackBoard(only) {
+    const target = only ? racks.filter(r => r.code === only) : racks
+    if (!target.length) { toastError('출력할 랙이 없습니다'); return }
+
+    const win = window.open('', '_blank', 'width=900,height=1000')
+    if (!win) { toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
+
+    const pages = target.map(r => {
+      const cells = []
+      for (let lv = r.levels_cnt; lv >= 1; lv--) {
+        const tds = []
+        for (let c = 1; c <= r.rows_cnt; c++) tds.push(`<td>${String(c).padStart(2, '0')}</td>`)
+        cells.push(`<tr><th>${lv}층</th>${tds.join('')}</tr>`)
+      }
+      return `<div class="page">
+        <div class="hd">
+          <div class="code">${r.code}</div>
+          <div class="spec">${r.rows_cnt}칸 × ${r.levels_cnt}층<br><span>${r.zone || ''}</span></div>
+        </div>
+        <table class="grid">${cells.join('')}</table>
+        <div class="ft">
+          <div class="fmt">
+            <div class="fmt-t">위치 표기</div>
+            <div class="fmt-v">${r.code}-05-1</div>
+            <div class="fmt-l"><span>랙</span><span>칸</span><span>층</span></div>
+          </div>
+          <div class="note">자재 위치는 창고 입구 태블릿에서 검색하세요</div>
+        </div>
+      </div>`
+    }).join('')
+
+    win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>랙 안내판</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,'Malgun Gothic',sans-serif;color:#111}
+  .page{width:277mm;height:190mm;padding:10mm;page-break-after:always;
+        display:flex;flex-direction:column}
+  .hd{display:flex;align-items:flex-end;justify-content:space-between;
+      border-bottom:4px solid #111;padding-bottom:6mm;margin-bottom:8mm}
+  .code{font-size:110px;font-weight:900;line-height:0.9;letter-spacing:-4px;
+        font-family:ui-monospace,Menlo,monospace}
+  .spec{font-size:20px;font-weight:700;text-align:right;line-height:1.4}
+  .spec span{font-size:14px;font-weight:400;color:#666}
+  table.grid{width:100%;border-collapse:collapse;flex:1}
+  table.grid th,table.grid td{border:2px solid #111;text-align:center;
+    font-family:ui-monospace,Menlo,monospace;font-weight:700}
+  table.grid th{background:#111;color:#fff;width:60px;font-size:22px}
+  table.grid td{font-size:26px}
+  .ft{display:flex;align-items:center;justify-content:space-between;margin-top:8mm}
+  .fmt{border:3px solid #111;padding:4mm 8mm;text-align:center}
+  .fmt-t{font-size:13px;color:#666;font-weight:700}
+  .fmt-v{font-size:38px;font-weight:900;font-family:ui-monospace,Menlo,monospace;
+         letter-spacing:2px;line-height:1.2}
+  .fmt-l{display:flex;justify-content:space-around;font-size:12px;color:#666;font-weight:700}
+  .note{font-size:15px;color:#444;font-weight:600}
+  @page{size:A4 landscape;margin:0}
+  @media print{.page{page-break-after:always}}
+</style></head><body>${pages}</body></html>`)
+    win.document.close()
+    win.onload = () => { win.focus(); win.print() }
+  }
+
   function doPrintMap() {
     const el = boardRef.current
     if (!el) return
     const w = GW * CELL, h = GH * CELL
-    const scale = Math.min(1062 / w, 700 / h, 1)   // A4 가로 한 장
+    // A4 가로 인쇄 영역(여백 6mm) 에서 제목 줄을 뺀 크기
+    const scale = Math.min(1096 / w, 700 / h, 1)
 
     const win = window.open('', '_blank', 'width=1200,height=800')
     if (!win) { toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
@@ -71,17 +140,20 @@ export default function RackLayout() {
 <title>창고 배치도</title>
 <style>
   *{box-sizing:border-box}
-  body{margin:0;padding:10px;font-family:-apple-system,'Malgun Gothic',sans-serif;background:#fff}
-  .ttl{font-size:15px;font-weight:800;color:#0f172a}
-  .sub{font-size:10px;color:#64748b;margin-bottom:8px}
+  body{margin:0;padding:8px;font-family:-apple-system,'Malgun Gothic',sans-serif;background:#fff}
+  .ttl{font-size:14px;font-weight:800;color:#0f172a}
+  .sub{font-size:9px;color:#64748b;margin-bottom:6px}
+  /* scale 은 원본 크기만큼 자리를 차지해 종이를 넘긴다.
+     겉을 축소된 크기로 감싸 실제 차지하는 공간을 맞춘다. */
+  .box{width:${Math.round(w * scale)}px;height:${Math.round(h * scale)}px;overflow:hidden}
   .canvas{position:relative;transform:scale(${scale});transform-origin:top left;
           width:${w}px;height:${h}px}
-  @page{size:A4 landscape;margin:8mm}
+  @page{size:A4 landscape;margin:6mm}
   @media print{body{padding:0}}
 </style></head><body>
   <div class="ttl">진선테크 창고 배치도</div>
   <div class="sub">랙 ${racks.length}면 · ${n(total)}칸 · 출력 ${new Date().toLocaleDateString('ko-KR')}</div>
-  <div class="canvas">${el.innerHTML}</div>
+  <div class="box"><div class="canvas">${el.innerHTML}</div></div>
 </body></html>`)
     win.document.close()
     win.onload = () => { win.focus(); win.print() }
@@ -361,6 +433,13 @@ export default function RackLayout() {
             </button>
           )}
           {tab === 'map' && !editing && (
+            <button onClick={() => printRackBoard(null)}
+              title="랙마다 A4 한 장씩 — 랙 앞면에 붙이는 좌표 안내판입니다"
+              className="no-print px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 whitespace-nowrap">
+              📋<span className="hidden sm:inline"> 랙 안내판</span>
+            </button>
+          )}
+          {tab === 'map' && !editing && (
             <button onClick={printMap}
               title="배치도를 인쇄합니다 — 랙 코드를 크게 표시하고 사용률 색은 뺍니다"
               className="no-print px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 whitespace-nowrap">
@@ -485,7 +564,15 @@ export default function RackLayout() {
                     style={{
                       position: 'absolute', left: o.grid_x * CELL, top: o.grid_y * CELL,
                       width: o.grid_w * CELL, height: o.grid_h * CELL,
-                      background: o.color || st.bg, color: st.fg, fontSize: Math.max(8, Math.round(CELL * 0.62)),
+                      // 인쇄는 흑백이라 옅은 색이 사라진다. 테두리를 넣어 형태를 남긴다.
+                      background: printMode
+                        ? (o.kind === '기둥' || o.kind === '벽' ? '#333' : '#fff')
+                        : (o.color || st.bg),
+                      color: printMode
+                        ? (o.kind === '기둥' || o.kind === '벽' ? '#fff' : '#111')
+                        : st.fg,
+                      border: printMode ? '1px solid #333' : 'none',
+                      fontSize: Math.max(8, Math.round(CELL * 0.62)),
                       display: 'flex', alignItems: 'center', justifyContent: 'center',
                       borderRadius: 2, cursor: editing ? 'grab' : 'default',
                       outline: pick?.type === 'obj' && pick.id === i ? '3px solid #4f46e5' : 'none',
@@ -493,7 +580,7 @@ export default function RackLayout() {
                       padding: '0 2px', textOverflow: 'ellipsis',
                       fontWeight: o.kind === '기둥' || o.kind === '벽' ? 400 : 700,
                     }}>
-                    {o.grid_w >= 3 && o.kind !== '기둥' && o.kind !== '벽' ? (o.label || o.kind) : ''}
+                    {o.grid_w >= 3 && (printMode || (o.kind !== '기둥' && o.kind !== '벽')) ? (o.label || o.kind) : ''}
                     {editing && (
                       <span
                         onMouseDown={e => grab(e, 'obj', i, o.grid_x, o.grid_y, o.grid_w, o.grid_h, 'resize')}
@@ -546,6 +633,19 @@ export default function RackLayout() {
                       fontSize: Math.max(printMode ? 13 : 10, Math.round(CELL * (printMode ? 1.05 : 0.85))),
                       fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px',
                     }}>{r.code}</span>
+                    {/* 긴 랙은 반대쪽 끝에도 코드를 적는다.
+                        창고에서 어느 방향으로 다가와도 랙을 알아볼 수 있어야 한다. */}
+                    {(vertical ? h : w) > CELL * 12 && (
+                      <span style={{
+                        position: 'absolute',
+                        ...(vertical ? { bottom: 3, left: 0, right: 0 } : { right: 4, top: 0, bottom: 0 }),
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontFamily: 'ui-monospace,Menlo,monospace',
+                        fontSize: Math.max(printMode ? 11 : 9, Math.round(CELL * (printMode ? 0.9 : 0.7))),
+                        fontWeight: 800, color: '#0f172a', letterSpacing: '-0.3px',
+                        writingMode: 'horizontal-tb',
+                      }}>{r.code}</span>
+                    )}
                     {(vertical ? h : w) > CELL * 5 && (
                       printMode ? (
                         // 인쇄물에는 사용률 대신 규격을 적는다. 위치를 손으로 쓸 때 참고가 된다
