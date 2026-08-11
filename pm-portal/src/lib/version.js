@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.50.0'
+export const APP_VERSION = 'v3.50.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.50.1',
+    date: '2026-08-13',
+    changes: [
+      '자재 요청서 출력을 조회 계정도 쓸 수 있게 변경 — 요청자가 자기 요청을 뽑아 창고에 가져가야 하기 때문입니다. 처리(불출·발주·반려)는 편집 권한자만 가능한 것은 그대로입니다',
+      '요청 목록에서 조회 계정도 항목을 선택할 수 있습니다 (출력하려면 골라야 하므로)',
+    ],
+  },
   {
     version: 'v3.50.0',
     date: '2026-08-10',

@@ -1011,14 +1011,16 @@ export default function MaterialRequest() {
             </button>
             <span className="text-xs text-slate-400">{n(list.length)}건</span>
 
-            {canEdit && checked.length > 0 && (
+            {checked.length > 0 && (
               <div className="flex items-center gap-1.5 ml-auto flex-wrap">
                 <span className="text-xs font-bold text-indigo-600">{checked.length}건 선택</span>
+                {/* 출력은 요청자도 쓴다 — 자기 요청을 뽑아 창고에 가져가야 하기 때문 */}
                 <button onClick={printRequest}
                   title="선택한 요청을 출력합니다 — 보관 위치순으로 나오고 확인칸이 있습니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white">
                   🖨 출력
                 </button>
+                {canEdit && (<>
                 <button onClick={() => changeStatus('확인')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">확인</button>
                 <button onClick={() => doIssue(false)}
@@ -1046,6 +1048,7 @@ export default function MaterialRequest() {
                     ↩ 반려 취소
                   </button>
                 )}
+                </>)}
               </div>
             )}
           </div>
@@ -1097,12 +1100,12 @@ export default function MaterialRequest() {
 
                     {/* 요청 머리 — 목적·필요일·요청자 */}
                     <div
-                      onClick={() => canEdit && setSel(s2 => {
+                      onClick={() => setSel(s2 => {
                         const next = { ...s2 }
                         g.items.forEach(x => { next[x.id] = !allOn })
                         return next
                       })}
-                      className={`p-3.5 ${canEdit ? 'cursor-pointer' : ''} ${g.items.length > 1 ? 'border-b border-slate-100' : ''}`}>
+                      className={`p-3.5 cursor-pointer ${g.items.length > 1 ? 'border-b border-slate-100' : ''}`}>
                       <div className="flex items-start gap-3">
                         <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${st.dot}`} />
                         <div className="flex-1 min-w-0">
@@ -1163,10 +1166,8 @@ export default function MaterialRequest() {
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
-                          {canEdit && (
-                            <input type="checkbox" checked={allOn} readOnly
-                              className="w-4 h-4 accent-indigo-600 mt-1 pointer-events-none" />
-                          )}
+                          <input type="checkbox" checked={allOn} readOnly
+                            className="w-4 h-4 accent-indigo-600 mt-1 pointer-events-none" />
                           {h.is_mine && ['요청','확인'].includes(h.status) && (
                             <button onClick={e => { e.stopPropagation(); cancelMine(h.id) }}
                               className="text-[10px] px-1.5 py-0.5 rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-500 whitespace-nowrap">
@@ -1181,13 +1182,11 @@ export default function MaterialRequest() {
                     <div className={g.items.length > 1 ? 'divide-y divide-slate-50' : ''}>
                       {g.items.map(r => (
                         <div key={r.id}
-                          onClick={() => canEdit && setSel(s2 => ({ ...s2, [r.id]: !s2[r.id] }))}
-                          className={`px-3.5 py-2 flex items-center gap-2 text-xs ${canEdit ? 'cursor-pointer' : ''} ${
+                          onClick={() => setSel(s2 => ({ ...s2, [r.id]: !s2[r.id] }))}
+                          className={`px-3.5 py-2 flex items-center gap-2 text-xs cursor-pointer ${
                             sel[r.id] ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}`}>
-                          {canEdit && (
-                            <input type="checkbox" checked={!!sel[r.id]} readOnly
-                              className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none flex-shrink-0" />
-                          )}
+                          <input type="checkbox" checked={!!sel[r.id]} readOnly
+                            className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none flex-shrink-0" />
                           <span className="font-mono font-bold text-indigo-600 w-32 flex-shrink-0 truncate">
                             {r.std_code || '-'}
                           </span>
