@@ -270,6 +270,14 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const patch = { status: newStatus, issued: d.kind === '납품', issued_at: d.kind === '납품' ? now : null }
         // 부분납품이면 실제 납품수량으로 보정 (예: 4개 등록인데 3개만 납품 → qty=3으로 완료)
         if (d.kind === '납품' && d.qtyMismatch && d.rcvQty > 0) patch.qty_ordered = d.rcvQty
+        // 잔량 정리 — 납품·취소된 건은 남은 수량이 없다.
+        //   qty_remaining 은 (qty_ordered - qty_received) 로 계산되는 컬럼이라
+        //   직접 넣을 수 없다. 받은 수량을 채우면 자동으로 0 이 된다.
+        //   취소 건은 주문 수량을 그대로 둔다. 원래 얼마였는지가 기록이고,
+        //   부족자재 계산은 status 로 걸러내므로 잔량이 남아도 문제없다.
+        if (d.kind === '납품') {
+          patch.qty_received = d.qtyMismatch && d.rcvQty > 0 ? d.rcvQty : d.qty_ordered
+        }
         // 완료건 단가 채우기: DB에 단가 없으면 Received 단가로 (매출 집계용)
         if (d.kind === '납품' && d.priceFill && d.rcvPrice > 0) patch.unit_price = d.rcvPrice
         const { error } = await supabase.from('purchase_orders').update(patch).eq('id', d.id)

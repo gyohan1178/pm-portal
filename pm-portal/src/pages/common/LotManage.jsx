@@ -9,6 +9,41 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => new Date().toISOString().slice(0, 10)
 const MONO = "ui-monospace, Menlo, Consolas, monospace"
 
+// 브랜드 → 품목 → 로트 3단계로 묶는다.
+// 로트가 쭉 나열되면 같은 품목 것이 흩어져 무엇을 먼저 쓸지 알기 어렵다.
+function groupLots(lots) {
+  const byBrand = new Map()
+  lots.forEach(l => {
+    const b = (l.maker || '기타').trim() || '기타'
+    if (!byBrand.has(b)) byBrand.set(b, new Map())
+    const items = byBrand.get(b)
+    const code = l.std_code || '(미상)'
+    if (!items.has(code)) {
+      items.set(code, { code, name: l.item_name || '', makerCode: l.maker_code || '', rows: [] })
+    }
+    items.get(code).rows.push(l)
+  })
+
+  return [...byBrand.entries()]
+    .map(([name, itemMap]) => {
+      const items = [...itemMap.values()].map(it => ({
+        ...it,
+        // 오래된 것부터 — 먼저 써야 할 순서
+        rows: it.rows.slice().sort((a, b) => (a.fifo_rank || 0) - (b.fifo_rank || 0)),
+        left: it.rows.reduce((s2, r) => s2 + (Number(r.qty_left) || 0), 0),
+      })).sort((a, b) => a.code.localeCompare(b.code))
+
+      return {
+        name, items,
+        lots: items.reduce((s2, it) => s2 + it.rows.length, 0),
+        qty: items.reduce((s2, it) => s2 + it.left, 0),
+        expired: items.reduce((s2, it) => s2 + it.rows.filter(r => r.expired).length, 0),
+      }
+    })
+    // 기한 초과가 있는 브랜드를 위로
+    .sort((a, b) => (b.expired > 0) - (a.expired > 0) || a.name.localeCompare(b.name))
+}
+
 // 로트 관리.
 //
 //   시리얼·제조년월을 관리해야 하는 품목(BECKHOFF·ROOTECH·Allen-Bradley 등)의
@@ -156,61 +191,84 @@ function LotList({ lots, all, stat, isLoading, q, setQ, onlyLeft, setOnlyLeft })
         </div>
       )}
 
-      <div className="space-y-2">
-        {lots.map(l => (
-          <div key={l.id}
-            className={`rounded-xl border p-3.5 ${
-              l.expired ? 'border-rose-300 bg-rose-50/50' : 'border-slate-200 bg-white'}`}>
-            <div className="flex items-start gap-3 flex-wrap">
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {l.fifo_rank === 1 && Number(l.qty_left) > 0 && (
-                    <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold">
-                      먼저 사용
-                    </span>
-                  )}
-                  {l.expired && (
-                    <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold">
-                      기한 초과
-                    </span>
-                  )}
-                  <span className="font-mono text-sm font-bold text-indigo-600">{l.std_code}</span>
-                </div>
-                <p className="text-sm text-slate-700 mt-0.5">{l.item_name}</p>
-                <p className="text-[11px] text-slate-400">
-                  {l.maker}{l.maker && l.maker_code ? ' · ' : ''}
-                  <span style={{ fontFamily: MONO }}>{l.maker_code}</span>
-                </p>
-              </div>
-
-              <div className="text-right">
-                <p className="text-lg font-bold text-slate-800" style={{ fontFamily: MONO }}>
-                  {l.serial_no}
-                </p>
-                <p className="text-xs font-semibold text-slate-500">
-                  {l.made_ym || '제조 미상'}
-                  {l.age_months != null && (
-                    <span className="text-slate-400"> · {l.age_months}개월</span>
-                  )}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-3 mt-2.5 pt-2.5 border-t border-slate-100 text-xs flex-wrap">
-              <span className="text-slate-400">입고 <b className="text-slate-600">{l.in_date}</b></span>
-              {l.vendor_name && <span className="text-slate-400">{l.vendor_name}</span>}
-              <span className="ml-auto">
-                <span className="text-slate-400">잔량 </span>
-                <b className={Number(l.qty_left) > 0 ? 'text-slate-800' : 'text-slate-300'}>
-                  {n(l.qty_left)}
-                </b>
-                <span className="text-slate-300"> / {n(l.qty_in)}</span>
+      {/* 브랜드 → 품목 → 로트 3단계.
+          같은 품목의 로트가 흩어져 보이면 무엇을 먼저 쓸지 알기 어렵다. */}
+      <div className="space-y-4">
+        {groupLots(lots).map(brand => (
+          <div key={brand.name}>
+            <div className="flex items-baseline gap-2 mb-1.5 px-0.5">
+              <h3 className="text-sm font-bold text-slate-700">{brand.name}</h3>
+              <span className="text-[11px] text-slate-400">
+                {n(brand.items.length)}품목 · {n(brand.lots)}로트 · {n(brand.qty)}개
               </span>
+              {brand.expired > 0 && (
+                <span className="px-1.5 py-0.5 rounded bg-rose-100 text-[10px] font-bold text-rose-700">
+                  기한초과 {brand.expired}
+                </span>
+              )}
             </div>
-            {l.memo && <p className="text-[11px] text-slate-400 mt-1">{l.memo}</p>}
+
+            <div className="space-y-2">
+              {brand.items.map(it => (
+                <div key={it.code} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="px-3.5 py-2.5 bg-slate-50 border-b border-slate-100">
+                    <div className="flex items-baseline gap-2 flex-wrap">
+                      <span className="font-mono text-sm font-bold text-indigo-600">{it.code}</span>
+                      <span className="text-xs text-slate-600 flex-1 min-w-0 truncate">{it.name}</span>
+                      <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                        {it.rows.length}로트 · 잔 {n(it.left)}
+                      </span>
+                    </div>
+                    {it.makerCode && (
+                      <p className="text-[11px] text-slate-400" style={{ fontFamily: MONO }}>{it.makerCode}</p>
+                    )}
+                  </div>
+
+                  <div className="divide-y divide-slate-50">
+                    {it.rows.map(l => (
+                      <div key={l.id}
+                        className={`px-3.5 py-2.5 flex items-center gap-3 flex-wrap ${
+                          l.expired ? 'bg-rose-50/60' : ''}`}>
+                        <div className="flex items-center gap-1.5 flex-shrink-0">
+                          {l.fifo_rank === 1 && Number(l.qty_left) > 0 && !l.expired && (
+                            <span className="px-1.5 py-0.5 rounded bg-indigo-600 text-white text-[10px] font-bold">
+                              먼저
+                            </span>
+                          )}
+                          {l.expired && (
+                            <span className="px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold">
+                              기한
+                            </span>
+                          )}
+                          <span className="text-base font-bold text-slate-800" style={{ fontFamily: MONO }}>
+                            {l.serial_no}
+                          </span>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-500 whitespace-nowrap">
+                          {l.made_ym || '제조 미상'}
+                          {l.age_months != null && (
+                            <span className="text-slate-400 font-normal"> · {l.age_months}개월</span>
+                          )}
+                        </span>
+                        <span className="text-[11px] text-slate-400 whitespace-nowrap">
+                          입고 {l.in_date}{l.vendor_name ? ` · ${l.vendor_name}` : ''}
+                        </span>
+                        <span className="ml-auto text-xs whitespace-nowrap">
+                          <b className={Number(l.qty_left) > 0 ? 'text-slate-800' : 'text-slate-300'}>
+                            {n(l.qty_left)}
+                          </b>
+                          <span className="text-slate-300"> / {n(l.qty_in)}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ))}
       </div>
+
     </>
   )
 }
