@@ -115,7 +115,10 @@ export default function Layout({ profile }) {
             로그아웃
           </button>
         </header>
-        {profile?.role === 'admin' && (() => {
+        {/* 백업 안내는 관리자 PC 에서만 띄운다.
+            백업 이력을 localStorage 에 남기므로 폰에서는 PC 에서 받은 기록을
+            알 수 없어 늘 경고가 뜬다. 백업은 PC 에서 하는 작업이기도 하다. */}
+        {profile?.role === 'admin' && typeof window !== 'undefined' && window.innerWidth >= 1024 && (() => {
           let backupMsg = null
           try {
             const last = localStorage.getItem('pm_last_backup')
