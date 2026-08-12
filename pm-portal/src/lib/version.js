@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.55.0'
+export const APP_VERSION = 'v3.55.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.55.1',
+    date: '2026-08-13',
+    changes: [
+      'ASSY 출고에 선입선출 안내 추가 — 로트 관리 품목은 품명 아래에 먼저 쓸 시리얼과 제조 시기가 표시됩니다',
+      '불출표 인쇄에도 함께 나옵니다 — 창고에서 종이를 보고 어느 시리얼을 꺼낼지 알 수 있습니다',
+      '기한이 지난 로트는 붉게 \'⚠ 기한초과\' 로 표시되어 내보내지 않도록 합니다',
+    ],
+  },
   {
     version: 'v3.55.0',
     date: '2026-08-13',

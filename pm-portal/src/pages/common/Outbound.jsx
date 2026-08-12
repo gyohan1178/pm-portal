@@ -330,6 +330,28 @@ export default function Outbound() {
     },
   })
 
+  // 로트 관리 품목의 선입선출 안내.
+  //   먼저 써야 할 로트(가장 오래된 것)와 기한 초과 여부를 보여준다.
+  //   로트를 등록해도 출고 화면에 안 보이면 선입선출이 되지 않는다.
+  const { data: lotMeta = {} } = useQuery({
+    queryKey: ['outLotMeta', outItemIds.join(',')],
+    enabled: outItemIds.length > 0,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_lot_list', { p_item_id: null, p_only_left: true })
+      const m = {}
+      ;(data || []).forEach(l => {
+        if (!outItemIds.includes(l.item_id)) return
+        // 품목별로 먼저 쓸 것(fifo_rank 1) 하나만 남기고, 기한 초과 건수를 센다
+        if (!m[l.item_id]) m[l.item_id] = { first: null, expired: 0, count: 0 }
+        m[l.item_id].count += 1
+        if (l.expired) m[l.item_id].expired += 1
+        if (l.fifo_rank === 1) m[l.item_id].first = l
+      })
+      return m
+    },
+  })
+
   // ── 정렬은 수량과 분리 (수량 입력해도 순서 안 바뀌게) ──
   // 정렬 순서만 먼저 확정 → 수량은 렌더 시 outQtys에서 직접 읽음
   const [makerFilter, setMakerFilter] = useState('')  // 제조사 필터
@@ -423,10 +445,24 @@ export default function Outbound() {
       </tr>` + (alt ? `<tr class="alt">
         <td></td>
         <td colspan="9">↳ <b>대체품</b> ${alt}</td>
-      </tr>` : '')}).join('')
+      </tr>` : '') + (() => {
+        // 로트 관리 품목은 먼저 쓸 시리얼을 적는다. 창고에서 이걸 보고 꺼낸다
+        const lm = lotMeta[r.item_id]
+        if (!lm?.first) return ''
+        const f = lm.first
+        return `<tr class="alt${f.expired ? ' exp' : ''}">
+          <td></td>
+          <td colspan="9">↳ <b>${f.expired ? '⚠ 기한초과' : '먼저 사용'}</b>
+            <span class="mono">${f.serial_no}</span>
+            ${f.made_ym ? `· ${f.made_ym}` : ''} · 잔량 ${f.qty_left}
+            ${lm.count > 1 ? `<span class="dim">(외 ${lm.count - 1}로트)</span>` : ''}</td>
+        </tr>`
+      })()}).join('')
     return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
     <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
     .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
+    tr.alt.exp td{color:#b00;font-weight:bold}
+    tr.alt .dim{color:#888;font-weight:normal}
     h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
     table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;table-layout:fixed}
     th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all;vertical-align:middle}
@@ -652,7 +688,34 @@ export default function Outbound() {
                           <td className={`px-2 py-2 max-w-[80px] truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[100px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
                           <td className="px-2 py-2 font-mono text-xs text-indigo-600">{item.std_code}</td>
-                          <td className={`px-2 py-2 font-semibold max-w-[180px] truncate ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>{item.name}</td>
+                          <td className={`px-2 py-2 font-semibold max-w-[180px] ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>
+                            <div className="truncate">{item.name}</div>
+                            {(() => {
+                              // 로트 관리 품목이면 먼저 쓸 시리얼을 알려준다
+                              const lm = lotMeta[item.item_id]
+                              if (!lm?.first) return null
+                              const f = lm.first
+                              return (
+                                <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                                  <span className={`px-1 py-0.5 rounded text-[10px] font-bold ${
+                                    f.expired ? 'bg-rose-600 text-white' : 'bg-indigo-600 text-white'}`}>
+                                    {f.expired ? '기한초과' : '먼저사용'}
+                                  </span>
+                                  <span className="text-[11px] font-bold text-slate-600"
+                                    style={{ fontFamily: 'ui-monospace,Menlo,monospace' }}>
+                                    {f.serial_no}
+                                  </span>
+                                  {f.made_ym && (
+                                    <span className="text-[10px] text-slate-400">{f.made_ym}</span>
+                                  )}
+                                  <span className="text-[10px] text-slate-400">잔 {f.qty_left}</span>
+                                  {lm.count > 1 && (
+                                    <span className="text-[10px] text-slate-400">외 {lm.count - 1}로트</span>
+                                  )}
+                                </div>
+                              )
+                            })()}
+                          </td>
                           <td className="px-2 py-2 text-slate-500">{item.unit}</td>
                           <td className="px-2 py-2 text-right text-slate-600">{item.bom_qty}</td>
                           <td className="px-2 py-2">
