@@ -27,7 +27,7 @@ async function fetchPurchases(csId) {
   const data = await fetchAll(() => supabase
     .from('purchase_orders')
     .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code), vendors(name,ecount_code,payment_terms), projects(code,name)')
-    .eq('customer_id', csId).eq('order_type','purchase').neq('status','완료')
+    .eq('customer_id', csId).eq('order_type','purchase').not('status','in','(완료,취소)')
     .order('promise_date', { ascending: true }))
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date && p.promise_date < today }))
 }

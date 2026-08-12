@@ -37,7 +37,7 @@ export default function ERPExport() {
           .from('purchase_orders')
           .select('*, items(std_code, name, type), customers(name), vendors(name)')
           .in('customer_id', csIds)
-          .neq('status', '완료'))
+          .not('status', 'in', '(완료,취소)'))
         data = (pos || []).map(p => ({
           '고객사': p.customers?.name,
           'PO번호': p.po_number,

@@ -20,7 +20,7 @@ async function fetchActiveCPOs(customerId, projectId) {
   if (!customerId) return []
   let q = supabase.from('purchase_orders')
     .select('id,po_number,qty_ordered,qty_remaining,items!purchase_orders_item_id_fkey(std_code,name,unit),projects(code,name)')
-    .eq('customer_id', customerId).eq('order_type','customer_po').neq('status','완료')
+    .eq('customer_id', customerId).eq('order_type','customer_po').not('status','in','(완료,취소)')
   if (projectId) q = q.eq('project_id', projectId)
   const { data } = await q.order('created_at', { ascending: false })
   return data || []

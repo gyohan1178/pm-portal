@@ -118,7 +118,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
   if (projectIds.length) {
     const poRows = await fetchAll(() => supabase
       .from('purchase_orders').select('project_id,qty_remaining')
-      .eq('customer_id', customerId).eq('order_type','customer_po').neq('status','완료')
+      .eq('customer_id', customerId).eq('order_type','customer_po').not('status','in','(완료,취소)')
       .in('project_id', projectIds))
 
     const { data: bomRows } = await supabase
@@ -209,7 +209,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
     : { data: [] }
   const { data: purchaseRows } = itemIds.length
     ? { data: await fetchAll(() => supabase.from('purchase_orders').select('item_id,qty_remaining')
-      .eq('customer_id', customerId).eq('order_type','purchase').neq('status','완료').in('item_id', itemIds)) }
+      .eq('customer_id', customerId).eq('order_type','purchase').not('status','in','(완료,취소)').in('item_id', itemIds)) }
     : { data: [] }
 
   const invMap = {}; (invRows||[]).forEach(r=>{invMap[r.item_id]=r.qty})

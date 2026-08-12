@@ -19,7 +19,9 @@ async function fetchCustomerPOs(csId, showAll) {
       .from('purchase_orders')
       .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,lt_weeks), projects(code,name)')
       .eq('customer_id', csId).eq('order_type','customer_po')
-    if (!showAll) qb = qb.neq('status','완료')
+    // 완료뿐 아니라 취소도 뺀다. 취소 건이 남아 있으면
+    // 납기가 지났다는 이유로 '지연' 으로 잡혀 실제보다 많아 보인다.
+    if (!showAll) qb = qb.not('status','in','(완료,취소)')
     return qb.order('promise_date', { ascending: true })
   }
   const data = await fetchAll(make)

@@ -26,7 +26,7 @@ async function fetchPendingPOs(customerId, vendorId) {
   const make = () => {
     let q = supabase.from('purchase_orders')
       .select('*, items!purchase_orders_item_id_fkey(std_code,name,unit,manufacturer,manufacturer_code), vendors(name), customers(name,code)')
-      .eq('order_type','purchase').neq('status','완료')
+      .eq('order_type','purchase').not('status','in','(완료,취소)')
     if (customerId) q = q.eq('customer_id', customerId)
     if (vendorId) q = q.eq('vendor_id', vendorId)
     return q.order('order_date', { ascending: true })

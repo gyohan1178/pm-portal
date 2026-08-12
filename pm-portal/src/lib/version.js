@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.56.0'
+export const APP_VERSION = 'v3.56.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.56.1',
+    date: '2026-08-13',
+    changes: [
+      '취소된 발주가 목록에 남아 \'지연\' 으로 잡히던 문제 수정 — 완료만 걸러내고 취소는 그대로 보여주고 있었습니다',
+      '고객사 PO·구매발주·입고·출고·소요 BOM·ERP 내보내기 등 7개 화면에 함께 적용',
+    ],
+  },
   {
     version: 'v3.56.0',
     date: '2026-08-13',

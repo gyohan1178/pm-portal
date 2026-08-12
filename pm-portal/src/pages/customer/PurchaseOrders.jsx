@@ -38,7 +38,7 @@ async function fetchPOs(csCode) {
     .from('purchase_orders')
     .select('*, items(std_code, name, type, lt_weeks), vendors(name)')
     .eq('customer_id', cs.id)
-    .neq('status', '완료')
+    .not('status', 'in', '(완료,취소)')
     .order('promise_date', { ascending: true }))
 
   if (error) throw error
