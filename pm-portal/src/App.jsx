@@ -42,6 +42,7 @@ const PaymentPlan = lazy(() => import('./pages/PaymentPlan'))
 const ActivityLog = lazy(() => import('./pages/admin/ActivityLog'))
 const RackLayout = lazy(() => import('./pages/common/RackLayout'))
 const StockFinder = lazy(() => import('./pages/common/StockFinder'))
+const LotManage = lazy(() => import('./pages/common/LotManage'))
 const UnifiedUpload = lazy(() => import('./pages/UnifiedUpload'))
 const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
 const MaterialRequest = lazy(() => import('./pages/common/MaterialRequest'))
@@ -162,6 +163,7 @@ export default function App() {
         <Route path="activity" element={<ActivityLog />} />
         <Route path="rack-layout" element={<RackLayout />} />
         <Route path="finder" element={<StockFinder />} />
+        <Route path="lot" element={<LotManage />} />
         <Route path="upload" element={<UnifiedUpload />} />
         <Route path="schedule-changes" element={<ScheduleChanges />} />
         <Route path="material-request" element={<MaterialRequest />} />

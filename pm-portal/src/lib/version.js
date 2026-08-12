@@ -1,6 +1,17 @@
-export const APP_VERSION = 'v3.54.0'
+export const APP_VERSION = 'v3.55.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.55.0',
+    date: '2026-08-13',
+    changes: [
+      '★ 로트 관리 추가 (자재 메뉴) — 시리얼·제조년월을 관리해야 하는 품목의 입고 묶음을 기록합니다. 오래된 로트에 \'먼저 사용\' 이 표시되어 선입선출을 할 수 있습니다',
+      '제조 표기 자동 변환 — BECKHOFF 5125B309 → 25년 51주, Allen-Bradley WEEK48.2024 → 24년 48주, ROOTECH 2026/07 → 26년 07월 형식으로 통일됩니다',
+      '사용 기한을 품목별로 정할 수 있고, 기한이 지난 로트는 붉게 표시됩니다 (BECKHOFF 는 2년)',
+      '한 품목에 시리얼이 여러 개 있을 수 있으며 각각 별도 로트로 관리됩니다',
+      'SQL: pm_lot.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.54.0',
     date: '2026-08-13',

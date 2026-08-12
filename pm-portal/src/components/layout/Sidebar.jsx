@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/lot': ['🏷','로트 관리'],
   '/finder': ['🔍','자재 위치 찾기'],
   '/material-request': ['🙋','자재 요청'],
   '/schedule-changes': ['📅','납품 일정 변경'],
@@ -247,6 +248,7 @@ export default function Sidebar({ onNavigate, profile }) {
         <CollapseSection label="📦 자재" sKey="mat">
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
+          <MenuItem to="/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>부분 불출 (호기별 키팅)</MenuItem>
           <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>

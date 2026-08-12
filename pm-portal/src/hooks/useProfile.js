@@ -115,7 +115,7 @@ export function canAccessSection(profile, key) {
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes' || pathname === '/material-request') return 'floor'
-  if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
+  if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/lot' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
   // 영업 — 매출견적(+견적이력 내부 탭)
