@@ -38,7 +38,7 @@ async function suggestItems(q) {
   if (!q || q.trim().length < 2) return []
   const { data } = await supabase.from('items')
     .select('id,std_code,name,type,manufacturer_code')
-    .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%`)
+    .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`)
     .limit(8)
   return data || []
 }

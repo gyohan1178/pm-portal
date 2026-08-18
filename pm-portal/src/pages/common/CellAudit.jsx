@@ -82,8 +82,8 @@ export default function CellAudit() {
     searchTimer.current = setTimeout(async () => {
       const t = v.trim()
       const { data } = await supabase.from('items')
-        .select('id,std_code,name,unit,manufacturer,manufacturer_code, inventory(qty,location)')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%`)
+        .select('id,std_code,name,unit,manufacturer,manufacturer_code,spec, inventory(qty,location)')
+        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%,spec.ilike.%${t}%`)
         .limit(12)
       setHits(data || []); setSearching(false)
     }, 300)
@@ -195,6 +195,9 @@ export default function CellAudit() {
                       <p className="text-[11px] text-slate-400">
                         {h.manufacturer}{h.manufacturer && h.manufacturer_code ? ' · ' : ''}
                         <span className="font-mono">{h.manufacturer_code}</span>
+                        {h.spec && (
+                          <span className="ml-1.5 text-slate-400">{h.spec}</span>
+                        )}
                         {inv && (
                           <span className={here ? 'ml-1.5 text-slate-400' : 'ml-1.5 text-amber-600 font-semibold'}>
                             · 재고 {n(inv.qty)}{inv.location ? ` @ ${inv.location}` : ' (위치 없음)'}

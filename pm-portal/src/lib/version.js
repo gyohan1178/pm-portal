@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.58.0'
+export const APP_VERSION = 'v3.58.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.58.1',
+    date: '2026-08-18',
+    changes: [
+      '★ 품목 검색에 규격을 포함 — 제조사 정보가 규격란에 적힌 품목(예: EATON_FAZ-C6/1)이 검색되지 않던 문제입니다',
+      '칸 실사·현장 검색·입고·발주·로트 관리·자재 위치 찾기 6개 화면에 적용',
+      '칸 실사 검색 결과에 규격을 함께 표시해 무엇으로 찾아졌는지 알 수 있습니다',
+    ],
+  },
   {
     version: 'v3.58.0',
     date: '2026-08-18',

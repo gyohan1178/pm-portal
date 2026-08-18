@@ -145,7 +145,7 @@ export default function Inbound() {
   // 발주외 품목 자동완성 (공용 AutoInput 사용)
   const fetchDirectSuggest = async (q) => {
     const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
-      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%`).limit(8)
+      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`).limit(8)
     return data || []
   }
   const iCanEdit = useCanEdit()

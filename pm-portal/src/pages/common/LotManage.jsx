@@ -296,7 +296,7 @@ function LotAdd({ onDone }) {
       const t = v.trim()
       const { data } = await supabase.from('items')
         .select('id,std_code,name,manufacturer,manufacturer_code,lot_managed,shelf_months')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%`)
+        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%,spec.ilike.%${t}%`)
         .limit(15)
       setHits(data || [])
     }, 300)

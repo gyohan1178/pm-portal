@@ -30,7 +30,7 @@ export default function StockFinder() {
       const t = v.trim()
       const { data } = await supabase.from('items')
         .select('id,std_code,name,unit,manufacturer,manufacturer_code, inventory(qty,location)')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
+        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%,spec.ilike.%${t}%`)
         .limit(20)
       // 위치가 있는 것을 먼저 — 찾으러 온 사람에게 필요한 답이다
       const rows = (data || []).sort((a, b) => {
