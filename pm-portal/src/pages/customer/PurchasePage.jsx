@@ -328,6 +328,7 @@ export default function PurchasePage() {
       }
       return [...prev, {
         item_id: selItem.id, name: selItem.name, std_code: selItem.std_code,
+        maker: selItem.manufacturer || '', makerPn: selItem.manufacturer_code || '',
         vendor_id: selVendor||null, vendorName: vendors.find(v=>v.id===selVendor)?.name||'',
         type: selItem.type||form.type, qty_ordered: form.qty_ordered, unit_price: form.unit_price,
         order_date: form.order_date, promise_date: form.promise_date, po_number: form.po_number, memo: form.memo,
@@ -344,7 +345,7 @@ export default function PurchasePage() {
     if (!parsed.length) { alert('붙여넣은 내용이 없어요'); return }
     const codes = [...new Set(parsed.map(r=>r.code))]
     const { data: items } = await supabase.from('items')
-      .select('id,std_code,name,type,purchase_price,vendor_id,vendors(name)').in('std_code', codes)
+      .select('id,std_code,name,type,purchase_price,vendor_id,manufacturer,manufacturer_code,vendors(name)').in('std_code', codes)
     const byCode = {}; (items||[]).forEach(it=>{ byCode[it.std_code]=it })
     const notFound = []
     setLines(prev => {
@@ -360,6 +361,7 @@ export default function PurchasePage() {
             unit_price: r.price!=null ? r.price : next[idx].unit_price }
         } else {
           next.push({ item_id:it.id, name:it.name, std_code:it.std_code,
+            maker: it.manufacturer || '', makerPn: it.manufacturer_code || '',
             vendor_id: selVendor||it.vendor_id||null,
             vendorName: selVendor ? (vendors.find(v=>v.id===selVendor)?.name||'') : (it.vendors?.name||''),
             type: it.type||'자재', qty_ordered:qty, unit_price:price,
@@ -408,6 +410,7 @@ export default function PurchasePage() {
         } else {
           next.push({
             item_id:b.item_id, name:b.items?.name, std_code:b.items?.std_code,
+            maker: b.items?.manufacturer || '', makerPn: b.items?.manufacturer_code || '',
             vendor_id:vId, vendorName:vName, type:'가공',
             qty_ordered:qty, unit_price: b.items?.purchase_price ?? '',
             order_date:form.order_date, promise_date:form.promise_date, po_number:form.po_number,
@@ -980,13 +983,27 @@ export default function PurchasePage() {
                   {lines.map((ln,i)=>(
                     <div key={i} className="flex items-center gap-2 text-xs border-b border-slate-50 last:border-0 py-1">
                       <span className="font-mono text-indigo-600 w-24 shrink-0 truncate">{ln.std_code||'-'}</span>
-                      <span className="text-slate-700 flex-1 truncate">{ln.name}</span>
-                      {(() => {
-                        const vn = vendors.find(v => v.id === ln.vendor_id)?.name
-                        return vn
-                          ? <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-600 shrink-0 max-w-[90px] truncate" title={vn}>{vn}</span>
-                          : <span className="px-1.5 py-0.5 rounded bg-rose-50 text-[10px] font-bold text-rose-500 shrink-0">업체없음</span>
-                      })()}
+                      <span className="flex-1 min-w-0">
+                        <span className="text-slate-700 block truncate">{ln.name}</span>
+                        {(ln.maker || ln.makerPn) && (
+                          <span className="block text-[10px] text-slate-400 truncate">
+                            {ln.maker}
+                            {ln.maker && ln.makerPn ? ' · ' : ''}
+                            <span className="font-mono">{ln.makerPn}</span>
+                          </span>
+                        )}
+                      </span>
+                      {/* 구매처는 담은 뒤에도 바꿀 수 있다.
+                          비딩이 그 사이에 바뀌는 일이 잦기 때문이다. */}
+                      <select value={ln.vendor_id || ''}
+                        onChange={e => updateLine(i, 'vendor_id', e.target.value || null)}
+                        className={`shrink-0 max-w-[110px] px-1 py-0.5 rounded text-[10px] font-bold border-0 cursor-pointer ${
+                          ln.vendor_id ? 'bg-slate-100 text-slate-600' : 'bg-rose-50 text-rose-500'}`}>
+                        <option value="">업체없음</option>
+                        {vendors.map(v => (
+                          <option key={v.id} value={v.id}>{v.name}</option>
+                        ))}
+                      </select>
                       <label className="flex items-center gap-1 text-slate-400">수량
                         <input type="number" min="0" value={ln.qty_ordered} onChange={e=>updateLine(i,'qty_ordered',Number(e.target.value))}
                           className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded text-slate-700"/>

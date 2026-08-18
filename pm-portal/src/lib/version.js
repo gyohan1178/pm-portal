@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.57.2'
+export const APP_VERSION = 'v3.58.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.58.0',
+    date: '2026-08-18',
+    changes: [
+      '구매발주 담은 품목에서 구매처를 바꿀 수 있습니다 — 담은 뒤 비딩이 바뀌는 경우가 잦아 다시 담지 않아도 되게 했습니다',
+      '담은 품목에 제조사·제조사품번을 함께 표시 (직접 담기·엑셀 붙여넣기·BOM 불러오기 모두)',
+    ],
+  },
   {
     version: 'v3.57.2',
     date: '2026-08-14',
