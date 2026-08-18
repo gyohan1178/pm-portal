@@ -132,6 +132,7 @@ export default function Inbound() {
   const [hTo, setHTo] = useState(todayStr())
   const [hCustomer, setHCustomer] = useState('')
   const [hVendor, setHVendor] = useState('')
+  const [cartOpen, setCartOpen] = useState(true)   // 담은 품목 패널
   const [hVendorText, setHVendorText] = useState('')
   const [hItem, setHItem] = useState('')
   // 입력이 멈춘 뒤 거른다 — 한 글자마다 전체를 훑으면 느려진다
@@ -263,19 +264,32 @@ export default function Inbound() {
     setChecked(prev => ({ ...prev, [po.id]: !prev[po.id] }))
     setInboundData(prev => prev[po.id] ? prev : ({ ...prev, [po.id]: { qty: po.qty_remaining||0, unit_price: po.unit_price||'' } }))
   }
+  // 지금 보이는 것만 토글한다. 검색 밖에서 담아둔 건은 건드리지 않는다.
   function toggleAll() {
-    if (rows.length && rows.every(r => checked[r.id])) { setChecked({}) }
-    else {
-      const c = {}, d = { ...inboundData }
-      rows.forEach(r => { c[r.id] = true; if (!d[r.id]) d[r.id] = { qty: r.qty_remaining||0, unit_price: r.unit_price||'' } })
-      setChecked(c); setInboundData(d)
+    const allOn = rows.length > 0 && rows.every(r => checked[r.id])
+    setChecked(prev => {
+      const next = { ...prev }
+      rows.forEach(r => { if (allOn) delete next[r.id]; else next[r.id] = true })
+      return next
+    })
+    if (!allOn) {
+      setInboundData(prev => {
+        const d = { ...prev }
+        rows.forEach(r => {
+          if (!d[r.id]) d[r.id] = { qty: r.qty_remaining || 0, unit_price: r.unit_price || '' }
+        })
+        return d
+      })
     }
   }
   function updateData(id, field, val) {
     setInboundData(prev => ({ ...prev, [id]: { ...prev[id], [field]: val } }))
   }
 
-  const checkedRows = rows.filter(r => checked[r.id])
+  // 검색 결과(rows)가 아니라 전체(pendingPOs)에서 고른다.
+  // 검색어를 바꿔도 앞서 체크한 건이 사라지지 않아야
+  // 여러 품목을 찾아가며 담을 수 있다.
+  const checkedRows = pendingPOs.filter(r => checked[r.id])
   const hasInput = checkedRows.some(r => inboundData[r.id]?.qty && Number(inboundData[r.id].qty) > 0)
 
   // 선택한 건의 공급가 합계 — 명세표와 대조할 때 쓴다.
@@ -371,6 +385,64 @@ export default function Inbound() {
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center">
               ✅ {result}
               <button onClick={()=>setResult(null)} className="ml-auto text-emerald-400">✕</button>
+            </div>
+          )}
+
+          {/* 담아둔 것 — 검색을 바꿔도 남아 있어야 여러 품목을 찾아가며 담을 수 있다 */}
+          {checkedRows.length > 0 && (
+            <div className="rounded-xl border-2 border-indigo-300 bg-indigo-50/50 overflow-hidden">
+              <div className="px-3.5 py-2.5 flex items-center gap-2 flex-wrap border-b border-indigo-200">
+                <span className="text-xs font-bold text-indigo-700">
+                  담은 품목 {checkedRows.length}건
+                </span>
+                {checkedAmt > 0 && (
+                  <span className="text-xs font-bold text-slate-700">
+                    {checkedAmt.toLocaleString('ko-KR')}원
+                  </span>
+                )}
+                <button onClick={() => setCartOpen(v => !v)}
+                  className="text-[11px] text-indigo-600 font-semibold hover:underline">
+                  {cartOpen ? '접기 ▲' : '펼치기 ▼'}
+                </button>
+                <button onClick={() => { setChecked({}); setInboundData({}) }}
+                  className="ml-auto text-[11px] text-slate-400 hover:text-rose-500">
+                  전체 해제
+                </button>
+              </div>
+
+              {cartOpen && (
+                <div className="max-h-52 overflow-y-auto divide-y divide-indigo-100">
+                  {checkedRows.map(r => {
+                    const d = inboundData[r.id] || {}
+                    const qty = Number(d.qty) || 0
+                    const price = Number(
+                      d.unit_price !== '' && d.unit_price != null ? d.unit_price : r.unit_price
+                    ) || 0
+                    return (
+                      <div key={r.id} className="px-3.5 py-2 flex items-center gap-2 text-xs bg-white/60">
+                        <span className="font-mono text-indigo-600 w-28 flex-shrink-0 truncate">
+                          {r.items?.std_code || '-'}
+                        </span>
+                        <span className="text-slate-600 flex-1 min-w-0 truncate">{r.items?.name}</span>
+                        <span className="text-slate-400 w-20 flex-shrink-0 truncate text-right">
+                          {r.vendors?.name || ''}
+                        </span>
+                        <span className="w-14 flex-shrink-0 text-right font-bold text-slate-800">
+                          {qty}
+                          <span className="font-normal text-slate-400">/{r.qty_remaining}</span>
+                        </span>
+                        <span className="w-20 flex-shrink-0 text-right text-slate-600">
+                          {(qty * price).toLocaleString('ko-KR')}
+                        </span>
+                        <button onClick={() => {
+                            setChecked(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                          }}
+                          className="text-slate-300 hover:text-rose-500 px-1 flex-shrink-0">✕</button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
             </div>
           )}
 
