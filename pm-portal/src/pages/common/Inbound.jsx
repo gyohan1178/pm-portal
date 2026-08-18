@@ -327,7 +327,10 @@ export default function Inbound() {
   function exportHistory() {
     const data = histShown.map(r=>({
       '입고일':r.movement_date, '기준코드':r.items?.std_code, '품명':r.items?.name,
-      '단위':r.items?.unit, '수량':r.qty, '발주번호':r.purchase_orders?.po_number||'',
+      '단위':r.items?.unit, '수량':r.qty,
+      '단가':Number(r.unit_price)||0,
+      '금액':(Number(r.qty)||0) * (Number(r.unit_price)||0),
+      '발주번호':r.purchase_orders?.po_number||'',
       '구매처':r.purchase_orders?.vendors?.name||'', '고객사':r.customers?.name||'',
       '비고':r.note||'',
     }))
@@ -704,13 +707,13 @@ export default function Inbound() {
                         checked={histShown.length>0 && selHist.size===histShown.length}
                         onChange={e=>setSelHist(e.target.checked ? new Set(histShown.map(r=>r.id)) : new Set())}/>
                     </th>
-                    {['입고일','기준코드','품명','수량','단위','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
+                    {['입고일','기준코드','품명','수량','단위','단가','금액','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
                       <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {histShown.length===0
-                      ? <tr><td colSpan={11} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
+                      ? <tr><td colSpan={13} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
                       : hVis.shown.map(r=>(
                         <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${selHist.has(r.id)?'bg-red-50/40':''}`}>
                           <td className="px-3 py-2 text-center">
@@ -722,6 +725,12 @@ export default function Inbound() {
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                           <td className="px-3 py-2 text-right font-bold text-emerald-700">{r.qty}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
+                          <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">
+                            {r.unit_price ? Number(r.unit_price).toLocaleString('ko-KR') : '-'}
+                          </td>
+                          <td className="px-3 py-2 text-right font-semibold text-slate-700 whitespace-nowrap">
+                            {r.unit_price ? (Number(r.qty) * Number(r.unit_price)).toLocaleString('ko-KR') : '-'}
+                          </td>
                           <td className="px-3 py-2">{r.po_id ? <span className="font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</span> : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-bold">발주외</span>}</td>
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">{r.purchase_orders?.projects?.code||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.vendors?.name||'-'}</td>

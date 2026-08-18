@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.57.1'
+export const APP_VERSION = 'v3.57.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.57.2',
+    date: '2026-08-14',
+    changes: [
+      '입고현황에 단가·금액 열 추가 — 얼마에 받았는지 확인할 수 있고, 엑셀 내보내기에도 들어갑니다',
+    ],
+  },
   {
     version: 'v3.57.1',
     date: '2026-08-14',
