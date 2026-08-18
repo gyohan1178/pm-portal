@@ -277,6 +277,18 @@ export default function Inbound() {
 
   const checkedRows = rows.filter(r => checked[r.id])
   const hasInput = checkedRows.some(r => inboundData[r.id]?.qty && Number(inboundData[r.id].qty) > 0)
+
+  // 선택한 건의 공급가 합계 — 명세표와 대조할 때 쓴다.
+  // 단가를 안 넣었으면 발주 단가를 쓴다.
+  const checkedAmt = checkedRows.reduce((sum, r) => {
+    const d = inboundData[r.id] || {}
+    const qty = Number(d.qty) || 0
+    // 빈 문자열은 ?? 로 안 걸러진다. 값이 실제로 있을 때만 쓴다.
+    const price = Number(
+      d.unit_price !== '' && d.unit_price != null ? d.unit_price : r.unit_price
+    ) || 0
+    return sum + qty * price
+  }, 0)
   // 검색은 디바운스된 값으로 거른다.
   // 한 글자마다 전체를 훑으면 건수가 많을 때 입력이 밀린다.
   const histShown = useMemo(() => {
@@ -346,7 +358,13 @@ export default function Inbound() {
               </div>
               {inboundDate !== todayStr() && <p className="text-xs text-amber-600 mt-1">⚠️ 오늘이 아닌 날짜</p>}
             </div>
-            <div className="ml-auto text-xs text-slate-400 self-center">미입고 {rows.length}건{checkedRows.length>0 && ` · 선택 ${checkedRows.length}`}</div>
+            <div className="ml-auto text-xs text-slate-400 self-center whitespace-nowrap">
+              미입고 {rows.length}건
+              {checkedRows.length > 0 && ` · 선택 ${checkedRows.length}`}
+              {checkedAmt > 0 && (
+                <> · <b className="text-slate-600">{checkedAmt.toLocaleString('ko-KR')}</b>원</>
+              )}
+            </div>
           </div>
 
           {result && (
@@ -436,7 +454,17 @@ export default function Inbound() {
                   <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap">
                     <input value={note} onChange={e=>setNote(e.target.value)} placeholder="입고 비고 (선택)"
                       className="flex-1 min-w-[200px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-                    <p className="text-xs text-slate-400">입고일 <span className="font-semibold text-indigo-600">{inboundDate}</span> · 선택 <span className="font-semibold text-indigo-600">{checkedRows.length}</span>건</p>
+                    <p className="text-xs text-slate-400 whitespace-nowrap">
+                      입고일 <span className="font-semibold text-indigo-600">{inboundDate}</span>
+                      {' · 선택 '}<span className="font-semibold text-indigo-600">{checkedRows.length}</span>건
+                      {checkedAmt > 0 && (
+                        <>
+                          {' · '}
+                          <span className="font-bold text-slate-700">{checkedAmt.toLocaleString('ko-KR')}</span>
+                          <span className="text-slate-400">원</span>
+                        </>
+                      )}
+                    </p>
                     <button onClick={()=>inboundMut.mutate()} disabled={inboundMut.isPending||!hasInput}
                       className="px-6 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                       {inboundMut.isPending?'처리 중...':`✅ 선택 ${checkedRows.length}건 입고 처리`}

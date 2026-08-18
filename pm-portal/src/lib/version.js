@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.56.1'
+export const APP_VERSION = 'v3.57.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.57.0',
+    date: '2026-08-14',
+    changes: [
+      '입고 처리 시 선택한 건의 공급가 합계를 표시 — 거래명세표 금액과 대조할 수 있습니다',
+      '단가를 따로 넣지 않으면 발주 단가로 계산하며, 수량을 넣은 건만 합산합니다',
+    ],
+  },
   {
     version: 'v3.56.1',
     date: '2026-08-13',
