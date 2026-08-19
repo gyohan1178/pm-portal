@@ -11,6 +11,13 @@ const FLOW = [
   { sys:'포털',     title:'출고·불출',   desc:'PO 기준 소요 산출, 납기순 배분 + 미불출 추적' },
 ]
 
+// 로트 관리 대상 품목의 별도 흐름
+const LOT_FLOW = [
+  { title:'입고 시 등록', desc:'박스 시리얼과 수량을 기록 — 제조 시기가 자동으로 채워집니다' },
+  { title:'보증 만료일 계산', desc:'입고일(거래명세서 작성일) 기준으로 자동 산출' },
+  { title:'불출 시 안내', desc:'오래된 로트부터 표시 — 화면과 불출표 인쇄물 모두' },
+]
+
 const START_STEPS = [
   '회원가입 신청 후 관리자 승인을 받으면 포털을 이용할 수 있다. (권한: 관리자 / 편집 / 조회)',
   '기준코드 DB를 먼저 익힌다 — JS 대표코드와 고객사 연결품목의 관계를 이해.',
@@ -20,6 +27,7 @@ const START_STEPS = [
   '입고처리에서 들어온 자재를 입고 등록한다.',
   '출고·불출에서 PO 기준으로 자재를 불출하고 미불출을 관리한다.',
   '마스터 관제탑에서 회사 전체 흐름(발주·재고·생산·납기)을 한눈에 점검한다.',
+  '현장에서 자재가 필요하면 자재 요청 메뉴로 올린다 — 권한과 무관하게 누구나 쓸 수 있다.',
 ]
 
 const MENU_GUIDE = [
@@ -29,10 +37,14 @@ const MENU_GUIDE = [
     { name:'매입 현황', desc:'고객사별 월 매입 금액 현황' },
   ]},
   { group:'공통 업무', items:[
+    { name:'자재 요청', desc:'현장에서 필요한 자재를 요청 — 누구나 쓸 수 있고, 처리(불출·발주)는 담당자가 합니다. 등록되지 않은 품목은 코드 부여를 요청할 수 있습니다' },
     { name:'견적입력', desc:'협력사 견적서 입력 — 단가변동이력으로 연결' },
-    { name:'입고', desc:'구매발주 건의 실물 입고 처리' },
+    { name:'입고', desc:'구매발주 건의 실물 입고 처리. 품목을 찾아가며 담으면 위에 쌓이고, 선택 건의 금액 합계가 나와 명세표와 대조할 수 있습니다' },
     { name:'출고', desc:'PO 기준 자재불출 + 미불출 추적 (다중 PO 일괄 불출, 납기순 배분)' },
     { name:'재고현황', desc:'품목별 현재고 — 부족자재·출고 계산의 기준' },
+    { name:'자재 위치 찾기', desc:'창고 입구 검색대용 화면. 품번·품명·제조사품번·규격으로 찾으면 보관 위치가 크게 표시됩니다' },
+    { name:'로트 관리', desc:'시리얼·보증기간이 있는 품목(BECKHOFF·ROOTECH 등)의 입고 묶음. 먼저 쓸 시리얼과 만료일을 보여줍니다' },
+    { name:'창고 배치도', desc:'랙 배치와 보관 위치. 배치도·랙 안내판을 인쇄할 수 있습니다' },
   ]},
   { group:'고객사 (AX/ED/VM/CSK)', items:[
     { name:'고객사 PO', desc:'이카운트 주문서 업로드·관리' },
@@ -118,6 +130,26 @@ export default function Help() {
             </div>
           ))}
           <div className="text-center text-xs text-slate-400 pt-1">↻ 출고가 끝나면 다음 수주로 순환</div>
+        </div>
+      </section>
+
+      {/* 로트 관리 — 대상 품목만 따로 도는 흐름 */}
+      <section className="rounded-xl border border-teal-200 bg-teal-50/30 p-4">
+        <p className="text-sm font-bold text-teal-800 mb-1">🏷 로트 관리 대상 품목</p>
+        <p className="text-xs text-slate-500 mb-3 leading-relaxed">
+          시리얼과 보증기간을 확인해야 하는 품목(BECKHOFF·ROOTECH·SCHISCHEK·KEYENCE)은
+          위 흐름에 더해 아래를 함께 합니다. 오래된 재고가 투입되어 버전 호환 문제가 생긴 적이 있어 도입했습니다.
+        </p>
+        <div className="space-y-1.5">
+          {LOT_FLOW.map((f, i) => (
+            <div key={i} className="rounded-lg border border-teal-100 bg-white p-2.5 flex items-start gap-2.5">
+              <span className="flex-shrink-0 w-5 h-5 rounded-full bg-teal-600 text-white font-bold flex items-center justify-center text-[10px]">{i+1}</span>
+              <div className="min-w-0">
+                <p className="text-xs font-bold text-slate-800">{f.title}</p>
+                <p className="text-[11px] text-slate-500 mt-0.5">{f.desc}</p>
+              </div>
+            </div>
+          ))}
         </div>
       </section>
 

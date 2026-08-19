@@ -156,6 +156,11 @@ export function canAccessPath(profile, pathname) {
   // 처리(불출·발주)는 화면 안에서 편집 권한으로 다시 가린다.
   if (pathname === '/material-request') return true
 
+  // 도움말은 누구나 본다.
+  //   'home' 으로 분류되어 관제탑 규칙에 걸리면서
+  //   현장·조회 계정이 열지 못하던 문제가 있었다.
+  if (pathname === '/help') return true
+
   const sec = sectionOfPath(pathname)
   if (sec === 'home') {
     // 관제탑은 지정한 사람만 본다.
