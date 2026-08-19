@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { PROC_CATS, catOf } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import StockPaste from '../../components/StockPaste'
@@ -61,6 +62,8 @@ export default function Inventory() {
   const [showNeg, setShowNeg] = useState(false)
   const [hideExcluded, setHideExcluded] = useState(true)   // 재고관리 제외 품목 숨김(기본)
   const [checked, setChecked] = useState({})
+  // 행을 눌러 고르고 끌어서 여러 줄을 한 번에
+  const rowSel = useRowSelect(setChecked)
   const [showAudit, setShowAudit] = useState(false)
   const [auditRows, setAuditRows] = useState([])
   const qc = useQueryClient()
@@ -308,7 +311,10 @@ export default function Inventory() {
               </thead>
               <tbody>
                 {negRows.map(r=>(
-                  <tr key={r.id} className={`border-b border-slate-50 ${checked[r.id]?'bg-rose-50':'hover:bg-slate-50'}`}>
+                  <tr key={r.id}
+                    onMouseDown={e => rowSel.start(r.id, e, !!checked[r.id])}
+                    onMouseEnter={e => rowSel.over(r.id, e)}
+                    className={`border-b border-slate-50 select-none cursor-pointer ${checked[r.id]?'bg-rose-50':'hover:bg-slate-50'}`}>
                     <td className="px-3 py-2 text-center">
                       <input type="checkbox" checked={!!checked[r.id]} onChange={e=>setChecked(c=>({...c,[r.id]:e.target.checked}))}/>
                     </td>

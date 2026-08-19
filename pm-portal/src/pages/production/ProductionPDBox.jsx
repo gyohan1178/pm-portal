@@ -1,8 +1,9 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, MAIN_PNS } from './mainPns'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 
@@ -85,6 +86,18 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const [mainTab, setMainTab] = useState('main') // main=주요 관리 | sub
   const [edit, setEdit] = useState(null)   // 편집 중인 레코드 or null
   const [sel, setSel] = useState(new Set()) // 일괄수정 선택
+  // 행을 눌러 고르고 끌어서 여러 줄을 한 번에.
+  //   훅은 {id:true} 객체를 다루므로 Set 과 오가도록 감싼다.
+  const rowSel = useRowSelect(useCallback(fn => {
+    setSel(prev => {
+      const obj = {}
+      prev.forEach(k => { obj[k] = true })
+      const next = typeof fn === 'function' ? fn(obj) : fn
+      const s2 = new Set()
+      Object.entries(next).forEach(([k, v]) => { if (v) s2.add(k) })
+      return s2
+    })
+  }, []))
   const [bulkField, setBulkField] = useState('arrival_date')
   const [bulkDate, setBulkDate] = useState('')
 
@@ -474,12 +487,16 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </td>
                 </tr>
               ) : (
-                <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 text-center ${sel.has(r.id)?'bg-indigo-50/50':''} ${!isMainPn(r.pn)?'opacity-90':''}`}>
+                <tr key={r.id}
+                  onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
+                  onMouseEnter={e => rowSel.over(r.id, e)}
+                  className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id)?'bg-indigo-50/50':''} ${!isMainPn(r.pn)?'opacity-90':''}`}>
                   <td className="px-1 py-2">
-                    <input type="checkbox" checked={sel.has(r.id)}
-                      onChange={()=>setSel(p=>{const n=new Set(p); n.has(r.id)?n.delete(r.id):n.add(r.id); return n})} />
+                    <input type="checkbox" checked={sel.has(r.id)} readOnly
+                      className="pointer-events-none" />
                   </td>
-                  <td className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
+                  {/* 품번은 편집 모달 진입점이라 행 선택에서 뺀다 */}
+                  <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
                     {r.pn}{!isMainPn(r.pn) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>

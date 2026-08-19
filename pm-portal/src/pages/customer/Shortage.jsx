@@ -4,6 +4,7 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
 import * as XLSX from 'xlsx'
@@ -163,6 +164,7 @@ export default function Shortage() {
   const [catSel, setCatSel] = useState(() => new Set())
   const [sortBy, setSortBy] = useState('order_need')
   const [checked, setChecked] = useState({})
+  const rowSel = useRowSelect(setChecked)
   const [showOrderForm, setShowOrderForm] = useState(false)
   const [selVendor, setSelVendor] = useState('')
   const [promiseDate, setPromiseDate] = useState('')
@@ -359,7 +361,10 @@ export default function Shortage() {
               <th className="px-3 py-2 text-right font-bold text-slate-400">발주수량</th>
             </tr></thead><tbody>
               {checkedItems.map(r=>(
-                <tr key={r.item_id} className="border-b border-slate-100">
+                <tr key={r.item_id}
+                  onMouseDown={e => rowSel.start(r.item_id, e, !!checked[r.item_id])}
+                  onMouseEnter={e => rowSel.over(r.item_id, e)}
+                  className={`border-b border-slate-100 select-none cursor-pointer ${checked[r.item_id]?'bg-indigo-50/50':''}`}>
                   <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.std_code}</td>
                   <td className="px-3 py-2 text-slate-700">{r.name}</td>
                   <td className="px-3 py-2 text-right font-semibold text-red-600">{r.orderNeed}</td>

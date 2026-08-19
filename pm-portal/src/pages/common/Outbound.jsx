@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -85,6 +85,18 @@ export default function Outbound() {
   }
   const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
+  // 행을 눌러 고르고 끌어서 여러 줄을 한 번에.
+  //   훅은 {id:true} 객체를 다루므로 Set 과 오가도록 감싼다.
+  const rowSel = useRowSelect(useCallback(fn => {
+    setSelectedIds(prev => {
+      const obj = {}
+      prev.forEach(k => { obj[k] = true })
+      const next = typeof fn === 'function' ? fn(obj) : fn
+      const s2 = new Set()
+      Object.entries(next).forEach(([k, v]) => { if (v) s2.add(k) })
+      return s2
+    })
+  }, []))
   // 위치순이 기본. 창고를 돌며 꺼내는 순서와 같아 동선이 짧아진다.
   const [sortBy, setSortBy] = useState('location')      // maker | location | code
   const [harnessUnits, setHarnessUnits] = useState(10)  // 하네스 불출 대수
@@ -672,10 +684,13 @@ export default function Outbound() {
                         const mt = mtOf(item.item_id)
                         const dim = mt !== 'normal'
                         return (
-                        <tr key={item.item_id} className={`border-b border-slate-100 ${dim?'bg-slate-50':''} ${selectedIds.has(item.item_id)?'bg-indigo-50/50':''}`}>
+                        <tr key={item.item_id}
+                          onMouseDown={e => rowSel.start(item.item_id, e, selectedIds.has(item.item_id))}
+                          onMouseEnter={e => rowSel.over(item.item_id, e)}
+                          className={`border-b border-slate-100 select-none cursor-pointer ${dim?'bg-slate-50':''} ${selectedIds.has(item.item_id)?'bg-indigo-50/50':''}`}>
                           <td className="px-2 py-2 text-center">
-                            <input type="checkbox" checked={selectedIds.has(item.item_id)}
-                              onChange={()=>setSelectedIds(p=>{ const n=new Set(p); n.has(item.item_id)?n.delete(item.item_id):n.add(item.item_id); return n })} />
+                            <input type="checkbox" checked={selectedIds.has(item.item_id)} readOnly
+                              className="pointer-events-none" />
                           </td>
                           <td className="px-2 py-2 text-center text-slate-400">{idx+1}</td>
                           <td className="px-2 py-2">

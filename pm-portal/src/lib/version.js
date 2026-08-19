@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.60.0'
+export const APP_VERSION = 'v3.61.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.61.0',
+    date: '2026-08-19',
+    changes: [
+      '행 클릭·드래그 선택을 네 화면에 추가 — ASSY 출고, 재고현황, 부족자재, 생산관리입니다. 체크박스를 정확히 누르지 않아도 행 아무 데나 누르면 선택되고, 누른 채 끌면 여러 줄이 한 번에 선택됩니다',
+      '생산관리에서 품번을 누르면 편집 모달이 열리는 동작은 그대로 유지됩니다',
+    ],
+  },
   {
     version: 'v3.60.0',
     date: '2026-08-19',
