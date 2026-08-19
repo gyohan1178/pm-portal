@@ -291,12 +291,28 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (error) throw error
         priceFilled++
       }
-      return { changed: diff.changes.length, inserted, created, done, canceled, priceFilled }
+      // PO 를 고쳤으면 생산관리 호기도 맞춰야 한다.
+      //   따로 눌러야 하는 구조라 빠뜨리기 쉬워, 적용 직후 바로 돌린다.
+      //   실패해도 PO 적용은 유효하므로 오류를 삼키고 안내만 남긴다.
+      let sync = null
+      try {
+        const { data: sd } = await supabase.rpc('sync_production_from_po',
+          { cs_code: 'AX', p_silent: true })
+        sync = sd?.[0] || null
+      } catch { /* 연동 실패는 별도 안내 */ }
+
+      return { changed: diff.changes.length, inserted, created, done, canceled, priceFilled, sync }
     },
     onSuccess: (r) => {
-      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}`)
+      const sy = r.sync
+      const syncMsg = sy
+        ? ` · 생산관리 연동(매칭 ${sy.matched||0}, 신규 ${sy.created||0}, 갱신 ${sy.updated||0})`
+        : ' · 생산관리 연동은 실패했습니다 — 생산관리에서 직접 눌러주세요'
+      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}`)
       setRows([]); setDiff(null); setDisCheck({})
       qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage'])
+      qc.invalidateQueries({ queryKey: ['production'], exact: false })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
     },
     onError: e => toastError('적용 오류: ' + e.message),
   })

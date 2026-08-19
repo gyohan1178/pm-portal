@@ -478,7 +478,7 @@ export default function PurchasePage() {
       const { data } = await supabase.from('items')
         .select('id,std_code,name,type,lt_weeks,vendor_id,manufacturer,manufacturer_code,purchase_price,unit,vendors(name)')
         .or(`name.ilike.%${v}%,std_code.ilike.%${v}%,manufacturer.ilike.%${v}%,manufacturer_code.ilike.%${v}%,spec.ilike.%${v}%`)
-        .limit(8)
+        .limit(20)
       if (seq !== itemSearchSeq.current) return   // 더 최근 입력이 있으면 버린다
       setItemResults(data || [])
     }, 250)

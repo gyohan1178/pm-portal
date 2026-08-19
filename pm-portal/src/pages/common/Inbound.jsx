@@ -145,7 +145,7 @@ export default function Inbound() {
   // 발주외 품목 자동완성 (공용 AutoInput 사용)
   const fetchDirectSuggest = async (q) => {
     const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
-      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`).limit(8)
+      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`).limit(20)
     return data || []
   }
   const iCanEdit = useCanEdit()
@@ -174,7 +174,8 @@ export default function Inbound() {
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
     onSuccess: () => {
       setResult(`입고 처리 완료 (${inboundDate}) — ${checkedRows.length}건`)
-      setInboundData({}); setChecked({}); setNote('')
+      // 검색어도 함께 지운다. 다음 명세표로 넘어갈 때 매번 지우는 수고를 던다.
+      setInboundData({}); setChecked({}); setNote(''); setRowSearch('')
       refreshProcurement(qc)
       // 입고 현황 캐시 명시적 갱신 (hQuery 포함 키까지 확실히 무효화)
       qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })
@@ -430,9 +431,13 @@ export default function Inbound() {
                         <span className="text-slate-400 w-20 flex-shrink-0 truncate text-right">
                           {r.vendors?.name || ''}
                         </span>
-                        <span className="w-14 flex-shrink-0 text-right font-bold text-slate-800">
-                          {qty}
-                          <span className="font-normal text-slate-400">/{r.qty_remaining}</span>
+                        {/* 검색을 바꾸면 그 건이 표에서 사라져 수량을 고칠 수 없다.
+                            부분 입고가 흔하므로 여기서 바로 고치게 한다. */}
+                        <span className="flex items-center gap-0.5 flex-shrink-0">
+                          <input type="number" min="0" value={d.qty ?? ''}
+                            onChange={e => updateData(r.id, 'qty', e.target.value)}
+                            className="w-14 px-1 py-0.5 text-right font-bold border border-slate-200 rounded" />
+                          <span className="text-slate-400 w-8">/{r.qty_remaining}</span>
                         </span>
                         <span className="w-20 flex-shrink-0 text-right text-slate-600">
                           {(qty * price).toLocaleString('ko-KR')}

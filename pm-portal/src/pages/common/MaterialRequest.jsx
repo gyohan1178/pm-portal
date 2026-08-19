@@ -1196,6 +1196,16 @@ export default function MaterialRequest() {
                           <span className="font-bold text-slate-700 w-16 flex-shrink-0 text-right">
                             {n(r.qty)}<span className="font-normal text-slate-400 ml-0.5">{r.unit}</span>
                           </span>
+                          {/* 재고는 담당자만 본다. 불출할지 발주할지 판단하는 근거다. */}
+                          {canEdit && r.item_id && (
+                            <span className={`w-24 flex-shrink-0 text-right text-[11px] font-semibold ${
+                              Number(r.stock_qty) >= Number(r.qty) ? 'text-emerald-600' : 'text-rose-500'}`}>
+                              재고 {n(r.stock_qty)}
+                              {Number(r.po_pending) > 0 && (
+                                <span className="text-sky-600 ml-1">＋{n(r.po_pending)}</span>
+                              )}
+                            </span>
+                          )}
                           {r.status !== h.status && (
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex-shrink-0 ${(ST[r.status] || ST['요청']).cls}`}>
                               {r.status}
