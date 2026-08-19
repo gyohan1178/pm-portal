@@ -1,6 +1,18 @@
-export const APP_VERSION = 'v3.59.0'
+export const APP_VERSION = 'v3.60.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.60.0',
+    date: '2026-08-19',
+    changes: [
+      '★ 로트 관리 화면을 품목 카드 방식으로 다시 설계 — 대상이 여덟 종뿐이라 표보다 카드가 한눈에 들어옵니다. 품목마다 먼저 써야 할 시리얼과 만료일이 크게 표시됩니다',
+      '보증기간을 형번별로 관리 — BECKHOFF·SCHISCHEK·KEYENCE 1년, ROOTECH ACCURA MD-GAS 2년',
+      '보증 시작을 입고일(거래명세서 작성일) 기준으로 변경 (기존에는 제조일 기준이었습니다)',
+      '로트 등록을 간소화 — 품목을 고르면 시리얼·수량만 넣으면 되고, 등록 후 같은 품목으로 이어서 입력할 수 있습니다',
+      'Allen-Bradley 는 선입선출 대상에서 제외 (입고 시 확인만)',
+      'SQL: pm_lot_v2.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.59.0',
     date: '2026-08-19',

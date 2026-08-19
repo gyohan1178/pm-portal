@@ -454,7 +454,7 @@ export default function Outbound() {
           <td></td>
           <td colspan="9">↳ <b>${f.expired ? '⚠ 기한초과' : '먼저 사용'}</b>
             <span class="mono">${f.serial_no}</span>
-            ${f.made_ym ? `· ${f.made_ym}` : ''} · 잔량 ${f.qty_left}
+            ${f.expire_date ? `· ${f.expire_date}까지` : ''} · 잔량 ${f.qty_left}
             ${lm.count > 1 ? `<span class="dim">(외 ${lm.count - 1}로트)</span>` : ''}</td>
         </tr>`
       })()}).join('')
@@ -705,8 +705,11 @@ export default function Outbound() {
                                     style={{ fontFamily: 'ui-monospace,Menlo,monospace' }}>
                                     {f.serial_no}
                                   </span>
-                                  {f.made_ym && (
-                                    <span className="text-[10px] text-slate-400">{f.made_ym}</span>
+                                  {f.expire_date && (
+                                    <span className={`text-[10px] ${
+                                      f.expired ? 'text-rose-600 font-bold' : 'text-slate-400'}`}>
+                                      {f.expire_date}까지
+                                    </span>
                                   )}
                                   <span className="text-[10px] text-slate-400">잔 {f.qty_left}</span>
                                   {lm.count > 1 && (
