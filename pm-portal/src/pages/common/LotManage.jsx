@@ -42,6 +42,9 @@ export default function LotManage() {
   const canEdit = useCanEdit()
   const [openItem, setOpenItem] = useState(null)   // 펼친 품목
   const [addFor, setAddFor] = useState(null)       // 로트 등록 대상
+  const [editLot, setEditLot] = useState(null)     // 수정할 로트
+  const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
+  const [showDone, setShowDone] = useState(false)  // 소진분 포함
 
   const { data: sum = [], isLoading } = useQuery({
     queryKey: ['lotSummary'],
@@ -54,10 +57,10 @@ export default function LotManage() {
   })
 
   const { data: lots = [] } = useQuery({
-    queryKey: ['lotList'],
+    queryKey: ['lotList', showDone],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_lot_list',
-        { p_item_id: null, p_only_left: true })
+        { p_item_id: null, p_only_left: !showDone })
       if (error) throw error
       return data || []
     },
@@ -69,6 +72,11 @@ export default function LotManage() {
     lots.forEach(l => { (m[l.item_id] ||= []).push(l) })
     return m
   }, [lots])
+
+  function refresh() {
+    qc.invalidateQueries({ queryKey: ['lotSummary'] })
+    qc.invalidateQueries({ queryKey: ['lotList'], exact: false })
+  }
 
   const stat = useMemo(() => ({
     items: sum.length,
@@ -116,6 +124,11 @@ export default function LotManage() {
               ＋ 로트 등록
             </button>
           )}
+          <label className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-slate-500 cursor-pointer">
+            <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)}
+              className="w-3.5 h-3.5 accent-indigo-600" />
+            소진분 포함
+          </label>
           <button onClick={exportXl}
             className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
             📥 엑셀
@@ -174,9 +187,19 @@ export default function LotManage() {
                       <span className="text-sm font-bold text-slate-800"
                         style={{ fontFamily: MONO }}>{s.maker_code || s.std_code}</span>
                       <span className="text-[11px] text-slate-400">{s.maker}</span>
-                      <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">
-                        보증 {s.shelf_months}개월
-                      </span>
+                      {canEdit ? (
+                        <button onClick={() => setShelfFor(s)}
+                          title="보증기간 수정"
+                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                            s.shelf_months ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                           : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                          {s.shelf_months ? `보증 ${s.shelf_months}개월` : '⚠ 보증기간 미설정'}
+                        </button>
+                      ) : (
+                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">
+                          {s.shelf_months ? `보증 ${s.shelf_months}개월` : '보증 미설정'}
+                        </span>
+                      )}
                     </div>
                     <p className="text-xs text-slate-500 mt-0.5">{s.item_name}</p>
                   </div>
@@ -220,6 +243,9 @@ export default function LotManage() {
                   <button onClick={() => setOpenItem(open ? null : s.item_id)}
                     className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500">
                     {open ? '접기 ▲' : `로트 ${s.lot_cnt}개 보기 ▼`}
+                    {Number(s.done_cnt) > 0 && (
+                      <span className="ml-1 text-slate-400">· 소진 {s.done_cnt}</span>
+                    )}
                   </button>
                   {canEdit && (
                     <button onClick={() => setAddFor({
@@ -238,7 +264,8 @@ export default function LotManage() {
                   {rows.map(l => (
                     <div key={l.id}
                       className={`px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs ${
-                        l.expired ? 'bg-rose-50/60' : ''}`}>
+                        Number(l.qty_left) <= 0 ? 'bg-slate-100/70 text-slate-400'
+                          : l.expired ? 'bg-rose-50/60' : ''}`}>
                       <span className="w-6 text-center text-[10px] font-bold text-slate-400">
                         {l.fifo_rank}
                       </span>
@@ -261,6 +288,11 @@ export default function LotManage() {
                       </span>
                       {l.vendor_name && (
                         <span className="text-[10px] text-slate-400 w-16 text-right">{l.vendor_name}</span>
+                      )}
+                      {canEdit && (
+                        <button onClick={() => setEditLot(l)}
+                          title="수정 · 삭제"
+                          className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
                       )}
                     </div>
                   ))}
@@ -289,11 +321,15 @@ export default function LotManage() {
 
       {addFor && (
         <LotAdd preset={addFor} onClose={() => setAddFor(null)}
-          onDone={() => {
-            qc.invalidateQueries({ queryKey: ['lotSummary'] })
-            qc.invalidateQueries({ queryKey: ['lotList'] })
-            setAddFor(null)
-          }} />
+          onDone={() => { refresh(); setAddFor(null) }} />
+      )}
+      {editLot && (
+        <LotEdit lot={editLot} onClose={() => setEditLot(null)}
+          onDone={() => { refresh(); setEditLot(null) }} />
+      )}
+      {shelfFor && (
+        <ShelfEdit item={shelfFor} onClose={() => setShelfFor(null)}
+          onDone={() => { refresh(); setShelfFor(null) }} />
       )}
     </div>
   )
@@ -476,6 +512,220 @@ function LotAdd({ preset, onClose, onDone }) {
               </p>
             </>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ───────────────────────── 로트 수정 ─────────────────────────
+//   출고 연동 전까지는 잔량을 손으로 맞춰야 한다.
+function LotEdit({ lot, onClose, onDone }) {
+  const [qty, setQty] = useState(String(lot.qty_left ?? ''))
+  const [serial, setSerial] = useState(lot.serial_no || '')
+  const [madeYm, setMadeYm] = useState(lot.made_ym || '')
+  const [inDate, setInDate] = useState(lot.in_date || '')
+  const [vendor, setVendor] = useState(lot.vendor_name || '')
+  const [memo, setMemo] = useState(lot.memo || '')
+  const [busy, setBusy] = useState(false)
+  const [confirmDel, setConfirmDel] = useState(false)
+
+  async function save() {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_lot_update', {
+        p_id: lot.id,
+        p_qty_left: qty === '' ? null : Number(qty),
+        p_serial: serial.trim() || null,
+        p_made_ym: madeYm,
+        p_in_date: inDate || null,
+        p_vendor: vendor,
+        p_memo: memo,
+      })
+      if (error) throw error
+      if (data !== 'ok') { toastError(data); return }
+      toastSuccess('수정됨')
+      onDone?.()
+    } catch (e) { toastError('수정 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function del() {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_lot_delete', { p_id: lot.id })
+      if (error) throw error
+      if (data !== 'ok') { toastError(data); return }
+      toastSuccess('삭제됨')
+      onDone?.()
+    } catch (e) { toastError('삭제 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[92vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-bold text-slate-800">로트 수정</h3>
+            <p className="text-[11px] text-slate-400">{lot.std_code} · {lot.item_name}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 text-xl px-2">✕</button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
+            <p className="text-[11px] text-amber-800 leading-relaxed">
+              출고와 아직 연결되지 않아 잔량이 자동으로 줄지 않습니다.
+              실제로 나간 만큼 여기서 맞춰 주세요.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">잔량</label>
+              <input type="number" min="0" value={qty}
+                onChange={e => setQty(e.target.value)}
+                className="w-full px-3 py-3 text-lg text-right font-bold border-2 border-indigo-200 rounded-lg" />
+              <p className="text-[10px] text-slate-400 mt-0.5">입고 {n(lot.qty_in)}</p>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">시리얼</label>
+              <input value={serial} onChange={e => setSerial(e.target.value.toUpperCase())}
+                className="w-full px-3 py-3 text-sm font-bold border border-slate-200 rounded-lg"
+                style={{ fontFamily: MONO }} />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">입고일</label>
+              <input type="date" value={inDate} onChange={e => setInDate(e.target.value)}
+                className="w-full px-2 py-2 text-sm border border-slate-200 rounded-lg" />
+              <p className="text-[10px] text-slate-400 mt-0.5">보증 시작 기준</p>
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">제조</label>
+              <input value={madeYm} onChange={e => setMadeYm(e.target.value)}
+                placeholder="25년 51주"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">구매처</label>
+              <input value={vendor} onChange={e => setVendor(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">비고</label>
+              <input value={memo} onChange={e => setMemo(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+          </div>
+
+          <button onClick={save} disabled={busy}
+            className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
+            {busy ? '저장 중…' : '저장'}
+          </button>
+
+          <div className="pt-2 border-t border-slate-100">
+            {confirmDel ? (
+              <div className="rounded-lg bg-rose-50 border border-rose-200 p-3">
+                <p className="text-xs font-bold text-rose-700 mb-2">
+                  이 로트를 지웁니다. 되돌릴 수 없습니다.
+                </p>
+                <div className="flex gap-2">
+                  <button onClick={del} disabled={busy}
+                    className="flex-1 py-2 text-xs font-bold rounded-lg bg-rose-600 text-white">
+                    삭제
+                  </button>
+                  <button onClick={() => setConfirmDel(false)}
+                    className="flex-1 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-600">
+                    취소
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => setConfirmDel(true)}
+                className="w-full py-2 text-xs font-semibold text-rose-500 hover:bg-rose-50 rounded-lg">
+                이 로트 삭제
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
+// ───────────────────────── 보증기간 ─────────────────────────
+function ShelfEdit({ item, onClose, onDone }) {
+  const [months, setMonths] = useState(String(item.shelf_months ?? ''))
+  const [busy, setBusy] = useState(false)
+
+  async function save() {
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_lot_set_shelf', {
+        p_item_id: item.item_id, p_months: months === '' ? 0 : Number(months),
+      })
+      if (error) throw error
+      if (data !== 'ok') { toastError(data); return }
+      toastSuccess('보증기간 저장')
+      onDone?.()
+    } catch (e) { toastError('저장 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
+      onClick={onClose}>
+      <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl overflow-hidden"
+        onClick={e => e.stopPropagation()}>
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="text-base font-bold text-slate-800">보증기간</h3>
+          <button onClick={onClose} className="text-slate-400 text-xl px-2">✕</button>
+        </div>
+        <div className="p-4 space-y-3">
+          <div>
+            <p className="text-sm font-bold text-slate-800" style={{ fontFamily: MONO }}>
+              {item.maker_code || item.std_code}
+            </p>
+            <p className="text-xs text-slate-500">{item.item_name}</p>
+            <p className="text-[11px] text-slate-400">{item.maker}</p>
+          </div>
+
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1">개월</label>
+            <div className="flex gap-1.5">
+              {[12, 24, 36].map(m => (
+                <button key={m} onClick={() => setMonths(String(m))}
+                  className={`flex-1 py-2.5 text-sm font-bold rounded-lg border-2 ${
+                    months === String(m) ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                                         : 'border-slate-200 text-slate-500'}`}>
+                  {m / 12}년
+                </button>
+              ))}
+            </div>
+            <input type="number" min="0" value={months}
+              onChange={e => setMonths(e.target.value)}
+              placeholder="직접 입력"
+              className="w-full mt-2 px-3 py-2.5 text-sm text-right border border-slate-200 rounded-lg" />
+            <p className="text-[11px] text-slate-400 mt-1">
+              입고일(거래명세서 작성일)부터 셉니다. 비우면 기한을 따지지 않습니다.
+            </p>
+          </div>
+
+          <button onClick={save} disabled={busy}
+            className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
+            {busy ? '저장 중…' : '저장'}
+          </button>
         </div>
       </div>
     </div>
