@@ -211,6 +211,29 @@ export default function RackLayout() {
   // 실사하며 자리를 옮길 때 기존 위치를 지운다.
   //   위치만 비우고 재고 수량은 그대로 둔다.
   const [clearAsk, setClearAsk] = useState(null)
+  const [confirmText, setConfirmText] = useState('')
+  const [snapOpen, setSnapOpen] = useState(false)
+
+  // 비운 기록 — 되돌릴 수 있게 남겨둔다
+  const { data: snaps = [] } = useQuery({
+    queryKey: ['rackSnaps'],
+    enabled: snapOpen,
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_rack_snapshots', { p_days: 30 })
+      return data || []
+    },
+  })
+
+  async function restore(id) {
+    try {
+      const { data, error } = await supabase.rpc('pm_rack_restore', { p_snap_id: id })
+      if (error) throw error
+      toastSuccess(data || '복구됨')
+      qc.invalidateQueries({ queryKey: ['rackMap'], exact: false })
+      qc.invalidateQueries({ queryKey: ['rackUsage'], exact: false })
+      qc.invalidateQueries({ queryKey: ['rackSnaps'] })
+    } catch (e) { toastError('복구 실패: ' + e.message) }
+  }
 
   async function doClearCell(row, lv, cell) {
     setClearAsk({
@@ -229,7 +252,13 @@ export default function RackLayout() {
             { p_rack: sel, p_row: clearAsk.row, p_level: clearAsk.lv })
         : await supabase.rpc('pm_rack_clear', { p_rack: sel })
       if (error) throw error
-      toastSuccess(data || '위치를 비웠습니다')
+      const r = Array.isArray(data) ? data[0] : data
+      if (r?.snap_id) {
+        toastSuccess(`${r.cnt}건 비움 — 되돌리려면 복구 기록에서 #${r.snap_id}`)
+      } else {
+        toastSuccess('비울 항목이 없습니다')
+      }
+      setConfirmText('')
       qc.invalidateQueries({ queryKey: ['rackMap'], exact: false })
       qc.invalidateQueries({ queryKey: ['rackUsage'], exact: false })
       qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
@@ -491,6 +520,58 @@ export default function RackLayout() {
         </div>
       </div>
 
+      {snapOpen && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setSnapOpen(false)}>
+          <div className="bg-white w-full max-w-2xl rounded-2xl overflow-hidden max-h-[85vh] flex flex-col"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+              <div>
+                <h3 className="text-base font-bold text-slate-800">비운 기록</h3>
+                <p className="text-[11px] text-slate-400">최근 30일 · 비어 있는 품목만 되돌립니다</p>
+              </div>
+              <button onClick={() => setSnapOpen(false)} className="text-slate-400 text-xl px-2">✕</button>
+            </div>
+            <div className="overflow-y-auto p-3 space-y-2">
+              {!snaps.length && (
+                <p className="text-center py-10 text-sm text-slate-400">기록이 없습니다</p>
+              )}
+              {snaps.map(sp => (
+                <div key={sp.id}
+                  className={`rounded-lg border p-3 ${sp.restored ? 'border-slate-100 bg-slate-50' : 'border-slate-200'}`}>
+                  <div className="flex items-start gap-3 flex-wrap">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-slate-800">
+                          {sp.rack_code}
+                          {sp.scope === 'cell' && `-${String(sp.row_no).padStart(2,'0')}-${sp.level_no}`}
+                        </span>
+                        <span className="text-xs text-slate-500">{sp.cnt}건</span>
+                        {sp.restored && (
+                          <span className="px-1.5 py-0.5 rounded bg-slate-200 text-[10px] font-bold text-slate-500">
+                            복구됨
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400 mt-0.5 truncate">{sp.preview} …</p>
+                      <p className="text-[10px] text-slate-400">
+                        {String(sp.created_at).slice(0,16).replace('T',' ')} · {sp.who || ''}
+                      </p>
+                    </div>
+                    {!sp.restored && (
+                      <button onClick={() => restore(sp.id)}
+                        className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
+                        되돌리기
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {clearAsk && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
           onClick={() => setClearAsk(null)}>
@@ -510,16 +591,33 @@ export default function RackLayout() {
                 {clearAsk.cnt > 0 && <b>{clearAsk.cnt}개 품목 · </b>}
                 위치만 지워지고 재고 수량은 그대로 남습니다. 되돌릴 수 없습니다.
               </p>
+              {/* 랙 전체는 손실이 커서 코드를 직접 치게 한다.
+                  버튼 한 번으로 47건이 사라진 적이 있다. */}
+              {clearAsk.kind === 'rack' && (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">
+                    확인을 위해 <b className="text-rose-600">{sel}</b> 를 입력하세요
+                  </label>
+                  <input value={confirmText} onChange={e => setConfirmText(e.target.value.toUpperCase())}
+                    autoFocus placeholder={sel}
+                    className="w-full px-3 py-2.5 text-sm font-bold text-center border-2 border-slate-200 rounded-lg"
+                    style={{ fontFamily: 'ui-monospace,Menlo,monospace' }} />
+                </div>
+              )}
               <div className="flex gap-2">
                 <button onClick={runClear}
-                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-rose-600 text-white">
+                  disabled={clearAsk.kind === 'rack' && confirmText !== sel}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-rose-600 text-white disabled:opacity-30">
                   비우기
                 </button>
-                <button onClick={() => setClearAsk(null)}
+                <button onClick={() => { setClearAsk(null); setConfirmText('') }}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
                   취소
                 </button>
               </div>
+              <p className="text-[11px] text-slate-400 text-center">
+                비우기 전 목록이 저장되어 되돌릴 수 있습니다
+              </p>
             </div>
           </div>
         </div>
@@ -777,16 +875,20 @@ export default function RackLayout() {
 
           {rack && canEdit && (
             <div className="no-print flex items-center gap-2 flex-wrap">
-              <span className="text-[11px] text-slate-400">
-                칸의 ✕ 를 누르면 그 칸만, 아래 버튼은 랙 전체를 비웁니다 · 재고 수량은 그대로 남습니다
+              <span className="text-[11px] text-slate-400 flex-1">
+                칸의 ✕ 는 그 칸만, 오른쪽 버튼은 랙 전체 · 재고 수량은 남습니다
               </span>
+              <button onClick={() => setSnapOpen(true)}
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">
+                ↩ 비운 기록
+              </button>
               <button onClick={() => setClearAsk({
                   kind: 'rack',
                   msg: `${sel} 랙 전체의 위치를 지웁니다`,
                   detail: '이 랙에 지정된 모든 품목의 보관 위치가 비워집니다',
                   cnt: Object.keys(cellMap).length,
                 })}
-                className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-200 text-rose-600 bg-rose-50">
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-200 text-rose-600 bg-rose-50">
                 🗑 랙 전체 비우기
               </button>
             </div>
@@ -850,7 +952,7 @@ function SheetBody({ rack, cellMap, qr, print, onClearCell }) {
                 return (
                   <td key={r} style={{
                     border: '0.3mm solid #64748b',
-                    height: print ? '20mm' : '64px',
+                    height: print ? '22mm' : '72px',
                     verticalAlign: 'top', padding: '1mm',
                     background: c ? '#fef9c3' : '#fff',
                     position: 'relative',
@@ -861,7 +963,7 @@ function SheetBody({ rack, cellMap, qr, print, onClearCell }) {
                     {c && (
                       <div style={{ fontSize: print ? '2.2mm' : '9px', color: '#713f12', lineHeight: 1.3,
                         overflow: 'hidden', display: '-webkit-box',
-                        WebkitLineClamp: print ? 5 : 4, WebkitBoxOrient: 'vertical' }}>
+                        WebkitLineClamp: print ? 6 : 5, WebkitBoxOrient: 'vertical' }}>
                         {/* 창고에서는 제조사품번으로 찾는 일이 많아 함께 적는다 */}
                         {(c.items || []).length
                           ? c.items.map((it, k) => (
@@ -869,10 +971,12 @@ function SheetBody({ rack, cellMap, qr, print, onClearCell }) {
                               <span style={{ fontFamily: 'ui-monospace,monospace', fontWeight: 700 }}>
                                 {it.std_code}
                               </span>
-                              {(it.maker_code || it.maker) && (
-                                <span style={{ color: '#92642a' }}>
-                                  {' · '}{it.maker_code || it.maker}
-                                </span>
+                              {it.maker && (
+                                <span style={{ color: '#92642a' }}> · {it.maker}</span>
+                              )}
+                              {it.maker_code && (
+                                <span style={{ color: '#92642a',
+                                  fontFamily: 'ui-monospace,monospace' }}> · {it.maker_code}</span>
                               )}
                             </div>
                           ))
