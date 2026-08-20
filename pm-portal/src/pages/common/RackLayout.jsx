@@ -208,6 +208,35 @@ export default function RackLayout() {
       .then(setQr).catch(() => setQr(''))
   }, [sel])
 
+  // 실사하며 자리를 옮길 때 기존 위치를 지운다.
+  //   위치만 비우고 재고 수량은 그대로 둔다.
+  const [clearAsk, setClearAsk] = useState(null)
+
+  async function doClearCell(row, lv, cell) {
+    setClearAsk({
+      kind: 'cell', row, lv,
+      msg: `${sel}-${String(row).padStart(2,'0')}-${lv} 칸의 위치를 지웁니다`,
+      detail: (cell.items || []).map(x => x.std_code).join(', ') || cell.codes,
+      cnt: Number(cell.item_count) || 0,
+    })
+  }
+
+  async function runClear() {
+    if (!clearAsk) return
+    try {
+      const { data, error } = clearAsk.kind === 'cell'
+        ? await supabase.rpc('pm_rack_clear_cell',
+            { p_rack: sel, p_row: clearAsk.row, p_level: clearAsk.lv })
+        : await supabase.rpc('pm_rack_clear', { p_rack: sel })
+      if (error) throw error
+      toastSuccess(data || '위치를 비웠습니다')
+      qc.invalidateQueries({ queryKey: ['rackMap'], exact: false })
+      qc.invalidateQueries({ queryKey: ['rackUsage'], exact: false })
+      qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
+      setClearAsk(null)
+    } catch (e) { toastError('실패: ' + e.message) }
+  }
+
   function startEdit() {
     // 저장하지 못하고 나간 작업이 있으면 이어서 할지 묻는다
     try {
@@ -462,6 +491,40 @@ export default function RackLayout() {
         </div>
       </div>
 
+      {clearAsk && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setClearAsk(null)}>
+          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 bg-rose-50 border-b border-rose-100">
+              <h3 className="text-base font-bold text-rose-800">위치 비우기</h3>
+            </div>
+            <div className="p-4 space-y-3">
+              <p className="text-sm font-semibold text-slate-800">{clearAsk.msg}</p>
+              {clearAsk.detail && (
+                <div className="rounded-lg bg-slate-50 p-2.5">
+                  <p className="text-[11px] text-slate-500 break-all">{clearAsk.detail}</p>
+                </div>
+              )}
+              <p className="text-xs text-slate-500">
+                {clearAsk.cnt > 0 && <b>{clearAsk.cnt}개 품목 · </b>}
+                위치만 지워지고 재고 수량은 그대로 남습니다. 되돌릴 수 없습니다.
+              </p>
+              <div className="flex gap-2">
+                <button onClick={runClear}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-rose-600 text-white">
+                  비우기
+                </button>
+                <button onClick={() => setClearAsk(null)}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {scanOpen && (
         <QrScanner onClose={() => setScanOpen(false)}
           onScan={(loc) => { setScanOpen(false); nav(`/cell/${loc}`) }} />
@@ -712,10 +775,28 @@ export default function RackLayout() {
             </button>
           </div>
 
+          {rack && canEdit && (
+            <div className="no-print flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] text-slate-400">
+                칸의 ✕ 를 누르면 그 칸만, 아래 버튼은 랙 전체를 비웁니다 · 재고 수량은 그대로 남습니다
+              </span>
+              <button onClick={() => setClearAsk({
+                  kind: 'rack',
+                  msg: `${sel} 랙 전체의 위치를 지웁니다`,
+                  detail: '이 랙에 지정된 모든 품목의 보관 위치가 비워집니다',
+                  cnt: Object.keys(cellMap).length,
+                })}
+                className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-200 text-rose-600 bg-rose-50">
+                🗑 랙 전체 비우기
+              </button>
+            </div>
+          )}
+
           {rack && (
             <>
               <div className="no-print bg-white rounded-xl border border-slate-200 p-4 overflow-x-auto">
-                <SheetBody rack={rack} cellMap={cellMap} qr={qr} />
+                <SheetBody rack={rack} cellMap={cellMap} qr={qr}
+                  onClearCell={canEdit ? doClearCell : null} />
               </div>
               <div className="sheet-print">
                 <SheetBody rack={rack} cellMap={cellMap} qr={qr} print />
@@ -729,7 +810,7 @@ export default function RackLayout() {
 }
 
 // 랙 구성표 — 격자 + 랙 QR. 랙 앞에 붙여 위치를 찾는 데 쓴다.
-function SheetBody({ rack, cellMap, qr, print }) {
+function SheetBody({ rack, cellMap, qr, print, onClearCell }) {
   const levels = Array.from({ length: rack.levels_cnt }, (_, i) => rack.levels_cnt - i)  // 위→아래
   const rows = Array.from({ length: rack.rows_cnt }, (_, i) => i + 1)
 
@@ -772,15 +853,40 @@ function SheetBody({ rack, cellMap, qr, print }) {
                     height: print ? '20mm' : '64px',
                     verticalAlign: 'top', padding: '1mm',
                     background: c ? '#fef9c3' : '#fff',
+                    position: 'relative',
                   }}>
                     <div style={{ fontSize: print ? '4mm' : '13px', fontWeight: 800, fontFamily: 'ui-monospace,monospace' }}>
                       {pad(r)}
                     </div>
                     {c && (
-                      <div style={{ fontSize: print ? '2.2mm' : '9px', color: '#713f12', lineHeight: 1.25,
-                        overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: print ? 4 : 3, WebkitBoxOrient: 'vertical' }}>
-                        {c.codes}
+                      <div style={{ fontSize: print ? '2.2mm' : '9px', color: '#713f12', lineHeight: 1.3,
+                        overflow: 'hidden', display: '-webkit-box',
+                        WebkitLineClamp: print ? 5 : 4, WebkitBoxOrient: 'vertical' }}>
+                        {/* 창고에서는 제조사품번으로 찾는 일이 많아 함께 적는다 */}
+                        {(c.items || []).length
+                          ? c.items.map((it, k) => (
+                            <div key={k} style={{ marginBottom: '0.4mm' }}>
+                              <span style={{ fontFamily: 'ui-monospace,monospace', fontWeight: 700 }}>
+                                {it.std_code}
+                              </span>
+                              {(it.maker_code || it.maker) && (
+                                <span style={{ color: '#92642a' }}>
+                                  {' · '}{it.maker_code || it.maker}
+                                </span>
+                              )}
+                            </div>
+                          ))
+                          : c.codes}
                       </div>
+                    )}
+                    {!print && c && onClearCell && (
+                      <button onClick={() => onClearCell(r, lv, c)}
+                        title="이 칸 위치 비우기"
+                        style={{ position: 'absolute', top: '2px', right: '2px',
+                          fontSize: '10px', color: '#cbd5e1', background: 'none',
+                          border: 0, cursor: 'pointer', lineHeight: 1, padding: '2px' }}>
+                        ✕
+                      </button>
                     )}
                   </td>
                 )
