@@ -9,6 +9,25 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => new Date().toISOString().slice(0, 10)
 const MONO = "ui-monospace, Menlo, Consolas, monospace"
 
+// 브랜드를 두 칸으로 나눈다.
+//   BECKHOFF 는 형번이 넷이라 왼쪽을 통째로 쓰고,
+//   나머지 셋은 오른쪽에 세로로 쌓아 한 화면에 담는다.
+function splitByBrand(rows) {
+  const by = new Map()
+  rows.forEach(r => {
+    const b = (r.maker || '기타').trim() || '기타'
+    if (!by.has(b)) by.set(b, [])
+    by.get(b).push(r)
+  })
+  const main = []      // 왼쪽 — 품목이 가장 많은 브랜드
+  const rest = []      // 오른쪽 — 나머지
+  const sorted = [...by.entries()].sort((a, b) => b[1].length - a[1].length)
+  sorted.forEach(([name, items], i) => {
+    (i === 0 ? main : rest).push({ name, items })
+  })
+  return { main, rest }
+}
+
 // 로트 관리.
 //
 //   시리얼과 보증기간을 관리해야 하는 품목은 여덟 종뿐이다.
@@ -133,9 +152,10 @@ export default function LotManage() {
         </div>
       )}
 
-      {/* 품목 카드 — 무엇부터 써야 하는지가 맨 앞 */}
-      <div className="space-y-2.5">
-        {sum.map(s => {
+      {/* 브랜드 두 칸 — 왼쪽에 형번이 많은 브랜드, 오른쪽에 나머지 */}
+      {(() => {
+        const { main, rest } = splitByBrand(sum)
+        const card = (s) => {
           const open = openItem === s.item_id
           const rows = byItem[s.item_id] || []
           const days = s.next_days
@@ -248,8 +268,24 @@ export default function LotManage() {
               )}
             </div>
           )
-        })}
-      </div>
+        }
+        // 브랜드 머리 + 그 아래 품목 카드들
+        const group = (g) => (
+          <div key={g.name} className="space-y-2">
+            <div className="flex items-baseline gap-2 px-0.5">
+              <h3 className="text-sm font-bold text-slate-700">{g.name}</h3>
+              <span className="text-[11px] text-slate-400">{g.items.length}종</span>
+            </div>
+            {g.items.map(card)}
+          </div>
+        )
+        return (
+          <div className="grid lg:grid-cols-2 gap-4 items-start">
+            <div className="space-y-4">{main.map(group)}</div>
+            <div className="space-y-4">{rest.map(group)}</div>
+          </div>
+        )
+      })()}
 
       {addFor && (
         <LotAdd preset={addFor} onClose={() => setAddFor(null)}

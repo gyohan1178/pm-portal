@@ -59,6 +59,25 @@ export function useCanEdit() {
   return data ? canEdit(data) : true
 }
 
+// 편집 권한 — 불러오기 전에는 false.
+//   useCanEdit 는 화면이 깜빡이지 않도록 기본을 true 로 두는데,
+//   재고처럼 가려야 하는 정보에는 그 사이 잠깐 노출되는 것이 문제다.
+//   모를 때는 숨기는 쪽을 택한다.
+export function useCanEditStrict() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['myRoleLite'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
+      return p
+    },
+  })
+  if (isLoading || !data) return false
+  return canEdit(data)
+}
+
 // 자재 요청 등록 권한.
 //   요청은 현장 누구나 낼 수 있어야 한다. 조회 계정도 등록만은 가능하게 한다.
 //   (처리 — 불출·발주·반려 — 는 편집 권한자만 할 수 있다)

@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
+import { useCanEditStrict, useCanEdit, useCanRequest } from '../../hooks/useProfile'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => new Date().toISOString().slice(0, 10)
@@ -32,6 +32,8 @@ const emptyRow = () => ({
 export default function MaterialRequest() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()        // 처리(불출·발주·반려)
+  // 재고는 가려야 하는 정보라, 권한을 모를 때는 숨긴다
+  const canSeeStock = useCanEditStrict()
   const canReq = useCanRequest()      // 요청 등록 — 조회 계정도 가능
   const [tab, setTab] = useState('list')      // list | new
   const [filter, setFilter] = useState(null)  // null=미완료
@@ -1197,7 +1199,7 @@ export default function MaterialRequest() {
                             {n(r.qty)}<span className="font-normal text-slate-400 ml-0.5">{r.unit}</span>
                           </span>
                           {/* 재고는 담당자만 본다. 불출할지 발주할지 판단하는 근거다. */}
-                          {canEdit && r.item_id && (
+                          {canSeeStock && r.item_id && (
                             <span className={`w-24 flex-shrink-0 text-right text-[11px] font-semibold ${
                               Number(r.stock_qty) >= Number(r.qty) ? 'text-emerald-600' : 'text-rose-500'}`}>
                               재고 {n(r.stock_qty)}

@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.61.1'
+export const APP_VERSION = 'v3.62.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.62.0',
+    date: '2026-08-19',
+    changes: [
+      '자재 요청의 재고 표시를 권한 확인 전까지 숨김 — 권한을 불러오는 잠깐 사이 조회 계정에도 재고가 보이던 문제입니다',
+      '로트 관리를 두 칸 배치로 변경 — 왼쪽에 형번이 많은 브랜드(BECKHOFF), 오른쪽에 나머지를 세로로 쌓아 한 화면에 담습니다',
+      '브랜드마다 머리글과 품목 수가 표시됩니다',
+    ],
+  },
   {
     version: 'v3.61.1',
     date: '2026-08-19',
