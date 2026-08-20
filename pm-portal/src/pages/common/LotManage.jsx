@@ -40,7 +40,8 @@ function splitByBrand(rows) {
 export default function LotManage() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
-  const [openItem, setOpenItem] = useState(null)   // 펼친 품목
+  // 여러 품목을 동시에 펼쳐 둘 수 있어야 비교하며 볼 수 있다
+  const [openItems, setOpenItems] = useState({})
   const [addFor, setAddFor] = useState(null)       // 로트 등록 대상
   const [editLot, setEditLot] = useState(null)     // 수정할 로트
   const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
@@ -124,6 +125,13 @@ export default function LotManage() {
               ＋ 로트 등록
             </button>
           )}
+          <button onClick={() => setOpenItems(
+              Object.keys(openItems).some(k => openItems[k])
+                ? {}
+                : Object.fromEntries(sum.map(x => [x.item_id, true])))}
+            className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">
+            {Object.keys(openItems).some(k => openItems[k]) ? '모두 접기' : '모두 펼치기'}
+          </button>
           <label className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-slate-500 cursor-pointer">
             <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)}
               className="w-3.5 h-3.5 accent-indigo-600" />
@@ -169,7 +177,7 @@ export default function LotManage() {
       {(() => {
         const { main, rest } = splitByBrand(sum)
         const card = (s) => {
-          const open = openItem === s.item_id
+          const open = !!openItems[s.item_id]
           const rows = byItem[s.item_id] || []
           const days = s.next_days
           const urgent = Number(s.expired_cnt) > 0
@@ -240,7 +248,7 @@ export default function LotManage() {
                 )}
 
                 <div className="flex gap-1.5 mt-2">
-                  <button onClick={() => setOpenItem(open ? null : s.item_id)}
+                  <button onClick={() => setOpenItems(v => ({ ...v, [s.item_id]: !v[s.item_id] }))}
                     className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500">
                     {open ? '접기 ▲' : `로트 ${s.lot_cnt}개 보기 ▼`}
                     {Number(s.done_cnt) > 0 && (
