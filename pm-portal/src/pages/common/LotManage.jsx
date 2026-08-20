@@ -263,37 +263,44 @@ export default function LotManage() {
                 <div className="border-t border-slate-100 divide-y divide-slate-50 bg-slate-50/50">
                   {rows.map(l => (
                     <div key={l.id}
-                      className={`px-4 py-2.5 flex items-center gap-3 flex-wrap text-xs ${
+                      className={`px-4 py-2.5 text-xs ${
                         Number(l.qty_left) <= 0 ? 'bg-slate-100/70 text-slate-400'
                           : l.expired ? 'bg-rose-50/60' : ''}`}>
-                      <span className="w-6 text-center text-[10px] font-bold text-slate-400">
-                        {l.fifo_rank}
-                      </span>
-                      <span className="text-sm font-bold text-slate-800 w-28" style={{ fontFamily: MONO }}>
-                        {l.serial_no}
-                      </span>
-                      <span className="text-slate-500 w-24">
-                        입고 {l.in_date}
-                      </span>
-                      <span className={`w-32 font-semibold ${
-                        l.expired ? 'text-rose-600' : l.days_left <= 90 ? 'text-amber-600' : 'text-slate-500'}`}>
-                        {l.expire_date} 까지
-                      </span>
-                      <span className="text-slate-400 w-20">
-                        {l.made_ym || '제조 미상'}
-                      </span>
-                      <span className="ml-auto">
-                        <b className="text-slate-800">{n(l.qty_left)}</b>
-                        <span className="text-slate-300"> / {n(l.qty_in)}</span>
-                      </span>
-                      {l.vendor_name && (
-                        <span className="text-[10px] text-slate-400 w-16 text-right">{l.vendor_name}</span>
-                      )}
-                      {canEdit && (
-                        <button onClick={() => setEditLot(l)}
-                          title="수정 · 삭제"
-                          className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
-                      )}
+                      {/* 두 칸 배치라 한 줄에 다 넣으면 가로로 넘친다.
+                          시리얼·수량을 위에, 날짜·구매처를 아래에 둔다. */}
+                      <div className="flex items-center gap-2">
+                        <span className="w-5 text-center text-[10px] font-bold text-slate-400 flex-shrink-0">
+                          {l.fifo_rank}
+                        </span>
+                        <span className="text-sm font-bold text-slate-800 flex-shrink-0"
+                          style={{ fontFamily: MONO }}>
+                          {l.serial_no}
+                        </span>
+                        <span className="text-slate-400 whitespace-nowrap">
+                          {l.made_ym || '제조 미상'}
+                        </span>
+                        <span className="ml-auto whitespace-nowrap">
+                          <b className="text-slate-800">{n(l.qty_left)}</b>
+                          <span className="text-slate-300"> / {n(l.qty_in)}</span>
+                        </span>
+                        {canEdit && (
+                          <button onClick={() => setEditLot(l)}
+                            title="수정 · 삭제"
+                            className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2.5 mt-1 pl-7 text-[11px]">
+                        <span className="text-slate-500 whitespace-nowrap">
+                          입고 {l.in_date}
+                        </span>
+                        <span className={`whitespace-nowrap font-semibold ${
+                          l.expired ? 'text-rose-600' : l.days_left <= 90 ? 'text-amber-600' : 'text-slate-500'}`}>
+                          ~ {l.expire_date}
+                        </span>
+                        <span className="text-slate-400 whitespace-nowrap truncate">
+                          입고처 {l.vendor_name || '—'}
+                        </span>
+                      </div>
                     </div>
                   ))}
                 </div>
