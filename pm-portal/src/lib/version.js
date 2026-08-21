@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.68.2'
+export const APP_VERSION = 'v3.68.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.68.3',
+    date: '2026-08-21',
+    changes: [
+      '★ 행 하나를 눌렀는데 바로 위 행까지 선택되던 문제 수정 — 선택하면 위에 요약 패널이 생기며 표가 아래로 밀리는데, 그때 마우스 아래에 들어온 행이 함께 잡히고 있었습니다. 마우스가 실제로 움직였을 때만 여러 줄이 선택됩니다',
+    ],
+  },
   {
     version: 'v3.68.2',
     date: '2026-08-21',

@@ -37,20 +37,24 @@ export function useRowSelect(setSel) {
     if (isControl(e)) return
     if (e.button !== undefined && e.button !== 0) return   // 왼쪽 버튼만
     const next = !isOn
-    drag.current = { mode: next, x: e.clientX, y: e.clientY, moved: false }
+    drag.current = { mode: next, from: id, x: e.clientX, y: e.clientY, moved: false }
     setSel(prev => ({ ...prev, [id]: next }))
   }, [setSel])
 
   const over = useCallback((id, e) => {
     const d = drag.current
     if (!d) return
+    if (id === d.from) return          // 처음 누른 행은 이미 처리됐다
     if (isControl(e)) return
     // 버튼을 뗀 상태로 지나가는 것은 드래그가 아니다.
     //   mouseup 을 놓쳤을 때 줄줄이 선택되던 문제를 막는다.
     if (e.buttons === 0) { drag.current = null; return }
-    // 몇 픽셀은 움직여야 끄는 것으로 본다. 손떨림으로 옆 행이 잡히지 않게.
+    // 선택하면 위에 요약 패널이 생기며 표가 아래로 밀린다.
+    //   그때 마우스 아래에 다른 행이 들어와 mouseenter 가 발동하므로,
+    //   마우스가 실제로 움직였을 때만 드래그로 본다.
+    if (e.clientX === d.x && e.clientY === d.y) return
     if (!d.moved) {
-      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 6) return
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 8) return
       d.moved = true
     }
     const mode = d.mode
