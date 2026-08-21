@@ -12,6 +12,7 @@ const KIND = {
   weekly:   { label: '주간보고',  cls: 'bg-sky-100 text-sky-700' },
   movement: { label: '입고 이력', cls: 'bg-emerald-100 text-emerald-700' },
   rack:     { label: '랙 위치',   cls: 'bg-amber-100 text-amber-700' },
+  hogi_done:{ label: '호기 완료', cls: 'bg-teal-100 text-teal-700' },
 }
 
 // 삭제 기록.

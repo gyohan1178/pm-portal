@@ -301,14 +301,28 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         sync = sd?.[0] || null
       } catch { /* 연동 실패는 별도 안내 */ }
 
-      return { changed: diff.changes.length, inserted, created, done, canceled, priceFilled, sync }
+      // 납품이 끝난 PO 는 호기도 완료로 바꾼다.
+      //   연동은 완료 PO 를 보지 않아 호기가 납품대기로 남기 때문이다.
+      //   납품대기인 것만 바꾸며, 되돌릴 수 있게 기록을 남긴다.
+      let hogiDone = null
+      try {
+        const { data: hd } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
+        hogiDone = Array.isArray(hd) ? hd[0] : hd
+      } catch { /* 실패해도 PO 적용은 유효하다 */ }
+
+      return { changed: diff.changes.length, inserted, created, done, canceled,
+               priceFilled, sync, hogiDone }
     },
     onSuccess: (r) => {
       const sy = r.sync
+      const hd = r.hogiDone
       const syncMsg = sy
         ? ` · 생산관리 연동(매칭 ${sy.matched||0}, 신규 ${sy.created||0}, 갱신 ${sy.updated||0})`
         : ' · 생산관리 연동은 실패했습니다 — 생산관리에서 직접 눌러주세요'
-      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}`)
+      const doneMsg = hd?.done_cnt > 0
+        ? ` · 납품 완료 호기 ${hd.done_cnt}건 반영${hd.snap_id ? ` (되돌리기 #${hd.snap_id})` : ''}`
+        : ''
+      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}${doneMsg}`)
       setRows([]); setDiff(null); setDisCheck({})
       qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage'])
       qc.invalidateQueries({ queryKey: ['production'], exact: false })

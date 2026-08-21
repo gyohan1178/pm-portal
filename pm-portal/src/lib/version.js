@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v3.68.4'
+export const APP_VERSION = 'v3.69.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.69.0',
+    date: '2026-08-21',
+    changes: [
+      '★ 납품이 끝나면 생산관리 호기도 자동으로 완료됩니다 — PO 파일만 올리면 PO 는 완료로 바뀌는데 호기는 납품대기로 남아 매번 손으로 맞춰야 했습니다',
+      '\'납품대기\' 인 호기만 바꿉니다 — 제작중·품질검수는 아직 만들고 있으므로 건드리지 않습니다',
+      '무엇을 바꿨는지 기록이 남아 \'삭제 기록\' 화면에서 되돌릴 수 있습니다',
+      'SQL: pm_po_done_hogi.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.68.4',
     date: '2026-08-21',
