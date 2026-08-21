@@ -248,10 +248,18 @@ async function saveBOMMulti({ rows, customerId, onProgress }) {
   onProgress?.('기존 BOM 정리 중...')
   // 5) 업로드 대상 어셈블리의 기존 BOM 일괄 삭제
   const projIds = Object.values(projMap)
+  // 지우기 전에 기록을 남긴다. 예전에 1,626행을 잃은 적이 있다.
+  let snapId = null, snapCnt = 0
   for (let i = 0; i < projIds.length; i += 200) {
-    const { error: dErr } = await supabase.from('bom').delete().eq('customer_id', customerId).in('project_id', projIds.slice(i, i + 200))
+    const { data: sd, error: dErr } = await supabase.rpc('pm_bom_delete_safe', {
+      p_customer_id: customerId,
+      p_project_ids: projIds.slice(i, i + 200),
+    })
     if (dErr) throw new Error('기존 BOM 정리 실패: ' + dErr.message)
+    const r = Array.isArray(sd) ? sd[0] : sd
+    if (r?.snap_id) { snapId = r.snap_id; snapCnt += Number(r.cnt) || 0 }
   }
+  if (snapId) onProgress?.(`기존 BOM ${snapCnt}건 정리 (복구 #${snapId})`)
 
   // 6) BOM 행 전부 구성 (dedup 포함) → 일괄 insert
   onProgress?.('BOM 저장 중...')

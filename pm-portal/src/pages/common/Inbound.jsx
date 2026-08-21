@@ -187,11 +187,13 @@ export default function Inbound() {
   const delHistMut = useMutation({
     mutationFn: async (ids) => {
       if (!guardEdit()) throw new Error('__READONLY__')
-      if (!guardEdit()) throw new Error('__READONLY__')
-      const { error } = await supabase.rpc('pm_delete_movements', { p_ids: ids })
+      // 지우기 전에 기록을 남긴다. 재고까지 함께 바뀌어 되돌리기 어렵기 때문이다.
+      const { data, error } = await supabase.rpc('pm_movement_delete_safe', { p_ids: ids })
       if (error) throw error
+      return Array.isArray(data) ? data[0] : data
     },
-    onSuccess: () => {
+    onSuccess: (r) => {
+      if (r?.snap_id) toastSuccess(`${r.cnt}건 삭제 — 되돌리려면 복구 기록 #${r.snap_id}`)
       setSelHist(new Set())
       qc.invalidateQueries(['inboundHistory']); qc.invalidateQueries(['inventory'])
       qc.invalidateQueries(['purchase']); qc.invalidateQueries(['shortage'])

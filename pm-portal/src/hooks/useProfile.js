@@ -180,6 +180,9 @@ export function canAccessPath(profile, pathname) {
   //   현장·조회 계정이 열지 못하던 문제가 있었다.
   if (pathname === '/help') return true
 
+  // 삭제 기록 복구는 편집 권한자만
+  if (pathname === '/restore') return canEdit(profile)
+
   const sec = sectionOfPath(pathname)
   if (sec === 'home') {
     // 관제탑은 지정한 사람만 본다.

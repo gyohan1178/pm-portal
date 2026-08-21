@@ -234,8 +234,11 @@ export default function WeeklyUpload() {
         .select('id').eq('submitted_by', submitterName).neq('id', report.id)
       const priorIds = (priorReports || []).map(r => r.id)
       if (priorIds.length > 0) {
-        const { error: delErr } = await supabase.from('weekly_items')
-          .delete().in('category', ['inbound', 'plan']).in('report_id', priorIds)
+        // 지우기 전에 기록을 남긴다. 재업로드로 이전 회차가 사라지기 때문이다.
+        const { error: delErr } = await supabase.rpc('pm_weekly_delete_safe', {
+          p_report_ids: priorIds,
+          p_cats: ['inbound', 'plan'],
+        })
         if (delErr) throw delErr
       }
 

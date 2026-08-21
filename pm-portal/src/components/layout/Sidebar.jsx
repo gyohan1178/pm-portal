@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
+  '/restore': ['↩','삭제 기록'],
   '/lot': ['🏷','로트 관리'],
   '/finder': ['🔍','자재 위치 찾기'],
   '/material-request': ['🙋','자재 요청'],
@@ -343,7 +344,11 @@ export default function Sidebar({ onNavigate, profile }) {
                 <span>👥</span> 회원 관리
               </NavLink>
             )}
-            <NavLink to="/help" onClick={onNavigate}
+            <NavLink to="/restore" onClick={onNavigate}
+              className={({isActive})=>`flex items-center gap-2 px-3 py-2 rounded-lg text-sm ${isActive?'bg-slate-100 text-slate-900 font-semibold':'text-slate-500 hover:bg-slate-50'}`}>
+              <span>↩</span> 삭제 기록
+            </NavLink>
+          <NavLink to="/help" onClick={onNavigate}
               className={({isActive})=>`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${isActive?'text-indigo-600 bg-indigo-50':'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
               <span>❓</span> 도움말
             </NavLink>

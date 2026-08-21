@@ -51,6 +51,7 @@ const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
 const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
 const Help = lazy(() => import('./pages/Help'))
+const SnapshotRestore = lazy(() => import('./pages/SnapshotRestore'))
 const ProductionDashboard = lazy(() => import('./pages/production/ProductionDashboard'))
 const ProductionCustomer = lazy(() => import('./pages/production/ProductionCustomer'))
 const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
@@ -173,6 +174,7 @@ export default function App() {
         <Route path="sales" element={<SalesDashboard />} />
         <Route path="sales/upload" element={<SalesUpload />} />
         <Route path="help" element={<Help />} />
+        <Route path="restore" element={<SnapshotRestore />} />
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
         <Route path="drawings" element={<DrawingSearch />} />
