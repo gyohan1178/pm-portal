@@ -502,7 +502,7 @@ export default function CustomerPO() {
           const delayed = filtered.filter(p => p.isDelayed)
           const dateChg = changedPOs.filter(p => p.changes.some(c => c.field === 'promise_date'))
           const revChg  = changedPOs.filter(p => p.changes.some(c => c.field === 'item_rev'))
-          const askRows = filtered.filter(p => revOf(p).kind === 'ask')
+          const askRows = filtered.filter(p => revOf(p) === 'ask')
           const cards = [
             ['전체 PO', filtered.length, 'slate', filtered, null],
             ['납기 지연', delayed.length, 'red', delayed, 'delay'],

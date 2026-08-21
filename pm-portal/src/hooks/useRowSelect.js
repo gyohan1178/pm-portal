@@ -4,42 +4,56 @@ import { useRef, useCallback, useEffect } from 'react'
 //
 //   체크박스를 정확히 누르는 건 번거롭다. 행 아무 데나 눌러도 되게 하고,
 //   누른 채 끌면 지나간 행이 같은 상태로 바뀌게 했다.
-//   (첫 행이 선택되면 나머지도 선택, 해제면 나머지도 해제)
 //
 //   버튼·입력란·링크를 누른 경우는 선택으로 보지 않는다.
 //   그 자리에서 수정·삭제 같은 다른 동작을 해야 하기 때문이다.
 export function useRowSelect(setSel) {
-  const drag = useRef(null)     // { mode: true|false } — 끄는 중인 상태
+  // { mode, x, y, moved } — 누른 위치와 실제로 끌었는지
+  const drag = useRef(null)
 
   // 마우스를 떼면 드래그 종료. 표 밖에서 떼도 풀리도록 창에 건다.
+  //   버튼이 이벤트를 삼켜 mouseup 을 놓치는 경우가 있어,
+  //   click·mouseleave·창 전환에도 함께 풀어 준다.
   useEffect(() => {
-    const up = () => { drag.current = null }
-    window.addEventListener('mouseup', up)
-    window.addEventListener('touchend', up)
+    const end = () => { drag.current = null }
+    window.addEventListener('mouseup', end)
+    window.addEventListener('touchend', end)
+    window.addEventListener('click', end)
+    window.addEventListener('blur', end)
+    document.addEventListener('mouseleave', end)
     return () => {
-      window.removeEventListener('mouseup', up)
-      window.removeEventListener('touchend', up)
+      window.removeEventListener('mouseup', end)
+      window.removeEventListener('touchend', end)
+      window.removeEventListener('click', end)
+      window.removeEventListener('blur', end)
+      document.removeEventListener('mouseleave', end)
     }
   }, [])
 
   const isControl = (e) =>
     !!e.target.closest('button,input,select,textarea,a,label,[data-no-select]')
 
-  // 현재 선택 상태를 직접 읽어 다음 값을 정한다.
-  // setSel 콜백 안에서 판단하면 드래그 모드를 즉시 못 잡기 때문이다.
   const start = useCallback((id, e, isOn) => {
     if (isControl(e)) return
+    if (e.button !== undefined && e.button !== 0) return   // 왼쪽 버튼만
     const next = !isOn
-    drag.current = { mode: next }
+    drag.current = { mode: next, x: e.clientX, y: e.clientY, moved: false }
     setSel(prev => ({ ...prev, [id]: next }))
   }, [setSel])
 
   const over = useCallback((id, e) => {
-    if (!drag.current) return
+    const d = drag.current
+    if (!d) return
     if (isControl(e)) return
-    // setSel 콜백은 나중에 실행된다. 그 사이 마우스를 떼면 drag.current 가
-    // 비어 오류가 나므로, 값을 먼저 꺼내 둔다.
-    const mode = drag.current.mode
+    // 버튼을 뗀 상태로 지나가는 것은 드래그가 아니다.
+    //   mouseup 을 놓쳤을 때 줄줄이 선택되던 문제를 막는다.
+    if (e.buttons === 0) { drag.current = null; return }
+    // 몇 픽셀은 움직여야 끄는 것으로 본다. 손떨림으로 옆 행이 잡히지 않게.
+    if (!d.moved) {
+      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 6) return
+      d.moved = true
+    }
+    const mode = d.mode
     setSel(prev => (prev[id] === mode ? prev : { ...prev, [id]: mode }))
   }, [setSel])
 
