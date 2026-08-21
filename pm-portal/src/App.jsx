@@ -86,8 +86,12 @@ export default function App() {
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session)
+    // 토큰은 한 시간마다 자동 갱신되는데, 그때마다 세션 객체가 새로 온다.
+    //   그대로 넣으면 App 전체가 다시 그려져 입력하던 화면이 잠깐 빈다.
+    //   사용자가 바뀐 경우에만 반영한다.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, next) => {
+      if (event === 'TOKEN_REFRESHED') return
+      setSession(prev => (prev?.user?.id === next?.user?.id ? prev : next))
     })
     return () => subscription.unsubscribe()
   }, [])

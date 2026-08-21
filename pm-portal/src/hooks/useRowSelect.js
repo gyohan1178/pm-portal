@@ -37,7 +37,10 @@ export function useRowSelect(setSel) {
   const over = useCallback((id, e) => {
     if (!drag.current) return
     if (isControl(e)) return
-    setSel(prev => prev[id] === drag.current.mode ? prev : { ...prev, [id]: drag.current.mode })
+    // setSel 콜백은 나중에 실행된다. 그 사이 마우스를 떼면 drag.current 가
+    // 비어 오류가 나므로, 값을 먼저 꺼내 둔다.
+    const mode = drag.current.mode
+    setSel(prev => (prev[id] === mode ? prev : { ...prev, [id]: mode }))
   }, [setSel])
 
   // 행에 붙일 속성 묶음. isOn 은 그 행의 현재 선택 여부.

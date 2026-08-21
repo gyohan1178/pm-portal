@@ -160,14 +160,18 @@ export default function Inbound() {
     onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
+  // 다시 불러오는 동안에도 이전 목록을 그대로 보여준다.
+  //   담아둔 품목이 사라졌다가 돌아오면 입력하던 흐름이 끊긴다.
   const { data: pendingPOs=[], isLoading, refetch } = useQuery({
     queryKey:['pendingPOs',selCustomer],
     queryFn:()=>fetchPendingPOs(selCustomer||null, null),
+    placeholderData: (prev) => prev,
   })
   const { data: history=[], isLoading: histLoading } = useQuery({
     queryKey:['inboundHistory', hQuery],
     queryFn:()=>fetchInboundHistory({ from:hQuery.from, to:hQuery.to, customerId:hQuery.customerId, vendorId:hQuery.vendorId }),
     enabled: tab==='history',
+    placeholderData: (prev) => prev,
   })
 
   const inboundMut = useMutation({
@@ -465,7 +469,7 @@ export default function Inbound() {
               <span className="ml-auto text-xs text-slate-400">정렬: {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'} · {rows.length}건</span>
             </div>
 
-            {isLoading ? <div className="text-center py-8 text-slate-400 text-xs">불러오는 중...</div>
+            {isLoading && !pendingPOs.length ? <div className="text-center py-8 text-slate-400 text-xs">불러오는 중...</div>
             : rows.length === 0
               ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400 text-xs">
                   미입고 발주가 없습니다
