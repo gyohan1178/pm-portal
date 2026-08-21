@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.68.3'
+export const APP_VERSION = 'v3.68.4'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.68.4',
+    date: '2026-08-21',
+    changes: [
+      '고객사 PO 요약 카드를 여닫을 때 느리던 문제 개선 — 카드를 누를 때마다 전체를 다시 세고 있었습니다. 원본이 바뀔 때만 계산합니다',
+    ],
+  },
   {
     version: 'v3.68.3',
     date: '2026-08-21',

@@ -11,6 +11,15 @@ import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
 
+// 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
+const CARD_CLS = {
+  slate:  { box: 'border-slate-200', lab: 'text-slate-400', val: 'text-slate-900' },
+  red:    { box: 'border-red-200 bg-red-50', lab: 'text-red-400', val: 'text-red-600' },
+  amber:  { box: 'border-amber-200 bg-amber-50', lab: 'text-amber-500', val: 'text-amber-700' },
+  violet: { box: 'border-violet-200 bg-violet-50', lab: 'text-violet-500', val: 'text-violet-700' },
+  orange: { box: 'border-orange-200 bg-orange-50', lab: 'text-orange-500', val: 'text-orange-700' },
+}
+
 async function fetchCustomerPOs(csId, showAll) {
   if (!csId) return []
   const today = new Date().toISOString().split('T')[0]
@@ -345,6 +354,23 @@ export default function CustomerPO() {
   const filtered = useMemo(
     () => revTab ? baseFiltered.filter(p => revOf(p) === 'ask') : baseFiltered,
     [baseFiltered, revTab, revMap])
+
+  // 카드 목록은 렌더마다 다시 세면 느려진다. 원본이 바뀔 때만 계산한다.
+  //   특히 revOf 는 품목마다 도면을 대조해 비용이 크다.
+  const cardData = useMemo(() => {
+    const delayed = filtered.filter(p => p.isDelayed)
+    const dateChg = changedPOs.filter(p => p.changes.some(c => c.field === 'promise_date'))
+    const revChg  = changedPOs.filter(p => p.changes.some(c => c.field === 'item_rev'))
+    const askRows = filtered.filter(p => revOf(p) === 'ask')
+    return [
+      { label: '전체 PO',  cnt: filtered.length, color: 'slate',  rows: filtered, kind: null },
+      { label: '납기 지연', cnt: delayed.length,  color: 'red',    rows: delayed,  kind: 'delay' },
+      { label: '납기 변경', cnt: dateChg.length,  color: 'amber',  rows: dateChg,  kind: 'date' },
+      { label: 'REV 변경', cnt: revChg.length,   color: 'violet', rows: revChg,   kind: 'rev' },
+      { label: '도면 요청', cnt: askRows.length,  color: 'orange', rows: askRows,  kind: 'ask' },
+    ]
+  }, [filtered, changedPOs, revMap])
+
   const today = new Date().toISOString().split('T')[0]
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
 
@@ -498,40 +524,19 @@ export default function CustomerPO() {
 
       {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        {(() => {
-          const delayed = filtered.filter(p => p.isDelayed)
-          const dateChg = changedPOs.filter(p => p.changes.some(c => c.field === 'promise_date'))
-          const revChg  = changedPOs.filter(p => p.changes.some(c => c.field === 'item_rev'))
-          const askRows = filtered.filter(p => revOf(p) === 'ask')
-          const cards = [
-            ['전체 PO', filtered.length, 'slate', filtered, null],
-            ['납기 지연', delayed.length, 'red', delayed, 'delay'],
-            ['납기 변경', dateChg.length, 'amber', dateChg, 'date'],
-            ['REV 변경', revChg.length, 'violet', revChg, 'rev'],
-            ['도면 요청', askCount, 'orange', askRows, 'ask'],
-          ]
-          // Tailwind 는 문자열을 조립하면 클래스를 못 찾는다. 전체를 적어 둔다.
-          const CLS = {
-            slate:  { box: 'border-slate-200', lab: 'text-slate-400', val: 'text-slate-900' },
-            red:    { box: 'border-red-200 bg-red-50', lab: 'text-red-400', val: 'text-red-600' },
-            amber:  { box: 'border-amber-200 bg-amber-50', lab: 'text-amber-500', val: 'text-amber-700' },
-            violet: { box: 'border-violet-200 bg-violet-50', lab: 'text-violet-500', val: 'text-violet-700' },
-            orange: { box: 'border-orange-200 bg-orange-50', lab: 'text-orange-500', val: 'text-orange-700' },
-          }
-          return cards.map(([label, cnt, color, rows, kind]) => {
-            const c = CLS[color]
-            return (
-              <button key={label}
-                onClick={() => cnt > 0 && setDetail({ label, rows, kind })}
-                disabled={!cnt}
-                className={`rounded-xl border p-3 text-left ${c.box} ${
-                  cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
-                <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${c.lab}`}>{label}</p>
-                <p className={`text-xl font-bold ${c.val}`}>{cnt}</p>
-              </button>
-            )
-          })
-        })()}
+        {cardData.map(c => {
+          const st = CARD_CLS[c.color]
+          return (
+            <button key={c.label}
+              onClick={() => c.cnt > 0 && setDetail(c)}
+              disabled={!c.cnt}
+              className={`rounded-xl border p-3 text-left ${st.box} ${
+                c.cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
+              <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${st.lab}`}>{c.label}</p>
+              <p className={`text-xl font-bold ${st.val}`}>{c.cnt}</p>
+            </button>
+          )
+        })}
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
