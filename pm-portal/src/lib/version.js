@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.67.0'
+export const APP_VERSION = 'v3.68.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.68.0',
+    date: '2026-08-21',
+    changes: [
+      '고객사 PO 요약 카드를 누르면 그 건만 따로 볼 수 있습니다 — 납기 지연·납기 변경·REV 변경·도면 요청 각각의 목록이 뜹니다',
+      '변경 건은 무엇이 어떻게 바뀌었는지(전 → 후)와 몇 번 바뀌었는지가 함께 나옵니다',
+      '📋 복사 버튼으로 엑셀에 바로 붙여넣을 수 있습니다',
+    ],
+  },
   {
     version: 'v3.67.0',
     date: '2026-08-20',

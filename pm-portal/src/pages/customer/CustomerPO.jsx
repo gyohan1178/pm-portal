@@ -103,6 +103,7 @@ export default function CustomerPO() {
   const { customerId: csCode } = useParams()
   const qc = useQueryClient()
   const [divTab, setDivTab] = useState('전체')
+  const [detail, setDetail] = useState(null)   // 카드 상세
   const [showForm, setShowForm] = useState(false)
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
@@ -296,6 +297,44 @@ export default function CustomerPO() {
   }, [pos, changedPOs, divTab, dq, chgTab, hideIssued])
 
   // 도면 REV 대조 — 대상 품번만 판정, 그 외는 null(배지 없음)
+  // 팝업 내용을 엑셀에 붙여넣을 수 있게 탭 구분으로 담는다
+  async function copyDetail(d) {
+    const head = ['PO번호','오더','DEL','구분','기준코드','품명','발주량','납기',
+      d.kind === 'date' ? '변경 전' : d.kind === 'rev' ? 'REV 전' : '비고',
+      d.kind === 'date' || d.kind === 'rev' ? '변경 후' : '',
+      d.kind === 'date' || d.kind === 'rev' ? '변경 횟수' : ''].filter(Boolean)
+
+    const lines = d.rows.map(p => {
+      const chg = (p.changes || []).filter(c =>
+        d.kind === 'date' ? c.field === 'promise_date' :
+        d.kind === 'rev'  ? c.field === 'item_rev' : true)
+      const last = chg[chg.length - 1]
+      const late = p.promise_date
+        ? Math.floor((Date.now() - new Date(p.promise_date)) / 86400000) : ''
+      const base = [p.po_number || '', p.order_line || '', p.del_line || '',
+        p.type || '', p.items?.std_code || '', p.items?.name || '',
+        p.qty_ordered ?? '', p.promise_date || '']
+      if (d.kind === 'date' || d.kind === 'rev') {
+        return [...base, last?.from || '', last?.to || '', chg.length || ''].join('\t')
+      }
+      return [...base, d.kind === 'delay' ? `${late}일 경과` : ''].join('\t')
+    })
+
+    const text = [head.join('\t'), ...lines].join('\n')
+    try {
+      await navigator.clipboard.writeText(text)
+      toastSuccess(`${d.rows.length}건 복사 — 엑셀에 붙여넣으세요`)
+    } catch {
+      // 클립보드 권한이 없는 환경(구형 브라우저·http)에서는 옛 방식으로
+      const ta = document.createElement('textarea')
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0'
+      document.body.appendChild(ta); ta.select()
+      try { document.execCommand('copy'); toastSuccess(`${d.rows.length}건 복사`) }
+      catch { toastError('복사할 수 없습니다') }
+      document.body.removeChild(ta)
+    }
+  }
+
   const revOf = (p) => {
     const code = p.items?.std_code
     if (!code || !hasDrawingCode(code)) return null
@@ -313,6 +352,79 @@ export default function CustomerPO() {
 
   return (
     <div className="space-y-4">
+
+      {/* 카드 상세 — 표를 그대로 옮겨 복사할 수 있게 한다 */}
+      {detail && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setDetail(null)}>
+          <div className="bg-white w-full max-w-5xl rounded-2xl overflow-hidden max-h-[88vh] flex flex-col"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
+              <h3 className="text-base font-bold text-slate-800">{detail.label}</h3>
+              <span className="text-sm font-bold text-slate-500">{detail.rows.length}건</span>
+              <button onClick={() => copyDetail(detail)}
+                className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600">
+                📋 복사
+              </button>
+              <button onClick={() => setDetail(null)} className="text-slate-400 text-xl px-2">✕</button>
+            </div>
+            <div className="overflow-auto flex-1">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 sticky top-0">
+                  <tr>
+                    {['PO번호','오더/DEL','구분','기준코드','품명','발주량','납기',
+                      detail.kind === 'date' ? '변경 내역' :
+                      detail.kind === 'rev'  ? 'REV 변경' :
+                      detail.kind === 'delay' ? '지연' : '비고'].map(h => (
+                      <th key={h} className="px-3 py-2 text-left font-bold text-slate-400 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detail.rows.map(p => {
+                    const chg = (p.changes || []).filter(c =>
+                      detail.kind === 'date' ? c.field === 'promise_date' :
+                      detail.kind === 'rev'  ? c.field === 'item_rev' : true)
+                    const last = chg[chg.length - 1]
+                    const late = p.promise_date
+                      ? Math.floor((Date.now() - new Date(p.promise_date)) / 86400000) : 0
+                    return (
+                      <tr key={p.id} className="border-t border-slate-100">
+                        <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{p.po_number}</td>
+                        <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{p.order_line}/{p.del_line}</td>
+                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{p.type || ''}</td>
+                        <td className="px-3 py-2 font-mono text-indigo-600 whitespace-nowrap">{p.items?.std_code}</td>
+                        <td className="px-3 py-2 text-slate-600 max-w-[240px] truncate" title={p.items?.name}>
+                          {p.items?.name}
+                        </td>
+                        <td className="px-3 py-2 text-right font-semibold text-slate-700">{p.qty_ordered}</td>
+                        <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{p.promise_date || '-'}</td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          {detail.kind === 'delay' ? (
+                            <b className="text-red-600">{late}일 경과</b>
+                          ) : last ? (
+                            <span className="text-slate-500">
+                              {last.from || '-'} <span className="text-slate-300">→</span> <b className="text-slate-700">{last.to || '-'}</b>
+                              {chg.length > 1 && <span className="text-slate-400 ml-1">({chg.length}회)</span>}
+                            </span>
+                          ) : (
+                            <span className="text-slate-300">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="px-4 py-2 border-t border-slate-100 bg-slate-50">
+              <p className="text-[11px] text-slate-400">
+                복사를 누르면 엑셀에 붙여넣을 수 있는 형태로 담깁니다
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
       <CustomerTabs />
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
@@ -384,12 +496,42 @@ export default function CustomerPO() {
         </span>
       </div>
 
+      {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 PO</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">납기 지연</p><p className="text-xl font-bold text-red-600">{filtered.filter(p=>p.isDelayed).length}</p></div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">납기 변경</p><p className="text-xl font-bold text-amber-700">{changedPOs.filter(p=>p.changes.some(c=>c.field==='promise_date')).length}</p></div>
-        <div className="rounded-xl border border-violet-200 bg-violet-50 p-3"><p className="text-xs font-bold text-violet-500 uppercase tracking-wide mb-1">REV 변경</p><p className="text-xl font-bold text-violet-700">{changedPOs.filter(p=>p.changes.some(c=>c.field==='item_rev')).length}</p></div>
-        <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><p className="text-xs font-bold text-orange-500 uppercase tracking-wide mb-1">도면 요청</p><p className="text-xl font-bold text-orange-700">{askCount}</p></div>
+        {(() => {
+          const delayed = filtered.filter(p => p.isDelayed)
+          const dateChg = changedPOs.filter(p => p.changes.some(c => c.field === 'promise_date'))
+          const revChg  = changedPOs.filter(p => p.changes.some(c => c.field === 'item_rev'))
+          const askRows = filtered.filter(p => revOf(p).kind === 'ask')
+          const cards = [
+            ['전체 PO', filtered.length, 'slate', filtered, null],
+            ['납기 지연', delayed.length, 'red', delayed, 'delay'],
+            ['납기 변경', dateChg.length, 'amber', dateChg, 'date'],
+            ['REV 변경', revChg.length, 'violet', revChg, 'rev'],
+            ['도면 요청', askCount, 'orange', askRows, 'ask'],
+          ]
+          // Tailwind 는 문자열을 조립하면 클래스를 못 찾는다. 전체를 적어 둔다.
+          const CLS = {
+            slate:  { box: 'border-slate-200', lab: 'text-slate-400', val: 'text-slate-900' },
+            red:    { box: 'border-red-200 bg-red-50', lab: 'text-red-400', val: 'text-red-600' },
+            amber:  { box: 'border-amber-200 bg-amber-50', lab: 'text-amber-500', val: 'text-amber-700' },
+            violet: { box: 'border-violet-200 bg-violet-50', lab: 'text-violet-500', val: 'text-violet-700' },
+            orange: { box: 'border-orange-200 bg-orange-50', lab: 'text-orange-500', val: 'text-orange-700' },
+          }
+          return cards.map(([label, cnt, color, rows, kind]) => {
+            const c = CLS[color]
+            return (
+              <button key={label}
+                onClick={() => cnt > 0 && setDetail({ label, rows, kind })}
+                disabled={!cnt}
+                className={`rounded-xl border p-3 text-left ${c.box} ${
+                  cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
+                <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${c.lab}`}>{label}</p>
+                <p className={`text-xl font-bold ${c.val}`}>{cnt}</p>
+              </button>
+            )
+          })
+        })()}
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
