@@ -243,7 +243,7 @@ export default function FieldSearch() {
                               <tr key={pi} className="border-b border-slate-50 hover:bg-slate-50">
                                 <td className="px-3 py-2">
                                   <span className="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[10px] font-bold">
-                                    {CUST_PREFIX[prefixOf(p.parent_code)] || prefixOf(p.parent_code)?.toUpperCase() || '?'}
+                                    {p.customer_code?.toUpperCase() || '?'}
                                   </span>
                                 </td>
                                 <td className="px-3 py-2">

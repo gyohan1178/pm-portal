@@ -92,9 +92,11 @@ export default function Issue() {
   async function searchItem(v) {
     setItemSearch(v)
     if (v.trim().length < 2) { setItemHits([]); return }
+    // 현장에서는 제조사품번으로 찾는 일이 많다. 규격에 제조사 정보가 든 품목도 있다.
     const { data } = await supabase.from('items')
-      .select('id,std_code,name,unit')
-      .or(`std_code.ilike.%${v}%,name.ilike.%${v}%`).limit(8)
+      .select('id,std_code,name,unit,manufacturer,manufacturer_code,spec')
+      .or(`std_code.ilike.%${v}%,name.ilike.%${v}%,manufacturer_code.ilike.%${v}%,manufacturer.ilike.%${v}%,spec.ilike.%${v}%`)
+      .limit(20)
     setItemHits(data || [])
   }
   function addDirect(it) {
@@ -484,7 +486,19 @@ export default function Issue() {
             <div className="border border-slate-100 rounded-lg divide-y max-h-40 overflow-auto">
               {itemHits.map(it => (
                 <button key={it.id} onClick={() => addDirect(it)} className="w-full text-left px-2 py-1.5 text-xs hover:bg-indigo-50">
-                  <span className="font-mono font-semibold text-indigo-600">{it.std_code}</span> <span className="text-slate-500">{it.name}</span>
+                  <div>
+                    <span className="font-mono font-semibold text-indigo-600">{it.std_code}</span>
+                    <span className="text-slate-500 ml-1.5">{it.name}</span>
+                  </div>
+                  {/* 제조사품번으로 찾는 일이 많다. 무엇으로 찾아졌는지 보이게 한다. */}
+                  {(it.manufacturer || it.manufacturer_code || it.spec) && (
+                    <div className="text-[10px] text-slate-400 mt-0.5 truncate">
+                      {it.manufacturer}
+                      {it.manufacturer && it.manufacturer_code ? ' · ' : ''}
+                      <span className="font-mono">{it.manufacturer_code}</span>
+                      {it.spec && <span className="ml-1.5">{it.spec}</span>}
+                    </div>
+                  )}
                 </button>
               ))}
             </div>

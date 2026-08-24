@@ -67,9 +67,12 @@ export default function CommonSearch() {
     return Object.values(m)
   })()
 
-  function goBOM(parentCode) {
-    const pf = prefixOf(parentCode) === 'ax' ? 'ax' : prefixOf(parentCode)
-    navigate(`/customer/${pf}/bom?assembly=${encodeURIComponent(parentCode)}`)
+  // 고객사는 조회 결과에 들어 있다.
+  //   품번 접두로 추측하면 AXCELIS 만 맞는다. 다른 고객사는
+  //   상위품목 코드에 접두가 없기 때문이다 (SAR0195D-0L2 · NKB930085).
+  function goBOM(parentCode, csCode) {
+    const cs = (csCode || prefixOf(parentCode) || '').toLowerCase()
+    navigate(`/customer/${cs}/bom?assembly=${encodeURIComponent(parentCode)}`)
   }
 
   return (
@@ -181,11 +184,11 @@ export default function CommonSearch() {
                               <tr key={pi} className="border-b border-slate-50 hover:bg-slate-50">
                                 <td className="px-3 py-2">
                                   <span className="px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 text-[10px] font-bold">
-                                    {CUST_PREFIX[prefixOf(p.parent_code)] || prefixOf(p.parent_code)?.toUpperCase() || '?'}
+                                    {p.customer_code?.toUpperCase() || '?'}
                                   </span>
                                 </td>
                                 <td className="px-3 py-2">
-                                  <button onClick={() => goBOM(p.parent_code)} className="font-mono text-xs font-bold text-indigo-600 hover:underline">{p.parent_code} ↗</button>
+                                  <button onClick={() => goBOM(p.parent_code, p.customer_code)} className="font-mono text-xs font-bold text-indigo-600 hover:underline">{p.parent_code} ↗</button>
                                 </td>
                                 <td className="px-3 py-2 text-slate-600 max-w-[240px] truncate">{p.parent_name}</td>
                                 <td className="px-3 py-2 text-right font-semibold text-slate-800">{p.qty}</td>
