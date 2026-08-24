@@ -36,19 +36,21 @@ const raw = (v) => String(v ?? '').replace(/[\^~]/g, ' ').trim()
 
 // ── 가로 ──
 const NO_W = mm(7), NO_H = mm(6)
-const QTY_W = mm(24)
-// W7-06-2 처럼 W 가 들어가면 좁아서 잘렸다. 두 글자 더 들어갈 만큼 넓힌다.
-const LOC_W = mm(26), LOC_H = mm(7.5)
+// LOC 는 W7-06-2 처럼 일곱 자라 넓은 자리가 필요하다. 첫 줄 우측에 크게 둔다.
+const LOC_W = mm(28), LOC_H = mm(6)
 const LOC_X = X1 - LOC_W
-const MK_W = UW - LOC_W - mm(2)   // 제조사 영역 — LOC 박스와 안 겹치게
+// 수량은 '10 EA' 정도로 짧다. 제조사 줄 옆 좁은 자리로 옮긴다.
+const QTY_W = mm(17)
+const QTY_X = X1 - QTY_W
+const MK_W = UW - QTY_W - mm(3)   // 제조사 영역 — 수량과 안 겹치게 (여유 3mm)
 
 // ── 세로 ──
-const ROW1_Y = Y0                 // NO 박스 · QTY
+const ROW1_Y = Y0                 // NO 박스 · LOC
 const PN_Y = Y0 + mm(6.8)         // 품번 (한 줄 전체)
 const DIV_Y = Y0 + mm(13.2)       // 구분선
 const MK_L1_Y = DIV_Y + mm(1.4)   // 제조사명
 const MK_L2_Y = DIV_Y + mm(6.4)   // 제조사품번
-const LOC_Y = DIV_Y + mm(1.2)     // LOC 박스
+const QTY_Y = DIV_Y + mm(2.2)     // 수량 — 제조사 줄 옆
 
 /**
  * 라벨 1장 ZPL
@@ -63,14 +65,16 @@ export function labelZpl(row) {
   const makerPn = raw(row.makerPn)
   const loc = esc(row.location)
   // ^A0N 글꼴은 폭이 높이의 약 0.55배다. 가운데 정렬에 쓴다.
-  const locW = Math.round(loc.length * mm(3.8) * 0.55)
+  const locW = Math.round(loc.length * mm(4.0) * 0.55)
   const isAlt = !!row.isAlt          // 비고로 지정한 대체품
 
   // 글자가 길면 폰트를 줄여 잘리지 않게 한다 (15자까지는 그대로, 최소 55%)
+  // 글자가 길면 크기를 줄여 넣는다.
+  //   0.5 배까지 줄여야 30자 넘는 제조사품번도 들어간다.
   const fit = (text, base = 3.6, limit = 15) => {
     const n = String(text || '').length
     if (n <= limit) return mm(base)
-    return mm(Math.max(base * 0.55, base * limit / n))
+    return mm(Math.max(base * 0.5, base * limit / n))
   }
 
   const out = [
@@ -81,8 +85,9 @@ export function labelZpl(row) {
     `^FO${X0},${ROW1_Y}^GB${NO_W},${NO_H},${NO_H}^FS`,
     `^FO${X0},${ROW1_Y + mm(1.1)}^FR^A0N,${mm(4.0)},${mm(4.0)}^FB${NO_W},1,0,C^FD${no}^FS`,
 
-    // QTY (우측) — 라벨과 값을 한 줄에
-    `^FO${X1 - QTY_W},${ROW1_Y + mm(1.4)}^A0N,${mm(4.4)},${mm(4.4)}^FB${QTY_W},1,0,R^FD${qty} EA${part ? ` (${part})` : ''}^FS`,
+    // LOC 박스 (검정) — 첫 줄 우측. 창고에서 가장 먼저 보는 값이다.
+    `^FO${LOC_X},${ROW1_Y}^GB${LOC_W},${LOC_H},${LOC_H}^FS`,
+    `^FO${LOC_X + Math.max(0, Math.round((LOC_W - locW) / 2))},${ROW1_Y + mm(1.1)}^FR^A0N,${mm(4.0)},${mm(4.0)}^FD${loc}^FS`,
 
     // 2줄 — 품번. 한 줄 전체를 써서 길어도 겹치지 않는다
     `^FO${X0},${PN_Y}^A0N,${mm(5.0)},${mm(5.0)}^FB${UW},1,0,L^FD${pn}^FS`,
@@ -96,7 +101,7 @@ export function labelZpl(row) {
   if (isAlt) {
     // 구분선 바로 위, 수량 왼쪽 빈 자리에 배지
     const bw = mm(12), bh = mm(3.2)
-    const bx = X1 - QTY_W - bw - mm(2)
+    const bx = X1 - bw - mm(2)
     const by = DIV_Y - bh - mm(0.8)
     out.push(
       `^FO${bx},${by}^GB${bw},${bh},${bh}^FS`,
@@ -113,14 +118,9 @@ export function labelZpl(row) {
   }
   if (!maker && !makerPn) out.push(`^FO${X0},${MK_L1_Y}^A0N,${mm(3.6)},${mm(3.6)}^FB${MK_W},1,0,L^FD ^FS`)
 
-  // LOC 박스 (검정) — 우측 고정
+  // 수량 — 제조사 줄 오른쪽. 짧아서 좁은 자리로 충분하다.
   out.push(
-    `^FO${LOC_X},${LOC_Y}^GB${LOC_W},${LOC_H},${LOC_H}^FS`,
-    `^FO${LOC_X},${LOC_Y + mm(0.5)}^FR^A0N,${mm(1.8)},${mm(1.8)}^FB${LOC_W},1,0,C^FDLOC^FS`,
-    // ^FB 가운데 정렬은 폭이 애매하면 글자를 밀어내 순서가 뒤섞인다.
-    //   (W7-05-3 이 W7-305- - 로 찍히는 일이 있었다)
-    //   글자 폭을 재서 직접 가운데에 놓는다.
-    `^FO${LOC_X + Math.max(0, Math.round((LOC_W - locW) / 2))},${LOC_Y + mm(2.6)}^FR^A0N,${mm(3.8)},${mm(3.8)}^FD${loc}^FS`,
+    `^FO${QTY_X},${QTY_Y}^A0N,${mm(4.4)},${mm(4.4)}^FB${QTY_W},1,0,R^FD${qty} EA${part ? ` (${part})` : ''}^FS`,
     '^XZ',
   )
   return out.join('')
