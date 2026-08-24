@@ -37,7 +37,8 @@ const raw = (v) => String(v ?? '').replace(/[\^~]/g, ' ').trim()
 // ── 가로 ──
 const NO_W = mm(7), NO_H = mm(6)
 const QTY_W = mm(24)
-const LOC_W = mm(17), LOC_H = mm(7.5)
+// W7-06-2 처럼 W 가 들어가면 좁아서 잘렸다. 두 글자 더 들어갈 만큼 넓힌다.
+const LOC_W = mm(26), LOC_H = mm(7.5)
 const LOC_X = X1 - LOC_W
 const MK_W = UW - LOC_W - mm(2)   // 제조사 영역 — LOC 박스와 안 겹치게
 
