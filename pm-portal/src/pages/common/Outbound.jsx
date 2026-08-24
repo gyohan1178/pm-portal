@@ -523,7 +523,9 @@ export default function Outbound() {
   return (
     <div className="space-y-4">
       {labelConfirm && (
-        <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendOutLabels(labelConfirm.labels)} />
+        <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)}
+          onPrint={(range) => sendOutLabels(
+            range ? labelConfirm.labels.slice(range.a - 1, range.b) : labelConfirm.labels)} />
       )}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
         {[['process','📤 출고 처리'],['history','📋 출고 현황']].map(([k,l])=>(
@@ -869,9 +871,19 @@ export default function Outbound() {
 
 // 라벨 출력 전 확인 모달 — 몇 장 나가는지 보고 나서 출력한다 (오출력 방지)
 function LabelConfirmModal({ data, onCancel, onPrint }) {
+  // 프린터가 중간에 걸리면 처음부터 다시 뽑아야 했다.
+  //   몇 번째부터 몇 번째까지만 골라 뽑을 수 있게 한다.
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const total = data.labelCount
+  const a = Math.max(1, Number(from) || 1)
+  const b = Math.min(total, Number(to) || total)
+  const partial = (from !== '' || to !== '') && (a > 1 || b < total)
+  const cnt = Math.max(0, b - a + 1)
+
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onCancel}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
         <div className="space-y-2 text-sm">
           <div className="flex justify-between"><span className="text-slate-500">품목</span><span className="font-bold">{data.itemCount}건</span></div>
@@ -893,10 +905,56 @@ function LabelConfirmModal({ data, onCancel, onPrint }) {
           {data.skipped > 0 && (
             <p className="text-xs text-slate-400">제외 {data.skipped}건</p>
           )}
+
+          <div className="pt-3 border-t border-slate-100">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-500 flex-shrink-0">범위</span>
+              <input type="number" min="1" max={total} value={from}
+                onChange={e => setFrom(e.target.value)} placeholder="1"
+                className="w-16 px-2 py-1.5 text-sm text-center border border-slate-200 rounded-lg" />
+              <span className="text-slate-300">~</span>
+              <input type="number" min="1" max={total} value={to}
+                onChange={e => setTo(e.target.value)} placeholder={String(total)}
+                className="w-16 px-2 py-1.5 text-sm text-center border border-slate-200 rounded-lg" />
+              {partial && (
+                <button onClick={() => { setFrom(''); setTo('') }}
+                  className="text-xs text-slate-400 px-1">전체</button>
+              )}
+            </div>
+            <p className={`text-[11px] mt-1.5 ${cnt <= 0 ? 'text-rose-500' : 'text-slate-400'}`}>
+              {cnt <= 0
+                ? `범위를 벗어났습니다 (1 ~ ${total})`
+                : partial
+                  ? `${a}번째부터 ${b}번째까지 ${cnt}장을 뽑습니다`
+                  : '비워두면 전체를 뽑습니다 · 중간에 걸렸을 때 이어서 뽑을 수 있습니다'}
+            </p>
+
+            {/* 몇 번이 무엇인지 알아야 범위를 고를 수 있다 */}
+            <div className="mt-2 max-h-40 overflow-y-auto rounded-lg border border-slate-100 divide-y divide-slate-50">
+              {data.labels.map((l, i) => {
+                const n = i + 1
+                const on = n >= a && n <= b
+                return (
+                  <div key={i}
+                    className={`px-2.5 py-1.5 flex items-center gap-2 text-[11px] ${
+                      on ? '' : 'opacity-35'}`}>
+                    <span className="w-6 text-right font-bold text-slate-400">{n}</span>
+                    <span className="font-mono text-slate-700 flex-1 truncate">{l.std_code}</span>
+                    {l.part && <span className="text-amber-600">{l.part}</span>}
+                    <span className="text-slate-400">{l.location || '-'}</span>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
         </div>
         <div className="flex gap-2 mt-5">
           <button onClick={onCancel} className="flex-1 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
-          <button onClick={onPrint} className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700">출력</button>
+          <button onClick={() => onPrint(partial ? { a, b } : null)}
+            disabled={cnt <= 0}
+            className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">
+            {partial ? `${cnt}장 출력` : '출력'}
+          </button>
         </div>
       </div>
     </div>
