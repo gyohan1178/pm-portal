@@ -7,9 +7,11 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 
-const STATUS_OPTS = ['PO접수', '자재발주', '제작중', '품질검수', '납품대기', '완료']
+// 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
+const STATUS_OPTS = ['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기', '완료']
 const STATUS_COLOR = {
   'PO접수': 'bg-slate-100 text-slate-600', '자재발주': 'bg-cyan-50 text-cyan-600',
+  '제작대기': 'bg-teal-50 text-teal-700',
   '제작중': 'bg-blue-50 text-blue-600', '품질검수': 'bg-violet-50 text-violet-600',
   '납품대기': 'bg-amber-50 text-amber-700', '완료': 'bg-emerald-50 text-emerald-700',
 }
@@ -254,6 +256,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       g[k] ??= { pn: k, name: r.name, main: isMainPn(k), total: 0, done: 0, making: 0, waiting: 0, next: null }
       g[k].total++
       if (r.status === '완료') g[k].done++
+      // 제작대기는 자재만 나간 상태라 아직 만들기 전이다. 대기로 센다.
       else if (['제작중','품질검수','납품대기'].includes(r.status)) g[k].making++
       else g[k].waiting++
       if (r.status !== '완료' && r.req_date) {

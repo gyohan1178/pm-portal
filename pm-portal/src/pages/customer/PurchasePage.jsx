@@ -11,6 +11,7 @@ import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
+import { printForeignPO } from '../../lib/foreignPO'
 
 
 function monthAgoStr() {
@@ -108,109 +109,6 @@ function exportEcount(items, vendors) {
   ws['!cols'] = headers.map(()=>({width:14}))
   XLSX.utils.book_append_sheet(wb, ws, '발주서')
   XLSX.writeFile(wb, `이카운트발주서_${yyyymmdd}.xlsx`)
-}
-
-// 미터를 피트로.
-//   현장에서는 1 M = 10/3 FT 로 쓴다. 실제(3.2808)와 1.6% 차이지만
-//   발주 단위(75·150·300·600·900·1200 M)가 250 FT 배수로 떨어지도록 맞춘 값이다.
-const M_TO_FT = 10 / 3
-function toFt(m) {
-  const ft = (Number(m) || 0) * M_TO_FT
-  // 발주 단위를 지키면 정수로 떨어진다. 아니면 소수 한 자리까지 둔다.
-  return Number.isInteger(ft) ? ft : Math.round(ft * 10) / 10
-}
-
-// 해외 발주서.
-//   달러로 계약하므로 외화 단가로 찍는다.
-//   원화(unit_price)는 관세·운임이 곱해진 기준단가라 발주서에 쓸 수 없다.
-function buildForeignPO(rows, vendor) {
-  if (!rows.length) { toastError('발주 건이 없습니다'); return }
-  const cur = rows[0].fx_currency || vendor?.currency || 'USD'
-  const poNo = rows[0].po_number || ''
-  const date = rows[0].order_date || ''
-  const addr = (vendor?.address || '').split('\n')
-
-  const A = []                       // 시트 배열
-  const put = (r, c, v) => { (A[r] ||= [])[c] = v }
-
-  put(4, 0, 'PURCHASE ORDER')
-  put(6, 0, 'TO          :'); put(6, 1, vendor?.name || '')
-  put(6, 5, '  P/O #  ');     put(6, 6, poNo)
-  addr.forEach((line, i) => put(7 + i, 1, line))
-  put(7, 5, 'Date'); put(7, 6, date)
-  const infoRow = 7 + Math.max(addr.length, 1)
-  if (vendor?.phone) put(infoRow, 1, `Tel : ${vendor.phone}`)
-  if (vendor?.email) put(infoRow + 1, 1, `E-mail : ${vendor.email}`)
-
-  put(13, 0, '  DESCRIPTION & MODEL')
-  put(13, 3, "Q'TY"); put(13, 5, 'UNIT PRICE'); put(13, 6, 'AMOUNT')
-
-  let r = 15, qtySum = 0, amtSum = 0
-  const odd = []                     // 발주 단위를 벗어난 건
-  rows.forEach((x, i) => {
-    const mQty = Number(x.qty_ordered) || 0
-    // 재고·입고는 M 으로 관리하지만 발주서는 FT 로 낸다.
-    //   단가도 함께 바뀌어야 금액이 맞는다.
-    const isLen = ['M','m','미터'].includes(x.items?.unit)
-    const qty = isLen ? toFt(mQty) : mQty
-    const unit = isLen ? 'FT' : (x.items?.unit || 'EA')
-    const priceM = Number(x.unit_price_fx) || 0
-    const price = isLen ? Math.round(priceM / M_TO_FT * 10000) / 10000 : priceM
-    const amt = Math.round(qty * price * 100) / 100
-    if (isLen && mQty % 75 !== 0) odd.push(`${x.items?.std_code} ${mQty}M`)
-    put(r, 0, i + 1)
-    put(r, 1, (x.items?.std_code || '').replace(/^AX-/, ''))
-    put(r, 2, x.items?.manufacturer_code || x.items?.name || '')
-    put(r, 3, qty)
-    put(r, 4, unit)
-    put(r, 5, price)
-    put(r, 6, amt)
-    qtySum += qty; amtSum += amt
-    r++
-  })
-
-  // 관세는 업체마다 다르다. 등록돼 있으면 붙인다.
-  const tariff = Number(vendor?.tariff_rate) || 0
-  if (tariff > 0) {
-    r++
-    const tv = Math.round(amtSum * tariff / 100 * 100) / 100
-    put(r, 1, 'TARIFF'); put(r, 6, tv)
-    amtSum += tv
-    r++
-  }
-
-  r += 2
-  put(r, 0, 'TOTAL'); put(r, 3, qtySum)
-  put(r, 4, rows[0]?.items?.unit || 'EA')
-  put(r, 6, Math.round(amtSum * 100) / 100)
-
-  r += 2
-  put(r, 0, 1); put(r, 1, 'Payment Term'); put(r, 2, `: ${vendor?.payment_terms || 'T/T'}`)
-  put(r + 1, 0, 2); put(r + 1, 1, 'Delivery'); put(r + 1, 2, `: ETA ${rows[0].promise_date || ''}`)
-  put(r + 2, 0, 3); put(r + 2, 1, 'Delivery to'); put(r + 2, 2, ': JINSUNTECH CO., LTD')
-  put(r + 3, 2, '98, CHADOL-RO, DONGNAM-GU, CHEONAN')
-  put(r + 4, 2, 'CHUNGCHEONGNAM-DO, KOREA')
-
-  r += 9
-  put(r, 4, 'Buyer :JINSUNTECH CO.,LTD')
-  put(r + 1, 4, '98, Chadol-ro, Dongnam-gu, Cheonan-si')
-  put(r + 2, 4, 'Chungcheongnam-do, KOREA')
-  put(r + 3, 4, 'TEL:041)579-5845  FAX:041)579-5846')
-
-  const ws = XLSX.utils.aoa_to_sheet(A)
-  ws['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 34 }, { wch: 9 },
-                 { wch: 6 }, { wch: 12 }, { wch: 14 }]
-  ws['!merges'] = [
-    { s: { r: 4, c: 0 }, e: { r: 4, c: 6 } },
-  ]
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, ws, poNo || 'PO')
-  XLSX.writeFile(wb, `${(date || '').replace(/-/g, '').slice(2)}_${(vendor?.name || 'PO').replace(/[\\/:*?"<>|]/g, '')}_PO.xlsx`)
-  toastSuccess(`${rows.length}건 · ${cur} ${Math.round(amtSum * 100) / 100}`)
-  if (odd.length) {
-    // 75M 배수가 아니면 FT 가 딱 떨어지지 않는다. 확인이 필요하다.
-    toastError(`발주 단위(75M 배수)가 아닌 건: ${odd.slice(0, 3).join(', ')}${odd.length > 3 ? ` 외 ${odd.length - 3}건` : ''}`)
-  }
 }
 
 const PO_COLS = [
@@ -909,8 +807,15 @@ export default function PurchasePage() {
             if (fv.length !== 1) return null
             const rows = checkedPOs.filter(p => p.vendor_id === fv[0].id)
             return (
-              <button onClick={() => buildForeignPO(rows, fv[0])}
-                title="해외 업체용 영문 발주서 — 외화 단가로 나옵니다"
+              <button onClick={() => {
+                  const r = printForeignPO(rows, fv[0])
+                  if (!r.ok) { toastError(r.msg); return }
+                  toastSuccess(`${r.cnt}건 · ${r.cur} ${r.total.toLocaleString()}`)
+                  if (r.odd?.length) {
+                    toastError(`발주 단위(75M 배수)가 아닌 건: ${r.odd.slice(0,3).join(', ')}${r.odd.length>3?` 외 ${r.odd.length-3}건`:''}`)
+                  }
+                }}
+                title="해외 업체용 영문 발주서 — 인쇄하거나 PDF 로 저장합니다"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-100">
                 🌏 해외 발주서 ({rows.length})
               </button>

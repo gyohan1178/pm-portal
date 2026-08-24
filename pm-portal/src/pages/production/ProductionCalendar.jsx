@@ -5,6 +5,7 @@ const STATUS_COLOR = {
   '납품대기': 'bg-blue-100 text-blue-700 border-blue-200',
   '품질검수': 'bg-violet-100 text-violet-700 border-violet-200',
   '제작중': 'bg-amber-100 text-amber-700 border-amber-200',
+  '제작대기': 'bg-teal-100 text-teal-700 border-teal-200',
   'PO접수': 'bg-slate-100 text-slate-600 border-slate-200',
 }
 

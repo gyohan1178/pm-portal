@@ -289,7 +289,7 @@ export default function ProductionBoard() {
       {view.groups.length === 0 && <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>표시할 호기가 없습니다 (전장완료 예정 {RANGE_DAYS}일 이내)</div>}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-        {['PO접수', '자재발주', '제작중', '품질검수', '납품대기'].map(st => (
+        {['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기'].map(st => (
           <div key={st} style={{ flex: narrow ? '1 1 30%' : 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 12, textAlign: 'center' }}>
             <b style={{ display: 'block', fontSize: narrow ? 24 : 32, fontWeight: 900, color: '#fff' }}>{view.byStatus[st] || 0}</b>
             <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 700 }}>{st === 'PO접수' ? '미불출(PO접수)' : st}</span>
