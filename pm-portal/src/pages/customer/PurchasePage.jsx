@@ -68,9 +68,6 @@ async function genPoNumber(dateStr) {
 
 function exportEcount(items, vendors) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))
-  const curVendor = vendorMap[selVendor]
-  const isForeign = !!curVendor?.is_foreign
-  const markup = Number(curVendor?.markup) || 1.2
   const today = new Date()
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
   const headers = ['일자','순번','납기일자','거래처코드','거래처명','참조','담당자','거래유형','입고창고','통화','환율','프로젝트','배송지','메모','품목코드','품목명','규격','수량','단가','외화금액','공급가액','부가세','적요']
@@ -298,6 +295,10 @@ export default function PurchasePage() {
 
   const { data: cs } = useCustomer(csCode)
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
+  const vendorMap = Object.fromEntries(vendors.map(v => [v.id, v]))
+  const curVendor = vendorMap[selVendor]
+  const isForeign = !!curVendor?.is_foreign
+  const markup = Number(curVendor?.markup) || 1.2
   const { data: purchases=[], isLoading, error } = useQuery({
     queryKey:['purchase',cs?.id], queryFn:()=>fetchPurchases(cs?.id), enabled:!!cs?.id,
   })

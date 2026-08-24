@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.70.0'
+export const APP_VERSION = 'v3.70.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.70.1',
+    date: '2026-08-21',
+    changes: [
+      '구매발주 화면이 열리지 않던 문제 수정 (v3.70.0 배포분)',
+    ],
+  },
   {
     version: 'v3.70.0',
     date: '2026-08-21',
