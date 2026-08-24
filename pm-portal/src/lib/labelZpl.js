@@ -62,6 +62,8 @@ export function labelZpl(row) {
   const maker = raw(row.maker)
   const makerPn = raw(row.makerPn)
   const loc = esc(row.location)
+  // ^A0N 글꼴은 폭이 높이의 약 0.55배다. 가운데 정렬에 쓴다.
+  const locW = Math.round(loc.length * mm(3.8) * 0.55)
   const isAlt = !!row.isAlt          // 비고로 지정한 대체품
 
   // 글자가 길면 폰트를 줄여 잘리지 않게 한다 (15자까지는 그대로, 최소 55%)
@@ -115,7 +117,10 @@ export function labelZpl(row) {
   out.push(
     `^FO${LOC_X},${LOC_Y}^GB${LOC_W},${LOC_H},${LOC_H}^FS`,
     `^FO${LOC_X},${LOC_Y + mm(0.5)}^FR^A0N,${mm(1.8)},${mm(1.8)}^FB${LOC_W},1,0,C^FDLOC^FS`,
-    `^FO${LOC_X},${LOC_Y + mm(2.6)}^FR^A0N,${mm(3.8)},${mm(3.8)}^FB${LOC_W},1,0,C^FD${loc}^FS`,
+    // ^FB 가운데 정렬은 폭이 애매하면 글자를 밀어내 순서가 뒤섞인다.
+    //   (W7-05-3 이 W7-305- - 로 찍히는 일이 있었다)
+    //   글자 폭을 재서 직접 가운데에 놓는다.
+    `^FO${LOC_X + Math.max(0, Math.round((LOC_W - locW) / 2))},${LOC_Y + mm(2.6)}^FR^A0N,${mm(3.8)},${mm(3.8)}^FD${loc}^FS`,
     '^XZ',
   )
   return out.join('')

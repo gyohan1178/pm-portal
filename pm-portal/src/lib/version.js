@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v3.71.0'
+export const APP_VERSION = 'v3.71.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.71.1',
+    date: '2026-08-21',
+    changes: [
+      '전장 라벨의 위치가 W7-05-3 → W7-305- - 처럼 뒤섞여 찍히던 문제 수정 — 가운데 정렬 방식이 글자를 밀어내고 있었습니다. 글자 폭을 재서 직접 배치합니다',
+    ],
+  },
   {
     version: 'v3.71.0',
     date: '2026-08-21',
