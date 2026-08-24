@@ -18,7 +18,8 @@ function monthAgoStr() {
 }
 
 async function fetchVendors() {
-  const { data } = await supabase.from('vendors').select('id,name,ecount_code').order('name')
+  const { data } = await supabase.from('vendors')
+    .select('id,name,ecount_code,is_foreign,currency,markup,tariff_rate').order('name')
   return data || []
 }
 async function fetchPurchases(csId) {
@@ -26,7 +27,7 @@ async function fetchPurchases(csId) {
   const today = new Date().toISOString().split('T')[0]
   const data = await fetchAll(() => supabase
     .from('purchase_orders')
-    .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code), vendors(name,ecount_code,payment_terms), projects(code,name)')
+    .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code,unit), vendors(name,ecount_code,payment_terms), projects(code,name)')
     .eq('customer_id', csId).eq('order_type','purchase').not('status','in','(완료,취소)')
     .order('promise_date', { ascending: true }))
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date && p.promise_date < today }))
@@ -67,6 +68,9 @@ async function genPoNumber(dateStr) {
 
 function exportEcount(items, vendors) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))
+  const curVendor = vendorMap[selVendor]
+  const isForeign = !!curVendor?.is_foreign
+  const markup = Number(curVendor?.markup) || 1.2
   const today = new Date()
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
   const headers = ['일자','순번','납기일자','거래처코드','거래처명','참조','담당자','거래유형','입고창고','통화','환율','프로젝트','배송지','메모','품목코드','품목명','규격','수량','단가','외화금액','공급가액','부가세','적요']
@@ -107,6 +111,87 @@ function exportEcount(items, vendors) {
   ws['!cols'] = headers.map(()=>({width:14}))
   XLSX.utils.book_append_sheet(wb, ws, '발주서')
   XLSX.writeFile(wb, `이카운트발주서_${yyyymmdd}.xlsx`)
+}
+
+// 해외 발주서.
+//   달러로 계약하므로 외화 단가로 찍는다.
+//   원화(unit_price)는 관세·운임이 곱해진 기준단가라 발주서에 쓸 수 없다.
+function buildForeignPO(rows, vendor) {
+  if (!rows.length) { toastError('발주 건이 없습니다'); return }
+  const cur = rows[0].fx_currency || vendor?.currency || 'USD'
+  const poNo = rows[0].po_number || ''
+  const date = rows[0].order_date || ''
+  const addr = (vendor?.address || '').split('\n')
+
+  const A = []                       // 시트 배열
+  const put = (r, c, v) => { (A[r] ||= [])[c] = v }
+
+  put(4, 0, 'PURCHASE ORDER')
+  put(6, 0, 'TO          :'); put(6, 1, vendor?.name || '')
+  put(6, 5, '  P/O #  ');     put(6, 6, poNo)
+  addr.forEach((line, i) => put(7 + i, 1, line))
+  put(7, 5, 'Date'); put(7, 6, date)
+  const infoRow = 7 + Math.max(addr.length, 1)
+  if (vendor?.phone) put(infoRow, 1, `Tel : ${vendor.phone}`)
+  if (vendor?.email) put(infoRow + 1, 1, `E-mail : ${vendor.email}`)
+
+  put(13, 0, '  DESCRIPTION & MODEL')
+  put(13, 3, "Q'TY"); put(13, 5, 'UNIT PRICE'); put(13, 6, 'AMOUNT')
+
+  let r = 15, qtySum = 0, amtSum = 0
+  rows.forEach((x, i) => {
+    const qty = Number(x.qty_ordered) || 0
+    const price = Number(x.unit_price_fx) || 0
+    const amt = Math.round(qty * price * 10000) / 10000
+    put(r, 0, i + 1)
+    put(r, 1, (x.items?.std_code || '').replace(/^AX-/, ''))
+    put(r, 2, x.items?.manufacturer_code || x.items?.name || '')
+    put(r, 3, qty)
+    put(r, 4, x.items?.unit || 'EA')
+    put(r, 5, price)
+    put(r, 6, amt)
+    qtySum += qty; amtSum += amt
+    r++
+  })
+
+  // 관세는 업체마다 다르다. 등록돼 있으면 붙인다.
+  const tariff = Number(vendor?.tariff_rate) || 0
+  if (tariff > 0) {
+    r++
+    const tv = Math.round(amtSum * tariff / 100 * 100) / 100
+    put(r, 1, 'TARIFF'); put(r, 6, tv)
+    amtSum += tv
+    r++
+  }
+
+  r += 2
+  put(r, 0, 'TOTAL'); put(r, 3, qtySum)
+  put(r, 4, rows[0]?.items?.unit || 'EA')
+  put(r, 6, Math.round(amtSum * 100) / 100)
+
+  r += 2
+  put(r, 0, 1); put(r, 1, 'Payment Term'); put(r, 2, `: ${vendor?.payment_terms || 'T/T'}`)
+  put(r + 1, 0, 2); put(r + 1, 1, 'Delivery'); put(r + 1, 2, `: ETA ${rows[0].promise_date || ''}`)
+  put(r + 2, 0, 3); put(r + 2, 1, 'Delivery to'); put(r + 2, 2, ': JINSUNTECH CO., LTD')
+  put(r + 3, 2, '98, CHADOL-RO, DONGNAM-GU, CHEONAN')
+  put(r + 4, 2, 'CHUNGCHEONGNAM-DO, KOREA')
+
+  r += 9
+  put(r, 4, 'Buyer :JINSUNTECH CO.,LTD')
+  put(r + 1, 4, '98, Chadol-ro, Dongnam-gu, Cheonan-si')
+  put(r + 2, 4, 'Chungcheongnam-do, KOREA')
+  put(r + 3, 4, 'TEL:041)579-5845  FAX:041)579-5846')
+
+  const ws = XLSX.utils.aoa_to_sheet(A)
+  ws['!cols'] = [{ wch: 6 }, { wch: 18 }, { wch: 34 }, { wch: 9 },
+                 { wch: 6 }, { wch: 12 }, { wch: 14 }]
+  ws['!merges'] = [
+    { s: { r: 4, c: 0 }, e: { r: 4, c: 6 } },
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, poNo || 'PO')
+  XLSX.writeFile(wb, `${(date || '').replace(/-/g, '').slice(2)}_${(vendor?.name || 'PO').replace(/[\\/:*?"<>|]/g, '')}_PO.xlsx`)
+  toastSuccess(`${rows.length}건 · ${cur} ${Math.round(amtSum * 100) / 100}`)
 }
 
 const PO_COLS = [
@@ -182,6 +267,9 @@ export default function PurchasePage() {
   const [itemResults, setItemResults] = useState([])
   const [selItem, setSelItem] = useState(null)
   const [selVendor, setSelVendor] = useState('')
+  // 해외 업체는 달러로 계약한다. 환율과 배수를 곱해 원화 기준단가를 만든다.
+  const [fxRate, setFxRate] = useState('')
+  const [fxPrice, setFxPrice] = useState('')
   const [vendorSearch, setVendorSearch] = useState('')
   const [vendorOpen, setVendorOpen] = useState(false)
   const [checked, setChecked] = useState({})
@@ -268,7 +356,10 @@ export default function PurchasePage() {
         const { data: same } = await q.limit(1)
         poNum = same?.[0]?.po_number || await genPoNumber(data.order_date)
       }
-      const payload = { vendor_id:selVendor||null, po_number:poNum, type:data.type, qty_ordered:Number(data.qty_ordered), order_date:data.order_date||null, promise_date:data.promise_date||null, unit_price:data.unit_price?Number(data.unit_price):null, memo:data.memo||null }
+      const payload = { vendor_id:selVendor||null, po_number:poNum, type:data.type, qty_ordered:Number(data.qty_ordered), order_date:data.order_date||null, promise_date:data.promise_date||null, unit_price:data.unit_price?Number(data.unit_price):null, memo:data.memo||null,
+        unit_price_fx: isForeign && fxPrice ? Number(fxPrice) : null,
+        fx_rate: isForeign && fxRate ? Number(fxRate) : null,
+        fx_currency: isForeign ? (curVendor?.currency || 'USD') : null }
       if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
       else { const{error}=await supabase.from('purchase_orders').insert({...payload,customer_id:cs?.id,item_id:selItem?.id,order_type:'purchase',qty_received:0,status:'진행중'}); if(error) throw error }
     },
@@ -280,6 +371,9 @@ export default function PurchasePage() {
     po_number: ln.po_number?.trim()||null, type: ln.type, qty_ordered: Number(ln.qty_ordered),
     order_date: ln.order_date||null, promise_date: ln.promise_date||null,
     unit_price: ln.unit_price?Number(ln.unit_price):null, memo: ln.memo||null,
+    unit_price_fx: ln.unit_price_fx ?? null,
+    fx_rate: ln.fx_rate ?? null,
+    fx_currency: ln.fx_currency ?? null,
     order_type:'purchase', qty_received:0, status:'진행중',
   })
   const saveMultiMut = useMutation({
@@ -329,12 +423,17 @@ export default function PurchasePage() {
       return [...prev, {
         item_id: selItem.id, name: selItem.name, std_code: selItem.std_code,
         maker: selItem.manufacturer || '', makerPn: selItem.manufacturer_code || '',
+        // 해외 발주는 달러 단가와 환율을 함께 남긴다. 원화만으로는 역산이 안 된다.
+        unit_price_fx: isForeign && fxPrice ? Number(fxPrice) : null,
+        fx_rate: isForeign && fxRate ? Number(fxRate) : null,
+        fx_currency: isForeign ? (curVendor?.currency || 'USD') : null,
         vendor_id: selVendor||null, vendorName: vendors.find(v=>v.id===selVendor)?.name||'',
         type: selItem.type||form.type, qty_ordered: form.qty_ordered, unit_price: form.unit_price,
         order_date: form.order_date, promise_date: form.promise_date, po_number: form.po_number, memo: form.memo,
       }]
     })
     setSelItem(null); setItemSearch(''); setItemResults([])
+    setFxPrice('')
     setForm(prev => ({ ...prev, qty_ordered:'', unit_price:'', memo:'' }))
   }
   async function addBulkPaste() {
@@ -780,6 +879,20 @@ export default function PurchasePage() {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
             📑 이카운트 발주서
           </button>
+          {/* 해외 업체 건이 섞여 있으면 영문 발주서도 뽑을 수 있게 한다 */}
+          {(() => {
+            const fv = [...new Set(checkedPOs.map(p => p.vendor_id))]
+              .map(id => vendorMap[id]).filter(v => v?.is_foreign)
+            if (fv.length !== 1) return null
+            const rows = checkedPOs.filter(p => p.vendor_id === fv[0].id)
+            return (
+              <button onClick={() => buildForeignPO(rows, fv[0])}
+                title="해외 업체용 영문 발주서 — 외화 단가로 나옵니다"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-100">
+                🌏 해외 발주서 ({rows.length})
+              </button>
+            )
+          })()}
         </div>
       )}
 
@@ -859,6 +972,47 @@ export default function PurchasePage() {
                     <label className="block text-xs font-bold text-slate-500 mb-1">단가 <span className="text-indigo-400 font-normal">자동</span></label>
                     <input type="number" value={form.unit_price} onChange={f('unit_price')} onKeyDown={e=>{if(e.key==='Enter'&&!editId&&selItem&&form.qty_ordered){e.preventDefault();addLine()}}} placeholder="단가" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                   </div>
+                  {/* 해외 업체는 달러로 계약한다. 넣으면 원화 기준단가가 자동으로 채워진다. */}
+                  {isForeign && (
+                    <div className="col-span-4 grid grid-cols-2 gap-2 rounded-lg bg-sky-50 border border-sky-200 p-2">
+                      <div>
+                        <label className="block text-xs font-bold text-sky-700 mb-1">
+                          {curVendor?.currency || 'USD'} 단가 *
+                        </label>
+                        <input type="number" step="0.0001" value={fxPrice}
+                          onChange={e => {
+                            const v = e.target.value
+                            setFxPrice(v)
+                            const r = Number(fxRate)
+                            if (v && r > 0) {
+                              setForm(prev => ({ ...prev,
+                                unit_price: Math.round(Number(v) * r * markup) }))
+                            }
+                          }}
+                          placeholder="0.31"
+                          className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-sky-700 mb-1">환율</label>
+                        <input type="number" value={fxRate}
+                          onChange={e => {
+                            const r = e.target.value
+                            setFxRate(r)
+                            if (fxPrice && Number(r) > 0) {
+                              setForm(prev => ({ ...prev,
+                                unit_price: Math.round(Number(fxPrice) * Number(r) * markup) }))
+                            }
+                          }}
+                          placeholder="1350"
+                          className="w-full px-3 py-2 text-sm border border-sky-200 rounded-lg" />
+                      </div>
+                      <p className="col-span-2 text-[11px] text-sky-600">
+                        {fxPrice && fxRate
+                          ? `${fxPrice} × ${fxRate} × ${markup} = ${Math.round(Number(fxPrice)*Number(fxRate)*markup).toLocaleString('ko-KR')}원`
+                          : `달러 단가 × 환율 × ${markup}(관세·운임) = 원화 기준단가`}
+                      </p>
+                    </div>
+                  )}
                   <div className={editId?'col-span-1':'col-span-2'}>
                     <label className="block text-xs font-bold text-slate-500 mb-1">메모</label>
                     <input value={form.memo} onChange={f('memo')} placeholder="메모" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
