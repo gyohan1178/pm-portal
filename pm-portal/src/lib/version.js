@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v3.70.2'
+export const APP_VERSION = 'v3.70.3'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.70.3',
+    date: '2026-08-21',
+    changes: [
+      'ASSY 출고 비고를 적으면 대체품으로 잡혀 제조사·제조사품번이 그 내용으로 바뀌던 동작을 없앴습니다 — 이제 비고는 비고로만 쓰입니다',
+      '불출표에도 \'대체품\' 대신 \'비고\' 로 나옵니다',
+    ],
+  },
   {
     version: 'v3.70.2',
     date: '2026-08-21',
