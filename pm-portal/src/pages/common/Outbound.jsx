@@ -7,6 +7,7 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
+import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 import * as XLSX from 'xlsx'
 
 function monthAgoStr() {
@@ -407,90 +408,25 @@ export default function Outbound() {
   // 글자수 제한 (넘으면 잘라냄)
   const cut = (str, max) => { const t = String(str||''); return t.length > max ? t.slice(0, max) : t }
   // 불출표 HTML 빌더 (공용)
+  // 불출표는 다품목 출고와 같은 서식을 쓴다.
+  //   현장에서 두 종이가 달라 보이면 헷갈리기 때문이다.
   function buildSheet(title, rows, qtyFn, extraMeta) {
-    const csName = selCustomer ? (customers.find(c=>c.id===selCustomer)?.name || '') : ''
-    const projName = selProject ? (projects.find(p=>p.id===selProject)?.code || '') : ''
-    const today = new Date().toLocaleDateString('ko-KR')
-    // 제작구분별 그룹핑 (소제목으로 구분) — 컬럼에서 제작구분 빼고 품명 넓힘
-    let lastMt = null, no = 0
-    const body = rows.map((r)=>{
-      const mt = mtOf(r.item_id)
-      let groupHdr = ''
-      if (mt !== lastMt) {
-        lastMt = mt
-        // 열이 10개이므로 colspan 도 10 (9로 두면 그룹 줄마다 빈 칸이 생겨 표가 어긋남)
-        groupHdr = `<tr class="grp"><td colspan="10">■ ${MT_LABEL[mt] || mt}</td></tr>`
-      }
-      no++
-      const nw = (mt === 'field_stock' || mt === 'harness') ? ' nw' : ''   // 전장(현장재고)·하네스는 1줄 제한
-      // 비고가 있으면 해당 행 아래에 한 줄 더 넣는다
-      const alt = (noteOf(r.item_id) || '').trim()
-      return groupHdr + `<tr>
-        <td class="c nw">${no}</td>
-        <td class="loc">${r.location||'-'}</td>
-        <td class="code">${r.std_code||''}</td>
-        <td class="cat">${r.cat||'-'}</td>
-        <td class="mk${nw}">${cut(r.maker,12)||'-'}</td>
-        <td class="mono${nw}">${cut(r.makerPn,20)||'-'}</td>
-        <td class="nm${nw}">${cut(r.name,30)}</td>
-        <td class="c b">${round2(qtyFn(r))}</td>
-        <td class="c">${r.unit||''}</td>
-        <td class="chk"></td>
-      </tr>` + (alt ? `<tr class="alt">
-        <td></td>
-        <td colspan="9">↳ <b>비고</b> ${alt}</td>
-      </tr>` : '') + (() => {
-        // 로트 관리 품목은 먼저 쓸 시리얼을 적는다. 창고에서 이걸 보고 꺼낸다
-        const lm = lotMeta[r.item_id]
-        if (!lm?.first) return ''
-        const f = lm.first
-        return `<tr class="alt${f.expired ? ' exp' : ''}">
-          <td></td>
-          <td colspan="9">↳ <b>${f.expired ? '⚠ 기한초과' : '먼저 사용'}</b>
-            <span class="mono">${f.serial_no}</span>
-            ${f.expire_date ? `· ${f.expire_date}까지` : ''} · 잔량 ${f.qty_left}
-            ${lm.count > 1 ? `<span class="dim">(외 ${lm.count - 1}로트)</span>` : ''}</td>
-        </tr>`
-      })()}).join('')
-    return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>
-    <style>*{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}body{padding:24px;color:#111}
-    .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px}
-    tr.alt.exp td{color:#b00;font-weight:bold}
-    tr.alt .dim{color:#888;font-weight:normal}
-    h1{font-size:20px;margin:0}.meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
-    table{width:100%;border-collapse:collapse;font-size:11px;margin-top:10px;table-layout:fixed}
-    th,td{border:1px solid #999;padding:4px 5px;text-align:left;overflow:hidden;word-break:break-all;vertical-align:middle}
-    th{background:#f0f0f0;font-size:10px}
-    .grp td{background:#e8eef7;font-weight:bold;font-size:11px;color:#1e3a5f;border-color:#999;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}
-    .loc{font-weight:bold;font-family:consolas;white-space:nowrap}
-    .code{font-family:consolas;white-space:nowrap;overflow:hidden;text-overflow:clip}
-    .cat{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    .alt td{background:#fff8e1;border-top:none;font-size:10.5px;color:#8a6100;padding:2px 4px}
-    .nm{line-height:1.3;word-break:break-word;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-    td{max-height:34px}
-    .nw{white-space:nowrap;overflow:hidden;text-overflow:clip}
-    tr{page-break-inside:avoid}.sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
-    .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
-    @media print{body{padding:0}}</style></head><body>
-    <div class="head"><h1>${title}</h1>
-    <div class="meta">고객사: <b>${csName}</b> · 프로젝트: ${projName} · ${extraMeta}<br>출력일: ${today} · 총 ${rows.length}품목</div></div>
-    <table><colgroup>
-      <col style="width:3%"><col style="width:5%"><col style="width:11%"><col style="width:7%">
-      <col style="width:10%"><col style="width:14%"><col style="width:33%">
-      <col style="width:6%"><col style="width:5%"><col style="width:6%">
-    </colgroup><thead><tr>
-      <th class="c">No</th><th>위치</th><th>기준코드</th><th>카테고리</th>
-      <th>제조사</th><th>제조사품번</th><th>품명</th><th class="c">수량</th><th class="c">단위</th><th class="c">키팅<br>확인</th>
-    </tr></thead><tbody>${body}</tbody></table>
-    <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
-    </body></html>`
+    return buildIssueSheet({
+      title,
+      csName: selCustomer ? (customers.find(c => c.id === selCustomer)?.name || '') : '',
+      meta: [
+        selProject ? (projects.find(p => p.id === selProject)?.code || '') : '',
+        extraMeta,
+      ].filter(Boolean).join(' · '),
+      rows: rows.map(r => ({
+        location: r.location, std_code: r.std_code,
+        maker: r.maker, makerPn: r.makerPn, name: r.name,
+        unit: r.unit || 'EA', qty: qtyFn(r),
+        makeType: mtOf(r.item_id), note: noteOf(r.item_id),
+      })),
+    })
   }
-  function openPrint(html) {
-    const w = window.open('','_blank')
-    if(!w){ toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
-    w.document.write(html); w.document.close(); w.onload=()=>{ w.focus(); w.print() }
-  }
+  const openPrint = (html) => openSheet(html, toastError)
 
   // 박스 불출표 — 정상 + 하네스(표시만). 제외는 안 나옴. 수량은 출고수량(하네스는 참고표시)
   function printIssueSheet() {

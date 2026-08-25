@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
+import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
 
 const today = () => new Date().toISOString().split('T')[0]
 
@@ -58,6 +59,9 @@ export default function Issue() {
   const [assyQty, setAssyQty] = useState(1)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
+  // 불출표에 '어느 상위품번에 몇 개' 를 적으려면 전개할 때 기록해 둬야 한다.
+  const [lastAssys, setLastAssys] = useState([])
+  const [byAssyMap, setByAssyMap] = useState({})
 
   const addMut = useMutation({
     mutationFn: async (rows) => {
@@ -193,6 +197,22 @@ export default function Issue() {
       })
       if (error) throw error
       if (!data?.length) { toastError('전개 결과가 없습니다'); return }
+
+      // 상위품번별 소요량 — 하나씩 따로 전개해 칸을 채운다
+      const assys = picked.filter(p => p.is_assy)
+      const map = {}
+      for (const a of assys) {
+        const { data: one } = await supabase.rpc('pm_explode_assy', {
+          p_customer_id: csId,
+          p_items: [{ code: a.std_code, qty: Number(a.qty) }],
+        })
+        ;(one || []).forEach(r => {
+          map[r.std_code] ??= {}
+          map[r.std_code][a.std_code] = r.qty
+        })
+      }
+      setLastAssys(picked.map(p => ({ ...p, qty: Number(p.qty) })))
+      setByAssyMap(map)
       addMut.mutate(data.map(r => ({
         item_id: r.item_id, std_code: r.std_code, name: r.name,
         unit: r.unit, qty: r.qty, issue_qty: r.qty,
@@ -376,110 +396,23 @@ export default function Issue() {
     const rows = itemRows.filter(r => !excluded.has(r.std_code))
     if (!rows.length) { toastError('출력할 품목이 없습니다'); return }
     const csName = customers.find(c => c.code === csCode)?.name || csCode.toUpperCase()
-    const today = new Date().toLocaleDateString('ko-KR')
-    const body = rows.map((r, i) => `<tr>
-      <td class="c">${i + 1}</td>
-      <td class="c">${deptShort(r.dept) || '-'}</td>
-      <td>${r.maker || '-'}</td>
-      <td class="mono">${r.makerPn || '-'}</td>
-      <td class="mono">${r.std_code || ''}</td>
-      <td>${r.name || ''}</td>
-      <td class="c b">${r.qty}</td>
-      <td class="c">${r.unit || ''}</td>
-      <td class="chk"></td>
-    </tr>`).join('')
 
-    // ── 창고 동선 격자 ──
-    //   가져올 자재가 어느 칸에 있는지 랙별로 표시한다.
-    //   칸 안의 번호는 위 목록의 No 와 같아 대조할 수 있다.
-    const locMap = {}          // 'A1' → { '05-1': [3, 7] }
-    const noLoc = []           // 위치가 지정되지 않은 자재
-    rows.forEach((r, i) => {
-      const loc = String(r.location || '').trim()
-      const m = loc.match(/^([A-Z]+\d*)-(\d+)-(\d+)$/i)
-      if (!m) { noLoc.push(i + 1); return }
-      const [, rack, cell, lv] = m
-      const key = `${parseInt(cell, 10)}-${parseInt(lv, 10)}`
-      if (!locMap[rack]) locMap[rack] = {}
-      if (!locMap[rack][key]) locMap[rack][key] = []
-      locMap[rack][key].push(i + 1)
-    })
+    // 담을 때 고른 상위품번을 가로로 늘어놓아, 어느 것에 몇 개인지 보이게 한다.
+    const assyCols = lastAssys.filter(a => a.is_assy).map(a => ({ code: a.std_code, qty: a.qty }))
 
-    // 자재가 있는 랙만 그린다
-    const usedRacks = racks.filter(rk => locMap[rk.code])
-    const gridHtml = usedRacks.length === 0 ? '' : `
-    <div class="grid-sec">
-      <div class="grid-ttl">창고 동선 — 아래 칸에서 가져오세요</div>
-      ${usedRacks.map(rk => {
-        const cells = []
-        for (let lv = rk.levels_cnt; lv >= 1; lv--) {
-          const row = []
-          for (let c = 1; c <= rk.rows_cnt; c++) {
-            const hit = locMap[rk.code][`${c}-${lv}`]
-            row.push(hit
-              ? `<td class="hit">${hit.join(',')}</td>`
-              : `<td></td>`)
-          }
-          cells.push(`<tr><th class="lv">${lv}층</th>${row.join('')}</tr>`)
-        }
-        const head = []
-        for (let c = 1; c <= rk.rows_cnt; c++) head.push(`<th>${c}</th>`)
-        return `<div class="rack">
-          <div class="rack-name">${rk.code}<span class="rack-sub">${rk.rows_cnt}칸 ${rk.levels_cnt}층</span></div>
-          <table class="grid"><tr><th class="lv"></th>${head.join('')}</tr>${cells.join('')}</table>
-        </div>`
-      }).join('')}
-      ${noLoc.length ? `<div class="noloc">⚠ 위치 미지정 — 목록 번호 ${noLoc.join(', ')} 은 직접 찾아야 합니다</div>` : ''}
-    </div>`
-
-    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>자재 불출표</title>
-    <style>
-      *{font-family:'Malgun Gothic',sans-serif;box-sizing:border-box}
-      body{padding:24px;color:#111}
-      .head{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:2px solid #333;padding-bottom:8px;margin-bottom:6px}
-      h1{font-size:20px;margin:0}
-      .meta{font-size:12px;color:#555;text-align:right;line-height:1.6}
-      table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
-      th,td{border:1px solid #999;padding:5px 6px;text-align:left}
-      th{background:#f0f0f0;font-size:11px}
-      .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace;white-space:nowrap}
-      .chk{width:44px;text-align:center}
-      /* 창고 동선 격자 */
-      .grid-sec{margin-top:14px;page-break-inside:avoid}
-      .grid-ttl{font-size:13px;font-weight:bold;border-bottom:1px solid #999;padding-bottom:4px;margin-bottom:8px}
-      .rack{display:inline-block;vertical-align:top;margin:0 14px 12px 0}
-      .rack-name{font-size:12px;font-weight:bold;margin-bottom:2px}
-      .rack-sub{font-size:9px;color:#777;font-weight:normal;margin-left:5px}
-      table.grid{border-collapse:collapse;margin:0}
-      table.grid th,table.grid td{border:1px solid #bbb;width:19px;height:19px;
-        text-align:center;font-size:8px;padding:0;color:#999}
-      table.grid th{background:#f5f5f5;font-weight:normal}
-      table.grid th.lv{width:26px;font-size:8px}
-      table.grid td.hit{background:#333;color:#fff;font-weight:bold;font-size:9px}
-      .noloc{font-size:11px;color:#b00;margin-top:6px}
-      tr{page-break-inside:avoid}
-      .sign{margin-top:18px;font-size:12px;display:flex;gap:40px}
-      .sign span{border-top:1px solid #999;padding-top:4px;min-width:120px;text-align:center}
-      @media print{body{padding:0}}
-    </style></head><body>
-    <div class="head">
-      <h1>자재 불출표</h1>
-      <div class="meta">고객사: <b>${csName}</b> · 출력일: ${today}<br>총 ${rows.length}품목</div>
-    </div>
-    <table>
-      <thead><tr>
-        <th class="c" style="width:4%">No</th><th class="c" style="width:5%">부서</th><th style="width:12%">제조사</th><th style="width:15%">제조사품번</th>
-        <th style="width:19%">기준코드</th><th style="width:24%">품명</th><th class="c" style="width:6%">수량</th><th class="c" style="width:5%">단위</th><th class="chk" style="width:10%">키팅<br>확인</th>
-      </tr></thead>
-      <tbody>${body}</tbody>
-    </table>
-    ${gridHtml}
-    <div class="sign"><span>작성</span><span>불출</span><span>확인</span></div>
-    </body></html>`
-    const w = window.open('', '_blank')
-    if (!w) { toastError('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.'); return }
-    w.document.write(html); w.document.close()
-    w.onload = () => { w.focus(); w.print() }
+    openPrint(buildIssueSheet({
+      title: '자재 불출표',
+      csName,
+      meta: assyCols.length ? `다품목 출고 · 상위품번 ${assyCols.length}종` : '다품목 출고',
+      rows: rows.map(r => ({
+        location: locMeta[r.item_id] || '',
+        std_code: r.std_code, maker: r.maker, makerPn: r.makerPn,
+        name: r.name, unit: r.unit, qty: r.qty,
+        makeType: r.makeType, note: r.note,
+        byAssy: byAssyMap[r.std_code],
+      })),
+      assyCols,
+    }), toastError)
   }
 
   // 라벨 ZPL 은 lib/labelZpl.js 에서 생성 (DPI 스케일 자동)
