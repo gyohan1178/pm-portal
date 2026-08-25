@@ -90,6 +90,10 @@ async function deleteAssembly(customerId, projectId) {
 // 품번 앞에 고객사 접두를 붙인다.
 //   AX- 로 고정돼 있어 Edwards BOM 을 올려도 AX- 가 붙었다.
 const PREFIX = { ax: 'AX-', ed: 'ED-', csk: 'CS-', vm: 'VM-' }
+// 상위품번(어셈블리)은 고객사마다 다르다.
+//   AXCELIS 는 AX-110158840 처럼 붙이고,
+//   Edwards 는 ASML 9B · H2D-HP 처럼 고객사가 쓰는 이름 그대로다.
+const PARENT_PREFIX = { ax: 'AX-' }
 const withPrefix = (pn, pre) => {
   const t = String(pn || '').replace(/\.0$/, '').trim()
   if (!t) return ''
@@ -172,12 +176,20 @@ function decodeHtm(buf) {
 
 // 다중 어셈블리 BOM 저장 — 배치 처리로 대량(만 단위) 빠르게
 async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
-  const PRE = PREFIX[String(csCode || '').toLowerCase()] || ''
+  const cs = String(csCode || '').toLowerCase()
+  const PRE = PREFIX[cs] || ''
+  const PARENT_PRE = PARENT_PREFIX[cs] || ''
   const AX = (pn) => withPrefix(pn, PRE)
+  // 상위품번에 접두를 붙이는 고객사
+  const PARENT_PREFIX = String(csCode || '').toLowerCase() === 'ax'
   // 1) 상위PN 그룹
   const groups = {}
   for (const r of rows) {
-    const parent = AX(r['상위PN'] ?? r['상위품번'])
+    // 상위품번(어셈블리) 접두는 고객사마다 다르다.
+    //   AXCELIS 는 AX-110158840 처럼 붙이고,
+    //   Edwards 는 ASML 9B · H2D-HP 처럼 그대로 쓴다.
+    const parent = PARENT_PREFIX ? AX(r['상위PN'] ?? r['상위품번'])
+                                 : String(r['상위PN'] ?? r['상위품번'] ?? '').replace(/\.0$/, '').trim()
     if (!parent) continue
     ;(groups[parent] = groups[parent] || []).push(r)
   }
@@ -189,7 +201,10 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   const projRows = parentCodes.map(code => {
     const lines = groups[code]
     // 어셈블리명·REV = 자기행(PN==상위PN)의 Description·REV
-    const selfRow = lines.find(r => AX(r['PN'] ?? r['하위품번']) === code)
+    const selfRow = lines.find(r => {
+      const pn = String(r['PN'] ?? r['하위품번'] ?? '').replace(/\.0$/, '').trim()
+      return pn === code || AX(pn) === code
+    })
     return {
       customer_id: customerId, code,
       name: String(selfRow?.['Description'] || selfRow?.['품명'] || lines[0]['상위품명'] || lines[0]['Parent Desc'] || '').trim(),
@@ -607,7 +622,7 @@ export default function BOM() {
         const groups = {}
         valid.forEach(r => {
           const p = parentKey(r)
-          if (!groups[p]) groups[p] = { code: withPrefix(p, PREFIX[String(csCode || '').toLowerCase()] || ''), name: String(r['상위품명']||'').trim(), rev: String(r['REV']||'A').trim(), count: 0 }
+          if (!groups[p]) groups[p] = { code: withPrefix(p, PARENT_PREFIX[String(csCode || '').toLowerCase()] || ''), name: String(r['상위품명']||'').trim(), rev: String(r['REV']||'A').trim(), count: 0 }
           groups[p].count++
         })
         setPreview({ total: valid.length, groups: Object.values(groups), rows: valid })
@@ -750,7 +765,7 @@ export default function BOM() {
               </thead>
               <tbody>
                 {preview.rows.slice(0, 200).map((r, i) => {
-                  const parent = withPrefix(String(r['상위PN'] ?? r['상위품번'] ?? ''), PREFIX[String(csCode || '').toLowerCase()] || '')
+                  const parent = withPrefix(r['상위PN'] ?? r['상위품번'], PARENT_PREFIX[String(csCode || '').toLowerCase()] || '')
                   const pn = String(r['PN'] ?? r['하위품번'] ?? '').replace(/\.0$/, '').trim()
                   const lv = r['LEVEL'] ?? r['LV'] ?? 1
                   return (

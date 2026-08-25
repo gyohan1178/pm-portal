@@ -5,6 +5,7 @@ export const CHANGELOG = [
     version: 'v3.72.3',
     date: '2026-08-25',
     changes: [
+      '상위품번(어셈블리)은 AXCELIS 만 접두를 붙입니다 — Edwards 는 ASML 9B·H2D-HP 처럼 고객사가 쓰는 이름 그대로입니다',
       '★ BOM 업로드가 고객사와 상관없이 AX- 를 붙이던 문제 수정 — Edwards BOM 을 올리면 AX-ED-NRE164754 처럼 이중으로 붙었습니다. 이제 고객사에 맞는 접두(AX-·ED-·CS-·VM-)가 붙고, 이미 접두가 있으면 그대로 둡니다',
       '기준코드 DB 품목 수정에 제조사·제조사품번 칸 추가 — 규격만 있어 화면에서 고칠 수 없었습니다',
       'SQL: pm_fix_ax_prefix.sql 실행 필요 (이미 잘못 만들어진 103건 정리)',
