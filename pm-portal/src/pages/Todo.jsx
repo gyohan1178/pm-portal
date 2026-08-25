@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
@@ -119,6 +119,30 @@ export default function Todo() {
     },
     onError: (e) => toastError('댓글 실패: ' + e.message),
   })
+
+  // 창이 열려 있을 때 Esc·뒤로가기로 닫히면 쓰던 내용이 날아간다.
+  //   Esc 는 확인을 거치게 하고, 뒤로가기는 창만 닫는다.
+  useEffect(() => {
+    if (!draft && !detail) return
+    const onKey = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); draft ? closeDraft() : setDetail(null) }
+    }
+    const onPop = (e) => { e.preventDefault?.(); draft ? closeDraft() : setDetail(null) }
+    window.addEventListener('keydown', onKey)
+    window.addEventListener('popstate', onPop)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('popstate', onPop)
+    }
+  }, [draft, detail])
+
+  // 적어 둔 것이 있으면 묻고 닫는다.
+  //   배경을 잘못 눌러 쓰던 내용이 사라진 적이 있다.
+  function closeDraft() {
+    const dirty = (draft?.title || '').trim() || (draft?.detail || '').trim()
+    if (dirty && !window.confirm('적은 내용이 사라집니다. 닫을까요?')) return
+    setDraft(null)
+  }
 
   const list = useMemo(() => {
     const kw = q.trim().toLowerCase()
@@ -380,7 +404,7 @@ export default function Todo() {
         const mine = isMine(r)
         return (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto"
-          onClick={() => setDetail(null)}>
+          onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
           <div className="bg-white w-full max-w-2xl rounded-2xl my-8" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
               <span className={`px-2 py-1 text-[11px] font-bold rounded-md ${ST_CLS[r.status]}`}>{r.status}</span>
@@ -504,7 +528,7 @@ export default function Todo() {
 
       {draft && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setDraft(null)}>
+          onClick={() => closeDraft()}>
           <div className="bg-white w-full max-w-lg rounded-2xl max-h-[88vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100">
@@ -574,7 +598,7 @@ export default function Todo() {
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
                   {saveMut.isPending ? '저장 중…' : '저장'}
                 </button>
-                <button onClick={() => setDraft(null)}
+                <button onClick={() => closeDraft()}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
                   취소
                 </button>

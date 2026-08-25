@@ -113,7 +113,7 @@ export default function ControlTower({ scope = 'ax' }) {
           <h1 className="text-lg font-bold text-slate-900">
             🎯 {isMaster ? '마스터 관제탑' : `${CUST.find(c => c.code === scope)?.name || scope} 관제탑`}
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">발주 → 자재 → 생산 → 납품 전 과정 통합 모니터링</p>
+          <p className="text-xs text-slate-400 mt-0.5">자재 흐름 — 요청·입고·발주·재고</p>
         </div>
         <div className="flex items-center gap-2">
         <button onClick={() => nav(`/what-if/${isMaster ? 'ax' : scope}`)}
@@ -146,8 +146,8 @@ export default function ControlTower({ scope = 'ax' }) {
               </div>
               {c.kpi ? (
                 <div className="text-[11px] text-slate-500 space-y-0.5">
-                  <p>🔴 입고지연 {c.kpi.inboundLate ?? 0} · 발주 {c.kpi.orderNeeded} · 음수 {c.kpi.negSoon}</p>
-                  <p>🟡 생산지연 {c.kpi.prodDelay} · 납품임박 {c.kpi.poSoon}</p>
+                  <p>🔴 입고지연 {c.kpi.inboundLate ?? 0} · 발주 {c.kpi.orderNeeded}</p>
+                  <p>🟡 재고음수 {c.kpi.negSoon}</p>
                 </div>
               ) : <p className="text-[11px] text-slate-300">데이터 없음</p>}
             </button>

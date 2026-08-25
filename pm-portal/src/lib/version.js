@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.75.0'
+export const APP_VERSION = 'v3.75.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.75.1',
+    date: '2026-08-25',
+    changes: [
+      '관제탑 \'입고 지연\' 이 0 으로 나오던 문제 수정 — 조회 조건이 값이 비어 있는 건을 걸러내고 있었습니다',
+      '할 일 창을 실수로 닫아 적던 내용이 사라지던 문제 수정 — 적은 것이 있으면 물어봅니다',
+      '마스터 관제탑 고객사 카드도 자재 위주로 정리',
+    ],
+  },
   {
     version: 'v3.75.0',
     date: '2026-08-25',

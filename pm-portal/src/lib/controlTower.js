@@ -117,7 +117,9 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
   //    구매 담당자가 가장 먼저 챙겨야 하는 값이라 앞자리에 둔다.
   const inboundLate = buyPos.filter(p => {
     const d = dDays(p.promise_date, today)
-    return d != null && d < 0
+    // 잔량은 여기서 거른다. 조회에서 걸면 값이 비어 있는 건이 빠진다.
+    const left = Number(p.qty_remaining ?? ((p.qty_ordered || 0) - (p.qty_received || 0)))
+    return d != null && d < 0 && left > 0
   }).map(p => {
     const d = -dDays(p.promise_date, today)
     return {
