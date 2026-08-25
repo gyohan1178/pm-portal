@@ -394,6 +394,21 @@ export default function Issue() {
   }, [cart])
 
   // 제조사 → 제조사품번 순 정렬 (itemMeta 병합)
+  // 품목 합계로 불출 수량을 조정한다.
+  //   한 품목이 여러 줄로 담겨 있을 수 있어, 앞줄부터 채우고 남은 만큼 0 으로 둔다.
+  function setIssueQty(agg, v) {
+    let left = Math.max(0, Number(v) || 0)
+    const lines = cart.filter(l => (l.std_code || l.item_id) === agg.std_code)
+    lines.forEach(l => {
+      const cap = Number(l.qty) || 0
+      const give = Math.min(cap, left)
+      left -= give
+      if ((Number(l.issue_qty ?? l.qty) || 0) !== give) {
+        updMut.mutate({ id: l.id, patch: { issue_qty: give } })
+      }
+    })
+  }
+
   // 품목에 저장된 제외 표시를 불러온다.
   //   같은 값이면 상태를 그대로 둔다. 매번 새 Set 을 만들면
   //   상태가 계속 바뀌어 다시 실행되는 고리에 빠진다.
@@ -733,7 +748,15 @@ export default function Issue() {
                   <td className="px-2 py-1.5 text-center text-slate-400">{a.unit || '-'}</td>
                   <td className="px-2 py-1.5 text-slate-400 max-w-[120px] truncate" title={[...a.srcs].join(', ')}>{[...a.srcs].join(', ')}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-slate-700">{a.qty}</td>
-                  <td className="px-2 py-1.5 text-right font-bold text-teal-600">{a.issue}</td>
+                  <td className="px-2 py-1.5 text-right">
+                    {/* 재고가 모자라면 여기서 실제로 낼 수량을 줄인다.
+                        나머지는 결품으로 잡힌다. */}
+                    <input type="number" min="0" value={a.issue}
+                      onChange={e => setIssueQty(a, e.target.value)}
+                      title="실제 불출할 수량. 소요보다 적으면 결품으로 잡힙니다"
+                      className={`w-16 px-1 py-0.5 text-right font-bold border rounded ${
+                        a.short > 0 ? 'border-red-300 text-red-600' : 'border-slate-200 text-teal-600'}`} />
+                  </td>
                   <td className={`px-2 py-1.5 text-right font-bold ${a.short > 0 ? 'text-red-500' : 'text-slate-300'}`}>{a.short || '-'}</td>
                   <td className="px-2 py-1.5 text-center whitespace-nowrap">
                     {a.makeType === 'normal' && String(a.location || '').trim() !== '라벨' ? (
