@@ -45,6 +45,22 @@ export function isFieldOnly(profile) {
 }
 
 // 페이지 어디서든 내 편집권한 확인 (뷰어 가드용) — 로딩 중엔 true(RLS가 최종 방어)
+// 지금 로그인한 사람. 할 일 담당자·댓글 작성자에 쓴다.
+export function useMe() {
+  const { data } = useQuery({
+    queryKey: ['me'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return null
+      const { data: p } = await supabase.from('pm_profiles')
+        .select('id,name,role,status').eq('id', user.id).single()
+      return p
+    },
+  })
+  return data || null
+}
+
 export function useCanEdit() {
   const { data } = useQuery({
     queryKey: ['myRoleLite'],
@@ -109,6 +125,8 @@ export function canEdit(profile) {
 export const SECTIONS = [
   // 관제탑은 전사 현황이 보이므로 지정한 인원만 허용한다
   { key: 'home',   label: '🎯 관제탑' },
+  // 부서 업무·주간회의 안건 — 계정마다 허용해 쓴다
+  { key: 'todo',   label: '📋 할 일' },
   { key: 'floor',  label: '🏭 현장' },
   { key: 'mat',    label: '📦 자재' },
   { key: 'buy',    label: '🛒 구매' },
@@ -133,6 +151,7 @@ export function canAccessSection(profile, key) {
 // 경로 → 섹션 매핑 (라우트 가드용)
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
+  if (pathname === '/todo') return 'todo'
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes' || pathname === '/material-request') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/lot' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)

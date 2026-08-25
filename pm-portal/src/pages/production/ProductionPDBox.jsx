@@ -16,6 +16,16 @@ const STATUS_COLOR = {
   '납품대기': 'bg-amber-50 text-amber-700', '완료': 'bg-emerald-50 text-emerald-700',
 }
 const dayMs = 86400000
+
+// 가장 최근 리비전변경. PO 연동에서 도면이 바뀌면 쌓인다.
+function lastRevChange(changes) {
+  if (!Array.isArray(changes)) return null
+  for (let i = changes.length - 1; i >= 0; i--) {
+    const c = changes[i]
+    if (c?.type === '리비전변경') return c
+  }
+  return null
+}
 function dday(d) { if (!d) return null; const x = new Date(String(d).slice(0, 10)); if (isNaN(x)) return null; return Math.round((x.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / dayMs) }
 function ddayCls(n) { if (n == null) return 'text-slate-300'; if (n < 0) return 'text-red-600 font-bold'; if (n <= 7) return 'text-orange-600 font-bold'; if (n <= 14) return 'text-yellow-600 font-semibold'; return 'text-emerald-600' }
 function md(d) { return d ? String(d).slice(5, 10) : '' }
@@ -504,7 +514,19 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
-                  <td className="px-2 py-2 text-slate-400">{r.rev || '-'}</td>
+                  <td className="px-2 py-2 text-slate-400">
+                    {(() => {
+                      const rc = lastRevChange(r.changes)
+                      if (!rc) return r.rev || '-'
+                      return (
+                        <span className="inline-flex items-baseline gap-1"
+                          title={`${rc.msg}${rc.at ? ` · ${String(rc.at).slice(0, 10)}` : ''}`}>
+                          <b className="text-violet-600">{r.rev || '-'}</b>
+                          <span className="text-[10px] text-slate-400">←{rc.from || '-'}</span>
+                        </span>
+                      )
+                    })()}
+                  </td>
                   <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">

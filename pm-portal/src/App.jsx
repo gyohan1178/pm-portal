@@ -32,6 +32,7 @@ const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
 const SalesQuote = lazy(() => import('./pages/master/SalesQuote'))
 const QuoteHistory = lazy(() => import('./pages/master/QuoteHistory'))
 const ERPExport = lazy(() => import('./pages/ERPExport'))
+const Todo = lazy(() => import('./pages/Todo'))
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const UserManagement = lazy(() => import('./pages/admin/UserManagement'))
 const Backup = lazy(() => import('./pages/admin/Backup'))
@@ -179,6 +180,7 @@ export default function App() {
         <Route path="sales/upload" element={<SalesUpload />} />
         <Route path="help" element={<Help />} />
         <Route path="restore" element={<SnapshotRestore />} />
+        <Route path="todo" element={<Todo />} />
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
         <Route path="drawings" element={<DrawingSearch />} />
