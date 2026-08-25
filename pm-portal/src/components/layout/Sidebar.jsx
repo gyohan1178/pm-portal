@@ -15,7 +15,7 @@ const MENU_META = {
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
   '/': ['🎯','관제탑'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
-  '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','부분 불출'],
+  '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','다품목 출고'],
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
   '/sales-quote': ['📤','매출견적'],
   '/field-search': ['🔎','현장 검색'], '/production': ['🏭','생산 대시보드'],
@@ -251,7 +251,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
-          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>부분 불출 (호기별 키팅)</MenuItem>
+          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
           <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>
           <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
         </CollapseSection>

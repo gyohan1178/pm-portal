@@ -7,52 +7,33 @@ import { deptStyle, deptShort } from '../../lib/bomStyle'
 
 const today = () => new Date().toISOString().split('T')[0]
 
-async function fetchAx() {
-  const { data } = await supabase.from('customers').select('id').eq('code', 'ax').single()
-  return data?.id
+// 호기별 키팅은 AXCELIS 만 하지만, 다품목 출고는 고객사마다 쓴다.
+//   CSK 는 여러 프로젝트 자재를 한 번에 빼기 때문이다.
+async function fetchCustomers() {
+  const { data } = await supabase.from('customers')
+    .select('id,code,name').order('code')
+  return data || []
 }
 async function fetchCart(csId) {
   if (!csId) return []
   const { data } = await supabase.from('pm_picking').select('*').eq('customer_id', csId).order('created_at')
   return data || []
 }
-async function fetchHogis() {
-  const { data } = await supabase.from('production')
-    .select('id,pn,hogi,name,status,req_date,po_id,missing_parts,parts_done')
-    .eq('customer_code', 'AX').neq('status', '완료').order('pn')
-  return (data || []).filter(h => !h.parts_done)
-}
-// 호기 어셈블리 BOM 전개 (부분불출이면 결품만)
-async function explodeHogi(h) {
-  const { data: proj } = await supabase.from('projects').select('id').eq('code', 'AX-' + h.pn).maybeSingle()
-  if (!proj) return { rows: [], err: `어셈블리(AX-${h.pn})를 BOM에서 못 찾음` }
-  const { data: bom } = await supabase.from('bom')
-    .select('qty_per_unit,item_id, items!bom_item_id_fkey(id,std_code,name,unit)')
-    .eq('project_id', proj.id)
-  let rows = (bom || []).filter(b => b.item_id).map(b => ({
-    item_id: b.item_id, std_code: b.items?.std_code, name: b.items?.name,
-    unit: b.items?.unit, qty: Number(b.qty_per_unit) || 0,
-  }))
-  const mp = Array.isArray(h.missing_parts) ? h.missing_parts : []
-  if (mp.length) {
-    const keys = new Set(mp.map(m => m.std_code || m.item_id))
-    rows = rows.filter(r => keys.has(r.std_code) || keys.has(r.item_id))
-  }
-  return { rows, err: null }
-}
 
 export default function Issue() {
   const qc = useQueryClient()
-  const [hogiSel, setHogiSel] = useState('')
+  const [csCode, setCsCode] = useState('ax')      // 고객사
   const [itemSearch, setItemSearch] = useState('')
   const [itemHits, setItemHits] = useState([])
+  const [picked, setPicked] = useState([])   // 전개 전 담은 목록
+  const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
-  const [cartView, setCartView] = useState('hogi') // hogi=호기별 | item=품목합계
+  const [cartView] = useState('item')   // 품목 합계로만 본다
   const [excluded, setExcluded] = useState(new Set()) // 불출표 제외 대상 (std_code)
 
-  const { data: csId } = useQuery({ queryKey: ['axId'], queryFn: fetchAx })
+  const { data: customers = [] } = useQuery({ queryKey: ['customers'], queryFn: fetchCustomers })
+  const csId = customers.find(c => c.code === csCode)?.id
   const { data: cart = [] } = useQuery({ queryKey: ['picking', csId], queryFn: () => fetchCart(csId), enabled: !!csId })
-  const { data: hogis = [] } = useQuery({ queryKey: ['pickHogis'], queryFn: fetchHogis, enabled: !!csId })
 
   const addMut = useMutation({
     mutationFn: async (rows) => {
@@ -77,31 +58,55 @@ export default function Issue() {
   })
 
   // 호기 담기
-  async function addHogi() {
-    const h = hogis.find(x => x.id === hogiSel); if (!h) return
-    const { rows, err } = await explodeHogi(h)
-    if (err) { toastError(err); return }
-    if (!rows.length) { toastError('전개된 부품이 없습니다 (이미 결품 0)'); return }
-    addMut.mutate(rows.map(r => ({
-      item_id: r.item_id, std_code: r.std_code, name: r.name, unit: r.unit, qty: r.qty, issue_qty: r.qty,
-      source: 'hogi', production_id: h.id, hogi: h.hogi, pn: h.pn, po_id: h.po_id || null, issued: true,
-    })))
-    setHogiSel('')
-  }
-  // 직접 품목 검색 (16* 등)
+  // 품목 검색. ASSY 는 고르면 하위가 전개되므로 미리 표시한다.
   async function searchItem(v) {
     setItemSearch(v)
-    if (v.trim().length < 2) { setItemHits([]); return }
-    // 현장에서는 제조사품번으로 찾는 일이 많다. 규격에 제조사 정보가 든 품목도 있다.
-    const { data } = await supabase.from('items')
-      .select('id,std_code,name,unit,manufacturer,manufacturer_code,spec')
-      .or(`std_code.ilike.%${v}%,name.ilike.%${v}%,manufacturer_code.ilike.%${v}%,manufacturer.ilike.%${v}%,spec.ilike.%${v}%`)
-      .limit(20)
+    if (v.trim().length < 2 || !csId) { setItemHits([]); return }
+    const { data } = await supabase.rpc('pm_issue_search',
+      { p_customer_id: csId, q: v.trim() })
     setItemHits(data || [])
   }
-  function addDirect(it) {
-    addMut.mutate([{ item_id: it.id, std_code: it.std_code, name: it.name, unit: it.unit, qty: 1, issue_qty: 1, source: 'direct', issued: true }])
+
+  // 담을 목록 — 여기서 수량을 정한 뒤 한 번에 전개한다
+  function pickItem(it) {
+    setPicked(prev => {
+      const i = prev.findIndex(x => x.std_code === it.std_code)
+      if (i >= 0) {
+        const next = [...prev]
+        next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + 1 }
+        return next
+      }
+      return [...prev, {
+        std_code: it.std_code, name: it.name, unit: it.unit,
+        maker: it.maker, maker_code: it.maker_code,
+        is_assy: it.is_assy, child_cnt: it.child_cnt, qty: 1,
+      }]
+    })
     setItemSearch(''); setItemHits([])
+  }
+
+  // 전개 — ASSY 는 하위로, 단품은 그대로. 같은 품목은 합산된다.
+  async function explodeAndAdd() {
+    if (!picked.length) { toastError('담은 품목이 없습니다'); return }
+    const bad = picked.filter(p => !(Number(p.qty) > 0))
+    if (bad.length) { toastError('수량을 입력하세요'); return }
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_explode_assy', {
+        p_customer_id: csId,
+        p_items: picked.map(p => ({ code: p.std_code, qty: Number(p.qty) })),
+      })
+      if (error) throw error
+      if (!data?.length) { toastError('전개 결과가 없습니다'); return }
+      addMut.mutate(data.map(r => ({
+        item_id: r.item_id, std_code: r.std_code, name: r.name,
+        unit: r.unit, qty: r.qty, issue_qty: r.qty,
+        source: 'direct', issued: true,
+      })))
+      toastSuccess(`${data.length}품목 담김`)
+      setPicked([])
+    } catch (e) { toastError('전개 실패: ' + e.message) }
+    finally { setBusy(false) }
   }
 
   // 일괄 출고 처리
@@ -147,7 +152,7 @@ export default function Issue() {
       return (data && data.warnings) || []
     },
     onSuccess: (warnings) => {
-      qc.invalidateQueries(['picking', csId]); qc.invalidateQueries(['pickHogis'])
+      qc.invalidateQueries(['picking', csId])
       qc.invalidateQueries(['inventory']); qc.invalidateQueries(['shortage']); qc.invalidateQueries(['cpo'])
       qc.invalidateQueries(['production']); qc.invalidateQueries(['prodBoard'])
       setMsg(warnings.length ? `출고 완료 (재고부족 경고 ${warnings.length}건):\n` + warnings.join('\n') : '출고 처리 완료')
@@ -275,7 +280,7 @@ export default function Issue() {
   function printIssueSheet() {
     const rows = itemRows.filter(r => !excluded.has(r.std_code))
     if (!rows.length) { toastError('출력할 품목이 없습니다'); return }
-    const csName = 'AXCELIS'
+    const csName = customers.find(c => c.code === csCode)?.name || csCode.toUpperCase()
     const today = new Date().toLocaleDateString('ko-KR')
     const body = rows.map((r, i) => `<tr>
       <td class="c">${i + 1}</td>
@@ -342,7 +347,7 @@ export default function Issue() {
       table{width:100%;border-collapse:collapse;font-size:12px;margin-top:10px}
       th,td{border:1px solid #999;padding:5px 6px;text-align:left}
       th{background:#f0f0f0;font-size:11px}
-      .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace}
+      .c{text-align:center}.b{font-weight:bold}.mono{font-family:consolas,monospace;white-space:nowrap}
       .chk{width:44px;text-align:center}
       /* 창고 동선 격자 */
       .grid-sec{margin-top:14px;page-break-inside:avoid}
@@ -368,8 +373,8 @@ export default function Issue() {
     </div>
     <table>
       <thead><tr>
-        <th class="c" style="width:5%">No</th><th class="c" style="width:6%">부서</th><th style="width:13%">제조사</th><th style="width:16%">제조사품번</th>
-        <th style="width:14%">기준코드</th><th style="width:25%">품명</th><th class="c" style="width:7%">수량</th><th class="c" style="width:6%">단위</th><th class="chk" style="width:8%">키팅<br>확인</th>
+        <th class="c" style="width:4%">No</th><th class="c" style="width:5%">부서</th><th style="width:12%">제조사</th><th style="width:15%">제조사품번</th>
+        <th style="width:19%">기준코드</th><th style="width:24%">품명</th><th class="c" style="width:6%">수량</th><th class="c" style="width:5%">단위</th><th class="chk" style="width:10%">키팅<br>확인</th>
       </tr></thead>
       <tbody>${body}</tbody>
     </table>
@@ -463,44 +468,90 @@ export default function Issue() {
       {labelConfirm && (
         <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendLabels(labelConfirm.labels)} />
       )}
-      <h1 className="text-lg font-bold text-slate-800">📤 출고 작업 <span className="text-xs font-normal text-slate-400">· 장바구니에 담아 한 번에 출고</span></h1>
+      <h1 className="text-lg font-bold text-slate-800">🧺 다품목 출고 <span className="text-xs font-normal text-slate-400">· 여러 품목을 담아 한 번에 · ASSY 는 하위로 전개</span></h1>
+
+      {/* 고객사 — 담은 것이 섞이지 않도록 고객사마다 따로 담긴다 */}
+      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
+        {customers.map(c => (
+          <button key={c.code} onClick={() => { setCsCode(c.code); setPicked([]) }}
+            className={`px-3.5 py-1.5 text-xs font-bold rounded-md ${
+              csCode === c.code ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
+            {c.name}
+          </button>
+        ))}
+      </div>
 
       {/* 담기 영역 */}
-      <div className="grid md:grid-cols-2 gap-3">
+      <div className="grid gap-3">
         <div className="border border-slate-200 rounded-xl p-3 space-y-2">
-          <p className="text-xs font-bold text-slate-600">① 생산 호기 (BOM 전개)</p>
-          <div className="flex gap-2">
-            <select value={hogiSel} onChange={e => setHogiSel(e.target.value)} className="flex-1 px-2 py-1.5 text-sm border border-slate-200 rounded-lg">
-              <option value="">호기 선택 (불출 미완료만)</option>
-              {hogis.map(h => <option key={h.id} value={h.id}>{h.pn} {h.hogi} · {h.name?.slice(0, 20)} {Array.isArray(h.missing_parts) && h.missing_parts.length ? `(결품 ${h.missing_parts.length})` : ''}</option>)}
-            </select>
-            <button onClick={addHogi} disabled={!hogiSel} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">담기</button>
-          </div>
-          <p className="text-[11px] text-slate-400">결품 있는 호기는 못 챙긴 부품만 전개됩니다</p>
-        </div>
-
-        <div className="border border-slate-200 rounded-xl p-3 space-y-2">
-          <p className="text-xs font-bold text-slate-600">② 직접 품목 (16* 등)</p>
-          <input value={itemSearch} onChange={e => searchItem(e.target.value)} placeholder="기준코드·품명 검색" className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
+          <p className="text-xs font-bold text-slate-600">
+            다품목 출고
+            <span className="font-normal text-slate-400 ml-1.5">
+              ASSY 를 고르면 하위가 전개됩니다
+            </span>
+          </p>
+          <input value={itemSearch} onChange={e => searchItem(e.target.value)}
+            placeholder="기준코드·품명·제조사품번 검색"
+            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
           {itemHits.length > 0 && (
             <div className="border border-slate-100 rounded-lg divide-y max-h-40 overflow-auto">
               {itemHits.map(it => (
-                <button key={it.id} onClick={() => addDirect(it)} className="w-full text-left px-2 py-1.5 text-xs hover:bg-indigo-50">
-                  <div>
+                <button key={it.id} onClick={() => pickItem(it)}
+                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-indigo-50">
+                  <div className="flex items-center gap-1.5">
                     <span className="font-mono font-semibold text-indigo-600">{it.std_code}</span>
-                    <span className="text-slate-500 ml-1.5">{it.name}</span>
+                    {it.is_assy && (
+                      <span className="px-1 py-0.5 rounded bg-violet-100 text-violet-700 text-[9px] font-bold">
+                        ASSY {it.child_cnt}
+                      </span>
+                    )}
+                    <span className="text-slate-500 truncate">{it.name}</span>
                   </div>
-                  {/* 제조사품번으로 찾는 일이 많다. 무엇으로 찾아졌는지 보이게 한다. */}
-                  {(it.manufacturer || it.manufacturer_code || it.spec) && (
+                  {(it.maker || it.maker_code || it.spec) && (
                     <div className="text-[10px] text-slate-400 mt-0.5 truncate">
-                      {it.manufacturer}
-                      {it.manufacturer && it.manufacturer_code ? ' · ' : ''}
-                      <span className="font-mono">{it.manufacturer_code}</span>
+                      {it.maker}
+                      {it.maker && it.maker_code ? ' · ' : ''}
+                      <span className="font-mono">{it.maker_code}</span>
                       {it.spec && <span className="ml-1.5">{it.spec}</span>}
                     </div>
                   )}
                 </button>
               ))}
+            </div>
+          )}
+
+          {/* 담은 목록 — 수량을 정한 뒤 한 번에 전개한다 */}
+          {picked.length > 0 && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 divide-y divide-indigo-100">
+              {picked.map((p, i) => (
+                <div key={p.std_code} className="px-2 py-1.5 flex items-center gap-2 text-xs">
+                  <span className="font-mono font-semibold text-indigo-700 flex-shrink-0">{p.std_code}</span>
+                  {p.is_assy && (
+                    <span className="px-1 py-0.5 rounded bg-violet-100 text-violet-700 text-[9px] font-bold flex-shrink-0">
+                      ASSY
+                    </span>
+                  )}
+                  <span className="text-slate-500 flex-1 truncate">{p.name}</span>
+                  <input type="number" min="1" value={p.qty}
+                    onChange={e => setPicked(prev => prev.map((x, j) =>
+                      j === i ? { ...x, qty: e.target.value } : x))}
+                    className="w-14 px-1.5 py-1 text-right border border-indigo-200 rounded" />
+                  <span className="text-slate-400 w-6">{p.unit}</span>
+                  <button onClick={() => setPicked(prev => prev.filter((_, j) => j !== i))}
+                    className="text-slate-300 hover:text-rose-500 px-1">✕</button>
+                </div>
+              ))}
+              <div className="px-2 py-2 flex items-center gap-2">
+                <span className="text-[11px] text-slate-500 flex-1">
+                  {picked.length}품목 · ASSY {picked.filter(p => p.is_assy).length}개
+                </span>
+                <button onClick={() => setPicked([])}
+                  className="px-2 py-1 text-[11px] text-slate-400">비우기</button>
+                <button onClick={explodeAndAdd} disabled={busy}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                  {busy ? '전개 중…' : '전개해서 담기'}
+                </button>
+              </div>
             </div>
           )}
           <p className="text-[11px] text-slate-400">고객사 PO에서 체크 → 담기로도 들어옵니다</p>
@@ -511,14 +562,10 @@ export default function Issue() {
       <div className="border border-slate-200 rounded-xl overflow-hidden">
         <div className="px-3 py-2 bg-slate-50 flex items-center justify-between">
           <span className="text-xs font-bold text-slate-600">장바구니 {cart.length}건 · 불출 {issuedCnt} / 결품 {shortCnt}</span>
-          <div className="flex gap-0.5 p-0.5 bg-slate-200/60 rounded-lg">
-            <button onClick={() => setCartView('hogi')} className={`px-2 py-0.5 text-[11px] font-semibold rounded-md ${cartView==='hogi'?'bg-white text-slate-800 shadow-sm':'text-slate-500'}`}>호기별</button>
-            <button onClick={() => setCartView('item')} className={`px-2 py-0.5 text-[11px] font-semibold rounded-md ${cartView==='item'?'bg-white text-slate-800 shadow-sm':'text-slate-500'}`}>품목합계</button>
-          </div>
           <div className="flex gap-2">
             <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)`)) clearMut.mutate() }}
               disabled={!cart.length || clearMut.isPending} className="px-3 py-1 text-xs font-semibold rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 초기화</button>
-            <button onClick={() => { setCartView('item'); setTimeout(printIssueSheet, 100) }} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>
+            <button onClick={() => setTimeout(printIssueSheet, 100)} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>
             <button onClick={printLabels} disabled={!cart.length} title="위치값 있는 품목을 ZM400 라벨로 출력 (Zebra Browser Print 필요)" className="px-3 py-1 text-xs font-semibold rounded border border-teal-200 text-teal-600 hover:bg-teal-50 disabled:opacity-40">🏷 라벨 출력</button>
             <button onClick={() => { if (cart.length && window.confirm(`불출분 출고처리 / 결품 ${shortCnt}건 기록. 진행할까요?`)) processMut.mutate() }}
               disabled={!cart.length || processMut.isPending} className="px-3 py-1 text-xs font-bold rounded bg-teal-600 text-white disabled:opacity-40">
@@ -560,7 +607,13 @@ export default function Issue() {
                   <td className="px-2 py-1.5 text-slate-500 max-w-[90px] truncate">{a.maker || '—'}</td>
                   <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>
-                  <td className="px-2 py-1.5 text-slate-600 max-w-[150px] truncate">{a.name}</td>
+                  <td className="px-2 py-1.5 text-slate-600 max-w-[150px] truncate">
+                    {/* 하네스는 창고에서 빼는 게 아니라 만드는 것이라 구분한다 */}
+                    {a.makeType === 'harness' && (
+                      <span className="px-1 py-0.5 mr-1 rounded bg-amber-100 text-amber-700 text-[9px] font-bold">하네스</span>
+                    )}
+                    {a.name}
+                  </td>
                   <td className="px-2 py-1.5 text-center text-slate-400">{a.unit || '-'}</td>
                   <td className="px-2 py-1.5 text-slate-400 max-w-[120px] truncate" title={[...a.srcs].join(', ')}>{[...a.srcs].join(', ')}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-slate-700">{a.qty}</td>
