@@ -322,17 +322,21 @@ export default function Issue() {
   // 불출표 제외 — 품목에 저장한다.
   //   창고에서 안 나가는 품목은 늘 같아, 매번 다시 체크하면 번거롭다.
   async function saveExclude(row, on) {
+    // 캐시를 먼저 바꾼다. 나중에 바꾸면 그 사이 useEffect 가
+    //   옛 값을 보고 체크를 도로 켠다.
+    if (row.item_id) {
+      qc.setQueriesData({ queryKey: ['issueItemMeta'], exact: false }, (old) => {
+        if (!old || typeof old !== 'object') return old
+        const cur = old[row.item_id]
+        if (!cur) return old
+        return { ...old, [row.item_id]: { ...cur, issue_exclude: on } }
+      })
+    }
     setExcluded(p => { const n = new Set(p); on ? n.add(row.std_code) : n.delete(row.std_code); return n })
     if (!row.item_id) return
     const { error } = await supabase.from('items')
       .update({ issue_exclude: on }).eq('id', row.item_id)
-    if (error) { toastError('제외 설정 저장 실패: ' + error.message); return }
-    qc.setQueriesData({ queryKey: ['issueItemMeta'], exact: false }, (old) => {
-      if (!old || typeof old !== 'object') return old
-      const cur = old[row.item_id]
-      if (!cur) return old
-      return { ...old, [row.item_id]: { ...cur, issue_exclude: on } }
-    })
+    if (error) toastError('제외 설정 저장 실패: ' + error.message)
   }
 
   // 위치(inventory.location) 메타 — 라벨/불출표에 표시
@@ -390,12 +394,18 @@ export default function Issue() {
   }, [cart])
 
   // 제조사 → 제조사품번 순 정렬 (itemMeta 병합)
-  // 품목에 저장된 제외 표시를 불러온다
+  // 품목에 저장된 제외 표시를 불러온다.
+  //   같은 값이면 상태를 그대로 둔다. 매번 새 Set 을 만들면
+  //   상태가 계속 바뀌어 다시 실행되는 고리에 빠진다.
   useEffect(() => {
-    const on = Object.values(itemMeta).filter(i => i?.issue_exclude)
-    if (!on.length) return
-    const codes = new Set(itemAgg.filter(a => itemMeta[a.item_id]?.issue_exclude).map(a => a.std_code))
-    if (codes.size) setExcluded(prev => new Set([...prev, ...codes]))
+    const codes = itemAgg
+      .filter(a => itemMeta[a.item_id]?.issue_exclude)
+      .map(a => a.std_code)
+    if (!codes.length) return
+    setExcluded(prev => {
+      const add = codes.filter(c => !prev.has(c))
+      return add.length ? new Set([...prev, ...add]) : prev
+    })
   }, [itemMeta, itemAgg])
 
   const itemRows = useMemo(() => {
