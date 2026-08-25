@@ -94,7 +94,8 @@ export default function QuoteHistory() {
     [items])
 
   const { data: statusMap = {} } = useQuery({
-    queryKey: ['quoteItemStatus', kind, allCodes.length],
+    // 품목 수만 키로 쓰면 작업비가 바뀌어도 갱신되지 않는다
+    queryKey: ['quoteItemStatus', kind, allCodes.join(',')],
     enabled: allCodes.length > 0 && kind === 'sales',
     queryFn: async () => {
       const out = {}

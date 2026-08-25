@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
+import { toastError } from '../../lib/toast'
 import { tierMargin, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
@@ -287,8 +288,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           effective_date: quoteDate, source: 'quote', quote_no: no,
         }))
       if (labor.length) {
-        await supabase.from('pm_labor_costs')
+        // 오류를 삼키면 저장이 안 돼도 모른 채 넘어간다.
+        //   실제로 유니크 제약이 없어 작업비가 쌓이지 않은 적이 있다.
+        const { error: lErr } = await supabase.from('pm_labor_costs')
           .upsert(labor, { onConflict: 'std_code,effective_date,source,quote_no' })
+        if (lErr) toastError('작업비 이력 저장 실패: ' + lErr.message)
       }
       return no
     },
@@ -396,7 +400,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             position: absolute; left:0; top:0; width:100%; padding:12mm; background:#fff;
           }
           body.printing-quote .no-print { display: none !important; }
-          @page { size: A4; margin: 0; }
+          /* 품목 열이 많아 세로로는 좁다. 가로로 낸다. */
+          @page { size: A4 landscape; margin: 0; }
         }
         .qi{border:0;border-bottom:1px solid #e2e8f0;padding:2px 4px;font-size:12px;outline:none;background:transparent}
         .qi:focus{border-bottom-color:#6366f1}
@@ -617,7 +622,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5"><input value={l.remarks} onChange={(e) => patch(l.key, { remarks: e.target.value })} className="qi w-full" /></td>
 
                   <td className="py-1.5 no-print text-right">
-                    <input type="number" value={l.materialKrw} onChange={(e) => patchCost(l.key, { materialKrw: Number(e.target.value) })} className="qi w-full text-right" />
+                    <input type="text" inputMode="numeric"
+                      value={l.materialKrw ? Number(l.materialKrw).toLocaleString('ko-KR') : ''}
+                      onChange={(e) => patchCost(l.key, {
+                        materialKrw: Number(String(e.target.value).replace(/[^0-9.]/g, '')) || 0,
+                      })}
+                      placeholder="0"
+                      className="qi w-full text-right" />
                     {l.kind === 'assy' && (
                       <button type="button"
                         onClick={() => setOpenParts((o) => ({ ...o, [l.key]: !o[l.key] }))}
@@ -630,7 +641,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5 no-print text-right">
                     {l.kind === 'assy' ? (
                       <>
-                        <input type="number" value={l.laborKrw} onChange={(e) => patchCost(l.key, { laborKrw: Number(e.target.value) })}
+                        {/* number 입력란은 쉼표를 못 받는다.
+                            글자로 받고 숫자만 남겨 저장한다. */}
+                        <input type="text" inputMode="numeric"
+                          value={l.laborKrw ? Number(l.laborKrw).toLocaleString('ko-KR') : ''}
+                          onChange={(e) => patchCost(l.key, {
+                            laborKrw: Number(String(e.target.value).replace(/[^0-9.]/g, '')) || 0,
+                          })}
+                          placeholder="0"
                           className="qi w-full text-right" />
                         {l.laborSrc && (
                           <div className="text-[10px] text-sky-600 mt-0.5" title={`출처 ${l.laborSrc.source}`}>
