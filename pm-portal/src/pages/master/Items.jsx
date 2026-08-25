@@ -539,8 +539,20 @@ export default function Items() {
               <label className="block text-xs font-bold text-slate-500 mb-1">구매처</label>
               <VendorPicker value={form.vendor_id} onChange={id=>setForm(p=>({...p, vendor_id:id}))} />
             </div>
+            {/* 제조사·제조사품번은 라벨·불출표·발주서에 쓰인다.
+                규격만 있으면 화면에서 고칠 수 없어 따로 둔다. */}
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">제조사</label>
+              <input value={form.manufacturer || ''} onChange={f('manufacturer')} placeholder="LAPP"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">제조사품번</label>
+              <input value={form.manufacturer_code || ''} onChange={f('manufacturer_code')} placeholder="53119030"
+                className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
             <div className="col-span-2">
-              <label className="block text-xs font-bold text-slate-500 mb-1">규격 (제조사 + 제조사품번)</label>
+              <label className="block text-xs font-bold text-slate-500 mb-1">규격</label>
               <input value={form.spec} onChange={f('spec')} placeholder="제조사 + 제조사품번"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>

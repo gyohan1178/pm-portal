@@ -87,9 +87,15 @@ async function deleteAssembly(customerId, projectId) {
   if (projErr) throw projErr
 }
 
-const AX = (pn) => {
+// 품번 앞에 고객사 접두를 붙인다.
+//   AX- 로 고정돼 있어 Edwards BOM 을 올려도 AX- 가 붙었다.
+const PREFIX = { ax: 'AX-', ed: 'ED-', csk: 'CS-', vm: 'VM-' }
+const withPrefix = (pn, pre) => {
   const t = String(pn || '').replace(/\.0$/, '').trim()
-  return t ? (t.startsWith('AX-') ? t : 'AX-' + t) : ''
+  if (!t) return ''
+  if (!pre) return t
+  // 이미 어느 접두든 붙어 있으면 그대로 둔다
+  return /^(AX|ED|CS|VM)-/i.test(t) ? t : pre + t
 }
 const truthyYN = (v) => /^(y|yes|true|1|o|예)$/i.test(String(v || '').trim())
 
@@ -165,7 +171,9 @@ function decodeHtm(buf) {
 }
 
 // 다중 어셈블리 BOM 저장 — 배치 처리로 대량(만 단위) 빠르게
-async function saveBOMMulti({ rows, customerId, onProgress }) {
+async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
+  const PRE = PREFIX[String(csCode || '').toLowerCase()] || ''
+  const AX = (pn) => withPrefix(pn, PRE)
   // 1) 상위PN 그룹
   const groups = {}
   for (const r of rows) {
@@ -484,7 +492,8 @@ export default function BOM() {
   async function lookupItem(code) {
     const raw = String(code || '').trim().toUpperCase()
     if (!raw) return null
-    const cand = raw.startsWith('AX-') ? [raw] : [`AX-${raw}`, raw]
+    const pre = PREFIX[String(csCode || '').toLowerCase()] || ''
+    const cand = /^(AX|ED|CS|VM)-/i.test(raw) ? [raw] : (pre ? [pre + raw, raw] : [raw])
     for (const c of cand) {
       const { data } = await supabase.from('items')
         .select('id, std_code, name, unit, manufacturer, manufacturer_code, category, type')
@@ -531,7 +540,7 @@ export default function BOM() {
 
   const saveMut = useMutation({
     mutationFn: async (rows) => {
-      const res = await saveBOMMulti({ rows, customerId: cs?.id, onProgress: setProgress })
+      const res = await saveBOMMulti({ rows, customerId: cs?.id, csCode, onProgress: setProgress })
       // HTM 업로드 + 옵션 켜짐일 때만, 기존 품목의 빈 제조사 채우기
       if (htmInfo && fillMfr) {
         setProgress('제조사 빈칸 채우는 중...')
@@ -598,7 +607,7 @@ export default function BOM() {
         const groups = {}
         valid.forEach(r => {
           const p = parentKey(r)
-          if (!groups[p]) groups[p] = { code: 'AX-' + p, name: String(r['상위품명']||'').trim(), rev: String(r['REV']||'A').trim(), count: 0 }
+          if (!groups[p]) groups[p] = { code: withPrefix(p, PREFIX[String(csCode || '').toLowerCase()] || ''), name: String(r['상위품명']||'').trim(), rev: String(r['REV']||'A').trim(), count: 0 }
           groups[p].count++
         })
         setPreview({ total: valid.length, groups: Object.values(groups), rows: valid })
@@ -741,7 +750,7 @@ export default function BOM() {
               </thead>
               <tbody>
                 {preview.rows.slice(0, 200).map((r, i) => {
-                  const parent = 'AX-' + String(r['상위PN'] ?? r['상위품번'] ?? '').replace(/\.0$/, '').replace(/^AX-/, '').trim()
+                  const parent = withPrefix(String(r['상위PN'] ?? r['상위품번'] ?? ''), PREFIX[String(csCode || '').toLowerCase()] || '')
                   const pn = String(r['PN'] ?? r['하위품번'] ?? '').replace(/\.0$/, '').trim()
                   const lv = r['LEVEL'] ?? r['LV'] ?? 1
                   return (
