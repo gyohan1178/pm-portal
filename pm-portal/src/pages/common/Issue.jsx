@@ -14,6 +14,20 @@ async function fetchCustomers() {
     .select('id,code,name').order('code')
   return data || []
 }
+// BOM 상위품목 — 드롭다운용.
+//   CSK 52 · VM 34 · ED 11 종이라 목록으로 고르는 게 빠르다.
+//   AXCELIS 는 780 종이라 검색으로 찾는다.
+async function fetchAssys(csId) {
+  if (!csId) return []
+  const { data } = await supabase
+    .from('projects')
+    .select('code,name, bom(count)')
+    .eq('customer_id', csId)
+    .order('code')
+  return (data || [])
+    .map(p => ({ code: p.code, name: p.name, cnt: p.bom?.[0]?.count || 0 }))
+    .filter(p => p.cnt > 0)
+}
 async function fetchCart(csId) {
   if (!csId) return []
   const { data } = await supabase.from('pm_picking').select('*').eq('customer_id', csId).order('created_at')
@@ -34,6 +48,16 @@ export default function Issue() {
   const { data: customers = [] } = useQuery({ queryKey: ['customers'], queryFn: fetchCustomers })
   const csId = customers.find(c => c.code === csCode)?.id
   const { data: cart = [] } = useQuery({ queryKey: ['picking', csId], queryFn: () => fetchCart(csId), enabled: !!csId })
+  // AXCELIS 는 상위품목이 780 종이라 목록이 너무 길다. 검색으로만 찾는다.
+  const useDropdown = csCode !== 'ax'
+  const { data: assys = [] } = useQuery({
+    queryKey: ['pickAssys', csId], queryFn: () => fetchAssys(csId),
+    enabled: !!csId && useDropdown,
+  })
+  const [assySel, setAssySel] = useState('')
+  const [assyQty, setAssyQty] = useState(1)
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteText, setPasteText] = useState('')
 
   const addMut = useMutation({
     mutationFn: async (rows) => {
@@ -83,6 +107,77 @@ export default function Issue() {
       }]
     })
     setItemSearch(''); setItemHits([])
+  }
+
+  // 드롭다운에서 ASSY 담기
+  function addAssy() {
+    const a = assys.find(x => x.code === assySel)
+    if (!a) { toastError('품목을 고르세요'); return }
+    const q = Number(assyQty) || 1
+    setPicked(prev => {
+      const i = prev.findIndex(x => x.std_code === a.code)
+      if (i >= 0) {
+        const next = [...prev]
+        next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + q }
+        return next
+      }
+      return [...prev, {
+        std_code: a.code, name: a.name, unit: 'EA',
+        is_assy: true, child_cnt: a.cnt, qty: q,
+      }]
+    })
+    setAssySel(''); setAssyQty(1)
+  }
+
+  // 엑셀 붙여넣기 — 품번과 수량을 탭·쉼표·공백으로 나눈다
+  async function addPaste() {
+    const lines = pasteText.split(/\r?\n/).map(l => l.trim()).filter(Boolean)
+    if (!lines.length) { toastError('붙여넣은 내용이 없습니다'); return }
+    const want = lines.map(l => {
+      const p = l.split(/[\t,]+|\s{2,}/).map(x => x.trim()).filter(Boolean)
+      // 품번·품명·수량 순으로 붙여넣는 일이 많다.
+      //   숫자인 칸 가운데 마지막 것을 수량으로 본다.
+      const nums = p.slice(1).filter(x => /^[0-9]+(\.[0-9]+)?$/.test(x))
+      return { code: p[0], qty: Number(nums[nums.length - 1]) || 1 }
+    }).filter(x => x.code)
+
+    setBusy(true)
+    try {
+      // 있는 품번인지 확인한다. 없는 것은 알려 준다.
+      const codes = [...new Set(want.map(w => w.code))]
+      const { data: found } = await supabase.rpc('pm_issue_check_codes',
+        { p_customer_id: csId, p_codes: codes })
+      const map = Object.fromEntries((found || []).map(f => [f.code, f]))
+      const miss = codes.filter(c => !map[c])
+
+      const ok = []
+      want.forEach(w => {
+        const f = map[w.code]; if (!f) return
+        const i = ok.findIndex(x => x.std_code === f.std_code)
+        if (i >= 0) ok[i].qty += w.qty
+        else ok.push({
+          std_code: f.std_code, name: f.name, unit: f.unit,
+          is_assy: f.is_assy, child_cnt: f.child_cnt, qty: w.qty,
+        })
+      })
+      if (!ok.length) { toastError('찾은 품목이 없습니다'); return }
+
+      setPicked(prev => {
+        const next = [...prev]
+        ok.forEach(o => {
+          const i = next.findIndex(x => x.std_code === o.std_code)
+          if (i >= 0) next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + o.qty }
+          else next.push(o)
+        })
+        return next
+      })
+      toastSuccess(`${ok.length}품목 담김`)
+      if (miss.length) {
+        toastError(`못 찾은 품번 ${miss.length}개: ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' 외' : ''}`)
+      }
+      setPasteText(''); setPasteOpen(false)
+    } catch (e) { toastError('실패: ' + e.message) }
+    finally { setBusy(false) }
   }
 
   // 전개 — ASSY 는 하위로, 단품은 그대로. 같은 품목은 합산된다.
@@ -487,12 +582,61 @@ export default function Issue() {
           <p className="text-xs font-bold text-slate-600">
             다품목 출고
             <span className="font-normal text-slate-400 ml-1.5">
-              ASSY 를 고르면 하위가 전개됩니다
+              ASSY 를 고르면 하위가 수량에 맞춰 전개됩니다
             </span>
           </p>
-          <input value={itemSearch} onChange={e => searchItem(e.target.value)}
-            placeholder="기준코드·품명·제조사품번 검색"
-            className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
+          {/* ASSY 는 목록으로 고른다. 고객사마다 열 종에서 쉰 종 남짓이다. */}
+          {useDropdown && assys.length > 0 && (
+            <div className="flex gap-1.5">
+              <select value={assySel} onChange={e => setAssySel(e.target.value)}
+                className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-slate-200 rounded-lg">
+                <option value="">ASSY 선택 ({assys.length}종)</option>
+                {assys.map(a => (
+                  <option key={a.code} value={a.code}>
+                    {a.code} · {a.name?.slice(0, 30)} ({a.cnt})
+                  </option>
+                ))}
+              </select>
+              <input type="number" min="1" value={assyQty}
+                onChange={e => setAssyQty(e.target.value)}
+                className="w-16 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+              <button onClick={addAssy} disabled={!assySel}
+                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                담기
+              </button>
+            </div>
+          )}
+
+          <div className="flex gap-1.5">
+            <input value={itemSearch} onChange={e => searchItem(e.target.value)}
+              placeholder={useDropdown ? '단품 검색 (기준코드·품명·제조사품번)' : '기준코드·품명·제조사품번 검색'}
+              className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
+            <button onClick={() => setPasteOpen(v => !v)}
+              title="엑셀에서 품번과 수량을 복사해 붙여넣기"
+              className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border ${
+                pasteOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500'}`}>
+              📋 붙여넣기
+            </button>
+          </div>
+
+          {pasteOpen && (
+            <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-2 space-y-1.5">
+              <textarea value={pasteText} onChange={e => setPasteText(e.target.value)}
+                rows={5} placeholder={'품번\t수량\nCS-ECK00011-00\t5\nIA1SOI74D311\t2'}
+                className="w-full px-2 py-1.5 text-xs font-mono border border-indigo-200 rounded" />
+              <div className="flex items-center gap-2">
+                <p className="text-[11px] text-slate-500 flex-1">
+                  엑셀에서 품번·수량 두 칸을 복사해 붙여넣으세요 · 수량이 없으면 1
+                </p>
+                <button onClick={() => { setPasteText(''); setPasteOpen(false) }}
+                  className="px-2 py-1 text-[11px] text-slate-400">닫기</button>
+                <button onClick={addPaste} disabled={busy || !pasteText.trim()}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                  {busy ? '확인 중…' : '담기'}
+                </button>
+              </div>
+            </div>
+          )}
           {itemHits.length > 0 && (
             <div className="border border-slate-100 rounded-lg divide-y max-h-40 overflow-auto">
               {itemHits.map(it => (
