@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -81,11 +81,14 @@ export default function Issue() {
   })
   const clearMut = useMutation({
     mutationFn: async () => { const { error } = await supabase.from('pm_picking').delete().eq('customer_id', csId); if (error) throw error },
-    onSuccess: () => { qc.invalidateQueries(['picking', csId]) },
+    onSuccess: () => {
+      qc.invalidateQueries(['picking', csId])
+      // 상위품번·제외 표시도 함께 지운다. 남아 있으면 다음 불출표에 섞인다.
+      setLastAssys([]); setByAssyMap({}); setExcluded(new Set())
+    },
     onError: e => toastError('초기화 오류: ' + e.message),
   })
 
-  // 호기 담기
   // 품목 검색. ASSY 는 고르면 하위가 전개되므로 미리 표시한다.
   async function searchItem(v) {
     setItemSearch(v)
@@ -271,6 +274,7 @@ export default function Issue() {
       qc.invalidateQueries(['inventory']); qc.invalidateQueries(['shortage']); qc.invalidateQueries(['cpo'])
       qc.invalidateQueries(['production']); qc.invalidateQueries(['prodBoard'])
       setMsg(warnings.length ? `출고 완료 (재고부족 경고 ${warnings.length}건):\n` + warnings.join('\n') : '출고 처리 완료')
+      setLastAssys([]); setByAssyMap({}); setExcluded(new Set())
     },
     onError: e => toastError('출고 오류: ' + e.message),
   })
@@ -283,7 +287,7 @@ export default function Issue() {
     enabled: metaIds.length > 0,
     queryFn: async () => {
       const { data } = await supabase.from('items')
-        .select('id,name,manufacturer,manufacturer_code,label_mode,pack_qty,dept').in('id', metaIds)
+        .select('id,name,manufacturer,manufacturer_code,label_mode,pack_qty,dept,issue_exclude').in('id', metaIds)
       return Object.fromEntries((data || []).map(i => [i.id, i]))
     },
   })
@@ -312,6 +316,22 @@ export default function Issue() {
       const cur = old[row.item_id]
       if (!cur) return old
       return { ...old, [row.item_id]: { ...cur, label_mode: mode, ...(pack !== undefined ? { pack_qty: packNum } : {}) } }
+    })
+  }
+
+  // 불출표 제외 — 품목에 저장한다.
+  //   창고에서 안 나가는 품목은 늘 같아, 매번 다시 체크하면 번거롭다.
+  async function saveExclude(row, on) {
+    setExcluded(p => { const n = new Set(p); on ? n.add(row.std_code) : n.delete(row.std_code); return n })
+    if (!row.item_id) return
+    const { error } = await supabase.from('items')
+      .update({ issue_exclude: on }).eq('id', row.item_id)
+    if (error) { toastError('제외 설정 저장 실패: ' + error.message); return }
+    qc.setQueriesData({ queryKey: ['issueItemMeta'], exact: false }, (old) => {
+      if (!old || typeof old !== 'object') return old
+      const cur = old[row.item_id]
+      if (!cur) return old
+      return { ...old, [row.item_id]: { ...cur, issue_exclude: on } }
     })
   }
 
@@ -360,7 +380,7 @@ export default function Issue() {
     const g = {}
     cart.forEach(ln => {
       const k = ln.std_code || ln.item_id
-      g[k] ??= { std_code: ln.std_code, name: ln.name, item_id: ln.item_id, qty: 0, issue: 0, short: 0, srcs: new Set() }
+      g[k] ??= { std_code: ln.std_code, name: ln.name, item_id: ln.item_id, unit: ln.unit, qty: 0, issue: 0, short: 0, srcs: new Set() }
       g[k].qty += Number(ln.qty) || 0
       g[k].issue += Number(ln.issue_qty ?? ln.qty) || 0
       g[k].short += shortQ(ln)
@@ -370,6 +390,14 @@ export default function Issue() {
   }, [cart])
 
   // 제조사 → 제조사품번 순 정렬 (itemMeta 병합)
+  // 품목에 저장된 제외 표시를 불러온다
+  useEffect(() => {
+    const on = Object.values(itemMeta).filter(i => i?.issue_exclude)
+    if (!on.length) return
+    const codes = new Set(itemAgg.filter(a => itemMeta[a.item_id]?.issue_exclude).map(a => a.std_code))
+    if (codes.size) setExcluded(prev => new Set([...prev, ...codes]))
+  }, [itemMeta, itemAgg])
+
   const itemRows = useMemo(() => {
     const withMeta = itemAgg.map(a => ({
       ...a,
@@ -501,7 +529,7 @@ export default function Issue() {
       {/* 고객사 — 담은 것이 섞이지 않도록 고객사마다 따로 담긴다 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {customers.map(c => (
-          <button key={c.code} onClick={() => { setCsCode(c.code); setPicked([]) }}
+          <button key={c.code} onClick={() => { setCsCode(c.code); setPicked([]); setLastAssys([]); setByAssyMap({}); setExcluded(new Set()) }}
             className={`px-3.5 py-1.5 text-xs font-bold rounded-md ${
               csCode === c.code ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
             {c.name}
@@ -671,6 +699,7 @@ export default function Issue() {
                 // 화면 NO 를 불출표·라벨과 같은 기준으로 매긴다 (제외 항목은 번호 없음)
                 let n = 0
                 return itemRows.map((a, i) => {
+                // 품목에 저장된 값이 기본. 이번 화면에서 바꾼 것이 있으면 그것을 쓴다.
                 const ex = excluded.has(a.std_code)
                 const sheetNo = ex ? null : ++n
                 return (
@@ -725,7 +754,9 @@ export default function Issue() {
                     ) : <span className="text-slate-300 text-[10px]">—</span>}
                   </td>
                   <td className="px-2 py-1.5 text-center">
-                    <input type="checkbox" checked={ex} onChange={() => setExcluded(p => { const n = new Set(p); n.has(a.std_code) ? n.delete(a.std_code) : n.add(a.std_code); return n })} title="불출표에서 제외" />
+                    <input type="checkbox" checked={ex}
+                      onChange={() => saveExclude(a, !ex)}
+                      title="불출표에서 제외 — 품목에 저장되어 다음에도 유지됩니다" />
                   </td>
                 </tr>
               )})
