@@ -50,7 +50,7 @@ function foldShortage(cacheRows) {
 
 // ── 메인: 모든 KPI + TOP 리스트 산출 ──
 // 입력: { shortage:[], pos:[], prod:[] }  (이미 scope로 필터된 데이터)
-export function computeControlTower({ shortage = [], pos = [], prod = [] }) {
+export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos = [] }) {
   const today = new Date().setHours(0, 0, 0, 0)
   const tm = thisMonth()
   const shortItems = foldShortage(shortage)
@@ -113,7 +113,24 @@ export function computeControlTower({ shortage = [], pos = [], prod = [] }) {
     detail: `입고예정 ${-dDays(p.arrival_date, today)}일 지남`, urgency: 70, link: 'production',
   }))
 
-  // 6) 하네스 불출 필요: 입고 30일 내인데 미불출(harness_issue 없음) & 미완료
+  // 6) 입고 지연: 구매발주 납기가 지났는데 아직 안 들어온 것.
+  //    구매 담당자가 가장 먼저 챙겨야 하는 값이라 앞자리에 둔다.
+  const inboundLate = buyPos.filter(p => {
+    const d = dDays(p.promise_date, today)
+    return d != null && d < 0
+  }).map(p => {
+    const d = -dDays(p.promise_date, today)
+    return {
+      kind: 'inboundLate',
+      std_code: p.items?.std_code || '',
+      name: p.items?.name || p.po_number || '',
+      detail: `${p.promise_date} 납기 · ${d}일 지남 · ${p.vendors?.name || '구매처 미정'} · 잔량 ${p.qty_remaining}`,
+      urgency: Math.min(98, 60 + d),   // 오래될수록 급하다
+      link: 'inbound',
+    }
+  })
+
+  // 7) 하네스 불출 필요: 입고 30일 내인데 미불출(harness_issue 없음) & 미완료
   const harnessNeed = prod.filter(p => {
     if (p.status === '완료' || p.harness_recv) return false
     const issued = p.harness_issue === true || (typeof p.harness_issue === 'string' && p.harness_issue.trim() && p.harness_issue !== 'false')
@@ -123,16 +140,16 @@ export function computeControlTower({ shortage = [], pos = [], prod = [] }) {
   })
 
   // ── 🟢 모니터 ──
-  // 7) 신규 PO: 최근 3일 내 생성
+  // 8) 신규 PO: 최근 3일 내 생성
   const newPO = pos.filter(p => {
     const d = dDays(p.created_at, today)
     return d != null && d >= -THRESHOLDS.newPODays
   })
-  // 8) 진행 중 생산
+  // 9) 진행 중 생산
   const inProgress = prod.filter(p => p.status !== '완료')
 
   // ── ⚡ 통합 TOP 리스트 (긴급도순) ──
-  const all = [...orderNeeded, ...prodDelay, ...negList, ...lateArrival]
+  const all = [...inboundLate, ...orderNeeded, ...prodDelay, ...negList, ...lateArrival]
   const seen = new Set()
   const top = all
     .sort((a, b) => b.urgency - a.urgency)
@@ -141,6 +158,7 @@ export function computeControlTower({ shortage = [], pos = [], prod = [] }) {
 
   return {
     kpi: {
+      inboundLate: inboundLate.length,
       orderNeeded: orderNeeded.length,
       negSoon: negSoon.length,
       prodDelay: prodDelay.length,
@@ -151,6 +169,6 @@ export function computeControlTower({ shortage = [], pos = [], prod = [] }) {
       inProgress: inProgress.length,
     },
     top,
-    lists: { orderNeeded, negList, prodDelay, poSoon, lateArrival, harnessNeed, newPO },
+    lists: { inboundLate, orderNeeded, negList, prodDelay, poSoon, lateArrival, harnessNeed, newPO },
   }
 }

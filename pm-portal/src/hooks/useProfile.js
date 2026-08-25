@@ -174,7 +174,7 @@ export function sectionOfPath(pathname) {
 }
 
 // 제한 계정의 기본 착지 경로 (접근 불가 페이지 진입 시 여기로)
-const SECTION_LANDING = { floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
+const SECTION_LANDING = { todo: '/todo', floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
   const a = allowedSections(profile)

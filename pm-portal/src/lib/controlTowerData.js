@@ -38,6 +38,18 @@ async function fetchPOsFor(customerIds) {
   return perCustomer.flat()
 }
 
+// 구매발주 — 자재를 사 오는 쪽. 위 fetchPOsFor 는 고객사 PO(파는 쪽)다.
+async function fetchBuyPOsFor(customerIds) {
+  const per = await Promise.all(customerIds.map(cid =>
+    supabase.from('purchase_orders')
+      .select('id,po_number,promise_date,order_date,qty_ordered,qty_received,qty_remaining,unit_price,status,customer_id,item_id,vendor_id, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
+      .eq('customer_id', cid).neq('order_type', 'customer_po')
+      .gt('qty_remaining', 0).neq('status', '취소')
+      .then(r => r.data || [])
+  ))
+  return per.flat()
+}
+
 async function fetchProdFor(codes) {
   // production.customer_code 는 대문자 — 고객사별 병렬
   const perCode = await Promise.all(codes.map(async (code) => {
@@ -65,10 +77,11 @@ export async function fetchControlTowerData(scope) {
   const ids = target.map(c => c.id)
   const codes = target.map(c => c.code)
 
-  const [shortage, pos, prod] = await Promise.all([
+  const [shortage, pos, prod, buyPos] = await Promise.all([
     fetchShortageFor(ids),
     fetchPOsFor(ids),
     fetchProdFor(codes),
+    fetchBuyPOsFor(ids),
   ])
 
   // 마스터(all)일 때 고객사별 분해도 같이
@@ -79,10 +92,11 @@ export async function fetchControlTowerData(scope) {
         shortage: shortage.filter(r => r.customer_id === c.id),
         pos: pos.filter(p => p.customer_id === c.id),
         prod: prod.filter(p => (p.customer_code || '').toLowerCase() === c.code),
+        buyPos: buyPos.filter(p => p.customer_id === c.id),
         name: c.name,
       }
     }
   }
 
-  return { shortage, pos, prod, customers: target, byCustomer }
+  return { shortage, pos, prod, buyPos, customers: target, byCustomer }
 }

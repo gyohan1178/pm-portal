@@ -3,6 +3,7 @@ import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { primaryCsCode } from '../../lib/customers'
+import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 
 // 즐겨찾기에 표시할 이름·아이콘
@@ -48,7 +49,29 @@ function usePersistOpen(key, defaultVal) {
 // 숨김은 권한이 아니라 본인 사이드바 정리 기능이다 (주소로 접근하면 열림).
 const MenuPrefsCtx = createContext(null)
 
-function MenuItem({ to, icon, children, end, onNavigate }) {
+// 메뉴 옆 알림 숫자.
+//   자재 요청이 들어와도 화면을 열어 보지 않으면 몰라 놓치는 일이 잦았다.
+//   포털을 쓰는 동안 늘 보이게 한다.
+function useAlertCounts() {
+  const { data } = useQuery({
+    queryKey: ['menuAlerts'],
+    staleTime: 60 * 1000,
+    refetchInterval: 3 * 60 * 1000,
+    queryFn: async () => {
+      const out = {}
+      try {
+        const { data: req } = await supabase.rpc('pm_request_list',
+          { p_status: null, p_days: 180, p_mine: false, p_customer: null, p_dept: null })
+        out['/material-request'] = (req || [])
+          .filter(r => ['요청', '코드대기', '확인'].includes(r.status)).length
+      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
+      return out
+    },
+  })
+  return data || {}
+}
+
+function MenuItem({ to, icon, children, end, onNavigate, badge }) {
   const prefs = useContext(MenuPrefsCtx)
   const fav = prefs?.favorites?.includes(to)
   const hidden = prefs?.hidden?.includes(to)
@@ -63,7 +86,13 @@ function MenuItem({ to, icon, children, end, onNavigate }) {
         ${isActive
           ? 'text-indigo-600 bg-indigo-50 before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:bg-indigo-600 before:rounded-r'
           : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'}`}>
-      <span className="text-sm w-4 text-center flex-shrink-0">{icon}</span>{children}
+      <span className="text-sm w-4 text-center flex-shrink-0">{icon}</span>
+      <span className="flex-1 min-w-0 truncate">{children}</span>
+      {badge > 0 && (
+        <span className="flex-shrink-0 min-w-[18px] px-1 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold text-center leading-tight">
+          {badge > 99 ? '99+' : badge}
+        </span>
+      )}
     </NavLink>
   )
 
@@ -161,6 +190,7 @@ function ChangelogModal({ onClose }) {
 }
 
 export default function Sidebar({ onNavigate, profile }) {
+  const alerts = useAlertCounts()
   const isAdmin = profile?.role === 'admin'
   const fieldOnly = isFieldOnly(profile)
   const pcs = primaryCsCode(profile)
@@ -281,7 +311,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {/* 자재 요청 — 현장 섹션 권한이 없어도 보이게 (누구나 요청 가능) */}
         {!canAccessSection(profile, 'floor') && (
           <div className="py-1 border-b border-slate-200">
-            <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate}>자재 요청</MenuItem>
+            <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
           </div>
         )}
 
@@ -289,7 +319,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'floor') && (
         <CollapseSection label="🏭 현장" sKey="floor">
           <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
-          <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate}>자재 요청</MenuItem>
+          <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
           <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>

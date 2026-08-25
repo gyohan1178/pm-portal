@@ -26,9 +26,10 @@ const ddayCls = (n) => n == null ? 'text-slate-300'
 const ddayText = (n) => n == null ? '' : n < 0 ? `${-n}일 지남` : n === 0 ? '오늘' : `D-${n}`
 
 async function fetchTodos() {
-  const { data, error } = await supabase.rpc('pm_todo_list')
+  const { data, error } = await supabase.rpc('pm_todo_items')
   if (error) throw error
-  return data || []
+  // id 가 없으면 뒤이은 수정·삭제가 엉뚱한 곳으로 간다. 미리 걸러 낸다.
+  return (data || []).filter(r => r && r.id != null)
 }
 async function fetchComments(todoId) {
   if (!todoId) return []
@@ -50,13 +51,16 @@ export default function Todo() {
   const [openCmt, setOpenCmt] = useState(null)  // 댓글 펼친 항목
   const [cmtText, setCmtText] = useState('')
   const [ym, setYm] = useState(() => todayStr().slice(0, 7))
+  const [detail, setDetail] = useState(null)   // 펼쳐 볼 안건
 
   const { data: rows = [], isLoading } = useQuery({ queryKey: ['todos'], queryFn: fetchTodos })
+  const cmtFor = detail?.id ?? openCmt
   const { data: comments = [] } = useQuery({
-    queryKey: ['todoCmt', openCmt], queryFn: () => fetchComments(openCmt), enabled: !!openCmt,
+    queryKey: ['todoCmt', cmtFor], queryFn: () => fetchComments(cmtFor), enabled: !!cmtFor,
   })
 
-  const isMine = (r) => !!me && (r.owner_id === me.id || r.created_by === me.id
+  // 담당자·작성자가 나인지. 값이 비면 남의 것으로 본다.
+  const isMine = (r) => !!me && !!(r.owner_id === me.id || r.created_by === me.id
     || (r.owner && me.name && r.owner === me.name))
 
   const saveMut = useMutation({
@@ -68,7 +72,7 @@ export default function Todo() {
         agenda: !!rec.agenda, tag: rec.tag || null,
       }
       if (!payload.title) throw new Error('내용을 적어 주세요')
-      if (rec.id) {
+      if (rec.id != null) {
         const { error } = await supabase.from('pm_todo').update(payload).eq('id', rec.id)
         if (error) throw error
       } else {
@@ -83,6 +87,8 @@ export default function Todo() {
 
   const patchMut = useMutation({
     mutationFn: async ({ id, patch }) => {
+      // id 가 없으면 엉뚱한 곳을 고치게 된다. 조회가 잘못됐다는 뜻이라 알린다.
+      if (id == null) throw new Error('항목을 찾을 수 없습니다 (새로고침 후 다시 시도)')
       const { error } = await supabase.from('pm_todo').update(patch).eq('id', id)
       if (error) throw error
     },
@@ -92,6 +98,7 @@ export default function Todo() {
 
   const delMut = useMutation({
     mutationFn: async (id) => {
+      if (id == null) throw new Error('항목을 찾을 수 없습니다 (새로고침 후 다시 시도)')
       const { error } = await supabase.from('pm_todo').delete().eq('id', id)
       if (error) throw error
     },
@@ -101,12 +108,13 @@ export default function Todo() {
 
   const cmtMut = useMutation({
     mutationFn: async ({ todoId, body }) => {
+      if (todoId == null) throw new Error('항목을 찾을 수 없습니다')
       const { error } = await supabase.from('pm_todo_comment')
         .insert({ todo_id: todoId, body: body.trim(), author: me?.name || null })
       if (error) throw error
     },
     onSuccess: () => {
-      qc.invalidateQueries(['todoCmt', openCmt]); qc.invalidateQueries(['todos'])
+      qc.invalidateQueries({ queryKey: ['todoCmt'], exact: false }); qc.invalidateQueries(['todos'])
       setCmtText('')
     },
     onError: (e) => toastError('댓글 실패: ' + e.message),
@@ -279,9 +287,11 @@ export default function Todo() {
 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-baseline gap-1.5 flex-wrap">
-                    <span className={`text-sm font-semibold ${done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
+                    <button onClick={() => setDetail(r)}
+                      className={`text-sm font-semibold text-left hover:underline ${
+                        done ? 'text-slate-400 line-through' : 'text-slate-800'}`}>
                       {r.title}
-                    </span>
+                    </button>
                     {r.agenda && (
                       <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">주간회의</span>
                     )}
@@ -361,6 +371,136 @@ export default function Todo() {
           )
         })}
       </div>
+
+      {/* 안건 상세 — 회의에서 하나를 펼쳐 놓고 이야기할 때 쓴다 */}
+      {detail && (() => {
+        const r = rows.find(x => x.id === detail.id) || detail
+        const d = dday(r.due_date)
+        const done = r.status === '완료'
+        const mine = isMine(r)
+        return (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto"
+          onClick={() => setDetail(null)}>
+          <div className="bg-white w-full max-w-2xl rounded-2xl my-8" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
+              <span className={`px-2 py-1 text-[11px] font-bold rounded-md ${ST_CLS[r.status]}`}>{r.status}</span>
+              {r.agenda && (
+                <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">주간회의</span>
+              )}
+              {mine && (
+                <button onClick={() => { setDraft({ ...r }); setDetail(null) }}
+                  className="ml-auto text-xs font-semibold text-slate-500 px-2 py-1 border border-slate-200 rounded-lg">
+                  ✎ 수정
+                </button>
+              )}
+              <button onClick={() => setDetail(null)}
+                className={`text-slate-400 text-xl px-2 ${mine ? '' : 'ml-auto'}`}>✕</button>
+            </div>
+
+            <div className="px-5 py-4 space-y-4">
+              <div>
+                <h2 className={`text-xl font-bold ${done ? 'text-slate-400 line-through' : 'text-slate-900'}`}>
+                  {r.title}
+                </h2>
+                <div className="flex items-center gap-3 mt-2 text-xs flex-wrap">
+                  {r.owner && <span className="text-slate-500">담당 <b className="text-slate-700">{r.owner}</b></span>}
+                  {r.due_date && (
+                    <span className={ddayCls(done ? null : d)}>
+                      기한 {r.due_date} {!done && ddayText(d)}
+                    </span>
+                  )}
+                  {r.priority !== '보통' && (
+                    <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${PR_CLS[r.priority]}`}>
+                      {r.priority}
+                    </span>
+                  )}
+                  {r.tag && (
+                    <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">{r.tag}</span>
+                  )}
+                  {done && r.done_at && (
+                    <span className="text-emerald-600">{String(r.done_at).slice(0, 10)} 완료</span>
+                  )}
+                </div>
+              </div>
+
+              {/* 내용 — 길게 적을 수 있게 그 자리에서 고친다 */}
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1.5">내용</label>
+                {mine ? (
+                  <textarea defaultValue={r.detail || ''} rows={10}
+                    onBlur={e => {
+                      const v = e.target.value
+                      if (v !== (r.detail || '')) patchMut.mutate({ id: r.id, patch: { detail: v || null } })
+                    }}
+                    placeholder="배경·경과·결정 사항을 적어 두면 회의에서 바로 꺼내 쓸 수 있습니다"
+                    className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-lg leading-relaxed" />
+                ) : (
+                  <div className="px-3 py-2.5 text-sm border border-slate-100 bg-slate-50 rounded-lg whitespace-pre-wrap leading-relaxed min-h-[80px] text-slate-600">
+                    {r.detail || <span className="text-slate-300">적힌 내용이 없습니다</span>}
+                  </div>
+                )}
+                {mine && <p className="text-[11px] text-slate-400 mt-1">칸 밖을 누르면 저장됩니다</p>}
+              </div>
+
+              {/* 댓글 */}
+              <div className="pt-1">
+                <label className="block text-xs font-bold text-slate-500 mb-2">
+                  댓글 {comments.length > 0 && <span className="text-indigo-600">{comments.length}</span>}
+                </label>
+                <div className="space-y-2 mb-2">
+                  {comments.map(c => (
+                    <div key={c.id} className="rounded-lg bg-slate-50 px-3 py-2">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-xs font-bold text-slate-700">{c.author || '—'}</span>
+                        <span className="text-[10px] text-slate-400">
+                          {String(c.created_at).slice(5, 16).replace('T', ' ')}
+                        </span>
+                      </div>
+                      <p className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">{c.body}</p>
+                    </div>
+                  ))}
+                  {!comments.length && (
+                    <p className="text-xs text-slate-400">아직 댓글이 없습니다</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input value={cmtText} onChange={e => setCmtText(e.target.value)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' && cmtText.trim()) cmtMut.mutate({ todoId: r.id, body: cmtText })
+                    }}
+                    placeholder="의견을 남기세요"
+                    className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                  <button onClick={() => cmtText.trim() && cmtMut.mutate({ todoId: r.id, body: cmtText })}
+                    disabled={!cmtText.trim() || cmtMut.isPending}
+                    className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                    등록
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2">
+              <select value={r.status}
+                onChange={e => patchMut.mutate({ id: r.id, patch: { status: e.target.value } })}
+                className={`px-2.5 py-1.5 text-xs font-bold rounded-md border-0 cursor-pointer ${ST_CLS[r.status]}`}>
+                {STATUS.map(x => <option key={x} value={x}>{x}</option>)}
+              </select>
+              <label className="flex items-center gap-1.5 text-xs font-semibold text-slate-600">
+                <input type="checkbox" checked={!!r.agenda}
+                  onChange={e => patchMut.mutate({ id: r.id, patch: { agenda: e.target.checked } })} />
+                주간회의 안건
+              </label>
+              {mine && (
+                <button onClick={() => {
+                    if (window.confirm(`"${r.title}" 을 지울까요?`)) { delMut.mutate(r.id); setDetail(null) }
+                  }}
+                  className="ml-auto text-xs text-slate-400 hover:text-rose-500 px-2">삭제</button>
+              )}
+            </div>
+          </div>
+        </div>
+        )
+      })()}
 
       {draft && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"

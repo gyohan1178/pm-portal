@@ -3,6 +3,7 @@ import TodoPanel from '../../components/TodoPanel'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../../lib/supabase'
 import { fetchControlTowerData } from '../../lib/controlTowerData'
 import { computeControlTower } from '../../lib/controlTower'
 
@@ -34,6 +35,9 @@ const LINK_MAP = {
   short: (scope) => `/customer/${scope}/short`,
   production: (scope) => `/production/${scope.toUpperCase()}`,
   cpo: (scope) => `/customer/${scope}/cpo`,
+  inbound: () => '/inbound',        // 입고 화면은 고객사 구분이 없다
+  request: () => '/material-request',
+  lot: () => '/lot',
 }
 
 export default function ControlTower({ scope = 'ax' }) {
@@ -61,10 +65,32 @@ export default function ControlTower({ scope = 'ax' }) {
       const d = data.byCustomer[c.code]
       if (!d) return { ...c, score: 0, kpi: null }
       const r = computeControlTower({ shortage: d.shortage, pos: d.pos, prod: d.prod })
-      const score = r.kpi.orderNeeded * 3 + r.kpi.negSoon * 2 + r.kpi.prodDelay * 3 + r.kpi.lateArrival
+      // 입고 지연은 바로 생산을 막으므로 가중치를 크게 둔다
+      const score = (r.kpi.inboundLate ?? 0) * 3 + r.kpi.orderNeeded * 3 + r.kpi.negSoon * 2 + r.kpi.prodDelay * 2 + r.kpi.lateArrival
       return { ...c, score, kpi: r.kpi }
     }).sort((a, b) => b.score - a.score)
   }, [isMaster, data])
+
+  // 자재 요청 — 처리 전인 것. 확인이 늦어 놓치는 일이 잦아 앞자리에 둔다.
+  const { data: reqPending = 0 } = useQuery({
+    queryKey: ['ctReqPending'],
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_request_list',
+        { p_status: null, p_days: 180, p_mine: false, p_customer: null, p_dept: null })
+      return (data || []).filter(r => ['요청', '코드대기', '확인'].includes(r.status)).length
+    },
+  })
+
+  // 로트 — 기한이 지났거나 다가온 것
+  const { data: lotAlert = 0 } = useQuery({
+    queryKey: ['ctLotAlert'],
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data } = await supabase.rpc('pm_lot_summary')
+      return (data || []).filter(r => (r.expired_cnt || 0) > 0 || (r.soon_cnt || 0) > 0).length
+    },
+  })
 
   const goLink = (item) => {
     const csForLink = isMaster ? 'ax' : scope   // 마스터에선 ax로 (추후 item별 고객사 라우팅 가능)
@@ -120,8 +146,8 @@ export default function ControlTower({ scope = 'ax' }) {
               </div>
               {c.kpi ? (
                 <div className="text-[11px] text-slate-500 space-y-0.5">
-                  <p>🔴 발주 {c.kpi.orderNeeded} · 음수 {c.kpi.negSoon} · 지연 {c.kpi.prodDelay}</p>
-                  <p>🟡 납품임박 {c.kpi.poSoon} · 미입고 {c.kpi.lateArrival}</p>
+                  <p>🔴 입고지연 {c.kpi.inboundLate ?? 0} · 발주 {c.kpi.orderNeeded} · 음수 {c.kpi.negSoon}</p>
+                  <p>🟡 생산지연 {c.kpi.prodDelay} · 납품임박 {c.kpi.poSoon}</p>
                 </div>
               ) : <p className="text-[11px] text-slate-300">데이터 없음</p>}
             </button>
@@ -131,16 +157,15 @@ export default function ControlTower({ scope = 'ax' }) {
 
       {/* KPI — 한눈에 보이게 한 줄로 압축.
           수시로 여는 화면이므로 스크롤 없이 상태가 파악되어야 한다. */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+        {/* 구매·자재만 남긴다. 담당자들이 각자 화면을 갖게 되면서
+            생산·영업 항목은 그쪽에서 보는 편이 낫다. */}
         {[
+          { v: reqPending,    l: '자재 요청',  s: '처리 대기',   t: 'red',    link: 'request' },
+          { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound' },
           { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short' },
-          { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'red',    link: 'short' },
-          { v: k.prodDelay,   l: '생산 지연',  s: 'D-7 미완료',  t: 'red',    link: 'production' },
-          { v: k.poSoon,      l: '납품 임박',  s: '14일 내',     t: 'yellow', link: 'cpo' },
-          { v: k.lateArrival, l: '미입고',     s: '예정일 지남', t: 'yellow', link: 'production' },
-          { v: k.harnessNeed, l: '하네스 불출', s: '30일 미불출', t: 'yellow', link: 'production' },
-          { v: k.newPO,       l: '신규 PO',    s: '3일 내',      t: 'green',  link: 'cpo' },
-          { v: k.inProgress,  l: '진행 생산',  s: '',            t: 'green',  link: 'production' },
+          { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'yellow', link: 'short' },
+          { v: lotAlert,      l: '로트 기한',  s: '만료·임박',   t: 'yellow', link: 'lot' },
         ].map((x, i) => {
           const tone = x.v === 0
             ? 'border-slate-200 bg-white text-slate-300'
@@ -171,8 +196,16 @@ export default function ControlTower({ scope = 'ax' }) {
               <div key={i} onClick={() => goLink(item)}
                 className="flex items-center gap-2.5 px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer text-xs">
                 <span className="text-xs font-bold text-slate-300 w-5">{i + 1}</span>
-                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${item.kind === 'order' ? 'bg-red-100 text-red-600' : item.kind === 'prodDelay' ? 'bg-orange-100 text-orange-600' : item.kind === 'neg' ? 'bg-rose-100 text-rose-600' : 'bg-amber-100 text-amber-600'}`}>
-                  {item.kind === 'order' ? '발주' : item.kind === 'prodDelay' ? '생산지연' : item.kind === 'neg' ? '재고음수' : '미입고'}
+                <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                  item.kind === 'inboundLate' ? 'bg-red-100 text-red-700'
+                  : item.kind === 'order' ? 'bg-red-100 text-red-600'
+                  : item.kind === 'prodDelay' ? 'bg-orange-100 text-orange-600'
+                  : item.kind === 'neg' ? 'bg-rose-100 text-rose-600'
+                  : 'bg-amber-100 text-amber-600'}`}>
+                  {item.kind === 'inboundLate' ? '입고지연'
+                   : item.kind === 'order' ? '발주'
+                   : item.kind === 'prodDelay' ? '생산지연'
+                   : item.kind === 'neg' ? '재고음수' : '미입고'}
                 </span>
                 <span className="font-mono text-xs text-indigo-600">{item.std_code}</span>
                 <span className="text-xs text-slate-500 flex-1 truncate">{item.name} · {item.detail}</span>
