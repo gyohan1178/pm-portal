@@ -132,7 +132,14 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
     }
   })
 
-  // 7) 하네스 불출 필요: 입고 30일 내인데 미불출(harness_issue 없음) & 미완료
+  // 7) 입고 예정: 2주 안에 들어올 것. 자리를 미리 비워 둬야 한다.
+  const inboundSoon = buyPos.filter(p => {
+    const d = dDays(p.promise_date, today)
+    const left = Number(p.qty_remaining ?? ((p.qty_ordered || 0) - (p.qty_received || 0)))
+    return d != null && d >= 0 && d <= 14 && left > 0
+  })
+
+  // 8) 하네스 불출 필요: 입고 30일 내인데 미불출(harness_issue 없음) & 미완료
   const harnessNeed = prod.filter(p => {
     if (p.status === '완료' || p.harness_recv) return false
     const issued = p.harness_issue === true || (typeof p.harness_issue === 'string' && p.harness_issue.trim() && p.harness_issue !== 'false')
@@ -161,6 +168,7 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
   return {
     kpi: {
       inboundLate: inboundLate.length,
+      inboundSoon: inboundSoon.length,
       orderNeeded: orderNeeded.length,
       negSoon: negSoon.length,
       prodDelay: prodDelay.length,
@@ -171,6 +179,6 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
       inProgress: inProgress.length,
     },
     top,
-    lists: { inboundLate, orderNeeded, negList, prodDelay, poSoon, lateArrival, harnessNeed, newPO },
+    lists: { inboundLate, inboundSoon, orderNeeded, negList, prodDelay, poSoon, lateArrival, harnessNeed, newPO },
   }
 }

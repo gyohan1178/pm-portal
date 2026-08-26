@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabase'
 const KIND = {
   request:     { icon: '🙋', label: '자재 요청' },
   inboundLate: { icon: '📦', label: '입고 지연' },
+  inboundSoon: { icon: '🚚', label: '입고 예정' },
   order:       { icon: '🛒', label: '발주 필요' },
   neg:         { icon: '⚠️', label: '재고 음수' },
   lot:         { icon: '🏷', label: '로트 기한' },

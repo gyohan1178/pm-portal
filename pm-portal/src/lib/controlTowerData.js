@@ -45,7 +45,8 @@ async function fetchBuyPOsFor(customerIds) {
       .select('id,po_number,promise_date,order_date,qty_ordered,qty_received,qty_remaining,unit_price,status,customer_id,item_id,vendor_id, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
       .eq('customer_id', cid)
       .eq('order_type', 'purchase')          // neq 는 null 을 걸러내 못 잡는다
-      .lt('promise_date', new Date().toISOString().slice(0, 10))
+      // 지난 것(지연)과 앞으로 2주(예정)를 함께 가져온다
+      .lte('promise_date', new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10))
       .neq('status', '취소')
       .then(r => r.data || [])
   ))

@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { toastError, toastSuccess } from '../../lib/toast'
 import { fetchControlTowerData } from '../../lib/controlTowerData'
 import { computeControlTower } from '../../lib/controlTower'
 
@@ -41,6 +42,7 @@ const LINK_MAP = {
 
 export default function ControlTower({ scope = 'ax' }) {
   const nav = useNavigate()
+  const qc = useQueryClient()
   const isMaster = scope === 'all'
 
   // 수시로 열어두는 화면이므로 5분마다 조용히 갱신하고,
@@ -89,6 +91,19 @@ export default function ControlTower({ scope = 'ax' }) {
     }).sort((a, b) => b.score - a.score)
   }, [isMaster, data])
 
+  // 부족자재는 캐시로 계산된다. 오래되면 다른 고객사가 0 으로 보인다.
+  const [refreshing, setRefreshing] = useState(false)
+  async function refreshAll() {
+    setRefreshing(true)
+    try {
+      const { error } = await supabase.rpc('refresh_all_shortage_cache')
+      if (error) throw error
+      await qc.invalidateQueries({ queryKey: ['controlTower'], exact: false })
+      toastSuccess('부족자재 다시 계산했습니다')
+    } catch (e) { toastError('갱신 실패: ' + e.message) }
+    finally { setRefreshing(false) }
+  }
+
   // 자재 요청 — 처리 전인 것. 확인이 늦어 놓치는 일이 잦아 앞자리에 둔다.
   const { data: reqPending = 0 } = useQuery({
     queryKey: ['ctReqPending'],
@@ -136,6 +151,12 @@ export default function ControlTower({ scope = 'ax' }) {
           <p className="text-xs text-slate-400 mt-0.5">자재 흐름 — 요청·입고·발주·재고</p>
         </div>
         <div className="flex items-center gap-2">
+        {/* 부족자재는 캐시라 오래되면 값이 어긋난다. 여기서 다시 계산한다. */}
+        <button onClick={refreshAll} disabled={refreshing}
+          title="부족자재를 다시 계산합니다 (몇 초 걸립니다)"
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-40">
+          {refreshing ? '계산 중…' : '↻ 다시 계산'}
+        </button>
         <button onClick={() => nav(`/what-if/${isMaster ? 'ax' : scope}`)}
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">
           🔬 What-if
@@ -154,10 +175,10 @@ export default function ControlTower({ scope = 'ax' }) {
       </div>
 
       {/* 마스터: 고객사별 위험도 비교 */}
-      {/* 값이 있는 고객사만 보인다. 전부 0 인 칸은 자리만 차지한다. */}
-      {isMaster && byCust.some(c => c.score > 0) && (
+      {/* 넷을 다 그린다. 담당자가 자기 고객사로 바로 들어가야 하기 때문이다. */}
+      {isMaster && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {byCust.filter(c => c.score > 0).map((c, i) => (
+          {byCust.map((c, i) => (
             <button key={c.code} onClick={() => nav(`/control-tower/${c.code}`)}
               className={`text-left rounded-xl border p-3 transition-all hover:shadow-md ${i === 0 && c.score > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
               <div className="flex items-center gap-1.5 mb-2">
@@ -178,12 +199,13 @@ export default function ControlTower({ scope = 'ax' }) {
 
       {/* KPI — 한눈에 보이게 한 줄로 압축.
           수시로 여는 화면이므로 스크롤 없이 상태가 파악되어야 한다. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
         {/* 구매·자재만 남긴다. 담당자들이 각자 화면을 갖게 되면서
             생산·영업 항목은 그쪽에서 보는 편이 낫다. */}
         {[
           { v: reqPending,    l: '자재 요청',  s: '처리 대기',   t: 'red',    link: 'request' },
           { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound' },
+          { v: k.inboundSoon, l: '입고 예정',  s: '2주 안',      t: 'green',  link: 'inbound' },
           { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short' },
           { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'yellow', link: 'short' },
           { v: lotAlert,      l: '로트 기한',  s: '만료·임박',   t: 'yellow', link: 'lot' },
