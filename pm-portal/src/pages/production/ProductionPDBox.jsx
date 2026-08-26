@@ -8,12 +8,14 @@ import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
-const STATUS_OPTS = ['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기', '완료']
+// 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
+const STATUS_OPTS = ['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기', '외주', '완료']
 const STATUS_COLOR = {
   'PO접수': 'bg-slate-100 text-slate-600', '자재발주': 'bg-cyan-50 text-cyan-600',
   '제작대기': 'bg-teal-50 text-teal-700',
   '제작중': 'bg-blue-50 text-blue-600', '품질검수': 'bg-violet-50 text-violet-600',
-  '납품대기': 'bg-amber-50 text-amber-700', '완료': 'bg-emerald-50 text-emerald-700',
+  '납품대기': 'bg-amber-50 text-amber-700', '외주': 'bg-slate-200 text-slate-700',
+  '완료': 'bg-emerald-50 text-emerald-700',
 }
 const dayMs = 86400000
 
@@ -86,9 +88,12 @@ function noteDisplay(note) {
   return { text, count: napgi.length, full }
 }
 
-const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수', po_received: true, req_date: '', machine_date: '', arrival_date: '', harness_issue: '', harness_done: '', part_issue: '', elec_done: '', note: '', manager: '' }
+const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수', po_received: true, req_date: '', machine_date: '', arrival_date: '', harness_issue: '', harness_done: '', part_issue: '', elec_done: '', note: '', manager: '', part: '', memo: '' }
 
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
+  // Edwards 는 한 호기 안에 EUV·H2D 가 섞여 부분마다 따로 관리한다
+  const isED = String(csCode || '').toUpperCase() === 'ED'
+  const [memoDraft, setMemoDraft] = useState({})
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
@@ -232,6 +237,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             harness_issue: rec.harness_issue || null, harness_done: rec.harness_done || null,
             part_issue: rec.part_issue || null, elec_done: rec.elec_done || null,
             note: rec.note, manager: rec.manager || null, missing_parts: rec.missing_parts || [],
+            part: rec.part || null, memo: rec.memo || null,
           }
           const { error } = await supabase.from('production').insert(ins)
           if (error) throw error
@@ -476,11 +482,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">PD명</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">REV</th>
+                {/* Edwards 는 한 호기에 EUV·H2D 가 섞여 부분마다 따로 간다 */}
+                {isED && <th rowSpan={2} className="px-2 py-1.5 font-bold">구분</th>}
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
                 <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
+                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold border-l border-slate-200">비고</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
               </tr>
@@ -495,7 +504,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={14} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={isED ? 17 : 16} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -527,6 +536,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       )
                     })()}
                   </td>
+                  {isED && (
+                    <td className="px-2 py-2">
+                      {r.part
+                        ? <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">{r.part}</span>
+                        : <span className="text-slate-300">-</span>}
+                    </td>
+                  )}
                   <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
@@ -566,6 +582,19 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}
+                  {/* 비고 — 로컬 작업·외주 입고 시기 등. 눌러서 바로 적는다. */}
+                  <td className="px-2 py-2 border-l border-slate-100 text-left max-w-[150px]">
+                    <input value={memoDraft[r.id] ?? r.memo ?? ''}
+                      onClick={e => e.stopPropagation()}
+                      onChange={e => setMemoDraft(m => ({ ...m, [r.id]: e.target.value }))}
+                      onBlur={e => {
+                        const v = e.target.value
+                        if (v !== (r.memo || '')) toggleMut.mutate({ id: r.id, field: 'memo', value: v || null })
+                        setMemoDraft(m => { const n = { ...m }; delete n[r.id]; return n })
+                      }}
+                      placeholder="—"
+                      className="w-full px-1 py-0.5 text-[11px] bg-transparent border-0 border-b border-transparent hover:border-slate-200 focus:border-indigo-400 focus:outline-none" />
+                  </td>
                   <td className="px-2 py-2 border-l border-slate-100">
                     {Array.isArray(r.missing_parts) && r.missing_parts.length > 0
                       ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{r.missing_parts.length}건</span>
@@ -601,6 +630,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               <div className="grid grid-cols-3 gap-3">
                 <Field label="CCN"><input value={edit.ccn || ''} onChange={e => setEdit(s => ({ ...s, ccn: e.target.value }))} className="inp" /></Field>
                 <Field label="REV"><input value={edit.rev || ''} onChange={e => setEdit(s => ({ ...s, rev: e.target.value }))} className="inp" /></Field>
+                {isED && (
+                  <Field label="구분"><input value={edit.part || ''} onChange={e => setEdit(s => ({ ...s, part: e.target.value }))} placeholder="EUV · H2D · MFM" className="inp" /></Field>
+                )}
                 <Field label="상태">
                   <select value={edit.status} onChange={e => setEdit(s => ({ ...s, status: e.target.value }))} className="inp">
                     {STATUS_OPTS.map(o => <option key={o}>{o}</option>)}

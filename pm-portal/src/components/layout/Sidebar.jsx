@@ -55,8 +55,9 @@ const MenuPrefsCtx = createContext(null)
 function useAlertCounts() {
   const { data } = useQuery({
     queryKey: ['menuAlerts'],
-    staleTime: 60 * 1000,
-    refetchInterval: 3 * 60 * 1000,
+    staleTime: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+    refetchIntervalInBackground: false,
     queryFn: async () => {
       const out = {}
       try {

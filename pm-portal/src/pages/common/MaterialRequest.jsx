@@ -81,6 +81,7 @@ export default function MaterialRequest() {
     },
     staleTime: 20 * 1000,        // 여러 명이 동시에 처리하므로 짧게 둔다
     refetchInterval: 60 * 1000,
+    refetchIntervalInBackground: false,   // 화면을 안 보고 있으면 쉰다
     refetchOnWindowFocus: true,
   })
 

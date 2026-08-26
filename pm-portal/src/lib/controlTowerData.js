@@ -17,6 +17,8 @@ async function fetchShortageFor(customerIds) {
     const pages = Math.ceil(count / 1000)
     const reqs = []
     for (let i = 0; i < pages; i++) {
+      // TODO: 컬럼 이름 확인 후 필요한 열만 뽑도록 좁힐 것.
+      //   지금은 8,743 행을 통째로 받아 화면 열 때마다 무겁다.
       reqs.push(
         supabase.from('forecast_shortage_cache').select('*')
           .eq('customer_id', cid).range(i * 1000, i * 1000 + 999)
