@@ -6,6 +6,7 @@ import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useRowSelect } from '../../hooks/useRowSelect'
+import { useMe } from '../../hooks/useProfile'
 import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
@@ -67,7 +68,15 @@ async function genPoNumber(dateStr) {
   return `${prefix}${String((nums.length?Math.max(...nums):0)+1).padStart(2,'0')}`
 }
 
-function exportEcount(items, vendors) {
+// 이카운트 담당자 코드 — 발주서를 내려받은 사람으로 찍힌다.
+//   여기 없는 계정은 기본값(김교한)을 쓴다.
+const ECOUNT_STAFF = {
+  '4ansans@jinsuntech.co.kr': '12463',
+  'hjh0524@jinsuntech.co.kr': '12544',
+}
+const ECOUNT_STAFF_DEFAULT = '00022'
+
+function exportEcount(items, vendors, staffCode) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))
   const today = new Date()
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
@@ -92,7 +101,7 @@ function exportEcount(items, vendors) {
     const supply = Math.round(qty*price), vat = Math.round(supply*0.1)
     const spec = [po.items?.manufacturer, po.items?.manufacturer_code].filter(Boolean).join(' ')  // 규격 = 제조사 제조사품번
     //          일자          순번          납기일자                        거래처코드              거래처명 담당자   거래유형 입고창고 통화 환율  프로젝트  배송지 메모        품목코드              품목명              규격  수량 단가  외화 공급가  부가세 적요
-    return [orderYmd || yyyymmdd, String(seqMap[gkey]), po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '', '00022', '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
+    return [orderYmd || yyyymmdd, String(seqMap[gkey]), po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '', staffCode || ECOUNT_STAFF_DEFAULT, '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
     //                                                                                          거래처명↑ 담당자↑00022      입고창고↑00009        프로젝트↑00012
   })
   const wb = XLSX.utils.book_new()
@@ -183,6 +192,9 @@ export default function PurchasePage() {
   const [itemSearch, setItemSearch] = useState('')
   const [itemResults, setItemResults] = useState([])
   const [selItem, setSelItem] = useState(null)
+  // ERP 발주서 담당자 — 내려받은 사람으로 찍는다
+  const me = useMe()
+  const ecountStaff = ECOUNT_STAFF[String(me?.email || '').toLowerCase()] || ECOUNT_STAFF_DEFAULT
   const [selVendor, setSelVendor] = useState('')
   // 해외 업체는 달러로 계약한다. 환율과 배수를 곱해 원화 기준단가를 만든다.
   const [fxRate, setFxRate] = useState('')
@@ -581,10 +593,20 @@ export default function PurchasePage() {
   }
   const noteOf = id => proposalMeta[id]?.note || ''
   const setMeta = (id,k,v) => setProposalMeta(prev=>({...prev,[id]:{...prev[id],[k]:v}}))
-  const propMonths = [...new Set(checkedPOs.map(p=>(p.order_date||'').slice(0,7)).filter(Boolean))].sort()
+  // 매입이 잡히는 달은 결제방식마다 다르다.
+  //   정기 결제만 물건이 들어와야(입고요청일) 매입이 된다.
+  //   카드·선급·해외 송금은 물건보다 돈이 먼저 나가므로 발주일이다.
+  const BY_ORDER_DATE = ['카드 결제', '선급 결제', '해외 송금']
+  const propMonthOf = (p) => {
+    const d = BY_ORDER_DATE.includes(payOf(p.id))
+      ? (p.order_date || p.promise_date)
+      : (p.promise_date || p.order_date)
+    return (d || '').slice(0, 7)
+  }
+  const propMonths = [...new Set(checkedPOs.map(propMonthOf).filter(Boolean))].sort()
   const propSum = {}; PAYS.forEach(pay=>propSum[pay]={})
   checkedPOs.forEach(p=>{
-    const m=(p.order_date||'').slice(0,7); if(!m) return
+    const m=propMonthOf(p); if(!m) return
     const amt=Math.round((p.qty_ordered||0)*(p.unit_price||0))
     propSum[payOf(p.id)][m]=(propSum[payOf(p.id)][m]||0)+amt
   })
@@ -796,7 +818,7 @@ export default function PurchasePage() {
             </button>
           </div>
 
-          <button onClick={()=>exportEcount(checkedPOs,vendors)}
+          <button onClick={()=>exportEcount(checkedPOs, vendors, ecountStaff)}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
             📑 이카운트 발주서
           </button>

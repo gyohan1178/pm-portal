@@ -389,6 +389,65 @@ export default function BOM() {
   const qc = useQueryClient()
   const [tab, setTab] = useState('list')
   const [selAssembly, setSelAssembly] = useState(null)
+  const [editAsm, setEditAsm] = useState(null)     // 상위품번 수정
+  const [addPart, setAddPart] = useState(null)     // 품목 추가
+  const [partQ, setPartQ] = useState('')
+  const [partHits, setPartHits] = useState([])
+
+  // 상위품번·품명·REV 수정
+  const asmMut = useMutation({
+    mutationFn: async ({ id, patch }) => {
+      const { error } = await supabase.from('projects').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: (_, v) => {
+      qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
+      setSelAssembly(a => (a ? { ...a, ...v.patch } : a))
+      setEditAsm(null)
+      toastSuccess('수정했습니다')
+    },
+    onError: e => toastError('수정 실패: ' + e.message),
+  })
+
+  // 세부 항목 — 품목 추가
+  const addPartMut = useMutation({
+    mutationFn: async ({ itemId, qty, rev }) => {
+      const { error } = await supabase.from('bom').insert({
+        customer_id: cs?.id, project_id: selAssembly.id,
+        item_id: itemId, qty_per_unit: Number(qty) || 1,
+        item_rev: rev || null,
+      })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['bomDetail'], exact: false })
+      setAddPart(null); setPartQ(''); setPartHits([])
+      toastSuccess('품목을 넣었습니다')
+    },
+    onError: e => toastError('추가 실패: ' + e.message),
+  })
+
+  // 세부 항목 — 수량 수정·삭제
+  const partMut = useMutation({
+    mutationFn: async ({ id, patch, del }) => {
+      const { error } = del
+        ? await supabase.from('bom').delete().eq('id', id)
+        : await supabase.from('bom').update(patch).eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['bomDetail'], exact: false }),
+    onError: e => toastError('실패: ' + e.message),
+  })
+
+  async function searchPart(v) {
+    setPartQ(v)
+    if (v.trim().length < 2) { setPartHits([]); return }
+    const { data } = await supabase.from('items')
+      .select('id,std_code,name,unit,manufacturer,manufacturer_code')
+      .or(`std_code.ilike.%${v}%,name.ilike.%${v}%,manufacturer_code.ilike.%${v}%`)
+      .limit(15)
+    setPartHits(data || [])
+  }
   const [preview, setPreview] = useState(null)
   const [rawRows, setRawRows] = useState([])
   const [csvMeta, setCsvMeta] = useState({ code:'', name:'', rev:'A' })
@@ -863,6 +922,9 @@ export default function BOM() {
                 <span className="text-xs font-semibold text-slate-700">{selAssembly.code}</span>
                 <span className="text-xs text-slate-400">{selAssembly.name}</span>
                 <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 ml-1">REV {selAssembly.rev || 'A'}</span>
+                <button onClick={() => setEditAsm({ ...selAssembly })}
+                  title="상위품번·품명·REV 수정"
+                  className="text-slate-300 hover:text-indigo-500 px-1">✎</button>
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-xs text-slate-400">{bomDetail.length}개 품목</span>
                   {(() => {
@@ -876,6 +938,10 @@ export default function BOM() {
                       </span>
                     )
                   })()}
+                  <button onClick={() => setAddPart({ qty: 1, rev: '' })}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
+                    + 품목 추가
+                  </button>
                   <button onClick={()=>exportDetailCSV(bomDetail, selAssembly)} disabled={!bomDetail.length}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
                 </div>
@@ -1005,11 +1071,20 @@ export default function BOM() {
                             <td className="px-3 py-2 text-right font-bold text-slate-900">{b.qty_per_unit}</td>
                             <td className="px-3 py-2 text-center whitespace-nowrap">
                               {canEdit ? (
+                                <>
                                 <button onClick={() => { setEditRow(b); setPnHit(null) }}
                                   title="대체품 교체·수량 수정"
                                   className="px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">
                                   수정
                                 </button>
+                                <button onClick={() => {
+                                    if (window.confirm(`${b.items?.std_code} 을 이 BOM 에서 뺄까요?`)) partMut.mutate({ id: b.id, del: true })
+                                  }}
+                                  title="이 BOM 에서 제외"
+                                  className="ml-1 px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600">
+                                  삭제
+                                </button>
+                                </>
                               ) : <span className="text-slate-300">-</span>}
                             </td>
                           </tr>
@@ -1024,6 +1099,141 @@ export default function BOM() {
         </div>
       )}
       {/* BOM 행 편집 — 대체품 교체·수량 수정 */}
+      {/* 상위품번 수정 — 코드·품명·REV */}
+      {editAsm && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => setEditAsm(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-800">상위품번 수정</h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                코드를 바꿔도 아래 품목은 그대로 따라옵니다
+              </p>
+            </div>
+            <div className="p-4 space-y-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">상위품번 *</label>
+                <input value={editAsm.code || ''} autoFocus
+                  onChange={e => setEditAsm(v => ({ ...v, code: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm font-mono border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">품명</label>
+                <input value={editAsm.name || ''}
+                  onChange={e => setEditAsm(v => ({ ...v, name: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">REV</label>
+                <input value={editAsm.rev || ''}
+                  onChange={e => setEditAsm(v => ({ ...v, rev: e.target.value }))}
+                  placeholder="A"
+                  className="w-24 px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => {
+                    const code = (editAsm.code || '').trim()
+                    if (!code) { toastError('상위품번을 적어 주세요'); return }
+                    asmMut.mutate({ id: editAsm.id, patch: {
+                      code, name: editAsm.name || null, rev: editAsm.rev || null,
+                    } })
+                  }}
+                  disabled={asmMut.isPending}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                  {asmMut.isPending ? '저장 중…' : '저장'}
+                </button>
+                <button onClick={() => setEditAsm(null)}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 품목 추가 — 이 BOM 에 넣을 부품 */}
+      {addPart && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
+          onClick={() => { setAddPart(null); setPartQ(''); setPartHits([]) }}>
+          <div className="bg-white w-full max-w-lg rounded-2xl" onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-100">
+              <h3 className="text-base font-bold text-slate-800">품목 추가</h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {selAssembly?.code} 에 넣습니다
+              </p>
+            </div>
+            <div className="p-4 space-y-3">
+              {!addPart.item ? (
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">품목 찾기</label>
+                  <input value={partQ} autoFocus onChange={e => searchPart(e.target.value)}
+                    placeholder="기준코드·품명·제조사품번"
+                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                  {partHits.length > 0 && (
+                    <div className="mt-1.5 border border-slate-100 rounded-lg divide-y max-h-56 overflow-auto">
+                      {partHits.map(it => (
+                        <button key={it.id} onClick={() => setAddPart(v => ({ ...v, item: it }))}
+                          className="w-full text-left px-2.5 py-1.5 hover:bg-indigo-50">
+                          <div className="flex items-baseline gap-1.5">
+                            <span className="font-mono text-xs font-semibold text-indigo-600">{it.std_code}</span>
+                            <span className="text-xs text-slate-500 truncate">{it.name}</span>
+                          </div>
+                          {(it.manufacturer || it.manufacturer_code) && (
+                            <p className="text-[10px] text-slate-400 truncate">
+                              {it.manufacturer} <span className="font-mono">{it.manufacturer_code}</span>
+                            </p>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 px-3 py-2">
+                    <div className="flex items-baseline gap-1.5">
+                      <span className="font-mono text-sm font-bold text-indigo-700">{addPart.item.std_code}</span>
+                      <span className="text-xs text-slate-500 truncate">{addPart.item.name}</span>
+                      <button onClick={() => setAddPart(v => ({ ...v, item: null }))}
+                        className="ml-auto text-xs text-slate-400">바꾸기</button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">소요량 *</label>
+                      <input type="number" step="0.01" min="0" value={addPart.qty}
+                        onChange={e => setAddPart(v => ({ ...v, qty: e.target.value }))}
+                        className="w-full px-3 py-2 text-sm text-right border border-slate-200 rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-bold text-slate-500 mb-1">REV</label>
+                      <input value={addPart.rev || ''}
+                        onChange={e => setAddPart(v => ({ ...v, rev: e.target.value }))}
+                        placeholder="비워도 됩니다"
+                        className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                    </div>
+                  </div>
+                </>
+              )}
+              <div className="flex gap-2 pt-1">
+                <button onClick={() => addPartMut.mutate({
+                    itemId: addPart.item?.id, qty: addPart.qty, rev: addPart.rev,
+                  })}
+                  disabled={!addPart.item || !(Number(addPart.qty) > 0) || addPartMut.isPending}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                  {addPartMut.isPending ? '넣는 중…' : '넣기'}
+                </button>
+                <button onClick={() => { setAddPart(null); setPartQ(''); setPartHits([]) }}
+                  className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
+                  취소
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {editRow && (
         <BomRowModal
           row={editRow} mode="edit"
