@@ -168,6 +168,10 @@ export default function Todo() {
     const start = new Date(first); start.setDate(1 - first.getDay())
     const byDate = {}
     rows.forEach(r => { if (r.due_date) (byDate[r.due_date] ||= []).push(r) })
+    // 한 칸에 몇 개만 보이므로 남은 일을 앞에 둔다.
+    //   완료는 뒤로 밀되 초록으로 함께 보인다.
+    Object.values(byDate).forEach(list => list.sort((a, b) =>
+      (a.status === '완료' ? 1 : 0) - (b.status === '완료' ? 1 : 0)))
     const cells = []
     for (let i = 0; i < 42; i++) {
       const d = new Date(start); d.setDate(start.getDate() + i)
@@ -239,10 +243,10 @@ export default function Todo() {
             const isToday = c.iso === todayStr()
             return (
               <div key={c.iso}
-                className={`min-h-[46px] rounded-md p-1 ${
+                className={`min-h-[58px] rounded-md p-1 ${
                   !c.cur ? 'opacity-30' : ''} ${isToday ? 'ring-1 ring-indigo-400' : ''}`}>
                 <span className={`text-[10px] ${isToday ? 'font-bold text-indigo-600' : 'text-slate-500'}`}>{c.day}</span>
-                {c.items.slice(0, 2).map(it => {
+                {c.items.slice(0, 3).map(it => {
                   const d = dday(it.due_date)
                   const done = it.status === '완료'
                   const cls = done ? 'bg-emerald-50 text-emerald-700'
@@ -250,13 +254,14 @@ export default function Todo() {
                   return (
                     <p key={it.id} title={`${it.title}${it.owner ? ` · ${it.owner}` : ''}`}
                       onClick={() => { setQ(it.title); setView('all') }}
-                      className={`text-[9px] leading-tight mt-0.5 px-1 rounded truncate cursor-pointer ${cls}`}>
+                      className={`text-[9px] leading-tight mt-0.5 px-1 rounded truncate cursor-pointer ${cls} ${
+                        done ? 'line-through opacity-70' : ''}`}>
                       {it.title}
                     </p>
                   )
                 })}
-                {c.items.length > 2 && (
-                  <p className="text-[9px] text-slate-400 mt-0.5">+{c.items.length - 2}</p>
+                {c.items.length > 3 && (
+                  <p className="text-[9px] text-slate-400 mt-0.5">+{c.items.length - 3}</p>
                 )}
               </div>
             )
