@@ -1,5 +1,4 @@
 import { useMemo } from 'react'
-import TodoPanel from '../../components/TodoPanel'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -55,7 +54,26 @@ export default function ControlTower({ scope = 'ax' }) {
 
   const ct = useMemo(() => {
     if (!data) return null
-    return computeControlTower({ shortage: data.shortage, pos: data.pos, prod: data.prod })
+    // 마스터에서는 고객사별로 계산해 항목마다 어느 고객사인지 붙인다.
+    //   담당자가 자기 고객사 화면으로 바로 넘어갈 수 있어야 한다.
+    if (isMaster && data.byCustomer) {
+      const merged = { kpi: {}, top: [], lists: {} }
+      CUST.forEach(c => {
+        const d = data.byCustomer[c.code]
+        if (!d) return
+        const r = computeControlTower({
+          shortage: d.shortage, pos: d.pos, prod: d.prod, buyPos: d.buyPos || [],
+        })
+        Object.entries(r.kpi).forEach(([k, v]) => { merged.kpi[k] = (merged.kpi[k] || 0) + v })
+        merged.top.push(...r.top.map(x => ({ ...x, cs: c.code, csName: c.name, csColor: c.color })))
+      })
+      merged.top.sort((a, b) => b.urgency - a.urgency)
+      merged.top = merged.top.slice(0, 30)
+      return merged
+    }
+    return computeControlTower({
+      shortage: data.shortage, pos: data.pos, prod: data.prod, buyPos: data.buyPos || [],
+    })
   }, [data])
 
   // 마스터: 고객사별 위험도 비교
@@ -64,7 +82,7 @@ export default function ControlTower({ scope = 'ax' }) {
     return CUST.map(c => {
       const d = data.byCustomer[c.code]
       if (!d) return { ...c, score: 0, kpi: null }
-      const r = computeControlTower({ shortage: d.shortage, pos: d.pos, prod: d.prod })
+      const r = computeControlTower({ shortage: d.shortage, pos: d.pos, prod: d.prod, buyPos: d.buyPos || [] })
       // 입고 지연은 바로 생산을 막으므로 가중치를 크게 둔다
       const score = (r.kpi.inboundLate ?? 0) * 3 + r.kpi.orderNeeded * 3 + r.kpi.negSoon * 2 + r.kpi.prodDelay * 2 + r.kpi.lateArrival
       return { ...c, score, kpi: r.kpi }
@@ -92,10 +110,12 @@ export default function ControlTower({ scope = 'ax' }) {
     },
   })
 
+  // 항목마다 어느 고객사 건인지 붙여 두었으므로 그쪽으로 보낸다.
+  //   담당자는 자기 고객사만 보므로 바로 넘어가야 한다.
   const goLink = (item) => {
-    const csForLink = isMaster ? 'ax' : scope   // 마스터에선 ax로 (추후 item별 고객사 라우팅 가능)
+    const cs = item.cs || (isMaster ? 'ax' : scope)
     const fn = LINK_MAP[item.link]
-    if (fn) nav(fn(csForLink))
+    if (fn) nav(fn(cs))
   }
 
   if (isLoading) return <div className="text-center py-16 text-slate-400 text-sm">관제 데이터를 불러오는 중...</div>
@@ -134,9 +154,10 @@ export default function ControlTower({ scope = 'ax' }) {
       </div>
 
       {/* 마스터: 고객사별 위험도 비교 */}
-      {isMaster && (
+      {/* 값이 있는 고객사만 보인다. 전부 0 인 칸은 자리만 차지한다. */}
+      {isMaster && byCust.some(c => c.score > 0) && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          {byCust.map((c, i) => (
+          {byCust.filter(c => c.score > 0).map((c, i) => (
             <button key={c.code} onClick={() => nav(`/control-tower/${c.code}`)}
               className={`text-left rounded-xl border p-3 transition-all hover:shadow-md ${i === 0 && c.score > 0 ? 'border-red-300 bg-red-50' : 'border-slate-200 bg-white'}`}>
               <div className="flex items-center gap-1.5 mb-2">
@@ -183,16 +204,17 @@ export default function ControlTower({ scope = 'ax' }) {
         })}
       </div>
 
-      {/* 오늘 할 일 · 급한 건 — 넓은 화면에서는 나란히 */}
-      <div className="grid lg:grid-cols-2 gap-4">
-        <TodoPanel compact />
-
+      {/* 급한 건 — 무엇부터 할지 하나로 보여 준다.
+          예전의 '오늘 할 일' 은 별도 메뉴가 생겨 뺐다. */}
       <div>
-        <p className="text-xs font-bold text-slate-700 mb-2">⚡ 지금 가장 급한 건</p>
+        <div className="flex items-baseline gap-2 mb-2">
+          <p className="text-xs font-bold text-slate-700">⚡ 지금 가장 급한 건</p>
+          <span className="text-[11px] text-slate-400">{ct.top.length}건</span>
+        </div>
         <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
           {ct.top.length === 0
             ? <div className="text-center py-8 text-slate-300 text-sm">긴급 항목이 없습니다 👍</div>
-            : ct.top.slice(0, 6).map((item, i) => (
+            : ct.top.slice(0, 12).map((item, i) => (
               <div key={i} onClick={() => goLink(item)}
                 className="flex items-center gap-2.5 px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer text-xs">
                 <span className="text-xs font-bold text-slate-300 w-5">{i + 1}</span>
@@ -207,13 +229,19 @@ export default function ControlTower({ scope = 'ax' }) {
                    : item.kind === 'prodDelay' ? '생산지연'
                    : item.kind === 'neg' ? '재고음수' : '미입고'}
                 </span>
-                <span className="font-mono text-xs text-indigo-600">{item.std_code}</span>
+                {/* 어느 고객사 건인지 — 담당자가 자기 것을 바로 찾는다 */}
+                {item.csName && (
+                  <span className="px-1.5 py-0.5 rounded text-[10px] font-bold flex-shrink-0"
+                    style={{ background: `${item.csColor}18`, color: item.csColor }}>
+                    {item.csName}
+                  </span>
+                )}
+                <span className="font-mono text-xs text-indigo-600 flex-shrink-0">{item.std_code}</span>
                 <span className="text-xs text-slate-500 flex-1 truncate">{item.name} · {item.detail}</span>
                 <span className="text-slate-300 text-xs">→</span>
               </div>
             ))}
         </div>
-      </div>
       </div>
     </div>
   )
