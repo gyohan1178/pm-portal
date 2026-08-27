@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
+import { parseEdMonthly } from '../../lib/edMonthly'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -94,6 +95,28 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // Edwards 는 한 호기 안에 EUV·H2D 가 섞여 부분마다 따로 관리한다
   const isED = String(csCode || '').toUpperCase() === 'ED'
   const [memoDraft, setMemoDraft] = useState({})
+  const edFileRef = useRef(null)
+
+  // 월간 실적 시트를 읽어 프로젝트+호기+구분 줄로 묶는다.
+  //   상태·비고·담당자는 현장이 관리하므로 덮어쓰지 않는다.
+  async function onEdFile(e) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    try {
+      const { records, skipped, error } = parseEdMonthly(await f.arrayBuffer())
+      if (error) { toastError(error); return }
+      if (!records.length) { toastError('가져올 내용이 없습니다'); return }
+      const now = records.filter(r => r.status !== '완료').length
+      const ok = window.confirm(
+        `${records.length}줄을 가져올까요?\n` +
+        `  진행 ${now} · 완료 ${records.length - now}\n` +
+        `  호기가 없는 ${skipped}줄(단품·ETC)은 뺍니다\n\n` +
+        `이미 있는 줄은 납기만 갱신하고\n상태·비고·담당자는 그대로 둡니다.`)
+      if (!ok) return
+      importMut.mutate({ records, edMode: true })
+    } catch (err) { toastError('파일을 읽지 못했습니다: ' + err.message) }
+  }
   const qc = useQueryClient()
   const [search, setSearch] = useState('')
   // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
@@ -207,20 +230,26 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const fileRef = useRef(null)
   // CSV 가져오기 — 품번+호기 기준 upsert (명세 6-4)
   const importMut = useMutation({
-    mutationFn: async (records) => {
+    mutationFn: async ({ records, edMode = false }) => {
       // 기존 데이터 (품번+호기 키)
-      const keyOf = (pn, hogi) => `${(pn || '').trim()}|${(hogi || '').trim()}`
+      // Edwards 는 한 줄이 프로젝트+호기+구분이라 구분까지 키에 넣는다
+      const keyOf = (pn, hogi, part) =>
+        `${(pn || '').trim()}|${(hogi || '').trim()}` + (isED ? `|${(part || '').trim()}` : '')
       const existMap = {}
-      for (const r of rows) existMap[keyOf(r.pn, r.hogi)] = r
+      for (const r of rows) existMap[keyOf(r.pn, r.hogi, r.part)] = r
 
       let created = 0, updated = 0
       for (const rec of records) {
         if (!rec.pn) continue
-        const exist = existMap[keyOf(rec.pn, rec.hogi)]
+        const exist = existMap[keyOf(rec.pn, rec.hogi, rec.part)]
         if (exist) {
           // SCHED_FIELDS만 갱신, id/created_at/완료상태/history 보존
           const patch = { updated_at: new Date().toISOString() }
+          // 월간 실적으로 다시 올릴 때 담당자가 손으로 넣은 것을 지우지 않는다.
+          //   상태·비고·담당자는 현장에서 관리하는 값이다.
+          const keep = edMode ? ['status', 'note', 'memo', 'manager'] : []
           for (const f of SCHED_FIELDS) {
+            if (keep.includes(f)) continue
             if (f === 'missing_parts') { patch.missing_parts = rec.missing_parts || [] }
             else if (rec[f] !== undefined && rec[f] !== '') patch[f] = rec[f]
           }
@@ -257,7 +286,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       try {
         const records = parsePDBoxCSV(String(reader.result))
         if (!records.length) { toastError('읽을 데이터가 없습니다'); return }
-        if (window.confirm(`${records.length}개 호기를 가져올까요?\n(같은 품번+호기는 일정만 갱신, 완료상태는 보존)`)) importMut.mutate(records)
+        if (window.confirm(`${records.length}개 호기를 가져올까요?\n(같은 품번+호기는 일정만 갱신, 완료상태는 보존)`)) importMut.mutate({ records })
       } catch (err) { toastError('CSV 파싱 오류: ' + err.message) }
     }
     reader.readAsText(f, 'utf-8')
@@ -357,6 +386,16 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           })
           exportPDBoxCSV(exportRows, csCode)
         }} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 CSV 추출</button>
+        {isED && (
+          <>
+            <input ref={edFileRef} type="file" accept=".xlsx,.xlsm" className="hidden" onChange={onEdFile} />
+            <button onClick={() => edFileRef.current?.click()} disabled={importMut.isPending}
+              title="영업관리 파일의 '에드워드 월간 실적' 시트를 읽습니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
+              {importMut.isPending ? '가져오는 중…' : '📗 월간 실적 올리기'}
+            </button>
+          </>
+        )}
         <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? '가져오는 중...' : '📤 CSV 가져오기'}</button>
         <input ref={fileRef} type="file" accept=".csv" onChange={onFile} className="hidden" />
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
@@ -478,8 +517,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     checked={(()=>{const ids=filtered.filter(r=>!r._month).map(r=>r.id); return ids.length>0 && ids.every(id=>sel.has(id))})()}
                     onChange={e=>{ const ids=filtered.filter(r=>!r._month).map(r=>r.id); setSel(e.target.checked? new Set(ids): new Set()) }} />
                 </th>
-                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">품번</th>
-                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">PD명</th>
+                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isED ? '프로젝트' : '품번'}</th>
+                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isED ? '품목' : 'PD명'}</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">REV</th>
                 {/* Edwards 는 한 호기에 EUV·H2D 가 섞여 부분마다 따로 간다 */}
@@ -518,7 +557,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       className="pointer-events-none" />
                   </td>
                   {/* 품번은 편집 모달 진입점이라 행 선택에서 뺀다 */}
-                  <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
+                  <td data-no-select
+                    className={`px-2 py-2 text-slate-700 text-left cursor-pointer hover:text-indigo-600 ${
+                      isED ? 'max-w-[190px] overflow-hidden text-ellipsis whitespace-nowrap' : 'font-mono'}`}
+                    title={isED ? r.pn : undefined}
+                    onClick={() => setEdit({ ...r })}>
                     {r.pn}{!isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
