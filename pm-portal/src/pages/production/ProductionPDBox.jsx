@@ -506,7 +506,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       <td className="px-3 py-2 text-center text-slate-500">{m.waiting}</td>
                       <td className="px-3 py-2 text-center font-bold text-slate-700">{m.total}</td>
                       <td className="px-3 py-2 text-center font-semibold text-slate-600">{m.next ? m.next.slice(5) : '—'}</td>
-                      <td className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
+                      <td data-no-select className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
                         {m.main ? (
                           <input type="number" step="0.5" min="0" defaultValue={mdMap[m.pn] ?? ''} placeholder="—"
                             onBlur={e => { const v = e.target.value; if (String(mdMap[m.pn] ?? '') !== v) mdSaveMut.mutate({ pn: m.pn, val: v }) }}
@@ -637,7 +637,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       )
                     })()}
                   </td>
-                  <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                  <td data-no-select className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
                       {md(r.req_date) || '미정'}
@@ -651,11 +651,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'arrival_date', value: v || null })}
                     onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'machine_recv', value: v })} />
                   {/* 전장>하네스 불출 (토글) */}
-                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'harness_recv', value: !truthy(r.harness_recv) })}>
+                  <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'harness_recv', value: !truthy(r.harness_recv) })}>
                     {truthy(r.harness_recv) ? <span className="text-teal-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-teal-500">불출</span>}
                   </td>
                   {/* 전장>부품 불출 (토글) */}
-                  <td className="px-2 py-2 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue) })}>
+                  <td data-no-select className="px-2 py-2 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue) })}>
                     {truthy(r.part_issue) ? <span className="text-blue-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-blue-500">불출</span>}
                   </td>
                   {/* 전장 완료예정 — MD 역산 자동, ✎로 수동 고정(elec_done), 클릭=완료 */}
@@ -663,7 +663,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'elec_done', value: v || null })}
                     onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'elec_recv', value: v })} />
                   {/* 품질 완료요청 — 역산, 클릭=완료 */}
-                  <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv) })}>
+                  <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv) })}>
                     {truthy(r.quality_recv)
                       ? <span className="text-rose-600 font-bold">✔ 완료</span>
                       : <span className="text-slate-500 hover:text-rose-500">{md(calcQuality(r)) || '—'}</span>}
@@ -677,7 +677,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}
                   {/* 비고 — 로컬 작업·외주 입고 시기 등. 눌러서 바로 적는다. */}
-                  <td className="px-2 py-2 border-l border-slate-100 text-left max-w-[150px]">
+                  <td data-no-select className="px-2 py-2 border-l border-slate-100 text-left max-w-[150px]">
                     <input value={memoDraft[r.id] ?? r.memo ?? ''}
                       onClick={e => e.stopPropagation()}
                       onChange={e => setMemoDraft(m => ({ ...m, [r.id]: e.target.value }))}
@@ -890,7 +890,7 @@ function AutoDateCell({ auto, manual, done, onDate, onToggle }) {
   const [editing, setEditing] = useState(false)
   const val = manual || auto
   if (done) {
-    return <td className="px-2 py-2 cursor-pointer text-center" onClick={() => onToggle(false)}>
+    return <td data-no-select className="px-2 py-2 cursor-pointer text-center" onClick={() => onToggle(false)}>
       <span className="font-bold text-emerald-600">✔ 완료</span>
       {val && <span className="block text-[9px] text-slate-300">{String(val).slice(5, 10)}</span>}
     </td>
@@ -903,7 +903,7 @@ function AutoDateCell({ auto, manual, done, onDate, onToggle }) {
         className="text-[11px] border border-indigo-300 rounded px-1 py-0.5 w-24" />
     </td>
   }
-  return <td className="px-2 py-2 cursor-pointer text-center group" onClick={() => onToggle(true)}>
+  return <td data-no-select className="px-2 py-2 cursor-pointer text-center group" onClick={() => onToggle(true)}>
     <span className="inline-flex items-center gap-1">
       <span className={manual ? 'text-slate-600 font-semibold' : 'text-slate-400'}>{val ? String(val).slice(5, 10) : '—'}</span>
       {!manual && val && <span className="text-[8px] text-indigo-300 font-bold" title="MD 역산 자동값">자동</span>}
@@ -921,7 +921,7 @@ function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor
   const colorMap = { emerald: 'text-emerald-600', amber: 'text-amber-600' }
 
   if (done) {
-    return <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => onToggle(false)}>
+    return <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => onToggle(false)}>
       <span className={`font-bold ${colorMap[doneColor]}`}>✔ 완료</span>
       {dateVal && <span className="block text-[9px] text-slate-300">{String(dateVal).slice(5, 10)}</span>}
     </td>
@@ -936,7 +936,7 @@ function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor
   }
   // 날짜 있으면: 클릭=완료 토글 · ✎=날짜 수정 (비우고 확정하면 날짜 삭제)
   if (dateVal) {
-    return <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center group" onClick={() => onToggle(true)}>
+    return <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center group" onClick={() => onToggle(true)}>
       <span className="inline-flex items-center gap-1">
         <span className="text-slate-500 group-hover:text-emerald-600">{String(dateVal).slice(5, 10)}</span>
         <button type="button" title="날짜 수정"
@@ -947,7 +947,7 @@ function DateCell({ row, dateField, doneField, done, onDate, onToggle, doneColor
     </td>
   }
   // 날짜 없으면: 클릭 시 입력
-  return <td className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center text-slate-300 hover:text-indigo-500" onClick={() => setEditing(true)}>
+  return <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center text-slate-300 hover:text-indigo-500" onClick={() => setEditing(true)}>
     + 날짜
   </td>
 }
