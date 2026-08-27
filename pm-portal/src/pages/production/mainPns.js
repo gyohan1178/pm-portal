@@ -21,3 +21,10 @@ export const MAIN_PNS = new Set([
   '110226948', // ASSY END STATION PD
 ])
 export const isMainPn = (pn) => MAIN_PNS.has(String(pn || '').trim())
+
+// 주요 관리대상인지 — 고객사까지 본다.
+//   AXCELIS 만 sub assy 를 따로 두고 위 16개 품번으로 가른다.
+//   Edwards 는 한 줄이 이미 프로젝트+호기+구분이라 모두 주요 관리대상이다.
+//   (프로젝트가 36종이고 계속 늘어 목록으로 관리할 수 없다)
+export const isMainRow = (pn, csCode) =>
+  String(csCode || '').toUpperCase() === 'AX' ? isMainPn(pn) : true

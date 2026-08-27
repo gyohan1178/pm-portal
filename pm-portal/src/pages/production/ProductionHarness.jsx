@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { isMainPn } from './mainPns'
+import { isMainRow } from './mainPns'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -18,7 +18,7 @@ function dDays(dateStr, today) {
 function buildHarnessBundles(records, today) {
   // 1) 작업 대상: 미완료 + 하네스 미완료
   // 주요 관리 품번만 하네스 우선순위 대상 (sub assy 제외)
-  const targets = records.filter(r => r.status !== '완료' && !r.harness_recv && isMainPn(r.pn))
+  const targets = records.filter(r => r.status !== '완료' && !r.harness_recv && isMainRow(r.pn, r.customer_code))
 
   // 2) 묶음 키: 품번만 (하네스는 가공물과 독립 제작 → 가공물 입고일로 쪼개지 않음)
   //    같은 품번은 최대한 크게 묶어 선행생산 (10개씩 분할)

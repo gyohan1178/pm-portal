@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { MAIN_PNS } from './mainPns'
-import { isMainPn } from './mainPns'
+import { isMainRow } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
 
 // 🖥 AXCELIS PD 생산 전광판 — 밀도형
@@ -89,7 +89,7 @@ export default function ProductionBoard() {
 
   const view = useMemo(() => {
     const today = new Date().toISOString().slice(0, 10)
-    const main = rows.filter(r => isMainPn(r.pn) && r.req_date)
+    const main = rows.filter(r => isMainRow(r.pn, r.customer_code) && r.req_date)
     const enriched = main.map(r => {
       const m = meta[r.pn] || {}
       const elec = calcElec(r, m.qc)

@@ -1,6 +1,6 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
-import { isMainPn, MAIN_PNS } from './mainPns'
+import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
@@ -269,7 +269,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     const g = {}
     rows.forEach(r => {
       const k = r.pn || '?'
-      g[k] ??= { pn: k, name: r.name, main: isMainPn(k), total: 0, done: 0, making: 0, waiting: 0, next: null }
+      g[k] ??= { pn: k, name: r.name, main: isMainRow(k, csCode), total: 0, done: 0, making: 0, waiting: 0, next: null }
       g[k].total++
       if (r.status === '완료') g[k].done++
       // 제작대기는 자재만 나간 상태라 아직 만들기 전이다. 대기로 센다.
@@ -285,7 +285,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
-    r = r.filter(x => isMainPn(x.pn) === (mainTab === 'main'))
+    r = r.filter(x => isMainRow(x.pn, csCode) === (mainTab === 'main'))
     if (dq.trim()) {
       const s = dq.toLowerCase()
       r = r.filter(x => (x.pn || '').toLowerCase().includes(s) || (x.name || '').toLowerCase().includes(s) || (x.hogi || '').toLowerCase().includes(s))
@@ -314,7 +314,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
     const g = {}
-    rows.filter(r => isMainPn(r.pn) && r.status !== '완료' && r.req_date).forEach(r => {
+    rows.filter(r => isMainRow(r.pn, csCode) && r.status !== '완료' && r.req_date).forEach(r => {
       const mdv = Number(mdMap[r.pn]) || 1
       const ew = weekKey(calcElec(r)); const qw = weekKey(calcQuality(r))
       if (ew) { g[ew] ??= { wk: ew, elecMd: 0, elecCnt: 0, qcCnt: 0 }; g[ew].elecMd += mdv; g[ew].elecCnt++ }
@@ -512,14 +512,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <tr key={r.id}
                   onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
                   onMouseEnter={e => rowSel.over(r.id, e)}
-                  className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id)?'bg-indigo-50/50':''} ${!isMainPn(r.pn)?'opacity-90':''}`}>
+                  className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id)?'bg-indigo-50/50':''} ${!isMainRow(r.pn, csCode)?'opacity-90':''}`}>
                   <td className="px-1 py-2">
                     <input type="checkbox" checked={sel.has(r.id)} readOnly
                       className="pointer-events-none" />
                   </td>
                   {/* 품번은 편집 모달 진입점이라 행 선택에서 뺀다 */}
                   <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600" onClick={() => setEdit({ ...r })}>
-                    {r.pn}{!isMainPn(r.pn) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
+                    {r.pn}{!isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
                   </td>
                   <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
@@ -551,7 +551,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                         return <span title={`원납기 대비 ${t>0?'밀림':'당겨짐'}`} className={`px-1 rounded text-[9px] font-bold ${t>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>{t>0?`+${t}일`:`${t}일`}</span> })()}
                     </span>
                   </td>
-                  {isMainPn(r.pn) ? (<>
+                  {isMainRow(r.pn, csCode) ? (<>
                   {/* 가공물 입고예정 — 날짜없으면 입력, 있으면 완료토글 */}
                   <DateCell row={r} dateField="arrival_date" doneField="machine_recv" done={r.machine_recv} doneColor="amber"
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'arrival_date', value: v || null })}
