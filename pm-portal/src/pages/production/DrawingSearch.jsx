@@ -74,7 +74,7 @@ async function expandBOM(customerId, rootCode, maxDepth = 10) {
           .from('bom')
           .select('project_id, qty_per_unit, level, seq, item_rev, items!bom_item_id_fkey(std_code, name)')
           .in('project_id', chunk)
-          .order('seq'))
+          .order('seq').order('id', { ascending: true }))
       rows.push(...part)
     }
 
@@ -103,7 +103,7 @@ async function fetchDrawings(codes) {
         .from('pm_drawings')
         .select('std_code, rev, edition, rev_order, file_name, file_path, file_mtime, is_latest, missing_since, category, naming_ok, is_conv, file_size')
         .in('std_code', chunk)
-        .order('rev_order', { ascending: false }))
+        .order('rev_order', { ascending: false }).order('id', { ascending: true }))
     out.push(...part)
   }
   return out
@@ -223,7 +223,7 @@ export default function DrawingSearch() {
         .from('pm_drawings')
         .select('std_code, file_name, missing_since')
         .not('missing_since', 'is', null)
-        .order('missing_since', { ascending: false })
+        .order('missing_since', { ascending: false }).order('id', { ascending: true })
         .limit(50)
       return data || []
     },
@@ -237,7 +237,7 @@ export default function DrawingSearch() {
       const { data } = await supabase
         .from('pm_drawings')
         .select('scanned_at')
-        .order('scanned_at', { ascending: false })
+        .order('scanned_at', { ascending: false }).order('id', { ascending: true })
         .limit(1)
         .maybeSingle()
       return data?.scanned_at || null

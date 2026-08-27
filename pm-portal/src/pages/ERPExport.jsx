@@ -76,7 +76,7 @@ export default function ERPExport() {
             .select('*, items(std_code, name), customers(name), projects(name)')
             .eq('movement_type', mvType)
             .in('customer_id', csIds)
-            .order('processed_at', { ascending: false })
+            .order('processed_at', { ascending: false }).order('id', { ascending: true })
           if (dateFrom) q = q.gte('processed_at', dateFrom)
           if (dateTo)   q = q.lte('processed_at', dateTo + 'T23:59:59')
           return q

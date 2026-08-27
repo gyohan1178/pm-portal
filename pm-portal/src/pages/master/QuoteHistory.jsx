@@ -40,7 +40,7 @@ async function fetchQuotes(kind) {
     .select('id, quote_no, quote_kind, quote_date, currency, project_name, issued_to, total_amount, total_cost_krw, margin_pct, status, memo')
     .eq('quote_kind', kind)
     .order('quote_date', { ascending: false })
-    .order('created_at', { ascending: false }))
+    .order('created_at', { ascending: false }).order('id', { ascending: true }))
   return rows
 }
 
@@ -52,7 +52,7 @@ async function fetchItems(quoteIds) {
       .from('pm_quote_items')
       .select('quote_id, line_no, std_code, description, rev, unit, qty, unit_price, cost_krw, material_krw, labor_krw, vendor, line_kind')
       .in('quote_id', quoteIds.slice(i, i + 100))
-      .order('line_no'))
+      .order('line_no').order('id', { ascending: true }))
     out.push(...part)
   }
   return out

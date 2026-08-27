@@ -32,7 +32,7 @@ async function fetchPurchases(csId) {
     .from('purchase_orders')
     .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code,unit), vendors(name,ecount_code,payment_terms), projects(code,name)')
     .eq('customer_id', csId).eq('order_type','purchase').not('status','in','(완료,취소)')
-    .order('promise_date', { ascending: true }))
+    .order('promise_date', { ascending: true }).order('id', { ascending: true }))
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date && p.promise_date < today }))
 }
 async function fetchPurchaseHistory(csId, from, to) {
@@ -42,7 +42,7 @@ async function fetchPurchaseHistory(csId, from, to) {
     .eq('movement_type','입고')
     .gte('movement_date', from)
     .lte('movement_date', to)
-    .order('movement_date', { ascending: false })
+    .order('movement_date', { ascending: false }).order('id', { ascending: true })
     .limit(2000)   // 발주가 쌓이므로 넉넉히. 화면 표시는 더 보기로 나눈다
   if (error) throw error
   // customer_id 필터 (purchase_orders 통해서)
@@ -248,7 +248,7 @@ export default function PurchasePage() {
     queryFn: async () => {
       const { data } = await supabase.from('purchase_orders')
         .select('item_id, order_date, projects(code,name)')
-        .in('item_id', propItemIds).not('project_id','is',null).order('order_date',{ascending:false})
+        .in('item_id', propItemIds).not('project_id','is',null).order('order_date',{ascending:false}).order('id', { ascending: true })
       const map={}
       ;(data||[]).forEach(r=>{ if(!r.projects?.code) return; (map[r.item_id]=map[r.item_id]||[]).push(r.projects.code) })
       Object.keys(map).forEach(k=>{ map[k]=[...new Set(map[k])] })

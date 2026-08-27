@@ -74,7 +74,7 @@ async function fetchBOMByCode(code) {
   const data = await fetchAll(() => supabase.from('bom')
     .select('seq,level,item_rev,qty_per_unit, items!bom_item_id_fkey(std_code,name,type,category,unit,manufacturer,manufacturer_code,dept)')
     .eq('customer_id', proj.customer_id).eq('project_id', proj.id)
-    .order('seq').order('created_at'))
+    .order('seq').order('created_at').order('id', { ascending: true }))
   return { rows: data || [], assembly: proj }
 }
 

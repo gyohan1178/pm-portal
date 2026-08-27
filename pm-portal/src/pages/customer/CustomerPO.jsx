@@ -31,7 +31,7 @@ async function fetchCustomerPOs(csId, showAll) {
     // 완료뿐 아니라 취소도 뺀다. 취소 건이 남아 있으면
     // 납기가 지났다는 이유로 '지연' 으로 잡혀 실제보다 많아 보인다.
     if (!showAll) qb = qb.not('status','in','(완료,취소)')
-    return qb.order('promise_date', { ascending: true })
+    return qb.order('promise_date', { ascending: true }).order('id', { ascending: true })
   }
   const data = await fetchAll(make)
   return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date&&p.promise_date<today }))

@@ -29,7 +29,7 @@ async function fetchPendingPOs(customerId, vendorId) {
       .eq('order_type','purchase').not('status','in','(완료,취소)')
     if (customerId) q = q.eq('customer_id', customerId)
     if (vendorId) q = q.eq('vendor_id', vendorId)
-    return q.order('order_date', { ascending: true })
+    return q.order('order_date', { ascending: true }).order('id', { ascending: true })
   }
   return await fetchAll(make)
 }
@@ -48,7 +48,7 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
-      .order('movement_date', { ascending: false })
+      .order('movement_date', { ascending: false }).order('id', { ascending: true })
       .range(off, off + PAGE - 1)
     if (error) throw error
     data = data.concat(batch || [])

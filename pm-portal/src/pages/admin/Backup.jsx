@@ -37,7 +37,7 @@ export default function Backup() {
       const t = TABLES[i]
       setProgress(p => p.map((x, xi) => xi === i ? { ...x, status: '내려받는 중…' } : x))
       try {
-        const rows = await fetchAll(() => supabase.from(t.name).select('*').order('created_at', { ascending: true }))
+        const rows = await fetchAll(() => supabase.from(t.name).select('*').order('created_at', { ascending: true }).order('id', { ascending: true }))
           .catch(() => fetchAll(() => supabase.from(t.name).select('*'))) // created_at 없는 테이블 대비
         const clean = (rows || []).map(r => {
           const o = {}

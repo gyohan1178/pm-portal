@@ -53,7 +53,7 @@ async function fetchBOMDetail(customerId, projectId) {
     .eq('customer_id', customerId)
     .eq('project_id', projectId)
     .order('seq')
-    .order('created_at'))
+    .order('created_at').order('id', { ascending: true }))
   return data || []
 }
 

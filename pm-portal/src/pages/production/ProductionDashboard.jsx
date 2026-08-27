@@ -9,7 +9,7 @@ async function fetchProduction() {
     .from('production')
     .select('id,customer_code,pn,name,hogi,status,req_date,arrival_date,machine_recv,harness_recv,elec_recv')
     .neq('status', '완료')
-    .order('req_date', { ascending: true }))
+    .order('req_date', { ascending: true }).order('id', { ascending: true }))
   return data || []
 }
 
