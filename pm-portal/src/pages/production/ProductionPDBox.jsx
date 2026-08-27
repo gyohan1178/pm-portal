@@ -411,7 +411,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <button onClick={() => edFileRef.current?.click()} disabled={importMut.isPending}
               title="영업관리 파일의 '에드워드 월간 실적' 시트를 읽습니다"
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
-              {importMut.isPending ? '가져오는 중…' : '📗 월간 실적 올리기'}
+              {importMut.isPending ? '올리는 중…' : '📤 PO 업로드'}
             </button>
           </>
         )}

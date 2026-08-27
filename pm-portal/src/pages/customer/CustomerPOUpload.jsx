@@ -294,10 +294,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       // PO 를 고쳤으면 생산관리 호기도 맞춰야 한다.
       //   따로 눌러야 하는 구조라 빠뜨리기 쉬워, 적용 직후 바로 돌린다.
       //   실패해도 PO 적용은 유효하므로 오류를 삼키고 안내만 남긴다.
+      //   납기가 바뀌면 기록을 남긴다. 조용히 넘기면 무엇이 바뀌었는지 알 수 없다.
       let sync = null
       try {
         const { data: sd } = await supabase.rpc('sync_production_from_po',
-          { cs_code: 'AX', p_silent: true })
+          { cs_code: 'AX', p_silent: false })
         sync = sd?.[0] || null
       } catch { /* 연동 실패는 별도 안내 */ }
 
