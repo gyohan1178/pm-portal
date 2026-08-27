@@ -93,7 +93,11 @@ export function parseEdMonthly(buf) {
     blank = 0
 
     const h = hogiOf(proj)
-    if (!h) { skipped++; continue }   // 단품·ETC 는 생산일정에 넣지 않는다
+    if (!h) { skipped++; continue }   // 호기가 없으면 장비가 아니다
+
+    // 단품은 만들지 않고 사서 넘기는 것이라 생산일정에 넣지 않는다
+    const g1 = String(r[cG1] || '').trim()
+    if (g1 === '단품') { skipped++; continue }
 
     const key = `${projOf(proj)}|${h}|${r[cG1] || '기타'}`
     let b = box.get(key)

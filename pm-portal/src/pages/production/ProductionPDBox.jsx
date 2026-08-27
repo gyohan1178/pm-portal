@@ -250,13 +250,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       const existMap = {}
       for (const r of rows) existMap[keyOf(r.pn, r.hogi, r.part)] = r
 
-      let created = 0, updated = 0
+      // 한 줄씩 왕복하면 164건에 164번 오간다. 모아서 한 번에 보낸다.
+      const toUpdate = [], toInsert = []
       for (const rec of records) {
         if (!rec.pn) continue
         const exist = existMap[keyOf(rec.pn, rec.hogi, rec.part)]
         if (exist) {
           // SCHED_FIELDS만 갱신, id/created_at/완료상태/history 보존
-          const patch = { updated_at: new Date().toISOString() }
+          const patch = { id: exist.id, updated_at: new Date().toISOString() }
           // 월간 실적으로 다시 올릴 때 담당자가 손으로 넣은 것을 지우지 않는다.
           //   상태·비고·담당자는 현장에서 관리하는 값이다.
           const keep = edMode ? ['status', 'note', 'memo', 'manager'] : []
@@ -270,12 +271,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             if (f === 'missing_parts') { patch.missing_parts = rec.missing_parts || [] }
             else if (rec[f] !== undefined && rec[f] !== '') patch[f] = rec[f]
           }
-          const { error } = await supabase.from('production').update(patch).eq('id', exist.id)
-          if (error) throw error
-          updated++
+          toUpdate.push({ ...exist, ...patch })
         } else {
-          const ins = {
-            id: 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+          toInsert.push({
+            id: 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
             customer_code: csCode, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
             name: rec.name, pn: rec.pn, hogi: rec.hogi, ccn: rec.ccn, rev: rec.rev,
             status: rec.status, po_received: rec.po_received,
@@ -284,12 +283,26 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             part_issue: rec.part_issue || null, elec_done: rec.elec_done || null,
             note: rec.note, manager: rec.manager || null, missing_parts: rec.missing_parts || [],
             part: rec.part || null, part2: rec.part2 || null, part3: rec.part3 || null, memo: rec.memo || null,
-          }
-          const { error } = await supabase.from('production').insert(ins)
-          if (error) throw error
-          created++
+          })
         }
       }
+
+      // 500개씩 나눠 보낸다. 한 번에 다 보내면 요청이 너무 커진다.
+      const chunk = (arr, n = 500) => {
+        const out = []
+        for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n))
+        return out
+      }
+      for (const part of chunk(toInsert)) {
+        const { error } = await supabase.from('production').insert(part)
+        if (error) throw error
+      }
+      for (const part of chunk(toUpdate)) {
+        const { error } = await supabase.from('production').upsert(part, { onConflict: 'id' })
+        if (error) throw error
+      }
+
+      const created = toInsert.length, updated = toUpdate.length
       return { created, updated }
     },
     onSuccess: (r) => { toastSuccess(`가져오기 완료 — 신규 ${r.created}건 · 일정수정 ${r.updated}건`); qc.invalidateQueries(['production', csCode]) },
