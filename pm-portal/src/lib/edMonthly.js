@@ -67,6 +67,8 @@ export function parseEdMonthly(buf) {
     return -1
   }
   const cG1 = col('구분1')
+  const cG2 = col('구분2')
+  const cG3 = col('구분3')
   const cProj = col('PROJECT', '프로젝트')
   const cPn = col('품번')
   const cQty = col("Q'TY", 'QTY', '수량')
@@ -96,7 +98,11 @@ export function parseEdMonthly(buf) {
     const key = `${projOf(proj)}|${h}|${r[cG1] || '기타'}`
     let b = box.get(key)
     if (!b) {
-      b = { pn: projOf(proj), hogi: `#${h}`, part: String(r[cG1] || '기타').trim(),
+      b = { pn: projOf(proj), hogi: `#${h}`,
+            part: String(r[cG1] || '기타').trim(),
+            // 구분2·3 은 묶음마다 하나로 정해진다. 처음 값을 쓴다.
+            part2: cG2 >= 0 ? String(r[cG2] || '').trim() : '',
+            part3: cG3 >= 0 ? String(r[cG3] || '').trim() : '',
             n: 0, need: [], deliv: [], nodeliv: 0 }
       box.set(key, b)
     }
@@ -112,11 +118,12 @@ export function parseEdMonthly(buf) {
     // 납품 일자가 다 채워졌고 지났으면 완료로 본다
     const done = !!latest && latest <= today && b.nodeliv === 0
     return {
-      pn: b.pn, name: b.pn, hogi: b.hogi, part: b.part,
+      pn: b.pn, name: b.pn, hogi: b.hogi,
+      part: b.part, part2: b.part2 || null, part3: b.part3 || null,
       req_date: b.need.length ? b.need.reduce((a, c) => (c < a ? c : a)) : null,
       status: done ? '완료' : 'PO접수',
       po_received: true,
-      memo: `${b.n}품목`,
+      // 비고는 사람이 쓰는 칸이다. 품목 수 같은 것으로 채우지 않는다.
       missing_parts: [],
     }
   })

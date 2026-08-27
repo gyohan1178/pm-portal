@@ -18,6 +18,18 @@ const STATUS_COLOR = {
   '납품대기': 'bg-amber-50 text-amber-700', '외주': 'bg-slate-200 text-slate-700',
   '완료': 'bg-emerald-50 text-emerald-700',
 }
+// Edwards 구분 — 장비의 어느 부분인지. 눈에 바로 들어오게 색을 나눈다.
+const PART_COLOR = {
+  'EUV':  'bg-violet-50 text-violet-700',
+  'H2D':  'bg-blue-50 text-blue-700',
+  'MFM':  'bg-teal-50 text-teal-700',
+  'BDM':  'bg-amber-50 text-amber-700',
+  'GEN4': 'bg-rose-50 text-rose-700',
+  'ASML': 'bg-cyan-50 text-cyan-700',
+  '단품':  'bg-slate-100 text-slate-600',
+}
+const partColor = (p) => PART_COLOR[String(p || '').trim()] || 'bg-slate-100 text-slate-600'
+
 const dayMs = 86400000
 
 // 가장 최근 리비전변경. PO 연동에서 도면이 바뀌면 쌓인다.
@@ -248,6 +260,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           // 월간 실적으로 다시 올릴 때 담당자가 손으로 넣은 것을 지우지 않는다.
           //   상태·비고·담당자는 현장에서 관리하는 값이다.
           const keep = edMode ? ['status', 'note', 'memo', 'manager'] : []
+          // 구분2·3 은 SCHED_FIELDS 에 없어 따로 넣는다
+          if (edMode) {
+            if (rec.part2 !== undefined) patch.part2 = rec.part2 || null
+            if (rec.part3 !== undefined) patch.part3 = rec.part3 || null
+          }
           for (const f of SCHED_FIELDS) {
             if (keep.includes(f)) continue
             if (f === 'missing_parts') { patch.missing_parts = rec.missing_parts || [] }
@@ -266,7 +283,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             harness_issue: rec.harness_issue || null, harness_done: rec.harness_done || null,
             part_issue: rec.part_issue || null, elec_done: rec.elec_done || null,
             note: rec.note, manager: rec.manager || null, missing_parts: rec.missing_parts || [],
-            part: rec.part || null, memo: rec.memo || null,
+            part: rec.part || null, part2: rec.part2 || null, part3: rec.part3 || null, memo: rec.memo || null,
           }
           const { error } = await supabase.from('production').insert(ins)
           if (error) throw error
@@ -317,7 +334,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     r = r.filter(x => isMainRow(x.pn, csCode) === (mainTab === 'main'))
     if (dq.trim()) {
       const s = dq.toLowerCase()
-      r = r.filter(x => (x.pn || '').toLowerCase().includes(s) || (x.name || '').toLowerCase().includes(s) || (x.hogi || '').toLowerCase().includes(s))
+      // 화면에 보이는 열은 모두 검색되어야 한다
+      r = r.filter(x => [x.pn, x.name, x.hogi, x.part, x.part2, x.part3, x.memo, x.manager]
+        .some(v => String(v || '').toLowerCase().includes(s)))
     }
     r.sort((a, b) => {
       const d = (a.req_date || '9999').localeCompare(b.req_date || '9999')
@@ -517,12 +536,22 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     checked={(()=>{const ids=filtered.filter(r=>!r._month).map(r=>r.id); return ids.length>0 && ids.every(id=>sel.has(id))})()}
                     onChange={e=>{ const ids=filtered.filter(r=>!r._month).map(r=>r.id); setSel(e.target.checked? new Set(ids): new Set()) }} />
                 </th>
-                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isED ? '프로젝트' : '품번'}</th>
-                <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isED ? '품목' : 'PD명'}</th>
+                {isED ? (
+                  /* Edwards 는 구분이 계층이라 큰 갈래부터 놓는다 */
+                  <>
+                    <th rowSpan={2} className="px-2 py-1.5 font-bold">구분1</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">구분2</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">구분3</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">프로젝트</th>
+                  </>
+                ) : (
+                  <>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">품번</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">PD명</th>
+                  </>
+                )}
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">REV</th>
-                {/* Edwards 는 한 호기에 EUV·H2D 가 섞여 부분마다 따로 간다 */}
-                {isED && <th rowSpan={2} className="px-2 py-1.5 font-bold">구분</th>}
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
@@ -543,7 +572,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={isED ? 17 : 16} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={isED ? 17 : 15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -556,15 +585,31 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     <input type="checkbox" checked={sel.has(r.id)} readOnly
                       className="pointer-events-none" />
                   </td>
-                  {/* 품번은 편집 모달 진입점이라 행 선택에서 뺀다 */}
-                  <td data-no-select
-                    className={`px-2 py-2 text-slate-700 text-left cursor-pointer hover:text-indigo-600 ${
-                      isED ? 'max-w-[190px] overflow-hidden text-ellipsis whitespace-nowrap' : 'font-mono'}`}
-                    title={isED ? r.pn : undefined}
-                    onClick={() => setEdit({ ...r })}>
-                    {r.pn}{!isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
-                  </td>
-                  <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
+                  {/* 품번(프로젝트)은 편집 모달 진입점이라 행 선택에서 뺀다 */}
+                  {isED ? (
+                    <>
+                      <td className="px-2 py-2">
+                        {r.part
+                          ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span>
+                          : <span className="text-slate-300">-</span>}
+                      </td>
+                      <td className="px-2 py-2 text-slate-600 text-left max-w-[110px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.part2}>{r.part2 || '-'}</td>
+                      <td className="px-2 py-2 text-slate-600 text-left max-w-[110px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.part3}>{r.part3 || '-'}</td>
+                      <td data-no-select
+                        className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer hover:text-indigo-600"
+                        title={r.pn} onClick={() => setEdit({ ...r })}>
+                        {r.pn}
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600"
+                        onClick={() => setEdit({ ...r })}>
+                        {r.pn}{!isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
+                      </td>
+                      <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
+                    </>
+                  )}
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {
@@ -579,13 +624,6 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       )
                     })()}
                   </td>
-                  {isED && (
-                    <td className="px-2 py-2">
-                      {r.part
-                        ? <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">{r.part}</span>
-                        : <span className="text-slate-300">-</span>}
-                    </td>
-                  )}
                   <td className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
