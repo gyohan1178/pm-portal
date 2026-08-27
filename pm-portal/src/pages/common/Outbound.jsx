@@ -184,9 +184,13 @@ export default function Outbound() {
   async function saveLocation(item_id, location) {
     if (!guardEdit()) return
     const loc = (location || '').trim()
-    // inventory 행이 있으면 UPDATE, 없으면 INSERT (item_id UNIQUE)
-    const { error } = await supabase.from('inventory')
-      .upsert({ item_id, location: loc || null }, { onConflict: 'item_id' })
+    // upsert 는 빠뜨린 컬럼을 null 로 덮어써 수량이 지워진다.
+    //   있으면 위치만 고치고, 없을 때만 새로 만든다.
+    const { data: cur } = await supabase.from('inventory')
+      .select('item_id').eq('item_id', item_id).maybeSingle()
+    const { error } = cur
+      ? await supabase.from('inventory').update({ location: loc || null }).eq('item_id', item_id)
+      : await supabase.from('inventory').insert({ item_id, location: loc || null, qty: 0 })
     if (error) { toastError('위치 저장 오류: ' + error.message); return }
     qc.invalidateQueries(['outLocMeta'])
     qc.invalidateQueries(['inventory'])

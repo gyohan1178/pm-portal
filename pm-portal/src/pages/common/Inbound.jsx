@@ -433,7 +433,12 @@ export default function Inbound() {
                         <span className="font-mono text-indigo-600 w-28 flex-shrink-0 truncate">
                           {r.items?.std_code || '-'}
                         </span>
-                        <span className="text-slate-600 flex-1 min-w-0 truncate">{r.items?.name}</span>
+                        <span className="text-slate-600 flex-1 min-w-0 truncate">
+                          {r.items?.name}
+                          {r.memo && (
+                            <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px]" title={r.memo}>{r.memo}</span>
+                          )}
+                        </span>
                         <span className="text-slate-400 w-20 flex-shrink-0 truncate text-right">
                           {r.vendors?.name || ''}
                         </span>
@@ -507,6 +512,11 @@ export default function Inbound() {
                               <td className="px-3 py-2">
                                 <div className="font-mono text-indigo-600 truncate max-w-[160px]">{po.items?.std_code}</div>
                                 <div className="text-[11px] text-slate-500 truncate max-w-[160px]">{po.items?.name||''}</div>
+                                {/* 발주할 때 적어 둔 메모. 입고 때도 봐야 한다. */}
+                                {po.memo && (
+                                  <div className="text-[11px] text-amber-700 bg-amber-50 rounded px-1 mt-0.5 truncate max-w-[160px]"
+                                    title={po.memo}>{po.memo}</div>
+                                )}
                               </td>
                               <td className="px-3 py-2">
                                 <div className="text-slate-700 truncate max-w-[130px]">{po.items?.manufacturer||'-'}</div>

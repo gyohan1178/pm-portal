@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import RackSpot, { parseLoc } from '../../components/RackSpot'
+import RackMiniMap, { useRackMap } from '../../components/RackMiniMap'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
@@ -78,6 +80,10 @@ async function fetchBOMByCode(code) {
 
 export default function FieldSearch() {
   const [tab, setTab] = useState('product')
+  // 창고에서 서서 찾을 때, 랙 몇 칸 몇 층인지 그림으로 보여 준다
+  const [detail, setDetail] = useState(null)
+  const { data: rackMap } = useRackMap()
+  const racks = rackMap?.racks || []
 
   // 제품 검색
   const [pq, setPq] = useState('')
@@ -156,7 +162,8 @@ export default function FieldSearch() {
                 {/* 📱 모바일: 카드형 (QR→폰 조회 대비) */}
                 <div className="md:hidden space-y-2">
                   {items.map(it => (
-                    <div key={it.id} className="rounded-xl border border-slate-200 bg-white p-3">
+                    <div key={it.id} onClick={() => setDetail(it)}
+                      className="rounded-xl border border-slate-200 bg-white p-3 cursor-pointer active:bg-slate-50">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-bold text-indigo-600">{it.std_code}</span>
                         <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span>
@@ -355,6 +362,81 @@ export default function FieldSearch() {
                     </div>
                   </div>)}
         </>
+      )}
+
+      {/* 품목 상세 — 창고에서 어느 칸인지 그림으로 */}
+      {detail && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-3"
+          onClick={() => setDetail(null)}>
+          <div className="bg-white w-full max-w-md rounded-2xl max-h-[88vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div className="px-4 py-3 border-b border-slate-100 flex items-start gap-2">
+              <div className="flex-1 min-w-0">
+                <p className="font-mono text-base font-bold text-indigo-600">{detail.std_code}</p>
+                <p className="text-sm text-slate-700 mt-0.5">{detail.name}</p>
+              </div>
+              <button onClick={() => setDetail(null)} className="text-slate-400 text-2xl leading-none px-1">×</button>
+            </div>
+
+            <div className="p-4 space-y-3">
+              {/* 위치 — 창고에서 제일 먼저 보는 것이라 맨 위에 둔다 */}
+              <div>
+                <p className="text-xs font-bold text-slate-500 mb-1.5">위치</p>
+                {String(detail.location || '').split(',').map(l => l.trim()).filter(Boolean).length === 0 ? (
+                  <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-center">
+                    <span className="text-sm text-slate-400">위치가 지정되지 않았습니다</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {String(detail.location).split(',').map(l => l.trim()).filter(Boolean).map(l => {
+                      const p2 = parseLoc(l)
+                      const rk = p2 && racks.find(r => r.code === p2.rack)
+                      return (
+                        <div key={l} className="space-y-2">
+                          {/* 창고 어디쯤인지 먼저, 그다음 랙 안 몇 칸인지 */}
+                          {p2 && racks.length > 0 && (
+                            <RackMiniMap code={p2.rack} racks={racks} objs={rackMap?.objs || []} />
+                          )}
+                          <RackSpot loc={l} rack={rk} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <p className="text-xs font-bold text-slate-500 mb-0.5">제조사</p>
+                  <p className="text-slate-700">{detail.manufacturer || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-500 mb-0.5">제조사품번</p>
+                  <p className="font-mono text-slate-700 break-all">{detail.manufacturer_code || '-'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-500 mb-0.5">단위</p>
+                  <p className="text-slate-700">{detail.unit || 'EA'}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-bold text-slate-500 mb-0.5">구분</p>
+                  <p className="text-slate-700">{detail.type || '-'}</p>
+                </div>
+                {detail.spec && (
+                  <div className="col-span-2">
+                    <p className="text-xs font-bold text-slate-500 mb-0.5">규격</p>
+                    <p className="text-slate-600 text-xs">{detail.spec}</p>
+                  </div>
+                )}
+              </div>
+
+              <button onClick={() => { openBOM(detail.std_code); setDetail(null) }}
+                className="w-full py-2.5 text-sm font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50">
+                📋 어디에 쓰이는지 보기
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
