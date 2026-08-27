@@ -32,9 +32,10 @@ export function projOf(proj) {
 const ymd = (v) => {
   if (!v) return ''
   if (v instanceof Date) {
-    // 엑셀 날짜는 UTC 자정이라 로컬로 읽으면 하루 당겨진다
-    const p = (n) => String(n).padStart(2, '0')
-    return `${v.getUTCFullYear()}-${p(v.getUTCMonth() + 1)}-${p(v.getUTCDate())}`
+    // 엑셀은 날짜를 숫자로 담아 자정에서 몇십 초 모자라게 나올 때가 있다.
+    //   그대로 읽으면 하루가 당겨진다. 가장 가까운 자정으로 맞춘다.
+    const wall = v.getTime() - v.getTimezoneOffset() * 60000
+    return new Date(Math.round(wall / 86400000) * 86400000).toISOString().slice(0, 10)
   }
   const s = String(v).slice(0, 10)
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : ''
