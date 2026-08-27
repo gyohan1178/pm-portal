@@ -5,6 +5,7 @@ import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { downloadProposalExcel } from '../../lib/proposalExcel'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { useMe } from '../../hooks/useProfile'
 import { logActivity } from '../../lib/activityLog'
@@ -624,26 +625,26 @@ export default function PurchasePage() {
     ? [...checkedPOs].sort((a,b)=>{ const va=PROP_SORT[propSort.key](a), vb=PROP_SORT[propSort.key](b); const c=PROP_NUM.has(propSort.key)?(Number(va)||0)-(Number(vb)||0):String(va).localeCompare(String(vb),'ko'); return propSort.dir==='asc'?c:-c })
     : checkedPOs
   const onPropSort = k => setPropSort(prev=>prev.key===k?{key:k,dir:prev.dir==='asc'?'desc':'asc'}:{key:k,dir:'asc'})
-  function exportProposal() {
-    const aoa = []
-    aoa.push(['구매 품의서']); aoa.push([])
-    aoa.push(['1. 개요']); (overview||'').split('\n').forEach(l=>aoa.push([l])); aoa.push([])
-    aoa.push(['2. 월별 매입 합계']); 
-    aoa.push(['결제구분', ...propMonths.map(m=>m.slice(5)+'월')])
-    PAYS.forEach(pay=>aoa.push([pay, ...propMonths.map(m=>propSum[pay][m]||0)]))
-    aoa.push(['합계', ...propMonths.map(m=>propMonthTotal(m))]); aoa.push([])
-    aoa.push(['3. 세부 품목'])
-    aoa.push(['발주일자','입고요청일','공급업체','품목코드','제조사','제조사품번','수량','발주금액','단위','합계금액','결제방식','프로젝트이력','비고'])
-    propSorted.forEach(p=>{
-      const amt=Math.round((p.qty_ordered||0)*(p.unit_price||0))
-      aoa.push([p.order_date||'', p.promise_date||'', p.vendors?.name||'', p.items?.std_code||'',
-        p.items?.manufacturer||'', p.items?.manufacturer_code||'', p.qty_ordered||0, p.unit_price||0,
-        p.items?.unit||'', amt, payOf(p.id), (projHist[p.item_id]||[]).join(', '), noteOf(p.id)])
-    })
-    aoa.push(['','','','','','','','','합계',propGrand,'','',''])
-    const wb=XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '품의서')
-    XLSX.writeFile(wb, `구매품의서_${new Date().toISOString().split('T')[0]}.xlsx`)
+  async function exportProposal() {
+    try {
+      await downloadProposalExcel({
+        overview,
+        months: propMonths,
+        pays: PAYS,
+        sum: propSum,
+        monthTotal: propMonthTotal,
+        grand: propGrand,
+        rows: propSorted.map(p => ({
+          order_date: p.order_date || '', promise_date: p.promise_date || '',
+          vendor: p.vendors?.name || '', std_code: p.items?.std_code || '',
+          maker: p.items?.manufacturer || '', maker_code: p.items?.manufacturer_code || '',
+          qty: p.qty_ordered || 0, price: p.unit_price || 0,
+          unit: p.items?.unit || '',
+          amount: Math.round((p.qty_ordered || 0) * (p.unit_price || 0)),
+          pay: payOf(p.id), proj: (projHist[p.item_id] || []).join(', '), note: noteOf(p.id),
+        })),
+      })
+    } catch (e) { toastError('엑셀 만들기 실패: ' + e.message) }
   }
   function printProposal() {
     const esc = v => String(v??'').replace(/[<>&]/g, c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))
