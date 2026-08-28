@@ -7,7 +7,7 @@
 
 // 'W7-05-3' → { rack: 'W7', row: 5, level: 3 }
 export function parseLoc(loc) {
-  const m = /^([A-Z]{1,2}\d?)-(\d{1,2})-(\d{1,2})$/i.exec(String(loc || '').trim())
+  const m = /^([A-Z]{1,2}\d?)\s*-\s*(\d{1,2})\s*-\s*(\d{1,2})$/i.exec(String(loc || '').trim())
   if (!m) return null
   return { rack: m[1].toUpperCase(), row: Number(m[2]), level: Number(m[3]) }
 }

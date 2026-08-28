@@ -47,9 +47,10 @@ export default function StockFinder() {
     inputRef.current?.focus()
   }
 
+  // 앞뒤 공백이 섞여 들어오면 못 읽어 '위치 미지정' 으로 보였다
   const parseLoc = (loc) => {
-    const m = String(loc || '').match(/^([A-Z]+\d*)-(\d+)-(\d+)$/i)
-    return m ? { rack: m[1], cell: m[2], lv: m[3] } : null
+    const m = String(loc || '').trim().match(/^([A-Z]+\d*)\s*-\s*(\d+)\s*-\s*(\d+)$/i)
+    return m ? { rack: m[1].toUpperCase(), cell: m[2], lv: m[3] } : null
   }
 
   const outLink = (h, kind) => {
