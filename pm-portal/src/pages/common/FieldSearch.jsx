@@ -23,16 +23,24 @@ async function searchItems(q) {
   if (error) throw error
   const ids = (data || []).map(d => d.id)
   const locMap = {}
+  const qtyMap = {}
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: inv } = await supabase.from('inventory').select('item_id,location').in('item_id', ids.slice(i, i + 200))
+    // 위치만 보면 몇 개 남았는지 몰라 재고현황을 다시 열어야 한다
+    const { data: inv } = await supabase.from('inventory')
+      .select('item_id,location,qty').in('item_id', ids.slice(i, i + 200))
     ;(inv || []).forEach(r => {
       if (r.location) {
         if (!locMap[r.item_id]) locMap[r.item_id] = new Set()
         locMap[r.item_id].add(r.location)
       }
+      qtyMap[r.item_id] = (qtyMap[r.item_id] || 0) + (Number(r.qty) || 0)
     })
   }
-  return (data || []).map(d => ({ ...d, location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '' }))
+  return (data || []).map(d => ({
+    ...d,
+    location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
+    qty: qtyMap[d.id] ?? null,
+  }))
 }
 
 // ── 자동완성 (2글자↑, 상위 8건) ──
@@ -167,7 +175,15 @@ export default function FieldSearch() {
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-bold text-indigo-600">{it.std_code}</span>
                         <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span>
-                        {it.location && <span className="ml-auto px-2 py-0.5 rounded bg-slate-800 text-white font-mono text-xs font-bold">{it.location}</span>}
+                        <span className="ml-auto flex items-center gap-1.5">
+                          {it.qty != null && (
+                            <span className={`px-1.5 py-0.5 rounded font-mono text-xs font-bold ${
+                              it.qty > 0 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-400'}`}>
+                              {Number(it.qty).toLocaleString('ko-KR')}{it.unit || 'EA'}
+                            </span>
+                          )}
+                          {it.location && <span className="px-2 py-0.5 rounded bg-slate-800 text-white font-mono text-xs font-bold">{it.location}</span>}
+                        </span>
                       </div>
                       <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
                       <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono">{it.manufacturer_code || '-'}</span></div>
@@ -181,7 +197,7 @@ export default function FieldSearch() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
-                        {['기준코드', '품명', '구분', '제조사', '제조사품번', '규격', '위치', 'BOM'].map(h =>
+                        {['기준코드', '품명', '구분', '제조사', '제조사품번', '규격', '재고', '위치', 'BOM'].map(h =>
                           <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
                       </tr></thead>
                       <tbody>
@@ -193,6 +209,10 @@ export default function FieldSearch() {
                             <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
                             <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}</td>
                             <td className="px-3 py-2 text-slate-500 max-w-[200px] truncate" title={it.spec}>{it.spec || '-'}</td>
+                            <td className={`px-3 py-2 text-right font-mono font-bold ${
+                              it.qty > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
+                              {it.qty != null ? Number(it.qty).toLocaleString('ko-KR') : '-'}
+                            </td>
                             <td className="px-3 py-2 font-semibold text-slate-700">{it.location || '-'}</td>
                             <td className="px-3 py-2">
                               <button onClick={() => openBOM(it.std_code)} className="text-[11px] text-indigo-500 hover:underline font-semibold">전개 ↗</button>
@@ -381,7 +401,15 @@ export default function FieldSearch() {
             <div className="p-4 space-y-3">
               {/* 위치 — 창고에서 제일 먼저 보는 것이라 맨 위에 둔다 */}
               <div>
-                <p className="text-xs font-bold text-slate-500 mb-1.5">위치</p>
+                <div className="flex items-baseline gap-2 mb-1.5">
+                  <p className="text-xs font-bold text-slate-500">위치</p>
+                  {detail.qty != null && (
+                    <span className={`ml-auto font-mono text-sm font-bold ${
+                      detail.qty > 0 ? 'text-emerald-700' : 'text-slate-400'}`}>
+                      재고 {Number(detail.qty).toLocaleString('ko-KR')} {detail.unit || 'EA'}
+                    </span>
+                  )}
+                </div>
                 {String(detail.location || '').split(',').map(l => l.trim()).filter(Boolean).length === 0 ? (
                   <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-3 text-center">
                     <span className="text-sm text-slate-400">위치가 지정되지 않았습니다</span>

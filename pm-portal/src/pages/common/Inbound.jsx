@@ -358,23 +358,18 @@ export default function Inbound() {
       {tab==='process' && (
         <>
           <CsTabs sel={selCustomer} onSel={setSelCustomer} customers={customers} />
-          <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">구매처 검색</label>
-              <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 입력"
-                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">입고 날짜</label>
-              <div className="flex items-center gap-2">
-                <input type="date" value={inboundDate} onChange={e=>setInboundDate(e.target.value)}
-                  className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
-                {inboundDate !== todayStr() && (
-                  <button onClick={()=>setInboundDate(todayStr())} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">오늘로</button>
-                )}
-              </div>
-              {inboundDate !== todayStr() && <p className="text-xs text-amber-600 mt-1">⚠️ 오늘이 아닌 날짜</p>}
-            </div>
+          {/* 위가 길면 표가 그만큼 밀린다. 라벨을 빼고 한 줄로 눕힌다. */}
+          <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
+            <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 검색"
+              className="w-44 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            <span className="text-xs text-slate-400">입고일</span>
+            <input type="date" value={inboundDate} onChange={e=>setInboundDate(e.target.value)}
+              className={`px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                inboundDate !== todayStr() ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white'}`}/>
+            {inboundDate !== todayStr() && (
+              <button onClick={()=>setInboundDate(todayStr())}
+                className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">오늘로</button>
+            )}
             <div className="ml-auto text-xs text-slate-400 self-center whitespace-nowrap">
               미입고 {rows.length}건
               {checkedRows.length > 0 && ` · 선택 ${checkedRows.length}`}
@@ -392,29 +387,34 @@ export default function Inbound() {
           )}
 
           {/* 담아둔 것 — 검색을 바꿔도 남아 있어야 여러 품목을 찾아가며 담을 수 있다 */}
-          {checkedRows.length > 0 && (
-            <div className="rounded-xl border-2 border-indigo-300 bg-indigo-50/50 overflow-hidden">
-              <div className="px-3.5 py-2.5 flex items-center gap-2 flex-wrap border-b border-indigo-200">
-                <span className="text-xs font-bold text-indigo-700">
-                  담은 품목 {checkedRows.length}건
+          {/* 담을 때마다 이 칸이 커지면 아래 표가 밀려 누르던 자리가 어긋난다.
+              네 줄 높이를 미리 잡아 두고 그 안에서만 늘어나게 한다. */}
+          <div className={`rounded-xl border-2 overflow-hidden ${
+            checkedRows.length > 0 ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 bg-slate-50'}`}>
+              <div className={`px-3.5 py-2.5 flex items-center gap-2 flex-wrap ${
+                checkedRows.length > 0 ? 'border-b border-indigo-200' : ''}`}>
+                <span className={`text-xs font-bold ${checkedRows.length > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>
+                  {checkedRows.length > 0 ? `담은 품목 ${checkedRows.length}건` : '담은 품목 없음 — 아래에서 체크하세요'}
                 </span>
                 {checkedAmt > 0 && (
                   <span className="text-xs font-bold text-slate-700">
                     {checkedAmt.toLocaleString('ko-KR')}원
                   </span>
                 )}
-                <button onClick={() => setCartOpen(v => !v)}
-                  className="text-[11px] text-indigo-600 font-semibold hover:underline">
-                  {cartOpen ? '접기 ▲' : '펼치기 ▼'}
-                </button>
-                <button onClick={() => { setChecked({}); setInboundData({}) }}
-                  className="ml-auto text-[11px] text-slate-400 hover:text-rose-500">
-                  전체 해제
-                </button>
+                {checkedRows.length > 0 && (<>
+                  <button onClick={() => setCartOpen(v => !v)}
+                    className="text-[11px] text-indigo-600 font-semibold hover:underline">
+                    {cartOpen ? '접기 ▲' : '펼치기 ▼'}
+                  </button>
+                  <button onClick={() => { setChecked({}); setInboundData({}) }}
+                    className="ml-auto text-[11px] text-slate-400 hover:text-rose-500">
+                    전체 해제
+                  </button>
+                </>)}
               </div>
 
               {cartOpen && (
-                <div className="max-h-52 overflow-y-auto divide-y divide-indigo-100">
+                <div className="h-[148px] overflow-y-auto divide-y divide-indigo-100">
                   {checkedRows.map(r => {
                     const d = inboundData[r.id] || {}
                     const qty = Number(d.qty) || 0
@@ -456,7 +456,6 @@ export default function Inbound() {
                 </div>
               )}
             </div>
-          )}
 
           <div className="space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
