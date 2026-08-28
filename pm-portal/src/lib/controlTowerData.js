@@ -17,10 +17,12 @@ async function fetchShortageFor(customerIds) {
     const pages = Math.ceil(count / 1000)
     const reqs = []
     for (let i = 0; i < pages; i++) {
-      // TODO: 컬럼 이름 확인 후 필요한 열만 뽑도록 좁힐 것.
-      //   지금은 8,743 행을 통째로 받아 화면 열 때마다 무겁다.
+      // 관제탑이 쓰는 열만 받는다.
+      //   select('*') 로 8,743 행을 통째로 받으면 화면 열 때마다 무겁다.
+      //   parents 는 목록이라 특히 크고, 여기서 쓰지 않는다.
       reqs.push(
-        supabase.from('forecast_shortage_cache').select('*')
+        supabase.from('forecast_shortage_cache')
+          .select('item_id,std_code,name,customer_id,year_month,current_stock,demand,incoming,projected,lt_weeks')
           .eq('customer_id', cid).order('item_id').range(i * 1000, i * 1000 + 999)
           .then(r => r.data || [])
       )

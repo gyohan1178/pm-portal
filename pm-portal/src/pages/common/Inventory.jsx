@@ -128,29 +128,26 @@ export default function Inventory() {
       const payload = Object.entries(byId).map(([item_id, qty]) => ({ item_id, qty }))
 
       // upsert 는 빠뜨린 컬럼을 null 로 덮어써 위치가 지워진다.
-      //   이미 있는 것은 수량만 update, 없는 것만 insert 한다.
+      //   기존 위치를 미리 읽어 함께 넣으면, 한 번에 보내면서도 위치가 남는다.
+      //   (한 줄씩 update 하면 2,000 건에 2,000 번 오간다)
       const ids = payload.map(p => p.item_id)
-      const have = new Set()
+      const locMap = new Map()
       for (let i = 0; i < ids.length; i += 300) {
         const { data } = await supabase.from('inventory')
-          .select('item_id').in('item_id', ids.slice(i, i + 300))
-        ;(data || []).forEach(r => have.add(r.item_id))
+          .select('item_id,location').in('item_id', ids.slice(i, i + 300))
+        ;(data || []).forEach(r => locMap.set(r.item_id, r.location ?? null))
       }
-      const toInsert = payload.filter(p => !have.has(p.item_id))
-      const toUpdate = payload.filter(p => have.has(p.item_id))
+      const merged = payload.map(p => ({
+        item_id: p.item_id, qty: p.qty,
+        location: locMap.has(p.item_id) ? locMap.get(p.item_id) : null,
+      }))
 
       let applied = 0
-      for (let i = 0; i < toInsert.length; i += 500) {
-        const chunk = toInsert.slice(i, i + 500)
-        const { error } = await supabase.from('inventory').insert(chunk)
+      for (let i = 0; i < merged.length; i += 500) {
+        const chunk = merged.slice(i, i + 500)
+        const { error } = await supabase.from('inventory').upsert(chunk, { onConflict: 'item_id' })
         if (error) throw error
         applied += chunk.length
-      }
-      for (const p of toUpdate) {
-        const { error } = await supabase.from('inventory')
-          .update({ qty: p.qty }).eq('item_id', p.item_id)
-        if (error) throw error
-        applied++
       }
       return { applied, skipped }
     },

@@ -28,10 +28,26 @@ export default function StockFinder() {
     setBusy(true)
     timer.current = setTimeout(async () => {
       const t = v.trim()
-      const { data } = await supabase.from('items')
-        .select('id,std_code,name,unit,manufacturer,manufacturer_code, inventory(qty,location)')
+      const { data: items } = await supabase.from('items')
+        .select('id,std_code,name,unit,manufacturer,manufacturer_code')
         .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%,spec.ilike.%${t}%`)
+        .order('std_code')
         .limit(20)
+
+      // 재고는 따로 가져온다.
+      //   items 에서 inventory(...) 로 딸려 오게 하면
+      //   위치가 있는데도 빈 값이 오는 경우가 있었다.
+      const ids = (items || []).map(x => x.id)
+      const invMap = {}
+      if (ids.length) {
+        const { data: inv } = await supabase.from('inventory')
+          .select('item_id,qty,location').in('item_id', ids)
+        ;(inv || []).forEach(r => { invMap[r.item_id] = r })
+      }
+      const data = (items || []).map(x => ({
+        ...x,
+        inventory: invMap[x.id] ? [invMap[x.id]] : [],
+      }))
       // 위치가 있는 것을 먼저 — 찾으러 온 사람에게 필요한 답이다
       const rows = (data || []).sort((a, b) => {
         const al = a.inventory?.[0]?.location ? 0 : 1
