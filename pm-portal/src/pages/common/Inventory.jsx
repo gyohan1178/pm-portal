@@ -19,7 +19,7 @@ async function fetchInventory(search) {
     const { data, error } = await supabase
       .from('inventory')
       .select('*, items(std_code,name,type,js_code,unit,safety_stock,lt_weeks,manufacturer,manufacturer_code,purchase_price,dept,stock_managed,customer_item_codes(customer_code,customers(name,code)))')
-      .order('updated_at', { ascending: false })
+      .order('updated_at', { ascending: false }).order('item_id')
       .range(from, from + 999)
     if (error) throw error
     all.push(...(data || []))

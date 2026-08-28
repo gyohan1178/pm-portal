@@ -106,7 +106,7 @@ async function fetchForecast(csId) {
     const { data: page } = await supabase.from('forecasts')
       .select('batch_id, received_date, created_at')
       .eq('customer_id', csId)
-      .order('created_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false, nullsFirst: false }).order('batch_id')
       .range(from, from + 999)
     if (!page || !page.length) break
     page.forEach(b => { if (!seen.find(x => x.batch_id === b.batch_id)) seen.push(b) })
@@ -122,7 +122,8 @@ async function fetchForecast(csId) {
       let q = supabase.from('forecasts').select('std_code,item_name,year_month,qty')
         .eq('customer_id', csId)
       q = (b.batch_id == null) ? q.is('batch_id', null) : q.eq('batch_id', b.batch_id)
-      const { data } = await q.range(from, from + 999)
+      // 정렬이 없으면 페이지마다 순서가 달라져 같은 행이 두 번 오거나 빠진다
+      const { data } = await q.order('std_code').order('year_month').range(from, from + 999)
       all.push(...(data || [])); if (!data || data.length < 1000) break
     }
     return all

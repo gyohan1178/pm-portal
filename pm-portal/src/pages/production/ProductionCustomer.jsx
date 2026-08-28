@@ -19,7 +19,7 @@ async function fetchByCustomer(code) {
   for (let from = 0; ; from += 1000) {
     const { data, error } = await supabase.from('production')
       .select('*').eq('customer_code', code)
-      .order('req_date', { ascending: true })
+      .order('req_date', { ascending: true }).order('id')
       .range(from, from + 999)
     if (error) throw error
     all.push(...(data || []))

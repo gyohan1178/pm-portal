@@ -71,7 +71,7 @@ async function fetchItems(search, type, field = '전체') {
   for (let from = 0; from < LIMIT_SEARCH; from += 1000) {
     let q = supabase.from('items')
       .select('*, vendors(id,name), customer_item_codes(id,customer_code,customer_id)')
-      .order('std_code')
+      .order('std_code').order('id')
       .range(from, from + 999)
     if (search) q = q.or(buildOr())
     if (type !== '전체') q = q.eq('type', type)

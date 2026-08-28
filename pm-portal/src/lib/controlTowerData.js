@@ -21,7 +21,7 @@ async function fetchShortageFor(customerIds) {
       //   지금은 8,743 행을 통째로 받아 화면 열 때마다 무겁다.
       reqs.push(
         supabase.from('forecast_shortage_cache').select('*')
-          .eq('customer_id', cid).range(i * 1000, i * 1000 + 999)
+          .eq('customer_id', cid).order('item_id').range(i * 1000, i * 1000 + 999)
           .then(r => r.data || [])
       )
     }
@@ -66,7 +66,7 @@ async function fetchProdFor(codes) {
     for (let i = 0; i < pages; i++) {
       reqs.push(
         supabase.from('production').select('*')
-          .eq('customer_code', code.toUpperCase()).range(i * 1000, i * 1000 + 999)
+          .eq('customer_code', code.toUpperCase()).order('id').range(i * 1000, i * 1000 + 999)
           .then(r => r.data || [])
       )
     }

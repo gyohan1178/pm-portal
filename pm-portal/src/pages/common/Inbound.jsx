@@ -357,15 +357,8 @@ export default function Inbound() {
 
       {tab==='process' && (
         <>
+          <CsTabs sel={selCustomer} onSel={setSelCustomer} customers={customers} />
           <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">고객사</label>
-              <select value={selCustomer} onChange={e=>setSelCustomer(e.target.value)}
-                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                <option value="">전체</option>
-                {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">구매처 검색</label>
               <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 입력"
@@ -655,6 +648,7 @@ export default function Inbound() {
 
       {tab==='history' && (
         <div className="space-y-4">
+          <CsTabs sel={hCustomer} onSel={setHCustomer} customers={customers} />
           <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">시작일</label>
@@ -665,14 +659,6 @@ export default function Inbound() {
               <label className="block text-xs font-bold text-slate-500 mb-1">종료일</label>
               <input type="date" value={hTo} onChange={e=>setHTo(e.target.value)}
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
-            </div>
-            <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">고객사</label>
-              <select value={hCustomer} onChange={e=>setHCustomer(e.target.value)}
-                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
-                <option value="">전체</option>
-                {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">구매처 검색</label>
@@ -768,6 +754,31 @@ export default function Inbound() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+// 고객사 탭. 구매발주와 같은 모양으로 맞춘다.
+//   드롭다운은 지금 뭘 보고 있는지 한눈에 안 들어온다.
+const CS_COLOR = { ax: '#8b5cf6', ed: '#3b82f6', vm: '#10b981', csk: '#f59e0b' }
+
+function CsTabs({ sel, onSel, customers }) {
+  return (
+    <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit mb-3">
+      <button onClick={() => onSel('')}
+        className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+          !sel ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+        전체
+      </button>
+      {customers.map(c => (
+        <button key={c.id} onClick={() => onSel(c.id)}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
+            sel === c.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+          <span className="w-2 h-2 rounded-full flex-shrink-0"
+            style={{ background: CS_COLOR[String(c.code || '').toLowerCase()] || '#94a3b8' }} />
+          {c.name}
+        </button>
+      ))}
     </div>
   )
 }

@@ -102,7 +102,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
           .select('id,po_number,order_line,del_line,item_rev,qty_ordered,unit_price,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
-          .eq('customer_id', csId).eq('order_type', 'customer_po')
+          .eq('customer_id', csId).eq('order_type', 'customer_po').order('id')
           .range(from, from + 999)
         if (error) throw error
         all.push(...(data || [])); if (!data || data.length < 1000) break

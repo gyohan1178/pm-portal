@@ -11,7 +11,8 @@ async function pageAll(table, select, build) {
   for (let i = 0; i < pages; i++) {
     let q = supabase.from(table).select(select)
     if (build) q = build(q)
-    reqs.push(q.range(i * 1000, i * 1000 + 999).then(r => r.data || []))
+    // 정렬이 없으면 페이지마다 순서가 달라져 같은 행이 두 번 오거나 빠진다
+      reqs.push(q.order('id').range(i * 1000, i * 1000 + 999).then(r => r.data || []))
   }
   return (await Promise.all(reqs)).flat()
 }
