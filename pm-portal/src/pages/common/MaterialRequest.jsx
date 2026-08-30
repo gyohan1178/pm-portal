@@ -59,6 +59,7 @@ export default function MaterialRequest() {
     urgency: '보통', purpose: '', product_code: '', product_name: '',
     unit_no: '', need_date: '',
     requester_name: '', check_dept: '', customer_code: '',
+    req_kind: '',        // 하네스팀일 때만 — 제작 | 절단
   })
   const [rows, setRows] = useState([emptyRow()])
   // ASSY 로 요청 — 그 BOM 부품을 제작구분별로 한꺼번에 가져온다
@@ -170,12 +171,22 @@ export default function MaterialRequest() {
     if (!head.purpose.trim()) { toastError('사용 목적을 입력하세요'); return }
     if (!head.requester_name.trim()) { toastError('요청자를 입력하세요'); return }
     if (!head.check_dept) { toastError('확인부서를 선택하세요'); return }
+    if (head.check_dept === '하네스팀' && !head.req_kind) {
+      toastError('요청 종류를 고르세요 (제작·절단)'); return
+    }
+    if (head.check_dept === '하네스팀' && head.req_kind === '절단'
+        && valid.some(r => !(Number(r.cut_mm) > 0))) {
+      toastError('절단 길이를 적어 주세요'); return
+    }
     setBusy(true)
     try {
       const payload = valid.map(r => ({
         urgency: head.urgency, purpose: head.purpose,
         requester_name: head.requester_name, check_dept: head.check_dept,
         customer_code: head.customer_code,
+        req_kind: head.check_dept === '하네스팀' ? (head.req_kind || null) : null,
+        cut_mm: head.check_dept === '하네스팀' && head.req_kind === '절단'
+          ? (Number(r.cut_mm) || null) : null,
         product_code: head.product_code, product_name: head.product_name,
         unit_no: head.unit_no, need_date: head.need_date || null,
         item_id: r.item_id, std_code: r.std_code, item_name: r.item_name,
@@ -566,6 +577,24 @@ export default function MaterialRequest() {
                   ))}
                 </div>
               </div>
+              {/* 하네스팀은 만들어 달라는 것과 잘라 달라는 것이 다르다 */}
+              {head.check_dept === '하네스팀' && (
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">요청 종류 *</label>
+                  <div className="flex gap-1">
+                    {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요']].map(([k, t]) => (
+                      <button key={k} onClick={() => setHead(h => ({ ...h, req_kind: k }))}
+                        title={t}
+                        className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border whitespace-nowrap ${
+                          head.req_kind === k
+                            ? 'border-indigo-500 bg-indigo-600 text-white'
+                            : 'border-slate-200 bg-white text-slate-500'}`}>
+                        {k}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">고객사</label>
                 <select value={head.customer_code}
@@ -686,6 +715,16 @@ export default function MaterialRequest() {
                       </button>
                     )}
                   </div>
+                  {/* 절단은 길이를 함께 적어야 한다 */}
+                  {head.check_dept === '하네스팀' && head.req_kind === '절단' && (
+                    <div className="flex items-center gap-1">
+                      <input type="number" inputMode="decimal" value={r.cut_mm || ''}
+                        onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, cut_mm: e.target.value } : x))}
+                        placeholder="길이"
+                        className="w-20 px-2 py-2 text-sm text-right font-bold border border-amber-300 bg-amber-50 rounded-lg" />
+                      <span className="text-[11px] text-slate-400">mm</span>
+                    </div>
+                  )}
                   <input type="number" inputMode="decimal" value={r.qty}
                     onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, qty: e.target.value } : x))}
                     placeholder="수량"
@@ -1133,6 +1172,13 @@ export default function MaterialRequest() {
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
                                 h.check_dept.includes('하네스') ? 'bg-violet-100 text-violet-700' : 'bg-teal-100 text-teal-700'}`}>
                                 {h.check_dept}
+                              </span>
+                            )}
+                            {/* 만들어 달라는 건지 잘라만 달라는 건지 */}
+                            {h.req_kind && (
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
+                                h.req_kind === '절단' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                {h.req_kind}{h.req_kind === '절단' && h.cut_mm ? ` ${Number(h.cut_mm).toLocaleString('ko-KR')}mm` : ''}
                               </span>
                             )}
                             {d !== null && (
