@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEditStrict, useCanEdit, useCanRequest } from '../../hooks/useProfile'
+import { ResizableTable } from '../../components/ResizableTable'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => new Date().toISOString().slice(0, 10)
@@ -17,6 +18,37 @@ const ST = {
   '완료':   { cls: 'border-emerald-200 bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
   '반려':   { cls: 'border-slate-200 bg-slate-50 text-slate-500', dot: 'bg-slate-400' },
 }
+
+// 이 달 1일 — 이력 탭의 기본 시작일
+const monthStart = () => {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
+}
+// 'YYYY-MM' 로 자른다 (월별 묶음)
+const ym = (d) => String(d || '').slice(0, 7)
+
+// 이력 표
+const HIST_COLS = [
+  { key: 'req_date',   label: '요청일',   defaultWidth: 92 },
+  { key: 'req_no',     label: '요청번호', defaultWidth: 112 },
+  { key: 'status',     label: '상태',     defaultWidth: 68 },
+  { key: 'check_dept', label: '확인부서', defaultWidth: 88 },
+  { key: 'req_kind',   label: '종류',     defaultWidth: 84 },
+  { key: 'customer_code', label: '고객사', defaultWidth: 66 },
+  { key: 'requester',  label: '요청자',   defaultWidth: 78 },
+  { key: 'purpose',    label: '사용목적', defaultWidth: 150 },
+  { key: 'unit_no',    label: '호기',     defaultWidth: 62 },
+  { key: 'std_code',   label: '기준코드', defaultWidth: 120 },
+  { key: 'item_name',  label: '품명',     defaultWidth: 220 },
+  { key: 'maker',      label: '제조사',   defaultWidth: 100 },
+  { key: 'qty',        label: '요청',     defaultWidth: 62, align: 'right' },
+  { key: 'issued_qty', label: '불출',     defaultWidth: 62, align: 'right' },
+  { key: 'unit',       label: '단위',     defaultWidth: 52 },
+  { key: 'need_date',  label: '필요일',   defaultWidth: 92 },
+  { key: 'handler',    label: '처리자',   defaultWidth: 78 },
+  { key: 'handle_type', label: '처리유형', defaultWidth: 80 },
+  { key: 'handled_at', label: '처리일시', defaultWidth: 118 },
+]
 
 const emptyRow = () => ({
   key: Math.random().toString(36).slice(2),
@@ -41,6 +73,15 @@ export default function MaterialRequest() {
   const [csFilter, setCsFilter] = useState(null)
   const [deptFilter, setDeptFilter] = useState(null)
   const [codeForm, setCodeForm] = useState(null)   // 코드 부여 중인 항목
+  // 부서 재배정 — 잘못 온 요청을 다른 팀으로 넘긴다
+  const [reassign, setReassign] = useState(null)   // { dept, kind, cuts: {id: mm} }
+  // 이력 조회
+  const [hFrom, setHFrom] = useState(monthStart())
+  const [hTo, setHTo] = useState(today())
+  const [hDept, setHDept] = useState(null)
+  const [hCs, setHCs] = useState(null)
+  const [hStatus, setHStatus] = useState(null)
+  const [hQ, setHQ] = useState('')
 
   // 코드 부여 대기 — 같은 품명끼리 묶여 나온다
   const { data: pendingCodes = [] } = useQuery({
@@ -87,6 +128,49 @@ export default function MaterialRequest() {
   })
 
   const checked = list.filter(r => sel[r.id])
+
+  // ── 이력 ──
+  //   목록은 90일·미완료 위주라 지난 것을 찾을 수 없다.
+  //   이력은 기간을 직접 잡아 조회한다. 탭을 열 때만 부른다.
+  const { data: hist = [], isFetching: hBusy } = useQuery({
+    queryKey: ['requestHistory', hFrom, hTo, hDept, hCs],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_request_history', {
+        p_from: hFrom || null, p_to: hTo || null,
+        p_dept: hDept, p_customer: hCs,
+      })
+      if (error) throw error
+      return data || []
+    },
+    enabled: tab === 'hist',
+    staleTime: 60 * 1000,
+  })
+
+  // 상태·검색어는 다시 조회하지 않고 화면에서 거른다
+  const histRows = hist.filter(r => {
+    if (hStatus && r.status !== hStatus) return false
+    const k = hQ.trim().toLowerCase()
+    if (!k) return true
+    return [r.std_code, r.item_name, r.maker, r.maker_code,
+            r.requester, r.purpose, r.req_no, r.product_code]
+      .some(v => String(v || '').toLowerCase().includes(k))
+  })
+
+  // 월별 묶음 — 몇 건이 어떻게 끝났는지
+  const histMonths = (() => {
+    const m = new Map()
+    for (const r of histRows) {
+      const k = ym(r.req_date)
+      if (!k) continue
+      let b = m.get(k)
+      if (!b) { b = { ym: k, cnt: 0, done: 0, rej: 0, open: 0 }; m.set(k, b) }
+      b.cnt++
+      if (r.status === '완료') b.done++
+      else if (r.status === '반려') b.rej++
+      else b.open++
+    }
+    return [...m.values()].sort((a, b) => (a.ym < b.ym ? 1 : -1))
+  })()
 
   // ── 품목 검색 ──
   const [searchIdx, setSearchIdx] = useState(null)
@@ -249,21 +333,71 @@ export default function MaterialRequest() {
     } catch (e) { toastError('발주 생성 실패: ' + e.message) }
   }
 
-  // 이력 엑셀 — 기간을 지정해 전체를 뽑는다.
-  //   목록은 90일·미완료 위주라 이력 조회에는 맞지 않아 별도로 조회한다.
-  const [xlBusy, setXlBusy] = useState(false)
-  async function exportHistory() {
-    const from = prompt('시작일 (YYYY-MM-DD)\n비워두면 전체', 
-      new Date(new Date().getFullYear(), 0, 1).toISOString().slice(0, 10))
-    if (from === null) return
-    setXlBusy(true)
+  // 부서 재배정 — 잘못 온 요청을 다른 팀으로 넘긴다.
+  //   하네스팀 일인데 구매자재팀으로 오는 일이 잦다.
+  //   이미 끝난 건(완료·반려)은 넘기지 않는다 — 이력이 꼬인다.
+  function openReassign() {
+    if (!checked.length) return
+    const blocked = checked.filter(r => r.status === '완료' || r.status === '반려')
+    if (blocked.length === checked.length) {
+      toastError('이미 처리된 건은 부서를 바꿀 수 없습니다')
+      return
+    }
+    // 넘길 수 있는 것만 남긴다
+    const movable = checked.filter(r => r.status !== '완료' && r.status !== '반려')
+    const to = movable[0].check_dept === '하네스팀' ? '구매자재팀' : '하네스팀'
+    setReassign({
+      dept: to, kind: to === '하네스팀' ? '제작' : '',
+      cuts: Object.fromEntries(movable.map(r => [r.id, r.cut_mm ?? ''])),
+      ids: movable.map(r => r.id),
+      rows: movable,
+      blocked: blocked.length,
+    })
+  }
+
+  async function doReassign() {
+    const rq = reassign
+    if (!rq) return
+    if (rq.dept === '하네스팀' && !rq.kind) { toastError('요청 종류를 선택하세요'); return }
+    if (rq.dept === '하네스팀' && rq.kind === '절단'
+        && rq.rows.some(r => !(Number(rq.cuts[r.id]) > 0))) {
+      toastError('절단은 품목마다 길이(mm)를 입력하세요'); return
+    }
+    setBusy(true)
     try {
-      const { data, error } = await supabase.rpc('pm_request_history', {
-        p_from: from.trim() || null, p_to: null,
-        p_dept: deptFilter, p_customer: csFilter,
+      const { data, error } = await supabase.rpc('pm_request_reassign', {
+        p_ids: rq.ids,
+        p_dept: rq.dept,
+        p_kind: rq.dept === '하네스팀' ? rq.kind : null,
+        p_cuts: rq.dept === '하네스팀' && rq.kind === '절단'
+          ? rq.rows.map(r => ({ id: r.id, mm: Number(rq.cuts[r.id]) || null }))
+          : null,
       })
       if (error) throw error
-      if (!data?.length) { toastError('해당 기간에 요청이 없습니다'); return }
+      const r = Array.isArray(data) ? data[0] : data
+      const upd = Number(r?.updated ?? 0)
+      const skip = Number(r?.skipped ?? 0)
+      if (skip > 0) toastError(`${n(upd)}건 이동 · ${r?.note || `${skip}건 건너뜀`}`)
+      else toastSuccess(`${n(upd)}건 → ${rq.dept}`)
+      setReassign(null)
+      setSel({})
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['requestHistory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
+    } catch (e) {
+      toastError('부서 변경 실패: ' + e.message)
+    } finally { setBusy(false) }
+  }
+
+  // 이력 엑셀 — 화면에 보이는 그대로 뽑는다.
+  //   예전에는 prompt 로 시작일만 묻고 바로 파일이 떨어져서
+  //   무엇이 나올지 보고 뽑을 수가 없었다.
+  const [xlBusy, setXlBusy] = useState(false)
+  async function exportHistory() {
+    if (!histRows.length) { toastError('내보낼 이력이 없습니다'); return }
+    setXlBusy(true)
+    try {
+      const data = histRows
 
       const rows = data.map(r => ({
         '요청번호': r.req_no || '',
@@ -271,6 +405,8 @@ export default function MaterialRequest() {
         '상태': r.status || '',
         '긴급도': r.urgency || '',
         '확인부서': r.check_dept || '',
+        '종류': r.req_kind || '',
+        '길이(mm)': r.cut_mm ?? '',
         '고객사': r.customer_code || '',
         '요청자': r.requester || '',
         '사용목적': r.purpose || '',
@@ -291,8 +427,10 @@ export default function MaterialRequest() {
         '처리메모': r.handle_memo || '',
       }))
       const ws = XLSX.utils.json_to_sheet(rows)
-      ws['!cols'] = [{ wch: 14 }, { wch: 11 }, { wch: 8 }, { wch: 7 }, { wch: 11 }, { wch: 9 },
-                     { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 10 },
+      // 위 rows 의 열 순서와 개수가 정확히 같아야 한다 (25개)
+      ws['!cols'] = [{ wch: 14 }, { wch: 11 }, { wch: 8 }, { wch: 7 }, { wch: 11 },
+                     { wch: 7 }, { wch: 9 },
+                     { wch: 9 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 10 },
                      { wch: 16 }, { wch: 32 }, { wch: 16 }, { wch: 18 },
                      { wch: 9 }, { wch: 6 }, { wch: 11 }, { wch: 20 },
                      { wch: 10 }, { wch: 9 }, { wch: 17 }, { wch: 9 }, { wch: 20 }]
@@ -513,6 +651,7 @@ export default function MaterialRequest() {
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
           {[['list', '📋 요청 목록'],
             ...(canReq ? [['new', '＋ 새 요청']] : []),
+            ['hist', '📊 이력'],
             ...(canEdit && pendingCodes.length ? [['code', `🏷 코드 부여 ${pendingCodes.length}`]] : []),
            ].map(([k, l]) => (
             <button key={k} onClick={() => setTab(k)}
@@ -1046,10 +1185,10 @@ export default function MaterialRequest() {
               ))}
             </div>
 
-            <button onClick={exportHistory} disabled={xlBusy}
-              title="기간을 지정해 요청 이력을 엑셀로 내려받습니다"
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
-              {xlBusy ? '…' : '📥 이력 엑셀'}
+            <button onClick={() => setTab('hist')}
+              title="지난 요청을 기간·검색으로 찾고 엑셀로 내려받습니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
+              📊 이력 보기
             </button>
             <span className="text-xs text-slate-400">{n(list.length)}건</span>
 
@@ -1063,6 +1202,11 @@ export default function MaterialRequest() {
                   🖨 출력
                 </button>
                 {canEdit && (<>
+                <button onClick={openReassign}
+                  title="우리 팀 일이 아닌 요청을 다른 팀으로 넘깁니다"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50">
+                  🔀 부서 변경
+                </button>
                 <button onClick={() => changeStatus('확인')}
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">확인</button>
                 <button onClick={() => doIssue(false)}
@@ -1275,6 +1419,262 @@ export default function MaterialRequest() {
             })()}
           </div>
         </>
+      )}
+
+      {/* ───────── 이력 ───────── */}
+      {tab === 'hist' && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+            <p className="text-xs font-bold text-slate-500">기간 · 조건</p>
+
+            {/* 달을 바로 고를 수 있게 — 대부분 "지난달 얼마나 나갔나" 를 본다 */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-[11px] font-bold text-slate-400">빠른 선택</span>
+              {[['이번 달', 0], ['지난달', 1], ['2달 전', 2]].map(([l, back]) => (
+                <button key={l}
+                  onClick={() => {
+                    const d = new Date()
+                    const s = new Date(d.getFullYear(), d.getMonth() - back, 1)
+                    const e = new Date(d.getFullYear(), d.getMonth() - back + 1, 0)
+                    const p = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`
+                    setHFrom(p(s)); setHTo(p(e))
+                  }}
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
+                  {l}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  const d = new Date()
+                  setHFrom(`${d.getFullYear()}-01-01`); setHTo(today())
+                }}
+                className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">
+                올해 전체
+              </button>
+            </div>
+
+            <div className="grid sm:grid-cols-4 gap-3">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">시작일</label>
+                <input type="date" value={hFrom} onChange={e => setHFrom(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">종료일</label>
+                <input type="date" value={hTo} onChange={e => setHTo(e.target.value)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">확인부서</label>
+                <select value={hDept || ''} onChange={e => setHDept(e.target.value || null)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg">
+                  <option value="">전체</option>
+                  <option value="구매자재팀">구매자재팀</option>
+                  <option value="하네스팀">하네스팀</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">상태</label>
+                <select value={hStatus || ''} onChange={e => setHStatus(e.target.value || null)}
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg">
+                  <option value="">전체</option>
+                  {['요청', '확인', '처리중', '완료', '반려'].map(s =>
+                    <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">검색</label>
+              <input value={hQ} onChange={e => setHQ(e.target.value)}
+                placeholder="품번 · 품명 · 제조사 · 요청자 · 사용목적 · 요청번호"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              <p className="text-[11px] text-slate-400 mt-1">
+                기간·부서만 조회로 가져오고, 상태와 검색어는 화면에서 걸러 냅니다 — 타이핑할 때마다 조회하지 않습니다.
+              </p>
+            </div>
+          </div>
+
+          {/* 월별 요약 */}
+          {!hBusy && histMonths.length > 0 && (
+            <div className="flex gap-2 flex-wrap">
+              {histMonths.map(m => (
+                <div key={m.ym} className="rounded-xl border border-slate-200 bg-white px-4 py-2.5">
+                  <p className="text-xs font-bold text-slate-700">{m.ym}</p>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    총 <b className="text-slate-800">{n(m.cnt)}</b>건
+                    {' · '}<span className="text-emerald-600">완료 {n(m.done)}</span>
+                    {m.open > 0 && <>{' · '}<span className="text-amber-600">진행 {n(m.open)}</span></>}
+                    {m.rej > 0 && <>{' · '}<span className="text-slate-400">반려 {n(m.rej)}</span></>}
+                  </p>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-xs text-slate-500 font-bold">{n(histRows.length)}건</span>
+            {hist.length !== histRows.length && (
+              <span className="text-xs text-slate-400">(조회 {n(hist.length)}건 중)</span>
+            )}
+            <button onClick={exportHistory} disabled={xlBusy || !histRows.length}
+              title="지금 화면에 보이는 그대로 내려받습니다"
+              className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
+              {xlBusy ? '…' : '📥 엑셀'}
+            </button>
+          </div>
+
+          {hBusy && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
+          {!hBusy && !histRows.length && (
+            <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
+              <p className="text-3xl mb-2">📊</p>
+              <p className="text-sm font-bold text-slate-600">해당 조건에 요청이 없습니다</p>
+              <p className="text-xs text-slate-400 mt-1">기간을 넓혀 보세요.</p>
+            </div>
+          )}
+          {!hBusy && histRows.length > 0 && (
+            <ResizableTable cols={HIST_COLS} storageKey="mreq_hist_cols">
+              {() => (
+                <tbody>
+                  {histRows.map((r, i) => (
+                    <tr key={`${r.req_no}-${r.std_code}-${i}`}
+                      className="border-b border-slate-100 hover:bg-slate-50">
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.req_date || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-mono text-slate-600">{r.req_no || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                        <span className={`px-1.5 py-0.5 rounded border text-[11px] font-bold ${ST[r.status]?.cls || 'border-slate-200 text-slate-500'}`}>
+                          {r.status || ''}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden">
+                        {r.check_dept && (
+                          <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${
+                            String(r.check_dept).includes('하네스') ? 'bg-violet-100 text-violet-700' : 'bg-teal-100 text-teal-700'}`}>
+                            {r.check_dept}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">
+                        {r.req_kind
+                          ? (r.req_kind === '절단' && r.cut_mm ? `절단 ${n(r.cut_mm)}mm` : r.req_kind)
+                          : ''}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden uppercase text-slate-500">{r.customer_code || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.requester || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.purpose || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.unit_no || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-mono text-slate-700">{r.std_code || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-700">{r.item_name || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.maker || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold text-slate-800">{n(r.qty)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-emerald-700">{r.issued_qty == null ? '' : n(r.issued_qty)}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">{r.unit || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.need_date || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.handler || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.handle_type || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">
+                        {r.handled_at ? String(r.handled_at).slice(0, 16).replace('T', ' ') : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              )}
+            </ResizableTable>
+          )}
+        </div>
+      )}
+
+      {/* ───────── 부서 변경 ───────── */}
+      {reassign && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setReassign(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-lg max-h-[85vh] overflow-y-auto space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">🔀 부서 변경</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {n(reassign.ids.length)}건을 다른 팀으로 넘깁니다.
+              </p>
+              {reassign.blocked > 0 && (
+                <p className="text-xs text-amber-600 mt-1 font-semibold">
+                  ⚠️ 이미 처리된 {n(reassign.blocked)}건은 빠졌습니다 — 완료·반려는 넘길 수 없습니다.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">어느 팀으로 *</label>
+              <div className="flex gap-1">
+                {['하네스팀', '구매자재팀'].map(d => (
+                  <button key={d}
+                    onClick={() => setReassign(v => ({
+                      ...v, dept: d, kind: d === '하네스팀' ? (v.kind || '제작') : '',
+                    }))}
+                    className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border ${
+                      reassign.dept === d
+                        ? 'border-indigo-500 bg-indigo-600 text-white'
+                        : 'border-slate-200 bg-white text-slate-500'}`}>
+                    {d}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {reassign.dept === '하네스팀' && (
+              <div>
+                <label className="block text-[11px] font-bold text-slate-500 mb-1">요청 종류 *</label>
+                <div className="flex gap-1">
+                  {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요']].map(([k, t]) => (
+                    <button key={k} title={t}
+                      onClick={() => setReassign(v => ({ ...v, kind: k }))}
+                      className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border ${
+                        reassign.kind === k
+                          ? 'border-indigo-500 bg-indigo-600 text-white'
+                          : 'border-slate-200 bg-white text-slate-500'}`}>
+                      {k}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {reassign.dept === '구매자재팀' && (
+              <p className="text-xs text-slate-500 bg-slate-50 rounded-lg p-3 leading-relaxed">
+                구매자재팀으로 넘기면 요청 종류(제작·절단)와 길이는 지워집니다.
+              </p>
+            )}
+
+            {/* 절단은 품목마다 길이가 다르다 */}
+            {reassign.dept === '하네스팀' && reassign.kind === '절단' && (
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-bold text-slate-500">품목별 길이(mm) *</p>
+                {reassign.rows.map(r => (
+                  <div key={r.id} className="flex items-center gap-2">
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-slate-700 truncate">{r.item_name || r.std_code || '(품명 없음)'}</p>
+                      <p className="text-[11px] text-slate-400 font-mono truncate">{r.std_code || '-'} · {n(r.qty)}{r.unit || ''}</p>
+                    </div>
+                    <input type="number" min="1" value={reassign.cuts[r.id] ?? ''}
+                      onChange={e => setReassign(v => ({ ...v, cuts: { ...v.cuts, [r.id]: e.target.value } }))}
+                      placeholder="mm"
+                      className="w-24 px-2 py-1.5 text-sm border border-slate-200 rounded-lg text-right" />
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-1">
+              <button onClick={() => setReassign(null)}
+                className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600">
+                취소
+              </button>
+              <button onClick={doReassign} disabled={busy}
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {busy ? '처리 중…' : `${n(reassign.ids.length)}건 → ${reassign.dept}`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
