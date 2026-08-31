@@ -129,6 +129,30 @@ export default function MaterialRequest() {
 
   const checked = list.filter(r => sel[r.id])
 
+  // ── 내가 낸 요청 중 아직 안 본 알림 ──
+  //   반려하거나 부서를 넘겨도 요청자는 찾아보지 않으면 모른다.
+  //   목록 조회(p_status null)는 반려를 빼고 오므로 따로 부른다.
+  const { data: notices = [] } = useQuery({
+    queryKey: ['requestNotice'],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_request_list',
+        { p_status: '전체', p_days: 180, p_mine: true, p_customer: null, p_dept: null })
+      if (error) throw error
+      return (data || []).filter(r => r.notice_at && !r.notice_seen_at)
+    },
+    staleTime: 60 * 1000,
+  })
+
+  async function seenNotice(ids) {
+    try {
+      const { error } = await supabase.rpc('pm_request_notice_seen',
+        { p_ids: ids, p_clear: false })
+      if (error) throw error
+      qc.invalidateQueries({ queryKey: ['requestNotice'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+    } catch (e) { toastError('확인 처리 실패: ' + e.message) }
+  }
+
   // ── 이력 ──
   //   목록은 90일·미완료 위주라 지난 것을 찾을 수 없다.
   //   이력은 기간을 직접 잡아 조회한다. 탭을 열 때만 부른다.
@@ -383,6 +407,8 @@ export default function MaterialRequest() {
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['requestHistory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['requestNotice'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
       qc.invalidateQueries({ queryKey: ['todoList'] })
     } catch (e) {
       toastError('부서 변경 실패: ' + e.message)
@@ -589,8 +615,15 @@ export default function MaterialRequest() {
       const done = Number(r?.done ?? 0), skip = Number(r?.skipped ?? 0)
       if (skip > 0) toastError(`${n(done)}건 되돌림 · ${r?.note || ''}`)
       else toastSuccess(`${n(done)}건 요청 상태로 되돌림`)
+      // 반려를 취소했으면 요청자에게 남긴 알림도 지운다.
+      //   안 지우면 "반려됨" 이 계속 떠 있어 요청자가 헷갈린다.
+      const { error: ne } = await supabase.rpc('pm_request_notice_seen',
+        { p_ids: checked.map(r => r.id), p_clear: true })
+      if (ne) toastError('알림 정리 실패: ' + ne.message)
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['requestNotice'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
       qc.invalidateQueries({ queryKey: ['todoList'] })
     } catch (e) { toastError('되돌리기 실패: ' + e.message) }
   }
@@ -631,6 +664,8 @@ export default function MaterialRequest() {
       }
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['requestNotice'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
       qc.invalidateQueries({ queryKey: ['todoList'] })   // 관제탑 건수도 함께 갱신
     } catch (e) {
       toastError('실패: ' + e.message)
@@ -663,6 +698,47 @@ export default function MaterialRequest() {
       </div>
 
       {/* ───────── 새 요청 ───────── */}
+      {/* ───────── 내 요청 알림 ─────────
+          반려하거나 부서를 넘겨도 요청자는 몰랐다.
+          누가·언제·왜 까지 보여 주고, 확인하면 사라진다. */}
+      {notices.length > 0 && (
+        <div className="rounded-xl border-2 border-rose-200 bg-rose-50 p-4 space-y-2.5">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="text-sm font-bold text-rose-800">
+              ⊗ 내 요청 중 확인할 것이 {n(notices.length)}건 있습니다
+            </p>
+            {notices.length > 1 && (
+              <button onClick={() => seenNotice(notices.map(r => r.id))}
+                className="ml-auto px-2.5 py-1 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-white hover:bg-rose-100">
+                모두 확인했습니다
+              </button>
+            )}
+          </div>
+          {notices.map(r => (
+            <div key={r.id} className="rounded-lg bg-white border border-rose-200 px-3.5 py-2.5 flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-bold text-slate-800">
+                  <span className="font-mono text-slate-500">{r.req_no}</span>
+                  {' · '}{r.item_name || r.std_code || '(품명 없음)'}
+                </p>
+                <p className="text-sm font-bold text-rose-700 mt-0.5 break-words">
+                  {r.notice_msg || ''}
+                  {r.req_kind === '절단' && r.cut_mm ? ` (${n(r.cut_mm)}mm)` : ''}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  {r.notice_by || '처리자 미상'}
+                  {r.notice_at ? ` · ${String(r.notice_at).slice(0, 16).replace('T', ' ')}` : ''}
+                </p>
+              </div>
+              <button onClick={() => seenNotice([r.id])}
+                className="shrink-0 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-white hover:bg-rose-100">
+                확인했습니다
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {tab === 'new' && (
         <div className="space-y-3">
           {/* 사용법 — 처음 쓰는 사람이 무엇을 적어야 할지 바로 알게 한다 */}

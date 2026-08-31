@@ -66,6 +66,12 @@ function useAlertCounts() {
         out['/material-request'] = (req || [])
           .filter(r => ['요청', '코드대기', '확인'].includes(r.status)).length
       } catch { /* 실패해도 메뉴는 그려야 한다 */ }
+      try {
+        // 내가 낸 요청이 반려되거나 다른 팀으로 넘어간 것.
+        //   위 조회는 반려를 빼고 오므로 여기서 따로 센다. 숫자만 받아 가볍다.
+        const { data: mine } = await supabase.rpc('pm_request_notice_count')
+        out['/material-request'] = (out['/material-request'] || 0) + (Number(mine) || 0)
+      } catch { /* 함수가 아직 없어도 메뉴는 그려야 한다 */ }
       return out
     },
   })
