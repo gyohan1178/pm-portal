@@ -2,31 +2,12 @@ import { useState, useMemo, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { attachStock } from '../../lib/stockLookup'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
-import { ResizableTable } from '../../components/ResizableTable'
 
 const today = () => new Date().toISOString().split('T')[0]
-
-// 담은 품목 표.
-//   제조사품번이 max-w 로 잘려 안 보이던 것을 열 너비로 바꿨다.
-//   헤더 오른쪽 끝을 끌면 넓어지고, 넓힌 값은 브라우저에 남는다.
-const ISSUE_COLS = [
-  { key: 'no',      label: 'No',        defaultWidth: 44,  style: { textAlign: 'center' } },
-  { key: 'dept',    label: '부서',      defaultWidth: 60,  style: { textAlign: 'center' } },
-  { key: 'maker',   label: '제조사',    defaultWidth: 110 },
-  { key: 'makerPn', label: '제조사품번', defaultWidth: 190 },
-  { key: 'std',     label: '기준코드',  defaultWidth: 130 },
-  { key: 'name',    label: '품명',      defaultWidth: 230 },
-  { key: 'unit',    label: '단위',      defaultWidth: 52,  style: { textAlign: 'center' } },
-  { key: 'srcs',    label: '호기',      defaultWidth: 120 },
-  { key: 'qty',     label: '총소요',    defaultWidth: 68,  style: { textAlign: 'right' } },
-  { key: 'issue',   label: '총불출',    defaultWidth: 84,  style: { textAlign: 'right' } },
-  { key: 'short',   label: '총결품',    defaultWidth: 68,  style: { textAlign: 'right' } },
-  { key: 'label',   label: '라벨',      defaultWidth: 150, style: { textAlign: 'center' } },
-  { key: 'exclude', label: '제외',      defaultWidth: 48,  style: { textAlign: 'center' } },
-]
 
 // 호기별 키팅은 AXCELIS 만 하지만, 다품목 출고는 고객사마다 쓴다.
 //   CSK 는 여러 프로젝트 자재를 한 번에 빼기 때문이다.
@@ -110,12 +91,22 @@ export default function Issue() {
   })
 
   // 품목 검색. ASSY 는 고르면 하위가 전개되므로 미리 표시한다.
+  //   같은 제조사품번에 코드가 여러 개 등록돼 있고 그중 하나만 재고를 관리한다.
+  //   어느 것을 골라야 하는지 보이도록 재고·위치를 함께 붙인다.
   async function searchItem(v) {
     setItemSearch(v)
     if (v.trim().length < 2 || !csId) { setItemHits([]); return }
-    const { data } = await supabase.rpc('pm_issue_search',
+    const { data, error } = await supabase.rpc('pm_issue_search',
       { p_customer_id: csId, q: v.trim() })
-    setItemHits(data || [])
+    if (error) { toastError('검색 실패: ' + error.message); setItemHits([]); return }
+    try {
+      const withStock = await attachStock(data || [])
+      // 재고가 있는 것을 위로 — 고를 것이 대개 그것이다
+      withStock.sort((a, b) => (b.stock > 0) - (a.stock > 0))
+      setItemHits(withStock)
+    } catch {
+      setItemHits(data || [])          // 재고를 못 붙여도 검색은 되게 한다
+    }
   }
 
   // 담을 목록 — 여기서 수량을 정한 뒤 한 번에 전개한다
@@ -655,7 +646,20 @@ export default function Issue() {
                         ASSY {it.child_cnt}
                       </span>
                     )}
-                    <span className="text-slate-500 truncate">{it.name}</span>
+                    <span className="text-slate-500 truncate flex-1">{it.name}</span>
+                    {/* 재고를 관리하는 코드가 어느 것인지 여기서 갈린다 */}
+                    {it.stock > 0 ? (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-[10px] font-bold whitespace-nowrap">
+                        재고 {it.stock}{it.unit || ''}
+                        {it.location ? ` · ${it.location}` : ''}
+                      </span>
+                    ) : it.hasStock ? (
+                      <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold whitespace-nowrap">
+                        재고 0{it.location ? ` · ${it.location}` : ''}
+                      </span>
+                    ) : (
+                      <span className="shrink-0 text-[10px] text-slate-300 whitespace-nowrap">재고 미등록</span>
+                    )}
                   </div>
                   {(it.maker || it.maker_code || it.spec) && (
                     <div className="text-[10px] text-slate-400 mt-0.5 truncate">
@@ -726,8 +730,19 @@ export default function Issue() {
         {cart.length === 0 ? (
           <p className="px-3 py-8 text-center text-sm text-slate-400">담긴 품목이 없습니다</p>
         ) : cartView === 'item' ? (
-          <ResizableTable cols={ISSUE_COLS} storageKey="issue_cart_cols">
-            {() => (
+          <div className="overflow-x-auto">
+          <table className="w-full text-xs min-w-[900px]">
+            <thead><tr className="bg-slate-50 text-slate-400">
+              <th className="px-2 py-1.5 text-center w-8">No</th>
+              <th className="px-2 py-1.5 text-center w-12">부서</th>
+              <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
+              <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
+              <th className="px-2 py-1.5 text-center w-12">단위</th>
+              <th className="px-2 py-1.5 text-left">호기</th>
+              <th className="px-2 py-1.5 text-right">총소요</th><th className="px-2 py-1.5 text-right">총불출</th><th className="px-2 py-1.5 text-right">총결품</th>
+              <th className="px-2 py-1.5 text-center w-36" title="라벨 출력 단위 — 바꾸면 품목에 저장되어 다음에도 유지됩니다">라벨</th>
+              <th className="px-2 py-1.5 text-center w-10" title="체크 = 불출표에서 제외">제외</th>
+            </tr></thead>
             <tbody>
               {(() => {
                 // 화면 NO 를 불출표·라벨과 같은 기준으로 매긴다 (제외 항목은 번호 없음)
@@ -744,13 +759,10 @@ export default function Issue() {
                       ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(a.dept)}`}>{deptShort(a.dept)}</span>
                       : <span className="text-slate-300">—</span>}
                   </td>
-                  {/* 제조사품번은 길어서 잘리곤 했다.
-                      이제 열 너비로만 잘리고, 헤더를 끌어 넓히면 다 보인다.
-                      마우스를 올리면 전체가 뜬다. */}
-                  <td className="px-2 py-1.5 text-slate-500 truncate" title={a.maker || ''}>{a.maker || '—'}</td>
-                  <td className="px-2 py-1.5 font-mono text-violet-600 truncate" title={a.makerPn || ''}>{a.makerPn || '—'}</td>
-                  <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600 truncate" title={a.std_code}>{a.std_code}</td>
-                  <td className="px-2 py-1.5 text-slate-600 truncate" title={a.name || ''}>
+                  <td className="px-2 py-1.5 text-slate-500 max-w-[90px] truncate">{a.maker || '—'}</td>
+                  <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
+                  <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>
+                  <td className="px-2 py-1.5 text-slate-600 max-w-[150px] truncate">
                     {/* 하네스는 창고에서 빼는 게 아니라 만드는 것이라 구분한다 */}
                     {a.makeType === 'harness' && (
                       <span className="px-1 py-0.5 mr-1 rounded bg-amber-100 text-amber-700 text-[9px] font-bold">하네스</span>
@@ -758,7 +770,7 @@ export default function Issue() {
                     {a.name}
                   </td>
                   <td className="px-2 py-1.5 text-center text-slate-400">{a.unit || '-'}</td>
-                  <td className="px-2 py-1.5 text-slate-400 truncate" title={[...a.srcs].join(', ')}>{[...a.srcs].join(', ')}</td>
+                  <td className="px-2 py-1.5 text-slate-400 max-w-[120px] truncate" title={[...a.srcs].join(', ')}>{[...a.srcs].join(', ')}</td>
                   <td className="px-2 py-1.5 text-right font-bold text-slate-700">{a.qty}</td>
                   <td className="px-2 py-1.5 text-right">
                     {/* 재고가 모자라면 여기서 실제로 낼 수량을 줄인다.
@@ -807,8 +819,8 @@ export default function Issue() {
               )})
               })()}
             </tbody>
-            )}
-          </ResizableTable>
+          </table>
+          </div>
         ) : (
           <div className="overflow-x-auto">
           <table className="w-full text-xs min-w-[900px]">
@@ -824,13 +836,9 @@ export default function Issue() {
                 <tr key={ln.id} className={`border-t border-slate-100 ${sh > 0 ? 'bg-red-50/40' : ''}`}>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{ln.std_code}</td>
                   <td className="px-2 py-1.5 text-slate-600 max-w-[180px]">
-                    <div className="truncate" title={ln.name || ''}>{ln.name}</div>
+                    <div className="truncate">{ln.name}</div>
                     {itemMeta[ln.item_id]?.manufacturer_code && (
-                      /* 여기도 좁으면 잘린다. 마우스를 올리면 전체가 뜬다. */
-                      <div className="truncate text-[10px] text-violet-500 font-mono"
-                        title={`${itemMeta[ln.item_id]?.manufacturer || ''} · ${itemMeta[ln.item_id]?.manufacturer_code || ''}`}>
-                        {itemMeta[ln.item_id]?.manufacturer} · {itemMeta[ln.item_id]?.manufacturer_code}
-                      </div>
+                      <div className="truncate text-[10px] text-violet-500 font-mono">{itemMeta[ln.item_id]?.manufacturer} · {itemMeta[ln.item_id]?.manufacturer_code}</div>
                     )}
                   </td>
                   <td className="px-2 py-1.5 text-slate-400">{ln.source === 'hogi' ? `${ln.pn} ${ln.hogi}` : '직접'}</td>

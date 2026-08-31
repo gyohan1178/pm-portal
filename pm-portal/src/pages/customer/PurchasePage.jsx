@@ -5,6 +5,7 @@ import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { attachStock } from '../../lib/stockLookup'
 import { downloadProposalExcel } from '../../lib/proposalExcel'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { useMe } from '../../hooks/useProfile'
@@ -513,7 +514,15 @@ export default function PurchasePage() {
         .or(`name.ilike.%${v}%,std_code.ilike.%${v}%,manufacturer.ilike.%${v}%,manufacturer_code.ilike.%${v}%,spec.ilike.%${v}%`)
         .limit(20)
       if (seq !== itemSearchSeq.current) return   // 더 최근 입력이 있으면 버린다
-      setItemResults(data || [])
+      // 같은 제조사품번에 코드가 여럿이고 그중 하나만 재고를 관리한다.
+      //   어느 것에 발주해야 하는지 보이도록 재고·위치를 붙인다.
+      try {
+        const withStock = await attachStock(data || [])
+        if (seq !== itemSearchSeq.current) return
+        setItemResults(withStock)
+      } catch {
+        setItemResults(data || [])     // 재고를 못 붙여도 검색은 되게 한다
+      }
     }, 250)
   }
 
@@ -903,7 +912,21 @@ export default function PurchasePage() {
                         {itemResults.map(item=>(
                           <button key={item.id} onClick={()=>{setSelItem(item);setItemSearch(item.name);setItemResults([]);if(item.vendor_id&&!selVendor){setSelVendor(item.vendor_id);setVendorSearch(item.vendors?.name||'')};setForm(prev=>({...prev,unit_price:(item.purchase_price??prev.unit_price)||'',type:item.type||prev.type}))}}
                             className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-100 last:border-0 text-xs">
-                            <div className="font-semibold text-slate-800">{item.name}</div>
+                            <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                              <span className="truncate flex-1">{item.name}</span>
+                              {item.stock > 0 ? (
+                                <span className="shrink-0 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-[10px] font-bold whitespace-nowrap">
+                                  재고 {item.stock}{item.unit || ''}
+                                  {item.location ? ` · ${item.location}` : ''}
+                                </span>
+                              ) : item.hasStock ? (
+                                <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold whitespace-nowrap">
+                                  재고 0{item.location ? ` · ${item.location}` : ''}
+                                </span>
+                              ) : (
+                                <span className="shrink-0 text-[10px] text-slate-300 font-normal whitespace-nowrap">재고 미등록</span>
+                              )}
+                            </div>
                             <div className="text-slate-400 font-mono text-xs flex gap-2">
                               <span>{item.std_code}</span>
                               {item.manufacturer_code&&<span className="text-violet-500">· {item.manufacturer_code}</span>}
