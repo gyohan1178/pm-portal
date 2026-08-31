@@ -111,8 +111,10 @@ export function buildIssueSheet(opt) {
   .b { font-weight: 700; }
   .nw { white-space: nowrap; }
   .mk { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .code { font-family: Consolas, "Courier New", monospace; font-size: ${wide ? '7pt' : '8pt'}; white-space: nowrap; overflow: hidden; }
-  .loc { font-family: Consolas, monospace; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; }
+  /* 품번·위치는 고정폭으로 둔다. 0 과 O, 1 과 I 를 창고에서 헷갈리지 않게 하려는 것이다.
+     크기는 본문과 맞춰 표가 한 덩어리로 보이게 한다. */
+  .code { font-family: Consolas, "Courier New", monospace; font-size: ${wide ? '8pt' : '9pt'}; white-space: nowrap; overflow: hidden; }
+  .loc { font-family: Consolas, "Courier New", monospace; font-weight: 700; text-align: center; white-space: nowrap; overflow: hidden; }
   .nm { line-height: 1.3; word-break: break-word; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
   .chk { background: #fafbfc; }
   .sub { background: #f7f9fc; }

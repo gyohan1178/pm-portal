@@ -4,6 +4,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useRowSelect } from '../../hooks/useRowSelect'
+import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
@@ -432,6 +433,31 @@ export default function Outbound() {
   }
   const openPrint = (html) => openSheet(html, toastError)
 
+  // ASSY 출고 표 — 열 너비를 마우스로 끌어 조절한다.
+  //   제조사·제조사품번이 80/100px 로 못 박혀 있어 긴 것은 뒤가 안 보였다.
+  //   전체 선택 체크박스는 첫 열 머리글 자리에 그대로 둔다.
+  const OUT_COLS = [
+    { key: 'sel', defaultWidth: 38, style: { textAlign: 'center' },
+      label: (
+        <input type="checkbox" title="전체 선택"
+          checked={outItems.length > 0 && outItems.every(o => selectedIds.has(o.item_id))}
+          onChange={e => { setSelectedIds(e.target.checked ? new Set(outItems.map(o => o.item_id)) : new Set()) }} />
+      ) },
+    { key: 'no',    label: 'No',        defaultWidth: 42,  style: { textAlign: 'center' } },
+    { key: 'loc',   label: '위치',      defaultWidth: 78 },
+    { key: 'cat',   label: '카테고리',  defaultWidth: 92 },
+    { key: 'maker', label: '제조사',    defaultWidth: 120 },
+    { key: 'mkpn',  label: '제조사품번', defaultWidth: 200 },
+    { key: 'std',   label: '기준코드',  defaultWidth: 130 },
+    { key: 'name',  label: '품명',      defaultWidth: 260 },
+    { key: 'unit',  label: '단위',      defaultWidth: 52 },
+    { key: 'bomq',  label: 'BOM/대',    defaultWidth: 70,  style: { textAlign: 'right' } },
+    { key: 'outq',  label: '출고수량',  defaultWidth: 88 },
+    { key: 'mt',    label: '제작구분',  defaultWidth: 128 },
+    { key: 'label', label: '라벨',      defaultWidth: 190 },
+    { key: 'note',  label: '비고',      defaultWidth: 150 },
+  ]
+
   // 박스 불출표 — 정상 + 하네스(표시만). 제외는 안 나옴. 수량은 출고수량(하네스는 참고표시)
   function printIssueSheet() {
     const rows = outOrder.filter(r => mtOf(r.item_id) !== 'exclude')
@@ -589,21 +615,11 @@ export default function Outbound() {
                   <button onClick={()=>setSelectedIds(new Set())} className="text-slate-400 hover:text-slate-600">선택해제</button>
                 </div>
               )}
-              <div className="rounded-xl border border-slate-200 overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 border-b border-slate-200">
-                    <th className="px-2 py-2.5 w-8 text-center">
-                      <input type="checkbox" title="전체 선택"
-                        checked={outItems.length>0 && outItems.every(o=>selectedIds.has(o.item_id))}
-                        onChange={e=>{ setSelectedIds(e.target.checked ? new Set(outItems.map(o=>o.item_id)) : new Set()) }} />
-                    </th>
-                    {[['No','w-8'],['위치','w-14'],['카테고리','w-16'],['제조사','w-20'],['제조사품번','w-24'],['기준코드','w-24'],['품명',''],['단위','w-10'],['BOM/대','w-14'],['출고수량','w-16'],['제작구분','w-24'],['라벨','w-32'],['비고','w-28']].map(([h,w])=>(
-                      <th key={h} className={`px-2 py-2.5 text-left font-bold text-slate-400 text-xs ${w}`}>{h}</th>
-                    ))}
-                  </tr></thead>
+              <ResizableTable cols={OUT_COLS} storageKey="outbound_bom_cols">
+                {() => (
                   <tbody>
                     {outItems.length===0
-                      ? <tr><td colSpan={13} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
+                      ? <tr><td colSpan={14} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
                       : outItems.map((item,idx)=>{
                         const mt = mtOf(item.item_id)
                         const dim = mt !== 'normal'
@@ -623,11 +639,13 @@ export default function Outbound() {
                               onBlur={e=>{ if(e.target.value.trim()!==(item.location||'')) saveLocation(item.item_id, e.target.value) }}
                               className="w-14 px-1 py-1 text-xs font-mono font-bold text-slate-700 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
                           </td>
-                          <td className="px-2 py-2 text-slate-500">{item.cat||'—'}</td>
-                          <td className={`px-2 py-2 max-w-[80px] truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
-                          <td className="px-2 py-2 font-mono text-xs text-violet-600 max-w-[100px] truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
-                          <td className="px-2 py-2 font-mono text-xs text-indigo-600">{item.std_code}</td>
-                          <td className={`px-2 py-2 font-semibold max-w-[180px] ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>
+                          <td className="px-2 py-2 text-slate-500 truncate" title={item.cat||''}>{item.cat||'—'}</td>
+                          {/* 제조사·제조사품번이 80/100px 로 못 박혀 있어 긴 것은 뒤가 안 보였다.
+                              이제 열 너비로만 잘리고, 헤더를 끌어 넓히면 다 보인다. */}
+                          <td className={`px-2 py-2 truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
+                          <td className="px-2 py-2 font-mono text-xs text-violet-600 truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
+                          <td className="px-2 py-2 font-mono text-xs text-indigo-600 truncate" title={item.std_code}>{item.std_code}</td>
+                          <td className={`px-2 py-2 font-semibold overflow-hidden ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>
                             <div className="truncate">{item.name}</div>
                             {(() => {
                               // 로트 관리 품목이면 먼저 쓸 시리얼을 알려준다
@@ -711,8 +729,8 @@ export default function Outbound() {
                       )})
                     }
                   </tbody>
-                </table>
-              </div>
+                )}
+              </ResizableTable>
               {outItems.length>0&&(
                 <div className="space-y-2">
                   <input value={note} onChange={e=>setNote(e.target.value)} placeholder="출고 비고 (선택)"
