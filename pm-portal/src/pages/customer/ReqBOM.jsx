@@ -73,8 +73,10 @@ function sortVal(r, key) {
 }
 
 async function fetchProjects(customerId) {
-  const { data } = await supabase.from('projects').select('id,code,name,rev').eq('customer_id', customerId).order('code')
-  return data || []
+  // 상위품번이 1,000개를 넘으면 뒷부분이 목록에 아예 안 나온다 (고를 수가 없다)
+  return await fetchAll(() => supabase.from('projects')
+    .select('id,code,name,rev').eq('customer_id', customerId)
+    .order('code').order('id'))
 }
 
 async function fetchVendors() {
@@ -121,10 +123,14 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
       .eq('customer_id', customerId).eq('order_type','customer_po').not('status','in','(완료,취소)')
       .in('project_id', projectIds))
 
-    const { data: bomRows } = await supabase
+    // ⚠ BOM 은 상위품번 몇 개만 골라도 1,000행을 쉽게 넘는다.
+    //   그냥 조회하면 말없이 잘리고 오류도 안 난다 (실제로 1,452행 중 452행이 빠졌다).
+    //   정렬이 없으면 어느 1,000행이 올지도 매번 달라진다.
+    const bomRows = await fetchAll(() => supabase
       .from('bom')
       .select('*, items!bom_item_id_fkey(id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price)')
       .eq('customer_id', customerId).in('project_id', projectIds)
+      .order('id'))
 
     const cpoMap = {}
     ;(poRows||[]).forEach(r=>{ if(r.project_id) cpoMap[r.project_id]=(cpoMap[r.project_id]||0)+(r.qty_remaining||0) })
@@ -161,9 +167,10 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
       // 1) 어셈블리 → 하위품목 전개 (소요량 = 입력수량 × qty_per_unit)
       if (asmCodes.length) {
         const projIds = asmCodes.map(c=>projByCode[c])
-        const { data: bomRows } = await supabase.from('bom')
-          .select('project_id,qty_per_unit,item_id, items!bom_item_id_fkey(id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price)')
+        const bomRows = await fetchAll(() => supabase.from('bom')
+          .select('project_id,qty_per_unit,item_id,id, items!bom_item_id_fkey(id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price)')
           .eq('customer_id', customerId).in('project_id', projIds)
+          .order('id'))
         const qtyByProj = {}
         asmCodes.forEach(c=>{ const m=manualItems.find(x=>x.code===c); qtyByProj[projByCode[c]]=Number(m?.qty)||0 })
         ;(bomRows||[]).forEach(b=>{
@@ -204,13 +211,31 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
   })
 
   const itemIds = Object.keys(itemMap)
-  const { data: invRows } = itemIds.length
-    ? await supabase.from('inventory').select('item_id,qty').in('item_id', itemIds)
-    : { data: [] }
-  const { data: purchaseRows } = itemIds.length
-    ? { data: await fetchAll(() => supabase.from('purchase_orders').select('item_id,qty_remaining')
-      .eq('customer_id', customerId).eq('order_type','purchase').not('status','in','(완료,취소)').in('item_id', itemIds)) }
-    : { data: [] }
+
+  // ⚠ BOM 을 다 가져오면 품목이 1,000종을 넘을 수 있다.
+  //   .in() 에 한꺼번에 넣으면 결과가 잘리고 주소도 너무 길어진다.
+  //   300개씩 나눠 부른다 (이 파일 위쪽 품목 조회와 같은 방식).
+  const chunk = (arr, size = 300) => {
+    const out = []
+    for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+    return out
+  }
+
+  const invRows = []
+  for (const ids of chunk(itemIds)) {
+    const { data, error } = await supabase.from('inventory').select('item_id,qty').in('item_id', ids)
+    if (error) throw error
+    invRows.push(...(data || []))
+  }
+
+  const purchaseRows = []
+  for (const ids of chunk(itemIds)) {
+    purchaseRows.push(...await fetchAll(() => supabase.from('purchase_orders')
+      .select('id,item_id,qty_remaining')
+      .eq('customer_id', customerId).eq('order_type','purchase')
+      .not('status','in','(완료,취소)').in('item_id', ids)
+      .order('id')))
+  }
 
   const invMap = {}; (invRows||[]).forEach(r=>{invMap[r.item_id]=r.qty})
   const purchaseMap = {}; (purchaseRows||[]).forEach(r=>{purchaseMap[r.item_id]=(purchaseMap[r.item_id]||0)+(r.qty_remaining||0)})
@@ -218,13 +243,19 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
   // 구매처(벤더) — items.vendor_id 가 있으면 vendors 이름 매핑. 스키마에 없으면 조용히 생략.
   const vendorByItem = {}
   if (itemIds.length) {
-    const { data: itemVendors } = await supabase.from('items').select('id,vendor_id').in('id', itemIds)
-    const vids = [...new Set((itemVendors||[]).map(x=>x.vendor_id).filter(Boolean))]
-    const { data: vRows } = vids.length
-      ? await supabase.from('vendors').select('id,name').in('id', vids)
-      : { data: [] }
-    const vName = {}; (vRows||[]).forEach(v=>{ vName[v.id]=v.name })
-    ;(itemVendors||[]).forEach(x=>{ if(x.vendor_id) vendorByItem[x.id]={ id:x.vendor_id, name:vName[x.vendor_id]||'' } })
+    const itemVendors = []
+    for (const ids of chunk(itemIds)) {
+      const { data } = await supabase.from('items').select('id,vendor_id').in('id', ids)
+      itemVendors.push(...(data || []))
+    }
+    const vids = [...new Set(itemVendors.map(x=>x.vendor_id).filter(Boolean))]
+    const vRows = []
+    for (const ids of chunk(vids)) {
+      const { data } = await supabase.from('vendors').select('id,name').in('id', ids)
+      vRows.push(...(data || []))
+    }
+    const vName = {}; vRows.forEach(v=>{ vName[v.id]=v.name })
+    itemVendors.forEach(x=>{ if(x.vendor_id) vendorByItem[x.id]={ id:x.vendor_id, name:vName[x.vendor_id]||'' } })
   }
 
   return Object.values(itemMap).map(r=>({
