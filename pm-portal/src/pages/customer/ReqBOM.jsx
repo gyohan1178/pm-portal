@@ -112,7 +112,10 @@ async function createPurchaseOrders({ items, csId, vendorId, promiseDate, poNumb
 }
 
 async function fetchReqBOM(customerId, projectIds, manualItems) {
-  if (!projectIds.length && !manualItems.length) return []
+  // meta — 무엇이 몇 행 반영됐는지 화면에 보여 주기 위한 것.
+  //   BOM 이 말없이 잘려 자재가 빠진 적이 있어(v3.84), 눈으로 확인할 수 있어야 한다.
+  const meta = { parents: [], bomRows: 0, singles: [], notFound: [], items: 0 }
+  if (!projectIds.length && !manualItems.length) return { items: [], meta }
 
   let rows = []
 
@@ -134,6 +137,12 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
 
     const cpoMap = {}
     ;(poRows||[]).forEach(r=>{ if(r.project_id) cpoMap[r.project_id]=(cpoMap[r.project_id]||0)+(r.qty_remaining||0) })
+
+    // 상위품번마다 BOM 이 몇 행 들어왔는지 남긴다
+    const cntByProj = {}
+    ;(bomRows||[]).forEach(b=>{ cntByProj[b.project_id]=(cntByProj[b.project_id]||0)+1 })
+    projectIds.forEach(pid=>{ meta.parents.push({ id: pid, code: null, bom: cntByProj[pid]||0 }) })
+    meta.bomRows += (bomRows||[]).length
 
     rows = (bomRows||[]).map(b=>({
       item_id: b.item_id,
@@ -173,6 +182,15 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
           .order('id'))
         const qtyByProj = {}
         asmCodes.forEach(c=>{ const m=manualItems.find(x=>x.code===c); qtyByProj[projByCode[c]]=Number(m?.qty)||0 })
+        // 상위품번마다 몇 행이 반영됐는지 남긴다
+        const cntByProj = {}
+        ;(bomRows||[]).forEach(b=>{ cntByProj[b.project_id]=(cntByProj[b.project_id]||0)+1 })
+        asmCodes.forEach(c=>{
+          meta.parents.push({ id: projByCode[c], code: c,
+                              qty: Number(manualItems.find(x=>x.code===c)?.qty)||0,
+                              bom: cntByProj[projByCode[c]]||0 })
+        })
+        meta.bomRows += (bomRows||[]).length
         ;(bomRows||[]).forEach(b=>{
           rows.push({
             item_id: b.item_id, std_code: b.items?.std_code, name: b.items?.name,
@@ -186,9 +204,14 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
 
       // 2) 단품 → items 직접 조회
       if (singleCodes.length) {
-        const { data: items } = await supabase.from('items')
+        const { data: items, error: ie } = await supabase.from('items')
           .select('id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price')
           .in('std_code', singleCodes)
+        if (ie) throw ie
+        // 상위품번도 아니고 품목에도 없는 것 — 지금까지 조용히 사라지고 있었다
+        const found = new Set((items||[]).map(x=>x.std_code))
+        meta.singles = singleCodes.filter(c=>found.has(c))
+        meta.notFound = singleCodes.filter(c=>!found.has(c))
         ;(items||[]).forEach(item=>{
           const manual = manualItems.find(m=>m.code===item.std_code)
           rows.push({
@@ -258,7 +281,9 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
     itemVendors.forEach(x=>{ if(x.vendor_id) vendorByItem[x.id]={ id:x.vendor_id, name:vName[x.vendor_id]||'' } })
   }
 
-  return Object.values(itemMap).map(r=>({
+  meta.items = Object.keys(itemMap).length
+
+  const out = Object.values(itemMap).map(r=>({
     ...r,
     stock: invMap[r.item_id]||0,
     pending: purchaseMap[r.item_id]||0,
@@ -266,6 +291,8 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
     lack: Math.round((r.total_need - (invMap[r.item_id]||0)) * 100) / 100,
     order_need: Math.max(0, Math.round((r.total_need - (invMap[r.item_id]||0) - (purchaseMap[r.item_id]||0)) * 100) / 100),
   })).sort((a,b)=>b.order_need-a.order_need)
+
+  return { items: out, meta }
 }
 
 export default function ReqBOM() {
@@ -291,11 +318,13 @@ export default function ReqBOM() {
   const { data: projects=[] } = useQuery({
     queryKey:['projects',cs?.id], queryFn:()=>fetchProjects(cs?.id), enabled:!!cs?.id,
   })
-  const { data: rows=[], isLoading } = useQuery({
+  const { data: reqData, isLoading } = useQuery({
     queryKey:['reqbom',cs?.id,activeManual],
     queryFn:()=>fetchReqBOM(cs?.id, [], activeManual),
     enabled:!!cs?.id&&activeManual.length>0,
   })
+  const rows = reqData?.items || []
+  const meta = reqData?.meta || null
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
 
   const orderMut = useMutation({
@@ -487,6 +516,54 @@ export default function ReqBOM() {
                   {orderMut.isPending?'생성 중...':'⚡ 구매발주 생성'}
                 </button>
               </div>
+            </div>
+          )}
+
+          {/* 무엇이 몇 행 반영됐는지.
+              BOM 이 1,000행에서 말없이 잘려 자재가 빠진 적이 있어(v3.84),
+              결과를 믿어도 되는지 눈으로 확인할 수 있게 한다. */}
+          {meta && !isLoading && (
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5 space-y-2">
+              <p className="text-xs font-bold text-slate-600">
+                📥 조회 반영 내역 — 상위품번 {meta.parents.length}개 · BOM {meta.bomRows.toLocaleString('ko-KR')}행
+                {meta.singles.length > 0 && ` · 단품 ${meta.singles.length}개`}
+                {' → 품목 '}{meta.items.toLocaleString('ko-KR')}종
+              </p>
+
+              {meta.parents.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {meta.parents.map(p => (
+                    <span key={p.id}
+                      className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${
+                        p.bom > 0
+                          ? 'border-slate-200 bg-white text-slate-600'
+                          : 'border-red-300 bg-red-50 text-red-600'}`}>
+                      <span className="font-mono">{p.code || p.id}</span>
+                      {p.qty ? <span className="text-slate-400"> ×{p.qty}</span> : null}
+                      {' '}{p.bom > 0 ? `${p.bom}행` : 'BOM 없음'}
+                    </span>
+                  ))}
+                </div>
+              )}
+
+              {meta.singles.length > 0 && (
+                <p className="text-[11px] text-slate-500">
+                  단품으로 처리 (BOM 전개 안 함): <span className="font-mono">{meta.singles.join(', ')}</span>
+                </p>
+              )}
+
+              {meta.notFound.length > 0 && (
+                <p className="text-xs font-bold text-red-600">
+                  ⚠️ 못 찾은 품번 {meta.notFound.length}개 — 결과에 빠져 있습니다:{' '}
+                  <span className="font-mono">{meta.notFound.join(', ')}</span>
+                </p>
+              )}
+
+              {meta.parents.some(p => p.bom === 0) && (
+                <p className="text-xs font-bold text-red-600">
+                  ⚠️ BOM 이 한 행도 없는 상위품번이 있습니다 — BOM 등록을 확인하세요.
+                </p>
+              )}
             </div>
           )}
 
