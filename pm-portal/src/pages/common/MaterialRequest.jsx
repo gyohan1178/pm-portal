@@ -45,6 +45,7 @@ const HIST_COLS = [
   { key: 'issued_qty', label: '불출',     defaultWidth: 62, align: 'right' },
   { key: 'unit',       label: '단위',     defaultWidth: 52 },
   { key: 'need_date',  label: '필요일',   defaultWidth: 92 },
+  { key: 'ready_date', label: '불출예정',  defaultWidth: 92 },
   { key: 'handler',    label: '처리자',   defaultWidth: 78 },
   { key: 'handle_type', label: '처리유형', defaultWidth: 80 },
   { key: 'handled_at', label: '처리일시', defaultWidth: 118 },
@@ -315,31 +316,40 @@ export default function MaterialRequest() {
   }
 
   // 처리 결과를 공통으로 안내한다
-  function report(r, okWord) {
+  function report(r, okWord, keepSel = false) {
     const done = Number(r?.done ?? 0), failed = Number(r?.failed ?? 0)
     if (failed > 0) toastError(`${n(done)}건 ${okWord} · ${failed}건 실패 — ${r?.note || ''}`)
     else toastSuccess(`${n(done)}건 ${okWord}`)
-    setSel({})
+    // 한 건만 처리했으면 체크해 둔 것을 지우지 않는다 — 이어서 다른 건을 처리한다
+    if (!keepSel) setSel({})
     qc.invalidateQueries({ queryKey: ['materialRequests'] })
+    qc.invalidateQueries({ queryKey: ['requestNotice'] })
+    qc.invalidateQueries({ queryKey: ['menuAlerts'] })
     qc.invalidateQueries({ queryKey: ['todoList'] })
   }
 
   // 불출 — 재고에서 실제로 빼고 출고 이력을 남긴다.
   //   force 는 장부에 없어도 진행한다. 실물은 있는데 입고 처리가
   //   안 됐거나 실사가 안 맞는 경우가 있어 필요하다. 재고는 음수가 된다.
-  async function doIssue(force = false) {
-    if (!checked.length) return
+  // 한 건만 불출하는 경우가 잦다.
+  //   품목 줄의 [불출] 을 누르면 그 줄만, 위쪽 버튼은 체크한 것을 한꺼번에.
+  async function doIssue(force = false, only = null) {
+    const ids = only ? [only.id] : checked.map(r => r.id)
+    if (!ids.length) return
+    const what = only
+      ? `${only.std_code || only.item_name || '이 품목'} 1건`
+      : `${ids.length}건`
     const msg = force
-      ? `${checked.length}건을 강제 불출합니다.\n\n재고가 모자라도 진행하며, 재고가 음수가 됩니다.\n나중에 입고나 실사로 바로잡아야 합니다.\n\n계속할까요?`
-      : `${checked.length}건을 불출 처리합니다.\n\n재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.`
+      ? `${what}을 강제 불출합니다.\n\n재고가 모자라도 진행하며, 재고가 음수가 됩니다.\n나중에 입고나 실사로 바로잡아야 합니다.\n\n계속할까요?`
+      : `${what}을 불출 처리합니다.\n\n재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.`
     if (!confirm(msg)) return
     try {
       const { data, error } = await supabase.rpc('pm_request_issue',
-        { p_ids: checked.map(r => r.id), p_force: force })
+        { p_ids: ids, p_force: force })
       if (error) throw error
       const r = Array.isArray(data) ? data[0] : data
       const forced = Number(r?.forced ?? 0)
-      report(r, forced > 0 ? `불출 완료 (강제 ${forced}건)` : '불출 완료')
+      report(r, forced > 0 ? `불출 완료 (강제 ${forced}건)` : '불출 완료', !!only)
       qc.invalidateQueries({ queryKey: ['inventory'] })
     } catch (e) { toastError('불출 실패: ' + e.message) }
   }
@@ -355,6 +365,49 @@ export default function MaterialRequest() {
       report(Array.isArray(data) ? data[0] : data, '발주 생성')
       qc.invalidateQueries({ queryKey: ['purchase'] })
     } catch (e) { toastError('발주 생성 실패: ' + e.message) }
+  }
+
+  // 불출 가능일 회신.
+  //   현장은 "언제 준비되나" 를 몰라 계속 물어봐야 했다.
+  //   품목마다 다르다 — 재고가 있으면 오늘, 발주가 걸리면 몇 주 뒤다.
+  const [readyForm, setReadyForm] = useState(null)   // { ids, rows, date, memo }
+
+  function openReady() {
+    if (!checked.length) return
+    const movable = checked.filter(r => r.status !== '완료' && r.status !== '반려')
+    if (!movable.length) { toastError('이미 처리된 건에는 넣을 수 없습니다'); return }
+    setReadyForm({
+      ids: movable.map(r => r.id),
+      rows: movable,
+      date: movable[0].ready_date || '',
+      memo: '',
+      blocked: checked.length - movable.length,
+    })
+  }
+
+  async function saveReady(clear = false) {
+    const f = readyForm
+    if (!f) return
+    if (!clear && !f.date) { toastError('불출 가능일을 넣으세요'); return }
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_request_ready', {
+        p_ids: f.ids, p_date: clear ? null : f.date, p_memo: f.memo.trim() || null,
+      })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      const upd = Number(r?.updated ?? 0)
+      if (Number(r?.skipped ?? 0) > 0) toastError(`${n(upd)}건 회신 · ${r?.note || ''}`)
+      else toastSuccess(clear ? `${n(upd)}건 예정일 지움` : `${n(upd)}건 → ${f.date} 불출 예정`)
+      setReadyForm(null)
+      setSel({})
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['requestHistory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['requestNotice'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+    } catch (e) {
+      toastError('회신 실패: ' + e.message)
+    } finally { setBusy(false) }
   }
 
   // 부서 재배정 — 잘못 온 요청을 다른 팀으로 넘긴다.
@@ -445,6 +498,7 @@ export default function MaterialRequest() {
         '요청수량': Number(r.qty) || 0,
         '단위': r.unit || '',
         '필요일': r.need_date || '',
+        '불출예정일': r.ready_date || '',
         '사유': r.reason || '',
         '처리자': r.handler || '',
         '처리유형': r.handle_type || '',
@@ -459,7 +513,7 @@ export default function MaterialRequest() {
                      { wch: 9 }, { wch: 10 }, { wch: 30 }, { wch: 16 }, { wch: 10 },
                      { wch: 16 }, { wch: 32 }, { wch: 16 }, { wch: 18 },
                      { wch: 9 }, { wch: 6 }, { wch: 11 }, { wch: 20 },
-                     { wch: 10 }, { wch: 9 }, { wch: 17 }, { wch: 9 }, { wch: 20 }]
+                     { wch: 10 }, { wch: 9 }, { wch: 17 }, { wch: 9 }, { wch: 20 }, { wch: 11 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '자재요청이력')
       XLSX.writeFile(wb, `자재요청이력_${new Date().toISOString().slice(0, 10)}.xlsx`)
@@ -1278,6 +1332,11 @@ export default function MaterialRequest() {
                   🖨 출력
                 </button>
                 {canEdit && (<>
+                <button onClick={openReady}
+                  title="현장이 언제 준비되는지 알 수 있게 날짜를 회신합니다"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">
+                  📅 불출 가능일
+                </button>
                 <button onClick={openReassign}
                   title="우리 팀 일이 아닌 요청을 다른 팀으로 넘깁니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50">
@@ -1435,6 +1494,23 @@ export default function MaterialRequest() {
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
+                          {/* 현장이 "언제 준비되나" 를 한눈에 보게 한다.
+                              품목마다 날짜가 다르면 가장 늦은 것이 곧 이 요청이 끝나는 날이다. */}
+                          {(() => {
+                            const ds = g.items.map(r => r.ready_date).filter(Boolean)
+                            if (!ds.length) return null
+                            const last = ds.reduce((a, x) => (x > a ? x : a))
+                            const mixed = new Set(ds).size > 1 || ds.length < g.items.length
+                            return (
+                              <div className="text-right leading-tight">
+                                <p className="text-[10px] font-bold text-rose-400">불출 예정</p>
+                                <p className="text-lg font-extrabold text-rose-600 whitespace-nowrap">
+                                  {String(last).slice(5).replace('-', '/')}
+                                </p>
+                                {mixed && <p className="text-[10px] text-rose-400">품목마다 다름</p>}
+                              </div>
+                            )
+                          })()}
                           <input type="checkbox" checked={allOn} readOnly
                             className="w-4 h-4 accent-indigo-600 mt-1 pointer-events-none" />
                           {h.is_mine && ['요청','확인'].includes(h.status) && (
@@ -1465,6 +1541,10 @@ export default function MaterialRequest() {
                           <span className="font-bold text-slate-700 w-16 flex-shrink-0 text-right">
                             {n(r.qty)}<span className="font-normal text-slate-400 ml-0.5">{r.unit}</span>
                           </span>
+                          {/* 품목마다 준비되는 날이 다르다 */}
+                          <span className="w-16 flex-shrink-0 text-right text-[11px] font-bold text-rose-600">
+                            {r.ready_date ? String(r.ready_date).slice(5).replace('-', '/') : ''}
+                          </span>
                           {/* 재고는 담당자만 본다. 불출할지 발주할지 판단하는 근거다. */}
                           {canSeeStock && r.item_id && (
                             <span className={`w-24 flex-shrink-0 text-right text-[11px] font-semibold ${
@@ -1479,6 +1559,16 @@ export default function MaterialRequest() {
                             <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border flex-shrink-0 ${(ST[r.status] || ST['요청']).cls}`}>
                               {r.status}
                             </span>
+                          )}
+                          {/* 한 건만 불출하는 경우가 잦다.
+                              줄 클릭은 선택이므로 여기서 멈춰야 한다. */}
+                          {canEdit && r.item_id && !['완료', '반려'].includes(r.status) && (
+                            <button
+                              onClick={e => { e.stopPropagation(); doIssue(false, r) }}
+                              title="이 품목만 불출 처리합니다"
+                              className="flex-shrink-0 px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-[10px] font-bold whitespace-nowrap">
+                              불출
+                            </button>
                           )}
                         </div>
                       ))}
@@ -1646,6 +1736,7 @@ export default function MaterialRequest() {
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-emerald-700">{r.issued_qty == null ? '' : n(r.issued_qty)}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">{r.unit || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.need_date || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-bold text-rose-600">{r.ready_date || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.handler || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.handle_type || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">
@@ -1657,6 +1748,82 @@ export default function MaterialRequest() {
               )}
             </ResizableTable>
           )}
+        </div>
+      )}
+
+      {/* ───────── 불출 가능일 회신 ───────── */}
+      {readyForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setReadyForm(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-md space-y-4"
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">📅 불출 가능일 회신</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {n(readyForm.ids.length)}건. 요청자 화면에 크게 표시되고 알림도 갑니다.
+              </p>
+              {readyForm.blocked > 0 && (
+                <p className="text-xs text-amber-600 mt-1 font-semibold">
+                  ⚠️ 이미 처리된 {n(readyForm.blocked)}건은 빠졌습니다.
+                </p>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">언제 준비됩니까 *</label>
+              <input type="date" value={readyForm.date}
+                onChange={e => setReadyForm(v => ({ ...v, date: e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                {[['오늘', 0], ['내일', 1], ['3일 뒤', 3], ['1주', 7], ['2주', 14], ['4주', 28]].map(([l, d]) => (
+                  <button key={l}
+                    onClick={() => {
+                      const x = new Date(); x.setDate(x.getDate() + d)
+                      setReadyForm(v => ({ ...v, date: x.toISOString().slice(0, 10) }))
+                    }}
+                    className="px-2 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">한마디 (선택)</label>
+              <input value={readyForm.memo}
+                onChange={e => setReadyForm(v => ({ ...v, memo: e.target.value }))}
+                placeholder="예: 발주 완료, 입고 즉시 연락드립니다"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+
+            <div className="max-h-40 overflow-y-auto rounded-lg bg-slate-50 p-2.5 space-y-1">
+              {readyForm.rows.map(r => (
+                <p key={r.id} className="text-[11px] text-slate-500 truncate">
+                  <span className="font-mono text-slate-400">{r.std_code || '-'}</span>{' '}
+                  {r.item_name || ''}
+                  {r.ready_date && <span className="text-rose-500 font-bold"> (지금 {String(r.ready_date).slice(5)})</span>}
+                </p>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-400">
+              품목마다 날짜가 다르면 나눠서 고르고 두 번 회신하세요.
+            </p>
+
+            <div className="flex gap-2">
+              <button onClick={() => setReadyForm(null)}
+                className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600">
+                취소
+              </button>
+              <button onClick={() => saveReady(true)} disabled={busy}
+                className="px-3 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-500 disabled:opacity-40">
+                지우기
+              </button>
+              <button onClick={() => saveReady(false)} disabled={busy}
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
+                {busy ? '처리 중…' : '회신'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

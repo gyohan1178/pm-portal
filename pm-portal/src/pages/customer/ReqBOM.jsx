@@ -295,8 +295,12 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
   return { items: out, meta }
 }
 
-export default function ReqBOM() {
-  const { customerId: csCode } = useParams()
+// 통합검색 탭에서도 같은 화면을 쓴다.
+//   주소에 고객사가 없으므로 밖에서 넘겨받는다.
+//   같은 컴포넌트를 재사용하므로 한쪽만 고쳐져 어긋날 일이 없다.
+export default function ReqBOM({ csCodeProp = null, embedded = false }) {
+  const params = useParams()
+  const csCode = csCodeProp ?? params.customerId
   const qc = useQueryClient()
   const [mainTab, setMainTab] = useState('req')
   const [deptFilter, setDeptFilter] = useState('전체')
@@ -354,14 +358,41 @@ export default function ReqBOM() {
   const allChecked = needOrder.length>0 && needOrder.every(r=>checked[r.item_id])
   const toggleCheck = (id,val)=>setChecked(p=>({...p,[id]:val}))
 
+  // 엑셀에서 품번·수량 두 열을 복사해 붙여넣는다.
+  //   예전에는 탭·줄바꿈을 다 같은 것으로 쪼개서
+  //   "품번 [탭] 수량" 을 넣으면 수량이 다음 행의 품번 자리로 들어갔다.
+  //   줄을 먼저 나누고, 줄 안에서 품번과 수량을 가른다.
   function handlePaste(e, i){
     const text = (e.clipboardData||window.clipboardData).getData('text')
     if(!text || !/[\n\t,]/.test(text)) return   // 단일 값이면 기본 동작
     e.preventDefault()
-    const codes = text.split(/[\n\t,]+/).map(x=>x.trim()).filter(Boolean)
+
+    // 탭이 있으면 탭만 열 구분으로 본다.
+    //   쉼표를 함께 쪼개면 '1,780' 이 1 과 780 으로 갈려 수량이 780 이 된다.
+    //   엑셀에서 복사하면 항상 탭이 온다.
+    const sep = text.includes('\t') ? /\t/ : /,/
+
+    const parsed = text.split(/\r?\n/).map(line => {
+      const cells = line.split(sep).map(x=>x.trim()).filter(x=>x!=='')
+      if(!cells.length) return null
+      // 마지막 칸이 숫자면 수량으로 본다. 아니면 품번만 있는 것이다.
+      const last = cells[cells.length-1].replace(/,/g,'')
+      const hasQty = cells.length>1 && last!=='' && !isNaN(Number(last))
+      return {
+        code: cells[0],
+        qty: hasQty ? String(Number(last)) : '',
+      }
+    }).filter(r => r && r.code)
+
+    if(!parsed.length) return
     setManualItems(prev=>{
       const next=[...prev]
-      codes.forEach((code,k)=>{ const idx=i+k; if(next[idx]) next[idx]={...next[idx],code}; else next[idx]={code,qty:''} })
+      parsed.forEach((row,k)=>{
+        const idx=i+k
+        // 수량을 안 붙여넣었으면 원래 칸에 적어 둔 값을 지우지 않는다
+        if(next[idx]) next[idx]={ ...next[idx], code:row.code, qty: row.qty || next[idx].qty }
+        else next[idx]=row
+      })
       return next
     })
   }
@@ -391,8 +422,8 @@ export default function ReqBOM() {
 
   return (
     <div className="space-y-4">
-      <CustomerTabs />
-      <ShortageTabs cs={csCode} />
+      {/* 통합검색 안에서는 고객사 탭이 어울리지 않아 숨긴다 */}
+      {!embedded && <><CustomerTabs /><ShortageTabs cs={csCode} /></>}
       {/* 탭 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['req','📊 소요량 조회'],['explode','🔍 역전개 (상위 찾기)']].map(([k,l])=>(
@@ -414,7 +445,7 @@ export default function ReqBOM() {
               className="text-xs text-slate-400 hover:text-slate-600 font-semibold">5행</button>
           </div>
         </div>
-        <p className="text-[11px] text-slate-400">엑셀에서 코드 여러 개 복사 → 첫 칸에 붙여넣으면 자동으로 행이 나뉩니다</p>
+        <p className="text-[11px] text-slate-400">엑셀에서 <b>품번·수량 두 열</b>을 복사 → 첫 칸에 붙여넣으면 행이 나뉘고 수량까지 채워집니다 (품번만 복사해도 됩니다)</p>
         <div className="space-y-2">
           {manualItems.map((item,i)=>(
             <div key={i} className="flex items-center gap-2">

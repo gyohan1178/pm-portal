@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { useCustomers } from '../../hooks/useCustomers'
+import ReqBOM from '../customer/ReqBOM'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -48,6 +50,9 @@ export default function CommonSearch() {
   const [tab, setTab] = useState('product')
   const [pq, setPq] = useState(''); const [pSubmitted, setPSubmitted] = useState('')
   const [rq, setRq] = useState(''); const [rSubmitted, setRSubmitted] = useState('')
+  // 소요량 조회는 BOM 이 고객사별로 있어 어느 고객사인지 정해야 한다
+  const { data: customers = [] } = useCustomers()
+  const [reqCs, setReqCs] = useState('')
 
   const { data: items = [], isLoading: pLoading } = useQuery({
     queryKey: ['commonProduct', pSubmitted], queryFn: () => searchItems(pSubmitted), enabled: !!pSubmitted.trim(),
@@ -83,7 +88,7 @@ export default function CommonSearch() {
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-        {[['product', '🔎 제품 검색'], ['where', '🔍 역전개 (사용처)']].map(([k, l]) => (
+        {[['product', '🔎 제품 검색'], ['where', '🔍 역전개 (사용처)'], ['reqbom', '📊 소요량 조회']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-4 py-1.5 text-xs font-semibold rounded-lg ${tab === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{l}</button>
         ))}
@@ -202,6 +207,45 @@ export default function CommonSearch() {
                   ))}
                 </div>)}
         </>
+      )}
+
+      {/* 소요량 조회 — 고객사별 화면과 같은 것을 그대로 쓴다 */}
+      {tab === 'reqbom' && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3.5">
+            <label className="block text-[11px] font-bold text-slate-500 mb-1.5">고객사</label>
+            <div className="flex gap-1.5 flex-wrap">
+              {customers.map(c => (
+                <button key={c.code} onClick={() => setReqCs(c.code)}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${
+                    reqCs === c.code
+                      ? 'border-indigo-500 bg-indigo-600 text-white'
+                      : 'border-slate-200 bg-white text-slate-500 hover:bg-slate-100'}`}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2">
+              BOM 은 고객사마다 따로 있어 먼저 골라야 합니다. 품번 앞자리로 알 수 있습니다 —
+              <span className="font-mono"> AX-</span> AXCELIS ·
+              <span className="font-mono"> ED-</span> Edwards ·
+              <span className="font-mono"> CS-</span> CSK ·
+              <span className="font-mono"> VM-</span> VM
+            </p>
+          </div>
+
+          {reqCs
+            ? <ReqBOM csCodeProp={reqCs} embedded />
+            : (
+              <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
+                <p className="text-3xl mb-2">📊</p>
+                <p className="text-sm font-bold text-slate-600">고객사를 먼저 골라 주세요</p>
+                <p className="text-xs text-slate-400 mt-1">
+                  고른 뒤 품번·수량을 붙여넣으면 소요량이 나옵니다.
+                </p>
+              </div>
+            )}
+        </div>
       )}
     </div>
   )
