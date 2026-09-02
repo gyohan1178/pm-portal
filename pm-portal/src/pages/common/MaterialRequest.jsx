@@ -851,8 +851,13 @@ export default function MaterialRequest() {
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 mb-1">요청 종류 *</label>
                   <div className="flex gap-1">
-                    {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요']].map(([k, t]) => (
-                      <button key={k} onClick={() => setHead(h => ({ ...h, req_kind: k }))}
+                    {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요'], ['자재', '자재만 주세요']].map(([k, t]) => (
+                      <button key={k}
+                        onClick={() => {
+                          setHead(h => ({ ...h, req_kind: k }))
+                          // 절단이 아니면 길이는 뜻이 없다. 남겨 두면 그대로 저장된다.
+                          if (k !== '절단') setRows(rs => rs.map(r => ({ ...r, cut_mm: '' })))
+                        }}
                         title={t}
                         className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border whitespace-nowrap ${
                           head.req_kind === k
@@ -862,6 +867,9 @@ export default function MaterialRequest() {
                       </button>
                     ))}
                   </div>
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    제작 = 만들어 주세요 · 절단 = 잘라만 주세요 · 자재 = 자재만 주세요
+                  </p>
                 </div>
               )}
               <div>
@@ -1453,10 +1461,12 @@ export default function MaterialRequest() {
                                 {h.check_dept}
                               </span>
                             )}
-                            {/* 만들어 달라는 건지 잘라만 달라는 건지 */}
+                            {/* 만들어 달라는 건지, 잘라만 달라는 건지, 자재만 달라는 건지 */}
                             {h.req_kind && (
                               <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                                h.req_kind === '절단' ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700'}`}>
+                                h.req_kind === '절단' ? 'bg-amber-100 text-amber-700'
+                                : h.req_kind === '자재' ? 'bg-teal-100 text-teal-700'
+                                : 'bg-indigo-100 text-indigo-700'}`}>
                                 {h.req_kind}{h.req_kind === '절단' && h.cut_mm ? ` ${Number(h.cut_mm).toLocaleString('ko-KR')}mm` : ''}
                               </span>
                             )}
@@ -1867,7 +1877,7 @@ export default function MaterialRequest() {
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">요청 종류 *</label>
                 <div className="flex gap-1">
-                  {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요']].map(([k, t]) => (
+                  {[['제작', '만들어 주세요'], ['절단', '잘라만 주세요'], ['자재', '자재만 주세요']].map(([k, t]) => (
                     <button key={k} title={t}
                       onClick={() => setReassign(v => ({ ...v, kind: k }))}
                       className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border ${
