@@ -470,8 +470,9 @@ export default function CustomerPO() {
           <button onClick={()=>pickMut.mutate(filtered.filter(p=>picked[p.id]))} disabled={pickMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 whitespace-nowrap disabled:opacity-40">🧺 장바구니 담기 ({Object.values(picked).filter(Boolean).length})</button>
         )}
-        <button onClick={()=>setShowUpload(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 whitespace-nowrap">📤 PO 업로드</button>
+        <button onClick={()=>setShowUpload(true)} disabled={!cs?.id}
+          title={cs?.id ? '' : '고객사 정보를 불러오는 중입니다'}
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 whitespace-nowrap disabled:opacity-40">📤 PO 업로드</button>
         <button onClick={()=>{setForm(EMPTY);setEditId(null);setShowForm(!showForm)}}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 whitespace-nowrap">➕ PO 추가</button>
       </div>

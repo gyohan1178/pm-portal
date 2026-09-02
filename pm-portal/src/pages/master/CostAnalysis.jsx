@@ -10,6 +10,7 @@ import {
   explodeBOM, computeCost, suggestPrice, calcMargin, fxScenario, tierMargin, DEFAULT_CFG,
 } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
+import CostSummary from './CostSummary'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString()
 const usd = n => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -34,6 +35,8 @@ async function fetchCostBOM(csId, projectId) {
 }
 
 export default function CostAnalysis() {
+  // 총괄 = 고객사 전체를 한눈에 · 견적 = 상위품번 하나를 파고들기
+  const [tab, setTab] = useState('summary')
   const { data: profile } = useMyProfile()
   const custList = orderedCustomers(profile)
   const [csCode, setCsCode] = useState(null)
@@ -139,13 +142,18 @@ export default function CostAnalysis() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💵 원가분석</h1>
-          <p className="text-xs text-slate-400">BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.</p>
+          <p className="text-xs text-slate-400">
+            {tab === 'summary'
+              ? '고객사의 상위품번을 한 줄씩 놓고 분류별 원자재 원가를 봅니다. 상위품번을 누르면 세부 내역이 열립니다.'
+              : 'BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.'}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <select value={code} onChange={e => { setCsCode(e.target.value); setProjectId('') }}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
             {custList.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
+          {tab === 'quote' && (<>
           <input value={asmSearch} onChange={e => setAsmSearch(e.target.value)}
             placeholder="코드/품명 검색 (예: 110134250)"
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 w-48" />
@@ -154,9 +162,25 @@ export default function CostAnalysis() {
             <option value="">어셈블리 선택… ({filteredAsm.length})</option>
             {filteredAsm.map(a => <option key={a.id} value={a.id}>{a.code} {a.name ? `· ${a.name}` : ''} ({a.itemCount})</option>)}
           </select>
+          </>)}
         </div>
       </div>
 
+      {/* 탭 */}
+      <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">
+        {[['summary', '📊 원가 총괄'], ['quote', '📄 견적 분석']].map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'summary' && (
+        <CostSummary csId={cs?.id} csName={custList.find(c => c.id === code)?.name || cs?.name || ''} />
+      )}
+
+      {tab === 'quote' && (<>
       {/* 설정값 */}
       <div className="flex items-end gap-3 flex-wrap bg-slate-50 rounded-xl p-3">
         <Field label="기준매입환율"><input type="number" value={buyRate} onChange={e => setBuyRate(e.target.value)} className="w-24 px-2 py-1.5 text-sm text-right rounded border border-slate-200" /></Field>
@@ -278,6 +302,7 @@ export default function CostAnalysis() {
           </p>
         </>
       )}
+      </>)}
     </div>
   )
 }

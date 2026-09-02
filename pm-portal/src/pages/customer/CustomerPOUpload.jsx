@@ -97,6 +97,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
   // 업로드 분석: 기존 PO와 (po+오더라인+DEL라인+품번) 키로 매칭 → 변경 감지
   const analyzeMut = useMutation({
     mutationFn: async () => {
+      // 고객사가 아직 안 잡혔으면 조회를 내보내지 않는다.
+      //   undefined 가 주소에 그대로 실려 customer_id=eq.undefined 로 나가면
+      //   400 만 뜨고 왜 안 되는지 알 수가 없다.
+      if (!csId) throw new Error('고객사 정보를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.')
+
       // 기존 customer_po 적재 (키 비교용)
       const all = []
       for (let from = 0; ; from += 1000) {
@@ -209,6 +214,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
   // 적용: 변경분은 update + 이력 누적, 신규는 insert
   const applyMut = useMutation({
     mutationFn: async () => {
+      // 여기서 뚫리면 고객사가 비어 있는 PO 가 만들어져 어디에도 안 보인다
+      if (!csId) throw new Error('고객사 정보를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.')
       const now = new Date().toISOString()
       // 변경 적용
       for (const c of diff.changes) {
