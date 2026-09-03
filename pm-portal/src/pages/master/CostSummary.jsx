@@ -224,7 +224,9 @@ export default function CostSummary({ csId, csName }) {
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-mono font-bold text-indigo-600">
                       {on ? '▾ ' : '▸ '}{r.project_code}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.project_name}</td>
+                    <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600" title={r.project_name || ''}>
+                      {r.project_name || <span className="text-slate-300">(이름 없음)</span>}
+                    </td>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-slate-400">{n0(r.bom_rows)}</td>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-slate-500">{n0(r.item_kinds)}</td>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-sky-700">{won(r.part_krw)}</td>
@@ -265,7 +267,7 @@ export default function CostSummary({ csId, csName }) {
         <div className="rounded-xl border-2 border-indigo-200 bg-white overflow-hidden">
           <div className="flex items-center gap-2 px-4 py-2.5 bg-indigo-50 border-b border-indigo-200 flex-wrap">
             <span className="font-mono font-bold text-indigo-800">{open.code}</span>
-            {open.name && <span className="text-xs text-slate-500">{open.name}</span>}
+            <span className="text-xs text-slate-500">{open.name || '(이름 없음)'}</span>
             <span className="text-xs text-slate-400">· {n0(detail.length)}행</span>
             {dBusy && <span className="text-xs text-slate-400">불러오는 중…</span>}
             <button onClick={() => setOpen(null)}

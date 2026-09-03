@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v3.92.0'
+export const APP_VERSION = 'v3.93.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.93.0',
+    date: '2026-09-02',
+    changes: [
+      '원가 총괄에서 어셈블리명이 없으면 (이름 없음) 으로 표시합니다 — 빈칸이면 화면이 안 나오는 것인지 데이터가 없는 것인지 구분되지 않았습니다',
+      '이름이 길어 잘려도 마우스를 올리면 전체가 보입니다',
+      'SQL: pm_projects_name_260902.sql 로 빈 어셈블리명을 품목 마스터에서 채웁니다',
+    ],
+  },
   {
     version: 'v3.92.0',
     date: '2026-09-02',
