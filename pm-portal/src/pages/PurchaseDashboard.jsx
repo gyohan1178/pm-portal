@@ -80,34 +80,21 @@ const fmt = v => (v/10000).toFixed(2)
 
 // 보고서 파일로 저장 — 링크나 계정 없이 전달할 수 있게 한 파일로 만든다.
 //   ⚠ 화면에서는 숫자를 눌러야 근거가 보이는데, 파일에서는 누를 수 없다.
-//     "이 금액이 어느 업체 건가" 를 되묻지 않도록 세부까지 모아 담는다.
-async function downloadReport(d, year, onProgress) {
-  // 값이 있는 (월, 고객사) 칸만 부른다. 빈 칸까지 부르면 조회가 수십 번 늘어난다.
-  const targets = []
-  d.months.forEach((row, i) => {
-    CS_LIST.forEach(cs => {
-      if ((Number(row[cs]) || 0) > 0 || (Number(row[cs + 'Pend']) || 0) > 0) {
-        targets.push({ month: i + 1, cs })
-      }
-    })
-  })
-
-  const detail = []
-  for (let i = 0; i < targets.length; i++) {
-    const t = targets[i]
-    onProgress?.(i + 1, targets.length)
-    try {
-      const { data, error } = await supabase.rpc('pm_purchase_breakdown',
-        { p_year: year, p_month: t.month, p_customer: t.cs })
-      if (error) throw error
-      if (data?.length) detail.push({ ...t, rows: data })
-    } catch {
-      // 한 칸이 실패해도 나머지는 담는다. 세부가 빠질 뿐 보고서는 나온다.
-    }
+//     "이 금액이 어느 업체 건가" 를 되묻지 않도록 협력사별 표를 함께 담는다.
+async function downloadReport(d, year) {
+  // 협력사 × 월 × 고객사. DB 함수가 한 번에 계산해 돌려준다.
+  let vendors = []
+  try {
+    const { data, error } = await supabase.rpc('pm_vendor_purchase_yearly',
+      { p_year: year, p_top: 20 })
+    if (error) throw error
+    vendors = data || []
+  } catch {
+    // 협력사 표가 없어도 나머지는 나온다
   }
 
   const html = buildPurchaseReport({
-    months: d.months, csChart: d.csChart, year, csList: CS_LIST, detail,
+    months: d.months, csChart: d.csChart, year, csList: CS_LIST, vendors,
   })
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -121,8 +108,7 @@ async function downloadReport(d, year, onProgress) {
 export default function PurchaseDashboard({ embed = false }) {
   // 숫자를 누르면 근거를 펼친다 — "이 달 매입이 왜 이 금액인가" 를 바로 확인
   const [detail, setDetail] = useState(null)   // { month, cs }
-  // 세부까지 모으느라 시간이 걸린다. 진행 상황을 보여줘야 멈춘 줄 알지 않는다.
-  const [rptBusy, setRptBusy] = useState(null)   // null | '3/28'
+  const [rptBusy, setRptBusy] = useState(null)
   const { data: d, isLoading } = useQuery({ queryKey:['purchaseDash'], queryFn: fetchDashboard, staleTime: 0, refetchOnMount: 'always' })
 
   if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
@@ -161,10 +147,9 @@ export default function PurchaseDashboard({ embed = false }) {
           {!embed && (
             <button
               onClick={async () => {
-                setRptBusy('0/0')
+                setRptBusy(true)
                 try {
-                  await downloadReport(d, new Date().getFullYear(),
-                    (i, n) => setRptBusy(`${i}/${n}`))
+                  await downloadReport(d, new Date().getFullYear())
                 } catch (e) {
                   toastError('보고서 저장 실패: ' + e.message)
                 } finally { setRptBusy(null) }
@@ -172,7 +157,7 @@ export default function PurchaseDashboard({ embed = false }) {
               disabled={!!rptBusy}
               title="화면 그대로 HTML 파일로 저장 — 월·고객사별 세부 내역까지 담깁니다"
               className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
-              {rptBusy ? `세부 모으는 중… ${rptBusy}` : '📄 보고서 저장'}
+              {rptBusy ? '만드는 중…' : '📄 보고서 저장'}
             </button>
           )}
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
@@ -321,6 +306,9 @@ export default function PurchaseDashboard({ embed = false }) {
           </table>
         </div>
       </div>
+
+      <VendorTable />
+
       {detail && <BreakdownModal {...detail} onClose={()=>setDetail(null)} />}
 
     </div>
@@ -403,6 +391,87 @@ function BreakdownModal({ month, cs, onClose }) {
             )
           })}
         </div>
+      </div>
+    </div>
+  )
+}
+
+// 협력사별 매입 — 어느 업체가 어느 고객사용을 공급하고 월별 얼마인가.
+//   ⚠ 확정(ecount) 기준이다. 발주잔·결제계획은 업체 이름 표기가 달라
+//     (「(주)제이엘텍」 vs 「제이엘텍」) 같은 업체가 두 줄로 갈린다.
+//     이름을 맞추기 전까지는 표기가 하나뿐인 확정만 쓴다.
+const MON12 = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
+
+function VendorTable() {
+  const year = new Date().getFullYear()
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ['vendorPurchase', year],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_vendor_purchase_yearly',
+        { p_year: year, p_top: 20 })
+      if (error) throw error
+      return data || []
+    },
+    staleTime: 5 * 60 * 1000,
+  })
+
+  if (isLoading) return null
+  if (!rows.length) return null
+
+  const eok2 = v => ((Number(v) || 0) / 100000000).toFixed(2)
+  const total = rows.reduce((a, r) => a + (Number(r.total_amt) || 0), 0)
+
+  return (
+    <div className="rounded-xl border border-slate-200 overflow-hidden">
+      <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+        <p className="text-sm font-bold text-slate-700">협력사별 매입 현황 (단위: 억원)</p>
+        <p className="text-xs text-slate-400 mt-0.5">
+          매입이 큰 곳부터 상위 20곳 · <b>확정(ecount) 기준</b> — 발주잔·결제계획은 포함되지 않습니다
+        </p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs whitespace-nowrap">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="px-3 py-2 text-left font-bold text-slate-500">협력사</th>
+              <th className="px-3 py-2 text-right font-bold text-slate-600 bg-slate-100">총액</th>
+              <th className="px-3 py-2 text-left font-bold text-slate-500">공급 고객사</th>
+              {MON12.map(m => <th key={m} className="px-2 py-2 text-right font-bold text-slate-400">{m}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={r.vendor} className={`border-b border-slate-100 ${r.is_etc ? 'text-slate-400 italic' : ''} ${i % 2 ? 'bg-slate-50/30' : ''}`}>
+                <td className={`px-3 py-1.5 ${r.is_etc ? '' : 'font-semibold text-slate-700'}`}>{r.vendor}</td>
+                <td className="px-3 py-1.5 text-right font-bold text-slate-800 bg-slate-50">{eok2(r.total_amt)}</td>
+                <td className="px-3 py-1.5 whitespace-normal max-w-[220px]">
+                  {(r.customers || []).map(c => (
+                    <span key={c.cs}
+                      className={`inline-block mr-1 mb-0.5 px-1.5 rounded-full text-[10px] font-bold border ${csColor(c.cs).light} ${csColor(c.cs).text} ${csColor(c.cs).border}`}>
+                      {c.cs} {eok2(c.amt)}
+                    </span>
+                  ))}
+                </td>
+                {MON12.map((_, j) => {
+                  const v = Number(r['m' + (j + 1)]) || 0
+                  return <td key={j} className="px-2 py-1.5 text-right text-slate-600">
+                    {v ? eok2(v) : <span className="text-slate-300">-</span>}
+                  </td>
+                })}
+              </tr>
+            ))}
+            <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
+              <td className="px-3 py-2 text-slate-700">합계</td>
+              <td className="px-3 py-2 text-right text-slate-900 bg-slate-100">{eok2(total)}</td>
+              <td></td>
+              {MON12.map((_, j) => (
+                <td key={j} className="px-2 py-2 text-right text-slate-700">
+                  {eok2(rows.reduce((a, r) => a + (Number(r['m' + (j + 1)]) || 0), 0))}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
       </div>
     </div>
   )

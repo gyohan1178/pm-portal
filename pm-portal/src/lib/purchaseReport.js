@@ -23,19 +23,67 @@ const CS_COLOR = {
 }
 const csHex = (cs) => CS_COLOR[cs] || '#64748b'
 
-const SRC_COLOR = {
-  '확정(ecount)': '#12a05f',
-  '결제계획':      '#7c5cd6',
-  '발주잔':        '#d99400',
+// 월별 고객사별 누적 막대. recharts 는 파일에 담을 수 없어 SVG 로 직접 그린다.
+//   화면 차트와 같은 값·같은 색을 쓴다.
+function barChart(months, csList) {
+  const W = 820, H = 210, PADL = 46, PADR = 8, PADT = 10, PADB = 26
+  const iw = W - PADL - PADR, ih = H - PADT - PADB
+  const totals = months.map(m =>
+    csList.reduce((a, cs) => a + (Number(m[cs]) || 0) + (Number(m[cs + 'Pend']) || 0), 0))
+  const max = Math.max(1, ...totals)
+  // 눈금은 1억(10000만) 단위로 올려 잡는다
+  const step = Math.max(10000, Math.ceil(max / 4 / 10000) * 10000)
+  const top = Math.ceil(max / step) * step
+  const y = v => PADT + ih - (v / top) * ih
+  const bw = iw / months.length
+  const bar = bw * 0.56
+
+  const grid = []
+  for (let g = 0; g <= top; g += step) {
+    grid.push(`<line x1="${PADL}" y1="${y(g)}" x2="${W - PADR}" y2="${y(g)}" stroke="#eef0f4"/>`
+      + `<text x="${PADL - 6}" y="${y(g) + 3}" text-anchor="end" font-size="9" fill="#a8afba">`
+      + `${(g / 10000).toFixed(0)}억</text>`)
+  }
+
+  const bars = months.map((m, i) => {
+    const x = PADL + bw * i + (bw - bar) / 2
+    let acc = 0
+    const segs = []
+    // 확정 먼저 쌓고, 예정은 흐리게 위에 올린다
+    csList.forEach(cs => {
+      const v = Number(m[cs]) || 0
+      if (v > 0) { segs.push(`<rect x="${x}" y="${y(acc + v)}" width="${bar}" `
+        + `height="${Math.max(0, y(acc) - y(acc + v))}" fill="${csHex(cs)}" opacity="0.88"/>`); acc += v }
+    })
+    csList.forEach(cs => {
+      const v = Number(m[cs + 'Pend']) || 0
+      if (v > 0) { segs.push(`<rect x="${x}" y="${y(acc + v)}" width="${bar}" `
+        + `height="${Math.max(0, y(acc) - y(acc + v))}" fill="${csHex(cs)}" opacity="0.30"/>`); acc += v }
+    })
+    return segs.join('')
+      + `<text x="${PADL + bw * i + bw / 2}" y="${H - 8}" text-anchor="middle" `
+      + `font-size="9" fill="#8b93a3">${esc(m.label)}</text>`
+  }).join('')
+
+  const legend = csList.map(cs =>
+    `<span class="lg"><i style="background:${csHex(cs)}"></i>${esc(cs)}</span>`).join('')
+
+  return `<div class="box">
+    <div class="ch-h"><h2>월별 고객사별 매입 추이</h2><div class="lgs">${legend}
+      <span class="lg"><i class="pale"></i>연한 색 = 예정</span></div></div>
+    <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" role="img">
+      ${grid.join('')}${bars}
+    </svg>
+  </div>`
 }
 
 /**
  * months  : 화면과 같은 월별 배열
  * csChart : [{ name, actual, pending }]
  * csList  : 고객사 순서
- * detail  : [{ month, cs, rows:[{source,label,amount,cnt,note}] }]  없으면 세부 없이
+ * vendors : pm_vendor_purchase_yearly 결과. 협력사별 월 표를 만든다.
  */
-export function buildPurchaseReport({ months, csChart, csList, year, detail = [] }) {
+export function buildPurchaseReport({ months, csChart, csList, year, vendors = [] }) {
   const ymd = new Date().toISOString().slice(0, 10)
   const totActual = csChart.reduce((a, c) => a + (Number(c.actual) || 0), 0)
   const totPending = csChart.reduce((a, c) => a + (Number(c.pending) || 0), 0)
@@ -84,37 +132,50 @@ export function buildPurchaseReport({ months, csChart, csList, year, detail = []
   const gTot = months.reduce((a, m) => a + csList.reduce((b, cs) => b + (Number(m[cs]) || 0), 0), 0)
   const gPend = months.reduce((a, m) => a + (Number(m.pending) || 0), 0)
 
-  const detailHtml = detail.length ? detail.map(blk => {
-    const bySrc = {}
-    ;(blk.rows || []).forEach(r => { (bySrc[r.source] = bySrc[r.source] || []).push(r) })
-    const total = (blk.rows || []).reduce((a, r) => a + (Number(r.amount) || 0), 0)
-    if (!total) return ''
-    const groups = Object.entries(bySrc).map(([src, list]) => {
-      const sum = list.reduce((a, r) => a + (Number(r.amount) || 0), 0)
-      const items = list.slice()
-        .sort((a, b) => (Number(b.amount) || 0) - (Number(a.amount) || 0))
-        .map(r => `<div class="di">
-            <span class="dl">${esc(r.label || '(미지정)')}${r.cnt > 1 ? `<i> · ${r.cnt}건</i>` : ''}</span>
-            <span class="da">${won(r.amount)}</span>
-          </div>`).join('')
-      const notes = [...new Set(list.map(r => r.note).filter(Boolean))]
-      return `<div class="src" style="border-color:${SRC_COLOR[src] || '#cbd5e1'}55">
-          <div class="src-h">
-            <b style="color:${SRC_COLOR[src] || '#475569'}">${esc(src)}</b>
-            <b>${won(sum)}원</b>
-          </div>
-          ${items}
-          ${notes.length ? `<p class="note">${esc(notes.join(' · '))}</p>` : ''}
-        </div>`
-    }).join('')
-    return `<div class="dblk">
-        <div class="dblk-h">
-          <span><b>${blk.month}월</b> · <span style="color:${csHex(blk.cs)}">${esc(blk.cs)}</span></span>
-          <b>${won(total)}원</b>
-        </div>
-        ${groups}
-      </div>`
-  }).filter(Boolean).join('') : ''
+  // ── 협력사별 매입 (확정 기준) ──
+  //   "어느 업체가 어느 고객사용을 공급하고 월별 얼마인가" 를 한 표에 담는다.
+  //   매입이 큰 곳부터. 172곳이라 상위 20곳만 따로 내고 나머지는 묶는다.
+  const MON = ['1월','2월','3월','4월','5월','6월','7월','8월','9월','10월','11월','12월']
+  const vTotal = vendors.reduce((a, v) => a + (Number(v.total_amt) || 0), 0)
+
+  const vendorRows = vendors.map((v, i) => {
+    const ms = MON.map((_, j) => Number(v['m' + (j + 1)]) || 0)
+    const badges = (v.customers || [])
+      .map(c => `<span class="b" style="color:${csHex(c.cs)};background:${csHex(c.cs)}14;`
+                + `border-color:${csHex(c.cs)}33">${esc(c.cs)} ${eok(c.amt / 10000)}</span>`)
+      .join('')
+    return `<tr class="${i % 2 ? 'alt ' : ''}${v.is_etc ? 'etc' : ''}">
+      <td class="l vn">${esc(v.vendor)}</td>
+      <td class="r ttl"><b>${eok((Number(v.total_amt) || 0) / 10000)}</b></td>
+      <td class="l bs">${badges}</td>
+      ${ms.map(x => `<td class="r">${x ? eok(x / 10000) : '<i>-</i>'}</td>`).join('')}
+    </tr>`
+  }).join('')
+
+  const vendorFoot = MON.map((_, j) =>
+    `<td class="r">${eok(vendors.reduce((a, v) => a + (Number(v['m' + (j + 1)]) || 0), 0) / 10000)}</td>`
+  ).join('')
+
+  const vendorHtml = vendors.length ? `
+  <div class="box vbox">
+    <h2>협력사별 매입 현황</h2>
+    <p class="h2sub">
+      매입이 큰 곳부터 · 단위 억원 · <b>확정(ecount) 기준</b> — 발주잔·결제계획은 포함되지 않습니다
+    </p>
+    <div class="scroll">
+    <table class="vt">
+      <thead><tr>
+        <th class="l">협력사</th><th class="ttl">총액</th><th class="l">공급 고객사</th>
+        ${MON.map(m => `<th>${m}</th>`).join('')}
+      </tr></thead>
+      <tbody>
+        ${vendorRows}
+        <tr class="tot"><td class="l">합계</td>
+          <td class="r ttl">${eok(vTotal / 10000)}</td><td></td>${vendorFoot}</tr>
+      </tbody>
+    </table>
+    </div>
+  </div>` : ''
 
   return `<!DOCTYPE html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -172,8 +233,30 @@ export function buildPurchaseReport({ months, csChart, csList, year, detail = []
   .dl i{color:#98a0b0;font-style:normal}
   .da{font-weight:700;color:#334155}
   .note{margin:6px 0 0;font-size:11px;color:#b45309}
+  .ch-h{display:flex;justify-content:space-between;align-items:flex-start;
+        gap:12px;flex-wrap:wrap;margin-bottom:8px}
+  .lgs{display:flex;gap:10px;flex-wrap:wrap}
+  .lg{font-size:10.5px;color:#6b7280;display:inline-flex;align-items:center;gap:4px}
+  .lg i{width:9px;height:9px;border-radius:2px;display:inline-block}
+  .lg i.pale{background:#c8ccd6}
+  .scroll{overflow-x:auto}
+  .vt{font-size:10.5px;min-width:1000px}
+  .vt th{padding:6px 4px}
+  .vt td{padding:4px 4px;text-align:right;color:#4b5563;white-space:nowrap}
+  .vt td.l{text-align:left}
+  .vt .vn{font-weight:700;color:#2b3038}
+  .vt .bs{white-space:normal;max-width:190px}
+  .vt i{color:#d4d8de;font-style:normal}
+  .vt tr.etc td{color:#94a3b8;font-style:italic}
+  .vt .ttl{color:#2b3038;background:#fafbfc;border-right:1px solid #e4e7ec}
+  .vt tr.tot .ttl{background:#f2f4f7}
+  .b{display:inline-block;font-size:9.5px;font-weight:700;border:1px solid;border-radius:20px;
+     padding:0 5px;margin:0 3px 2px 0;line-height:15px}
   .foot{margin-top:22px;padding-top:14px;border-top:1px solid #e8eaf0;font-size:11px;color:#98a0b0}
   @page{size:A4 portrait;margin:12mm}
+  /* 협력사 표는 12개월이라 세로로는 안 들어간다 */
+  @page vendor{size:A4 landscape;margin:8mm}
+  .vbox{page:vendor}
   @media print{
     body{background:#fff}
     .wrap{max-width:none;padding:0}
@@ -198,6 +281,8 @@ export function buildPurchaseReport({ months, csChart, csList, year, detail = []
 
   <div class="cards">${cards}</div>
 
+  ${barChart(months, csList)}
+
   <div class="box">
     <h2>월별 고객사별 매입 현황</h2>
     <p class="h2sub">단위 억원 · 확정=ecount · 예상=결제 기준</p>
@@ -218,12 +303,7 @@ export function buildPurchaseReport({ months, csChart, csList, year, detail = []
     </table>
   </div>
 
-  ${detailHtml ? `
-  <div class="box">
-    <h2>월·고객사별 세부 내역</h2>
-    <p class="h2sub">위 표의 숫자가 어느 업체·어느 근거에서 나온 것인지 펼쳐 놓았습니다.</p>
-  </div>
-  ${detailHtml}` : ''}
+  ${vendorHtml}
 
   <div class="foot">
     진선테크 지원본부 구매자재팀 · gyohan@jinsuntech.co.kr<br>
