@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
+import { downloadCostExcel } from '../../lib/costExcel'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString('ko-KR')
 const n0 = n => (Number(n) || 0).toLocaleString('ko-KR')
@@ -103,57 +104,28 @@ export default function CostSummary({ csId, csName }) {
   }
   const coverAll = sum.priced + sum.noPrice === 0 ? null : sum.priced / (sum.priced + sum.noPrice)
 
-  async function exportXlsx() {
+  // 매입단가·구매처는 영업팀에 나가면 안 된다. 만들 때부터 가른다.
+  //   손으로 지우는 방식은 한 번만 깜빡해도 그대로 나간다.
+  const [xlAsk, setXlAsk] = useState(false)
+
+  async function exportXlsx(withPrice) {
     if (!list.length) { toastError('내보낼 것이 없습니다'); return }
+    setXlAsk(false)
     setXlBusy(true)
     try {
-      const XLSX = await import('xlsx')
-      const wb = XLSX.utils.book_new()
-
-      const s1 = list.map(r => ({
-        '고객사': csName, '상위품번': r.project_code, '어셈블리명': r.project_name,
-        'BOM행': Number(r.bom_rows), '품목종수': Number(r.item_kinds),
-        '파트': Number(r.part_krw), '가공물': Number(r.mach_krw), '기타': Number(r.etc_krw),
-        '원자재 합계': Number(r.total_krw),
-        '단가 등록': Number(r.priced_kinds), '단가 미등록': Number(r.no_price_kinds),
-        '단가 반영률': cover(r) == null ? '' : Math.round(cover(r) * 1000) / 10,
-        '하네스(별도)': Number(r.harness_kinds),
-        '어셈블리(제외)': Number(r.assy_kinds),
-      }))
-      s1.push({
-        '고객사': '합계', '상위품번': `${list.length}개`, '어셈블리명': '',
-        'BOM행': sum.rows, '품목종수': '',
-        '파트': sum.part, '가공물': sum.mach, '기타': sum.etc, '원자재 합계': sum.total,
-        '단가 등록': sum.priced, '단가 미등록': sum.noPrice,
-        '단가 반영률': coverAll == null ? '' : Math.round(coverAll * 1000) / 10,
-        '하네스(별도)': '', '어셈블리(제외)': '',
-      })
-      const ws1 = XLSX.utils.json_to_sheet(s1)
-      ws1['!cols'] = [{ wch: 10 }, { wch: 18 }, { wch: 26 }, { wch: 8 }, { wch: 9 },
-                      { wch: 14 }, { wch: 14 }, { wch: 12 }, { wch: 16 },
-                      { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 12 }, { wch: 13 }]
-      XLSX.utils.book_append_sheet(wb, ws1, '총괄')
-
-      // 열어 본 상위품번이 있으면 그 세부도 함께
-      if (open && detail.length) {
-        const s2 = detail.map(d => ({
-          '상위품번': open.code, '분류': d.grp, '품번': d.std_code, '품명': d.item_name,
-          '제조사': d.manufacturer || '', '제조사품번': d.maker_code || '',
-          '소요': Number(d.qty), '단위': d.unit,
-          '매입단가': d.price == null ? '' : Number(d.price),
-          '금액': Number(d.amount), '구매처': d.vendor || '',
-          '합산': d.counted ? 'O' : 'X', '제외 사유': d.reason || '',
-        }))
-        const ws2 = XLSX.utils.json_to_sheet(s2)
-        ws2['!cols'] = [{ wch: 16 }, { wch: 8 }, { wch: 16 }, { wch: 32 }, { wch: 16 },
-                        { wch: 18 }, { wch: 8 }, { wch: 6 }, { wch: 11 }, { wch: 13 },
-                        { wch: 13 }, { wch: 6 }, { wch: 34 }]
-        XLSX.utils.book_append_sheet(wb, ws2, `세부_${String(open.code).slice(0, 22)}`)
-      }
-
       const d = new Date()
-      const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
-      XLSX.writeFile(wb, `원가총괄_${csName}_${ymd}.xlsx`)
+      const p2 = x => String(x).padStart(2, '0')
+      const asOf = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+      await downloadCostExcel({
+        head: { csName, asOf, rowCount: list.length, sum, cover: coverAll },
+        rows: list,
+        detail: open && detail.length
+          ? { code: open.code, name: open.name, rows: detail }
+          : null,
+        withPrice,
+        fileName: `원가총괄_${csName}${withPrice ? '' : '_영업팀용'}_`
+                  + `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.xlsx`,
+      })
     } catch (e) {
       toastError('내보내기 실패: ' + e.message)
     } finally { setXlBusy(false) }
@@ -195,12 +167,51 @@ export default function CostSummary({ csId, csName }) {
           className="px-3 py-2 text-sm rounded-lg border border-slate-200 w-64" />
         <span className="text-xs text-slate-400">{n0(list.length)}개</span>
         {isFetching && <span className="text-xs text-slate-400">불러오는 중…</span>}
-        <button onClick={exportXlsx} disabled={xlBusy || !list.length}
-          title="화면에 보이는 그대로. 세부를 열어 두면 그 시트도 함께 나옵니다"
+        <button onClick={() => setXlAsk(true)} disabled={xlBusy || !list.length}
+          title="표지와 총괄표가 있는 제출용 엑셀. 세부를 열어 두면 그 시트도 함께 나옵니다"
           className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
           {xlBusy ? '…' : '📥 엑셀'}
         </button>
       </div>
+
+      {/* 어떤 걸로 내려받을지. 매입단가가 실수로 나가는 것을 막는다. */}
+      {xlAsk && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setXlAsk(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3"
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">📥 어떤 걸로 내려받을까요</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                표지와 총괄표가 들어갑니다.
+                {open && detail.length > 0 && ` 열어 둔 ${open.code} 세부도 함께 나옵니다.`}
+              </p>
+            </div>
+
+            <button onClick={() => exportXlsx(true)} disabled={xlBusy}
+              className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-40">
+              <p className="text-sm font-bold text-slate-800">전체</p>
+              <p className="text-xs text-slate-400 mt-0.5">매입단가·구매처 포함 · 사내 보관용</p>
+            </button>
+
+            <button onClick={() => exportXlsx(false)} disabled={xlBusy}
+              className="w-full text-left px-4 py-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+              <p className="text-sm font-bold text-emerald-800">영업팀용</p>
+              <p className="text-xs text-emerald-600 mt-0.5">매입단가·구매처 빼고 · 파일 이름에 표시됨</p>
+            </button>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              ⚠️ 매입단가와 구매처는 협상에 쓰이는 값입니다. 사외로 나가면 곤란하므로
+              영업팀용에는 아예 담기지 않습니다.
+            </p>
+
+            <button onClick={() => setXlAsk(false)}
+              className="w-full py-2 text-sm font-semibold rounded-lg border border-slate-200 text-slate-500">
+              취소
+            </button>
+          </div>
+        </div>
+      )}
 
       {!isFetching && !list.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
