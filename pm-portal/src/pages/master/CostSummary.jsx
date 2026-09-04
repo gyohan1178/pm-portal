@@ -4,6 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { toastError } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
 import { downloadCostExcel } from '../../lib/costExcel'
+import { useCustomers } from '../../hooks/useCustomers'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString('ko-KR')
 const n0 = n => (Number(n) || 0).toLocaleString('ko-KR')
@@ -52,18 +53,31 @@ const DET_COLS = [
 ]
 
 const GRP_CLS = {
-  '파트':   'bg-sky-100 text-sky-700',
-  '가공물': 'bg-amber-100 text-amber-700',
+  '파트':     'bg-sky-100 text-sky-700',
+  '가공물':   'bg-amber-100 text-amber-700',
   '어셈블리': 'bg-violet-100 text-violet-700',
-  '하네스': 'bg-emerald-100 text-emerald-700',
-  '제외':   'bg-slate-100 text-slate-500',
-  '미분류': 'bg-rose-100 text-rose-600',
+  '하네스':   'bg-emerald-100 text-emerald-700',
+  '제외':     'bg-slate-100 text-slate-500',
+  '미분류':   'bg-rose-100 text-rose-600',
 }
+
+const sumOf = (rs) => rs.reduce((a, r) => ({
+  rows:  a.rows  + Number(r.bom_rows || 0),
+  part:  a.part  + Number(r.part_krw || 0),
+  mach:  a.mach  + Number(r.mach_krw || 0),
+  etc:   a.etc   + Number(r.etc_krw || 0),
+  total: a.total + Number(r.total_krw || 0),
+  priced:  a.priced  + Number(r.priced_kinds || 0),
+  noPrice: a.noPrice + Number(r.no_price_kinds || 0),
+}), { rows: 0, part: 0, mach: 0, etc: 0, total: 0, priced: 0, noPrice: 0 })
 
 export default function CostSummary({ csId, csName }) {
   const [q, setQ] = useState('')
   const [open, setOpen] = useState(null)      // { id, code, name }
   const [xlBusy, setXlBusy] = useState(false)
+  const [xlAsk, setXlAsk] = useState(null)    // null | 'scope' | 'kind'
+  const [xlAll, setXlAll] = useState(false)   // 전 고객사인가
+  const { data: customers = [] } = useCustomers()
 
   const { data: rows = [], isFetching } = useQuery({
     queryKey: ['cost-summary', csId],
@@ -87,16 +101,7 @@ export default function CostSummary({ csId, csName }) {
       String(r.project_name || '').toLowerCase().includes(k))
   }, [rows, q])
 
-  // 합계 — 화면에 보이는 것만
-  const sum = useMemo(() => list.reduce((a, r) => ({
-    rows:  a.rows  + Number(r.bom_rows || 0),
-    part:  a.part  + Number(r.part_krw || 0),
-    mach:  a.mach  + Number(r.mach_krw || 0),
-    etc:   a.etc   + Number(r.etc_krw || 0),
-    total: a.total + Number(r.total_krw || 0),
-    noPrice: a.noPrice + Number(r.no_price_kinds || 0),
-    priced:  a.priced  + Number(r.priced_kinds || 0),
-  }), { rows: 0, part: 0, mach: 0, etc: 0, total: 0, noPrice: 0, priced: 0 }), [list])
+  const sum = useMemo(() => sumOf(list), [list])
 
   const cover = (r) => {
     const p = Number(r.priced_kinds || 0), n = Number(r.no_price_kinds || 0)
@@ -104,27 +109,40 @@ export default function CostSummary({ csId, csName }) {
   }
   const coverAll = sum.priced + sum.noPrice === 0 ? null : sum.priced / (sum.priced + sum.noPrice)
 
-  // 매입단가·구매처는 영업팀에 나가면 안 된다. 만들 때부터 가른다.
+  // 매입단가·구매처는 다른 팀에 나가면 안 된다. 만들 때부터 가른다.
   //   손으로 지우는 방식은 한 번만 깜빡해도 그대로 나간다.
-  const [xlAsk, setXlAsk] = useState(false)
-
   async function exportXlsx(withPrice) {
-    if (!list.length) { toastError('내보낼 것이 없습니다'); return }
-    setXlAsk(false)
+    setXlAsk(null)
     setXlBusy(true)
     try {
       const d = new Date()
       const p2 = x => String(x).padStart(2, '0')
       const asOf = `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+      const ymd = `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}`
+
+      let books
+      if (xlAll) {
+        // 고객사마다 따로 부른다. 한 번에 받으면 1,000행에서 잘린다.
+        books = []
+        for (const c of customers) {
+          const rs = await fetchSummary(c.id)
+          if (!rs.length) continue
+          books.push({ csName: c.name, rows: rs, sum: sumOf(rs), detail: null })
+        }
+        if (!books.length) { toastError('내보낼 것이 없습니다'); return }
+      } else {
+        if (!list.length) { toastError('내보낼 것이 없습니다'); return }
+        books = [{
+          csName, rows: list, sum,
+          detail: open && detail.length
+            ? { code: open.code, name: open.name, rows: detail } : null,
+        }]
+      }
+
       await downloadCostExcel({
-        head: { csName, asOf, rowCount: list.length, sum, cover: coverAll },
-        rows: list,
-        detail: open && detail.length
-          ? { code: open.code, name: open.name, rows: detail }
-          : null,
-        withPrice,
-        fileName: `원가총괄_${csName}${withPrice ? '' : '_영업팀용'}_`
-                  + `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.xlsx`,
+        books, asOf, withPrice,
+        fileName: `원가총괄_${xlAll ? '전고객사' : csName}`
+                  + `${withPrice ? '' : '_영업팀용'}_${ymd}.xlsx`,
       })
     } catch (e) {
       toastError('내보내기 실패: ' + e.message)
@@ -167,45 +185,63 @@ export default function CostSummary({ csId, csName }) {
           className="px-3 py-2 text-sm rounded-lg border border-slate-200 w-64" />
         <span className="text-xs text-slate-400">{n0(list.length)}개</span>
         {isFetching && <span className="text-xs text-slate-400">불러오는 중…</span>}
-        <button onClick={() => setXlAsk(true)} disabled={xlBusy || !list.length}
-          title="표지와 총괄표가 있는 제출용 엑셀. 세부를 열어 두면 그 시트도 함께 나옵니다"
+        <button onClick={() => setXlAsk('scope')} disabled={xlBusy}
+          title="표지와 총괄표가 있는 제출용 엑셀"
           className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
           {xlBusy ? '…' : '📥 엑셀'}
         </button>
       </div>
 
-      {/* 어떤 걸로 내려받을지. 매입단가가 실수로 나가는 것을 막는다. */}
+      {/* 두 번 고른다 — 범위, 그다음 단가 포함 여부 */}
       {xlAsk && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setXlAsk(false)}>
+          onClick={() => setXlAsk(null)}>
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3"
             onClick={e => e.stopPropagation()}>
-            <div>
-              <h3 className="text-base font-bold text-slate-900">📥 어떤 걸로 내려받을까요</h3>
-              <p className="text-xs text-slate-400 mt-0.5">
-                표지와 총괄표가 들어갑니다.
-                {open && detail.length > 0 && ` 열어 둔 ${open.code} 세부도 함께 나옵니다.`}
+
+            {xlAsk === 'scope' && (<>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">📥 어느 범위로</h3>
+                <p className="text-xs text-slate-400 mt-0.5">표지와 총괄표가 들어갑니다.</p>
+              </div>
+              <button onClick={() => { setXlAll(false); setXlAsk('kind') }}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+                <p className="text-sm font-bold text-slate-800">{csName}</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  상위품번 {n0(list.length)}개
+                  {open && detail.length > 0 && ` · 열어 둔 ${open.code} 세부도 함께`}
+                </p>
+              </button>
+              <button onClick={() => { setXlAll(true); setXlAsk('kind') }}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50">
+                <p className="text-sm font-bold text-slate-800">전 고객사</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  고객사마다 시트를 나눠 담습니다 · 세부는 빠집니다
+                </p>
+              </button>
+            </>)}
+
+            {xlAsk === 'kind' && (<>
+              <div>
+                <h3 className="text-base font-bold text-slate-900">📥 어떤 걸로</h3>
+                <p className="text-xs text-slate-400 mt-0.5">{xlAll ? '전 고객사' : csName}</p>
+              </div>
+              <button onClick={() => exportXlsx(true)} disabled={xlBusy}
+                className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-40">
+                <p className="text-sm font-bold text-slate-800">전체</p>
+                <p className="text-xs text-slate-400 mt-0.5">매입단가·구매처 포함 · 사내 보관용</p>
+              </button>
+              <button onClick={() => exportXlsx(false)} disabled={xlBusy}
+                className="w-full text-left px-4 py-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+                <p className="text-sm font-bold text-emerald-800">다른 팀 전달용</p>
+                <p className="text-xs text-emerald-600 mt-0.5">매입단가·구매처 빼고 · 파일 이름에 표시됨</p>
+              </button>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                매입단가와 구매처는 협상에 쓰이는 값이라, 전달용에는 아예 담기지 않습니다.
               </p>
-            </div>
+            </>)}
 
-            <button onClick={() => exportXlsx(true)} disabled={xlBusy}
-              className="w-full text-left px-4 py-3 rounded-xl border border-slate-200 hover:bg-slate-50 disabled:opacity-40">
-              <p className="text-sm font-bold text-slate-800">전체</p>
-              <p className="text-xs text-slate-400 mt-0.5">매입단가·구매처 포함 · 사내 보관용</p>
-            </button>
-
-            <button onClick={() => exportXlsx(false)} disabled={xlBusy}
-              className="w-full text-left px-4 py-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-              <p className="text-sm font-bold text-emerald-800">영업팀용</p>
-              <p className="text-xs text-emerald-600 mt-0.5">매입단가·구매처 빼고 · 파일 이름에 표시됨</p>
-            </button>
-
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              ⚠️ 매입단가와 구매처는 협상에 쓰이는 값입니다. 사외로 나가면 곤란하므로
-              영업팀용에는 아예 담기지 않습니다.
-            </p>
-
-            <button onClick={() => setXlAsk(false)}
+            <button onClick={() => setXlAsk(null)}
               className="w-full py-2 text-sm font-semibold rounded-lg border border-slate-200 text-slate-500">
               취소
             </button>
@@ -324,9 +360,9 @@ export default function CostSummary({ csId, csName }) {
       )}
 
       <p className="text-[11px] text-slate-400 leading-relaxed">
-        · <b>파트</b> 전장·커넥터·케이블·하드웨어·기타 &nbsp;·&nbsp; <b>가공물</b> 판금·브라켓 &nbsp;·&nbsp; <b>기타</b> 사 오는 어셈블리·미분류<br />
-        · <b>하네스</b>는 우리가 만드는 것이라 매입원가에 넣지 않습니다. 종수만 보여 줍니다.<br />
-        · 그 자체가 상위품번인 어셈블리는 <b>하위 부품이 BOM 에 이미 들어 있어</b> 합계에서 뺍니다 (이중계산 방지).<br />
+        · <b>파트</b> 전장·커넥터·케이블·하드웨어 &nbsp;·&nbsp; <b>가공물</b> 판금·브라켓·외주 가공 &nbsp;·&nbsp; <b>기타</b> 사 오는 어셈블리·미분류<br />
+        · <b>하네스</b>는 고객사마다 합계 포함 여부가 다릅니다. 엑셀 표지의 산출 기준을 보세요.<br />
+        · 하위 부품이 별도로 산정된 어셈블리는 중복 산정을 피하기 위해 합계에서 뺍니다.<br />
         · <b>단가 반영률</b>이 낮으면 합계가 실제보다 적습니다. 상위품번을 눌러 어떤 품목이 빠졌는지 확인하세요.
       </p>
     </div>
