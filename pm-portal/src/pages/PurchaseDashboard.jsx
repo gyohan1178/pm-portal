@@ -3,6 +3,7 @@ import { buildPurchaseReport } from '../lib/purchaseReport'
 import AnalysisTabs from '../components/AnalysisTabs'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { toastError } from '../lib/toast'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 
 const CS_COLORS = {
@@ -77,10 +78,36 @@ async function fetchDashboard() {
 const CS_LIST = ['에드워드','VM','CSK','엑셀리스','하네스','기타']
 const fmt = v => (v/10000).toFixed(2)
 
-// 보고서 파일로 저장 — 링크나 계정 없이 전달할 수 있게 한 파일로 만든다
-function downloadReport(d, year) {
+// 보고서 파일로 저장 — 링크나 계정 없이 전달할 수 있게 한 파일로 만든다.
+//   ⚠ 화면에서는 숫자를 눌러야 근거가 보이는데, 파일에서는 누를 수 없다.
+//     "이 금액이 어느 업체 건가" 를 되묻지 않도록 세부까지 모아 담는다.
+async function downloadReport(d, year, onProgress) {
+  // 값이 있는 (월, 고객사) 칸만 부른다. 빈 칸까지 부르면 조회가 수십 번 늘어난다.
+  const targets = []
+  d.months.forEach((row, i) => {
+    CS_LIST.forEach(cs => {
+      if ((Number(row[cs]) || 0) > 0 || (Number(row[cs + 'Pend']) || 0) > 0) {
+        targets.push({ month: i + 1, cs })
+      }
+    })
+  })
+
+  const detail = []
+  for (let i = 0; i < targets.length; i++) {
+    const t = targets[i]
+    onProgress?.(i + 1, targets.length)
+    try {
+      const { data, error } = await supabase.rpc('pm_purchase_breakdown',
+        { p_year: year, p_month: t.month, p_customer: t.cs })
+      if (error) throw error
+      if (data?.length) detail.push({ ...t, rows: data })
+    } catch {
+      // 한 칸이 실패해도 나머지는 담는다. 세부가 빠질 뿐 보고서는 나온다.
+    }
+  }
+
   const html = buildPurchaseReport({
-    months: d.months, csChart: d.csChart, year, csList: CS_LIST,
+    months: d.months, csChart: d.csChart, year, csList: CS_LIST, detail,
   })
   const blob = new Blob([html], { type: 'text/html;charset=utf-8' })
   const url = URL.createObjectURL(blob)
@@ -94,6 +121,8 @@ function downloadReport(d, year) {
 export default function PurchaseDashboard({ embed = false }) {
   // 숫자를 누르면 근거를 펼친다 — "이 달 매입이 왜 이 금액인가" 를 바로 확인
   const [detail, setDetail] = useState(null)   // { month, cs }
+  // 세부까지 모으느라 시간이 걸린다. 진행 상황을 보여줘야 멈춘 줄 알지 않는다.
+  const [rptBusy, setRptBusy] = useState(null)   // null | '3/28'
   const { data: d, isLoading } = useQuery({ queryKey:['purchaseDash'], queryFn: fetchDashboard, staleTime: 0, refetchOnMount: 'always' })
 
   if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
@@ -130,10 +159,20 @@ export default function PurchaseDashboard({ embed = false }) {
         <div className="flex items-center gap-2">
           <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
           {!embed && (
-            <button onClick={() => downloadReport(d, new Date().getFullYear())}
-              title="보고서 형식 HTML 파일로 저장 — 링크 없이 전달할 수 있습니다"
-              className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
-              📄 보고서 저장
+            <button
+              onClick={async () => {
+                setRptBusy('0/0')
+                try {
+                  await downloadReport(d, new Date().getFullYear(),
+                    (i, n) => setRptBusy(`${i}/${n}`))
+                } catch (e) {
+                  toastError('보고서 저장 실패: ' + e.message)
+                } finally { setRptBusy(null) }
+              }}
+              disabled={!!rptBusy}
+              title="화면 그대로 HTML 파일로 저장 — 월·고객사별 세부 내역까지 담깁니다"
+              className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
+              {rptBusy ? `세부 모으는 중… ${rptBusy}` : '📄 보고서 저장'}
             </button>
           )}
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}

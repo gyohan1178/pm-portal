@@ -357,24 +357,6 @@ export default function WeeklyReport() {
   const csChart = Object.values(csAmtMap).filter(c=>c.actual+c.pending>0)
   const planByCS      = byCustomer(d?.plan||[])
   const delayByCS     = byCustomer(d?.delay||[])
-  // 불출: 상위 품목(project) 기준으로 묶음 — 하위 부품 일일이 나열 안 함.
-  // project 없는 수기 항목은 그대로 유지.
-  const rollupOutbound = (rows) => {
-    const groups = {}, standalone = []
-    for (const r of (rows || [])) {
-      const proj = (r.project || '').trim()
-      if (!proj) { standalone.push(r); continue }
-      const k = (r.customer || '') + '|' + proj
-      if (!groups[k]) groups[k] = { customer: r.customer, project: proj, parts: 0, note: r.note || '' }
-      groups[k].parts += 1
-    }
-    const grouped = Object.values(groups).map(g => ({
-      customer: g.customer, project: g.project, pn: '', name: `부품 ${g.parts}종`, qty: '', note: g.note,
-    }))
-    return [...grouped, ...standalone]
-  }
-  const outboundByCS  = byCustomer(rollupOutbound(d?.outbound||[]))
-
   const inboundTotal  = (d?.inbound||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
   const inboundCount  = (d?.inbound||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
   const planTotal     = (d?.plan||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
@@ -721,28 +703,6 @@ export default function WeeklyReport() {
             </SectionCard>
           )
         })()}
-
-        {/* 자재 불출 */}
-        {(d?.outbound||[]).length>0&&(
-          <SectionCard title="📤 자재 불출 현황" color="bg-purple-50"
-            collapsed={collapsed['outbound']}
-            onToggle={()=>setCollapsed(v=>({...v,outbound:!v['outbound']}))}>
-            {CUSTOMERS.map(cs=>(outboundByCS[cs]?.length>0&&(
-              <div key={cs}>
-                <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-100">
-                  <span className="text-xs font-bold text-slate-600">{cs}</span>
-                </div>
-                <ItemTable items={outboundByCS[cs]} cols={[
-                  {key:'project', label:'프로젝트', cls:'font-mono text-slate-600'},
-                  {key:'pn',      label:'품목코드', cls:'font-mono text-indigo-600'},
-                  {key:'name',    label:'품명'},
-                  {key:'qty',     label:'수량', cls:'text-right font-bold text-purple-700'},
-                  {key:'note',    label:'비고', cls:'text-slate-400'},
-                ]}/>
-              </div>
-            )))}
-          </SectionCard>
-        )}
 
         {/* 특이사항 */}
         <div className="rounded-xl border border-slate-200 overflow-x-auto">
