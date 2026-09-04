@@ -188,6 +188,28 @@ export default function Inbound() {
     onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
 
+  // 입고일만 바꾼다. 8월에 잡은 것을 9월로 이월하는 경우가 있다.
+  //   지웠다 다시 넣으면 재고가 두 번 움직여 위험하므로 날짜만 고친다.
+  const [dateForm, setDateForm] = useState(null)   // { date, memo }
+
+  const dateMut = useMutation({
+    mutationFn: async ({ ids, date, memo }) => {
+      if (!guardEdit()) throw new Error('__READONLY__')
+      const { data, error } = await supabase.rpc('pm_movement_date_change',
+        { p_ids: ids, p_date: date, p_memo: memo || null })
+      if (error) throw error
+      return Array.isArray(data) ? data[0] : data
+    },
+    onSuccess: (r) => {
+      if (Number(r?.skipped) > 0) toastError(`${r.updated}건 변경 · ${r.note || ''}`)
+      else toastSuccess(`${r?.updated ?? 0}건 입고일 변경`)
+      setDateForm(null); setSelHist(new Set())
+      qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })
+      refetch()
+    },
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('입고일 변경 오류: ' + e.message) },
+  })
+
   const delHistMut = useMutation({
     mutationFn: async (ids) => {
       if (!guardEdit()) throw new Error('__READONLY__')
@@ -675,14 +697,18 @@ export default function Inbound() {
               <button onClick={exportHistory}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
             )}
-            {selHist.size>0&&(
+            {selHist.size>0&&(<>
+              <button onClick={()=>setDateForm({ date:'', memo:'' })}
+                title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
+                className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
+                📅 입고일 변경 {selHist.size}건</button>
               <button onClick={()=>{
                   if(window.confirm(`선택한 입고 이력 ${selHist.size}건을 삭제할까요?\n재고와 입고수량(qty_received)도 그만큼 되돌립니다.`))
                     delHistMut.mutate([...selHist])
                 }} disabled={delHistMut.isPending}
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
                 🗑 선택 {selHist.size}건 삭제</button>
-            )}
+            </>)}
             <div className="ml-auto text-xs text-slate-400 self-center">
               총 {histShown.length}건 / {histTotal.toLocaleString()} {history[0]?.items?.unit||''}
             </div>
@@ -751,6 +777,74 @@ export default function Inbound() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 입고일 변경 — 날짜만 바꾼다 */}
+      {dateForm && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={()=>setDateForm(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3"
+            onClick={e=>e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">📅 입고일 변경</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                {selHist.size}건. 수량·단가·재고는 그대로 두고 날짜만 바꿉니다.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">바꿀 입고일 *</label>
+              <input type="date" value={dateForm.date}
+                onChange={e=>setDateForm(v=>({ ...v, date:e.target.value }))}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              <div className="flex gap-1.5 mt-2 flex-wrap">
+                {[['오늘',0],['이번 달 1일','m0'],['지난달 말일','mEnd']].map(([l,k])=>(
+                  <button key={l}
+                    onClick={()=>{
+                      const d=new Date(); let x
+                      if(k===0) x=d
+                      else if(k==='m0') x=new Date(d.getFullYear(), d.getMonth(), 1)
+                      else x=new Date(d.getFullYear(), d.getMonth(), 0)
+                      const p=n=>String(n).padStart(2,'0')
+                      setDateForm(v=>({ ...v,
+                        date:`${x.getFullYear()}-${p(x.getMonth()+1)}-${p(x.getDate())}` }))
+                    }}
+                    className="px-2 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+                    {l}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-500 mb-1">사유 (선택)</label>
+              <input value={dateForm.memo}
+                onChange={e=>setDateForm(v=>({ ...v, memo:e.target.value }))}
+                placeholder="예: 9월로 이월"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              바꾼 내역은 기록에 남습니다. 입고가 아닌 줄이 섞여 있으면 처리되지 않습니다.
+            </p>
+
+            <div className="flex gap-2">
+              <button onClick={()=>setDateForm(null)}
+                className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600">
+                취소
+              </button>
+              <button
+                onClick={()=>{
+                  if(!dateForm.date){ toastError('바꿀 날짜를 넣으세요'); return }
+                  dateMut.mutate({ ids:[...selHist], date:dateForm.date, memo:dateForm.memo.trim() })
+                }}
+                disabled={dateMut.isPending}
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {dateMut.isPending ? '처리 중…' : `${selHist.size}건 변경`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
