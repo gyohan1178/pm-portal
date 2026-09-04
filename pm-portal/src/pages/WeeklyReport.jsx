@@ -61,44 +61,42 @@ async function fetchWeeklyReport(from, to) {
     .gte('target_date', from)
     .lte('target_date', nextW.to)
 
-  // 매입 데이터 - RPC 집계 (Supabase row limit 우회)
-  const thisYear = new Date().getFullYear()
-  const yearStart = thisYear + '-01-01'
-  const yearEnd   = thisYear + '-12-31'
-  const { data: summaryData } = await supabase.rpc('get_purchase_summary', {
-    year_start: yearStart,
-    year_end: yearEnd,
-  })
-  // RPC 결과를 purchaseData/pendingData 형태로 변환
-  const purchaseData = (summaryData||[])
-    .filter(r => r.actual_amt > 0)
-    .map(r => ({ customer: r.customer, amount: r.actual_amt, target_date: r.month + '-01' }))
-  const pendingData = (summaryData||[])
-    .filter(r => r.pending_amt > 0)
-    .map(r => ({ customer: r.customer, amount: r.pending_amt, target_date: r.month + '-01' }))
-
-  // AX 포털 자동 집계 (업로드 대신 포털 실데이터)
-  let portalAx = {}
+  // 포털 자동 집계.
+  //   ⚠ 예전에는 AXCELIS 만 자동이고 나머지는 사람이 적어야 떴다.
+  //     그래서 납기 지연 64건 중 61건(Edwards 53 · CSK 8)이 안 보였다.
+  //     이제 네 고객사를 다 자동으로 집계한다.
+  let portal = {}
   try {
-    const { data: pax } = await supabase.rpc('get_weekly_portal_ax', {
+    const { data: pall } = await supabase.rpc('get_weekly_portal_all', {
       p_from: from, p_to: to, p_year: new Date(from).getFullYear(),
     })
-    portalAx = pax || {}
-  } catch { portalAx = {} }
-  const AXN = portalAx.inbound?.[0]?.customer || portalAx.purchase?.[0]?.customer
-            || portalAx.delay?.[0]?.customer || portalAx.pending?.[0]?.customer || 'AXCELIS'
-  const notAx = arr => (arr||[]).filter(r => r.customer !== AXN)
+    portal = pall || {}
+  } catch {
+    // 새 함수가 아직 없으면 예전 방식(AX 만)으로 물러난다
+    try {
+      const { data: pax } = await supabase.rpc('get_weekly_portal_ax', {
+        p_from: from, p_to: to, p_year: new Date(from).getFullYear(),
+      })
+      portal = pax || {}
+    } catch { portal = {} }
+  }
+  // 손으로 적은 것은 「직접 입력」으로 표시해 자동분과 갈라 본다.
+  //   자동과 겹치면 눈에 보이므로 수기 쪽을 지우면 된다.
+  const manual = arr => (arr||[]).map(r => ({ ...r, _manual: true }))
 
   return {
     submitters: [...new Set((allReports||[]).map(r=>r.submitted_by))],
-    inbound:  [...notAx((weekSummary||[]).filter(r=>r.category==='inbound')), ...(portalAx.inbound||[])],
-    plan:     [...notAx((weekSummary||[]).filter(r=>r.category==='plan')), ...(portalAx.plan||[])],
-    delay:    [...notAx((items||[]).filter(r=>r.category==='delay'&&thisWeekReportIds.has(r.report_id))), ...(portalAx.delay||[])],
-    outbound: [...notAx((items||[]).filter(r=>r.category==='outbound'&&thisWeekReportIds.has(r.report_id))), ...(portalAx.outbound||[])],
+    // 자동 집계가 기준. 수기 입력은 「직접 입력」 표시로 함께 보여 준다.
+    inbound:  [...(portal.inbound||[])],
+    plan:     [...(portal.plan||[])],
+    delay:    [...(portal.delay||[]),
+               ...manual((items||[]).filter(r=>r.category==='delay'&&thisWeekReportIds.has(r.report_id)))],
+    outbound: [...(portal.outbound||[]),
+               ...manual((items||[]).filter(r=>r.category==='outbound'&&thisWeekReportIds.has(r.report_id)))],
     calItems: (calItems||[]).filter(r=>r.category!=='special_note'),
     specialNotes: (calItems||[]).filter(r=>r.category==='special_note').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)),
-    purchaseData: [...notAx(purchaseData), ...(portalAx.purchase||[])],
-    pendingData:  [...notAx(pendingData), ...(portalAx.pending||[])],
+    purchaseData: [...(portal.purchase||[])],
+    pendingData:  [...(portal.pending||[])],
   }
 }
 
@@ -673,7 +671,16 @@ export default function WeeklyReport() {
                                 onChange={e=>setCheckedDelay(v=>({...v,[r.id]:e.target.checked}))}
                                 className="w-3.5 h-3.5 accent-emerald-500"/>}
                             </td>
-                            <td className="px-3 py-1.5 font-mono text-indigo-600">{r.pn||'-'}</td>
+                            <td className="px-3 py-1.5 font-mono text-indigo-600">
+                              {r.pn||'-'}
+                              {/* 자동 집계와 손으로 적은 것을 갈라 본다.
+                                  겹쳐 보이면 수기 쪽을 지우면 된다. */}
+                              {r._manual && (
+                                <span className="ml-1.5 px-1 py-0.5 rounded bg-slate-100 text-slate-500 text-[9px] font-bold align-middle">
+                                  직접 입력
+                                </span>
+                              )}
+                            </td>
                             <td className="px-3 py-1.5 text-slate-600">{r.vendor||'-'}</td>
                             <td className="px-3 py-1.5 text-slate-500">{r.manufacturer||'-'}</td>
                             <td className="px-3 py-1.5 font-mono text-slate-400">{r.manufacturer_pn||'-'}</td>

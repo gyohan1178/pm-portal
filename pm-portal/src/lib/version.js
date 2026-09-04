@@ -1,6 +1,18 @@
-export const APP_VERSION = 'v3.97.0'
+export const APP_VERSION = 'v3.98.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v3.98.0',
+    date: '2026-09-04',
+    changes: [
+      '★ 주간업무보고가 네 고객사를 모두 자동 집계합니다 — 지금까지 AXCELIS 만 자동이고 CSK·Edwards·VM 은 사람이 적어야 떴습니다',
+      '⚠️ 그래서 납기 지연 64건 중 61건이 화면에 없었습니다 (Edwards 53건 1.73억 · CSK 8건 0.25억). 적지 않으면 안 보이는 구조였습니다',
+      '입고·발주예정·지연·출고·매입·미착 모두 고객사 구분 없이 집계합니다',
+      '손으로 적은 것은 「직접 입력」 으로 표시해 자동분과 갈라 봅니다. 겹쳐 보이면 수기 쪽을 지우면 됩니다',
+      '새 함수가 아직 없으면 예전 방식(AXCELIS 만)으로 물러납니다 — SQL 을 안 돌려도 화면이 깨지지 않습니다',
+      'SQL: pm_weekly_portal_all.sql 실행 필요',
+    ],
+  },
   {
     version: 'v3.97.0',
     date: '2026-09-04',
