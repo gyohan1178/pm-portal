@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
-import { downloadCostExcel } from '../../lib/costExcel'
+import { downloadCostExcel, isPriced, sumPriced, COVER_MIN } from '../../lib/costExcel'
 import { useCustomers } from '../../hooks/useCustomers'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString('ko-KR')
@@ -102,6 +102,10 @@ export default function CostSummary({ csId, csName }) {
   }, [rows, q])
 
   const sum = useMemo(() => sumOf(list), [list])
+  // 엑셀은 반영률 95% 이상만 금액을 낸다. 화면도 같은 숫자를 보여야
+  // "왜 다르지" 가 안 생긴다.
+  const sumP = useMemo(() => sumPriced(list), [list])
+  const hold = useMemo(() => list.filter(r => !isPriced(r)).length, [list])
 
   const cover = (r) => {
     const p = Number(r.priced_kinds || 0), n = Number(r.no_price_kinds || 0)
@@ -155,12 +159,12 @@ export default function CostSummary({ csId, csName }) {
     <div className="space-y-3">
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card label="원자재 매입 합계" value={won(sum.total) + '원'}
-              sub={`상위품번 ${n0(list.length)}개 · BOM ${n0(sum.rows)}행`} accent="slate" />
-        <Card label="파트" value={won(sum.part) + '원'}
-              sub={sum.total > 0 ? `${Math.round(sum.part / sum.total * 100)}%` : '—'} accent="sky" />
-        <Card label="가공물" value={won(sum.mach) + '원'}
-              sub={sum.total > 0 ? `${Math.round(sum.mach / sum.total * 100)}%` : '—'} accent="amber" />
+        <Card label="원자재 매입 합계" value={won(sumP.total) + '원'}
+              sub={`상위품번 ${n0(list.length - hold)}개 산출 · BOM ${n0(sum.rows)}행`} accent="slate" />
+        <Card label="파트" value={won(sumP.part) + '원'}
+              sub={sumP.total > 0 ? `${Math.round(sumP.part / sumP.total * 100)}%` : '—'} accent="sky" />
+        <Card label="가공물" value={won(sumP.mach) + '원'}
+              sub={sumP.total > 0 ? `${Math.round(sumP.mach / sumP.total * 100)}%` : '—'} accent="amber" />
         <Card label="단가 반영률"
               value={coverAll == null ? '—' : `${(coverAll * 100).toFixed(1)}%`}
               sub={`등록 ${n0(sum.priced)}종 · 미등록 ${n0(sum.noPrice)}종`}
@@ -168,13 +172,14 @@ export default function CostSummary({ csId, csName }) {
       </div>
 
       {/* 반영률이 낮으면 숫자를 믿을 수 없다는 것을 먼저 알린다 */}
-      {coverAll != null && coverAll < 0.9 && (
+      {hold > 0 && (
         <div className="rounded-xl border-2 border-rose-200 bg-rose-50 px-4 py-3">
           <p className="text-sm font-bold text-rose-800">
-            ⚠️ 단가가 없는 품목이 {n0(sum.noPrice)}종입니다 — 위 합계는 실제 원가보다 적습니다
+            ⚠️ 단가 확인중인 상위품번이 {n0(hold)}개입니다 — 위 합계에 들어가지 않았습니다
           </p>
           <p className="text-xs text-rose-600 mt-0.5">
-            단가를 채운 만큼만 더해진 숫자입니다. 견적 근거로 쓰기 전에 반영률을 먼저 보세요.
+            매입단가 반영률이 {Math.round(COVER_MIN * 100)}% 미만이면 금액을 내지 않습니다.
+            덜 채워진 숫자를 원가로 내보내면 그대로 견적에 쓰이기 때문입니다. 아래 표에서 붉게 표시됩니다.
           </p>
         </div>
       )}
@@ -263,11 +268,13 @@ export default function CostSummary({ csId, csName }) {
               {list.map(r => {
                 const cv = cover(r)
                 const on = open?.id === r.project_id
+                const ok = isPriced(r)
                 return (
                   <tr key={r.project_id}
                     onClick={() => setOpen(on ? null : {
                       id: r.project_id, code: r.project_code, name: r.project_name })}
-                    className={`border-b border-slate-100 cursor-pointer ${on ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
+                    className={`border-b border-slate-100 cursor-pointer ${
+                      on ? 'bg-indigo-50' : ok ? 'hover:bg-slate-50' : 'bg-rose-50/50 hover:bg-rose-50'}`}>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-mono font-bold text-indigo-600">
                       {on ? '▾ ' : '▸ '}{r.project_code}
                     </td>
@@ -279,7 +286,9 @@ export default function CostSummary({ csId, csName }) {
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-sky-700">{won(r.part_krw)}</td>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-amber-700">{won(r.mach_krw)}</td>
                     <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-slate-500">{won(r.etc_krw)}</td>
-                    <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold text-slate-900">{won(r.total_krw)}</td>
+                    <td className={`px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold ${ok ? 'text-slate-900' : 'text-rose-600'}`}>
+                      {ok ? won(r.total_krw) : '단가 확인중'}
+                    </td>
                     <td className={`px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold ${
                       cv == null ? 'text-slate-300' : cv >= 0.9 ? 'text-emerald-600' : cv >= 0.5 ? 'text-amber-600' : 'text-rose-600'}`}>
                       {cv == null ? '—' : (cv * 100).toFixed(0) + '%'}
@@ -292,13 +301,15 @@ export default function CostSummary({ csId, csName }) {
               })}
               <tr className="bg-slate-100 font-bold">
                 <td className="px-3 py-2.5 text-slate-800">합계</td>
-                <td className="px-3 py-2.5 text-slate-400">{n0(list.length)}개 상위품번</td>
+                <td className="px-3 py-2.5 text-slate-400">
+                  {hold > 0 ? `${n0(list.length)}개 중 ${n0(list.length - hold)}개 산출` : `${n0(list.length)}개 상위품번`}
+                </td>
                 <td className="px-3 py-2.5 text-right text-slate-500">{n0(sum.rows)}</td>
                 <td className="px-3 py-2.5"></td>
-                <td className="px-3 py-2.5 text-right text-sky-700">{won(sum.part)}</td>
-                <td className="px-3 py-2.5 text-right text-amber-700">{won(sum.mach)}</td>
-                <td className="px-3 py-2.5 text-right text-slate-500">{won(sum.etc)}</td>
-                <td className="px-3 py-2.5 text-right text-slate-900">{won(sum.total)}</td>
+                <td className="px-3 py-2.5 text-right text-sky-700">{won(sumP.part)}</td>
+                <td className="px-3 py-2.5 text-right text-amber-700">{won(sumP.mach)}</td>
+                <td className="px-3 py-2.5 text-right text-slate-500">{won(sumP.etc)}</td>
+                <td className="px-3 py-2.5 text-right text-slate-900">{won(sumP.total)}</td>
                 <td className="px-3 py-2.5 text-right text-slate-500">
                   {coverAll == null ? '—' : (coverAll * 100).toFixed(0) + '%'}
                 </td>
@@ -363,7 +374,7 @@ export default function CostSummary({ csId, csName }) {
         · <b>파트</b> 전장·커넥터·케이블·하드웨어 &nbsp;·&nbsp; <b>가공물</b> 판금·브라켓·외주 가공 &nbsp;·&nbsp; <b>기타</b> 사 오는 어셈블리·미분류<br />
         · <b>하네스</b>는 고객사마다 합계 포함 여부가 다릅니다. 엑셀 표지의 산출 기준을 보세요.<br />
         · 하위 부품이 별도로 산정된 어셈블리는 중복 산정을 피하기 위해 합계에서 뺍니다.<br />
-        · <b>단가 반영률</b>이 낮으면 합계가 실제보다 적습니다. 상위품번을 눌러 어떤 품목이 빠졌는지 확인하세요.
+        · <b>단가 반영률 {Math.round(COVER_MIN * 100)}% 미만</b>인 상위품번은 금액을 내지 않고 「단가 확인중」으로 둡니다. 붉게 표시되며 합계에 들어가지 않습니다.
       </p>
     </div>
   )

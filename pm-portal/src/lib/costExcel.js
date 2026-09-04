@@ -31,6 +31,29 @@ const put = (ws, addr, v, o = {}) => {
 
 const won = n => Math.round(Number(n) || 0)
 
+// 매입단가 반영률이 낮으면 금액을 내지 않는다.
+//   덜 채워진 숫자를 금액처럼 내보내면 받는 쪽이 그대로 견적에 쓴다.
+//   줄은 남긴다 — 아예 빼면 그 상위품번이 있는지조차 모른다.
+export const COVER_MIN = 0.95
+export const coverOf = (r) => {
+  const p = Number(r.priced_kinds || 0), n = Number(r.no_price_kinds || 0)
+  return p + n === 0 ? null : p / (p + n)
+}
+export const isPriced = (r) => {
+  const c = coverOf(r)
+  return c != null && c >= COVER_MIN
+}
+// 금액을 낼 수 있는 줄만 더한다
+export const sumPriced = (rows) => rows.filter(isPriced).reduce((a, r) => ({
+  rows:  a.rows  + Number(r.bom_rows || 0),
+  part:  a.part  + Number(r.part_krw || 0),
+  mach:  a.mach  + Number(r.mach_krw || 0),
+  etc:   a.etc   + Number(r.etc_krw || 0),
+  total: a.total + Number(r.total_krw || 0),
+  priced:  a.priced  + Number(r.priced_kinds || 0),
+  noPrice: a.noPrice + Number(r.no_price_kinds || 0),
+}), { rows: 0, part: 0, mach: 0, etc: 0, total: 0, priced: 0, noPrice: 0 })
+
 // 하네스가 합계에 들어가는지는 고객사마다 다르다.
 //   틀리게 적으면 받는 쪽이 원가를 잘못 잡는다.
 const HARNESS_NOTE = {
@@ -43,7 +66,8 @@ const harnessNote = cs => HARNESS_NOTE[cs] || '하네스 포함 여부는 구매
 
 // 산출 기준 — 제출 문서에 쓰는 말투로 적는다
 const basisLines = (csName, priced, total) => ([
-  `매입단가가 등록된 품목만 합산했습니다 (${priced.toLocaleString('ko-KR')}종 / ${total.toLocaleString('ko-KR')}종).`,
+  `매입단가 반영률 95% 이상인 상위품번만 금액을 산출했습니다 (단가 등록 ${priced.toLocaleString('ko-KR')}종 / ${total.toLocaleString('ko-KR')}종).`,
+  '「단가 확인중」으로 표시된 상위품번은 금액 산출에서 제외했습니다. 필요하신 경우 구매자재팀으로 문의해 주십시오.',
   harnessNote(csName),
   '하네스 제작 작업비는 포함되어 있지 않습니다.',
   '사급 · 무상지급 등 견적 미대상 품목은 제외했습니다.',
@@ -60,17 +84,21 @@ export async function downloadCostExcel({ books, asOf, withPrice = true, fileNam
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()
 
+  // 금액을 낼 수 없는 줄은 「단가 확인중」으로 남기고 합계에서 뺀다
+  books.forEach(b => { b.sumP = sumPriced(b.rows); b.hold = b.rows.filter(r => !isPriced(r)).length })
+
   const all = books.reduce((a, b) => ({
     rows:  a.rows  + (b.sum.rows || 0),
-    part:  a.part  + (b.sum.part || 0),
-    mach:  a.mach  + (b.sum.mach || 0),
-    etc:   a.etc   + (b.sum.etc || 0),
-    total: a.total + (b.sum.total || 0),
+    part:  a.part  + (b.sumP.part || 0),
+    mach:  a.mach  + (b.sumP.mach || 0),
+    etc:   a.etc   + (b.sumP.etc || 0),
+    total: a.total + (b.sumP.total || 0),
     priced: a.priced + (b.sum.priced || 0),
     noPrice: a.noPrice + (b.sum.noPrice || 0),
     codes: a.codes + b.rows.length,
     kinds: a.kinds + b.rows.reduce((x, r) => x + Number(r.item_kinds || 0), 0),
-  }), { rows: 0, part: 0, mach: 0, etc: 0, total: 0, priced: 0, noPrice: 0, codes: 0, kinds: 0 })
+    hold: a.hold + b.hold,
+  }), { rows: 0, part: 0, mach: 0, etc: 0, total: 0, priced: 0, noPrice: 0, codes: 0, kinds: 0, hold: 0 })
 
   const multi = books.length > 1
   const title = multi ? '전 고객사' : books[0].csName
@@ -110,22 +138,26 @@ export async function downloadCostExcel({ books, asOf, withPrice = true, fileNam
   let r = 9
   if (multi) {
     // 고객사별 요약
-    const hd = ['고객사', '상위품번', 'BOM행', '파트', '가공물', '기타', '합계']
-    hd.forEach((h, i) => put(cv, `${'BCDEFGH'[i]}${r}`, h,
+    const CC = 'BCDEFGHI'
+    const hd = ['고객사', '상위품번', '단가 확인중', 'BOM행', '파트', '가공물', '기타', '합계']
+    hd.forEach((h, i) => put(cv, `${CC[i]}${r}`, h,
       { bold: true, fill: NAVY, color: HEAD_TX, border: true, align: 'center' }))
-    cv.getColumn('G').width = 16; cv.getColumn('H').width = 18
+    ;['G', 'H', 'I'].forEach(c => { cv.getColumn(c).width = 16 })
+    cv.getColumn('I').width = 18
     cv.getRow(r).height = 20
     books.forEach((b, i) => {
       const rr = r + 1 + i
-      const vals = [b.csName, b.rows.length, b.sum.rows,
-                    won(b.sum.part), won(b.sum.mach), won(b.sum.etc), won(b.sum.total)]
-      vals.forEach((v, j) => put(cv, `${'BCDEFGH'[j]}${rr}`, v,
+      const vals = [b.csName, b.rows.length, b.hold || '', b.sum.rows,
+                    won(b.sumP.part), won(b.sumP.mach), won(b.sumP.etc), won(b.sumP.total)]
+      vals.forEach((v, j) => put(cv, `${CC[j]}${rr}`, v,
         { border: true, align: j === 0 ? 'left' : 'right',
-          fmt: j === 0 ? undefined : NUM, bold: j === 6 }))
+          fmt: j === 0 ? undefined : NUM, bold: j === 7,
+          color: j === 2 && b.hold > 0 ? 'FFC00000' : undefined }))
     })
     const rs = r + 1 + books.length
-    const tv = ['합계', all.codes, all.rows, won(all.part), won(all.mach), won(all.etc), won(all.total)]
-    tv.forEach((v, j) => put(cv, `${'BCDEFGH'[j]}${rs}`, v,
+    const tv = ['합계', all.codes, all.hold || '', all.rows,
+                won(all.part), won(all.mach), won(all.etc), won(all.total)]
+    tv.forEach((v, j) => put(cv, `${CC[j]}${rs}`, v,
       { border: true, bold: true, fill: SUM_FILL, align: j === 0 ? 'left' : 'right',
         fmt: j === 0 ? undefined : NUM }))
     r = rs + 2
@@ -145,7 +177,15 @@ export async function downloadCostExcel({ books, asOf, withPrice = true, fileNam
     put(cv, `B${rs}`, '합계', { bold: true, border: true, fill: SUM_FILL })
     put(cv, `C${rs}`, won(all.total), { fmt: NUM, align: 'right', bold: true, border: true, fill: SUM_FILL })
     put(cv, `D${rs}`, 100, { fmt: PCT, align: 'right', bold: true, border: true, fill: SUM_FILL })
-    r = rs + 2
+    r = rs + 1
+    if (books[0].hold > 0) {
+      r++
+      cv.mergeCells(`B${r}:F${r}`)
+      put(cv, `B${r}`,
+        `단가 확인중 ${books[0].hold}개 상위품번은 금액 산출에서 제외했습니다 (전체 ${books[0].rows.length}개 중).`,
+        { size: 9.5, color: 'FFC00000', wrap: true })
+    }
+    r += 2
   }
 
   // 산출 기준
@@ -195,7 +235,10 @@ export async function downloadCostExcel({ books, asOf, withPrice = true, fileNam
     put(ws, 'A1', `원자재 원가 총괄 — ${bk.csName}`, { size: 15, bold: true })
     ws.getRow(1).height = 24
     ws.mergeCells(2, 1, 2, cols.length)
-    put(ws, 'A2', `기준일 ${asOf} · 상위품번 ${bk.rows.length.toLocaleString('ko-KR')}개 · 단위 원 · ${harnessNote(bk.csName)}`,
+    put(ws, 'A2',
+        `기준일 ${asOf} · 상위품번 ${bk.rows.length.toLocaleString('ko-KR')}개`
+        + (bk.hold > 0 ? ` (단가 확인중 ${bk.hold}개 제외)` : '')
+        + ` · 단위 원 · ${harnessNote(bk.csName)}`,
         { size: 9, color: 'FF98A0B0' })
 
     cols.forEach(([h], i) => {
@@ -210,25 +253,35 @@ export async function downloadCostExcel({ books, asOf, withPrice = true, fileNam
 
     bk.rows.forEach((x, i) => {
       const rr2 = 5 + i
-      const vals = [
-        x.project_code, x.project_name || '', Number(x.bom_rows), Number(x.item_kinds),
-        won(x.part_krw), won(x.mach_krw), won(x.etc_krw), won(x.total_krw),
-        Number(x.harness_kinds) > 0 ? Number(x.harness_kinds) : '',
-      ]
+      // 반영률이 낮으면 금액을 비우고 「단가 확인중」으로 둔다.
+      //   줄은 남긴다 — 아예 빼면 그 상위품번이 있는지조차 알 수 없다.
+      const ok = isPriced(x)
+      const vals = ok
+        ? [x.project_code, x.project_name || '', Number(x.bom_rows), Number(x.item_kinds),
+           won(x.part_krw), won(x.mach_krw), won(x.etc_krw), won(x.total_krw),
+           Number(x.harness_kinds) > 0 ? Number(x.harness_kinds) : '']
+        : [x.project_code, x.project_name || '', Number(x.bom_rows), Number(x.item_kinds),
+           '', '', '', '단가 확인중',
+           Number(x.harness_kinds) > 0 ? Number(x.harness_kinds) : '']
       vals.forEach((v, j) => {
         const c = ws.getCell(rr2, j + 1)
         c.value = v
-        c.font = { name: '맑은 고딕', size: 10, bold: j === 7 }
+        c.font = { name: '맑은 고딕', size: 10, bold: j === 7,
+                   color: { argb: ok ? 'FF1F2430' : (j === 7 ? 'FFC00000' : 'FF98A0B0') } }
         c.alignment = { horizontal: j >= 2 ? 'right' : 'left', vertical: 'middle' }
-        if (j >= 2) c.numFmt = NUM
+        if (j >= 2 && typeof v === 'number') c.numFmt = NUM
         c.border = BOX
-        if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SOFT } }
+        if (!ok) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFDF3F3' } }
+        else if (i % 2 === 1) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: SOFT } }
       })
     })
 
     const rr3 = 5 + bk.rows.length
-    const tot = ['합계', `${bk.rows.length}개 상위품번`, bk.sum.rows, '',
-                 won(bk.sum.part), won(bk.sum.mach), won(bk.sum.etc), won(bk.sum.total), '']
+    const tot = ['합계',
+                 bk.hold > 0 ? `${bk.rows.length}개 중 ${bk.rows.length - bk.hold}개 산출`
+                             : `${bk.rows.length}개 상위품번`,
+                 bk.sum.rows, '',
+                 won(bk.sumP.part), won(bk.sumP.mach), won(bk.sumP.etc), won(bk.sumP.total), '']
     tot.forEach((v, j) => {
       const c = ws.getCell(rr3, j + 1)
       c.value = v
