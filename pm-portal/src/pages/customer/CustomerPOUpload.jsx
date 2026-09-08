@@ -13,6 +13,15 @@ const pick = (row, keys) => {
   }
   return undefined
 }
+// 헤더 이름이 정확히 같은 것을 먼저 찾는다.
+//   부분 일치만 쓰면 'Item Desc' 가 'item' 으로 잡히고 'BRev' 가 'rev' 로 잡힌다.
+const pickExact = (row, keys) => {
+  for (const k of Object.keys(row)) {
+    const kn = k.replace(/\s/g, '').toLowerCase()
+    if (keys.some(t => kn === t)) return row[k]
+  }
+  return undefined
+}
 const s = v => (v == null ? '' : String(v).trim())
 const keyOf = (po, ol, dl) => `${po}|${ol}|${dl}`
 const dnorm = v => {
@@ -60,7 +69,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           del_line: s(pick(r, ['delline', 'del line', '납품라인'])).replace(/\.0$/, ''),
           ccn: s(pick(r, ['ccn'])),
           pn,
-          item_rev: s(pick(r, ['srev', 'rev', '리비전'])),   // SRev 기준
+          item_rev:  s(pickExact(r, ['srev']) ?? pick(r, ['srev', 'rev', '리비전'])),
+          item_brev: s(pickExact(r, ['brev']) ?? ''),
           qty: parseFloat(s(pick(r, ['quantity', '수량', 'qty', '발주량'])).replace(/,/g, '')) || 0,
           unit_price: parseFloat(s(pick(r, ['unit price', 'unitprice', '단가'])).replace(/[^0-9.]/g, '')) || 0,
           promise_date: dnorm(pick(r, ['promisedate', 'promise date', '약속일', '납기'])),
@@ -106,7 +116,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const all = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
-          .select('id,po_number,order_line,del_line,item_rev,qty_ordered,unit_price,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
+          .select('id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,unit_price,promise_date,division,status,changes, items!purchase_orders_item_id_fkey(std_code)')
           .eq('customer_id', csId).eq('order_type', 'customer_po').order('id')
           .range(from, from + 999)
         if (error) throw error
@@ -130,6 +140,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const chg = []
         if (code !== (ex.items?.std_code || '')) chg.push({ field: 'item', from: ex.items?.std_code || '-', to: code, _newCode: code })
         if (r.item_rev && r.item_rev !== (ex.item_rev || '')) chg.push({ field: 'item_rev', from: ex.item_rev || '-', to: r.item_rev })
+        if (r.item_brev && r.item_brev !== (ex.item_brev || '')) chg.push({ field: 'item_brev', from: ex.item_brev || '-', to: r.item_brev })
         if (r.promise_date && r.promise_date !== (ex.promise_date || '')) chg.push({ field: 'promise_date', from: ex.promise_date || '-', to: r.promise_date })
         if (r.qty && r.qty !== ex.qty_ordered) chg.push({ field: 'qty_ordered', from: ex.qty_ordered, to: r.qty })
         if (r.unit_price && r.unit_price !== (Number(ex.unit_price) || 0)) chg.push({ field: 'unit_price', from: ex.unit_price || 0, to: r.unit_price })
@@ -260,6 +271,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           customer_id: csId, item_id: item.id, order_type: 'customer_po',
           po_number: n.po_number, ccn: n.ccn || null, order_line: n.order_line || null,
           del_line: n.del_line || null, item_rev: n.item_rev || null,
+          item_brev: n.item_brev || null,
           qty_ordered: Math.round(n.qty), qty_received: 0,
           unit_price: n.unit_price || null,
           promise_date: n.promise_date, type: item.type || '자재',
@@ -458,7 +470,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                         <div className="font-mono text-slate-500 mb-1">{c.po_number} · {c.code} {c.order_line && `· L${c.order_line}`}</div>
                         {c.chg.map((x, j) => (
                           <div key={j} className="flex items-center gap-2 ml-2">
-                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'REV' : x.field === 'division' ? '구분' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
+                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'SREV' : x.field === 'item_brev' ? 'BREV' : x.field === 'division' ? '구분' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
                             <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 line-through">{x.from}</span>
                             <span className="text-slate-300">→</span>
                             <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-semibold">{x.to}</span>

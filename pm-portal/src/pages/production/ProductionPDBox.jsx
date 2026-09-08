@@ -71,21 +71,42 @@ function weekKey(dateStr) {
   return d.toISOString().slice(0, 10)
 }
 
-// 납기변동 태그: 비고의 A→B 기록에서 최초 원납기 vs 현재 납품일 차이(일)
-function delayTag(note, reqDate) {
-  if (!note || !reqDate) return null
-  const full = String(note)
-  const re = /(\d{4}-\d{2}-\d{2}|\d{2}-\d{2})\s*→\s*(\d{4}-\d{2}-\d{2}|\d{2}-\d{2})/g
-  let m, firstOld = null
-  while ((m = re.exec(full)) !== null) { if (!firstOld) firstOld = m[1] }
-  if (!firstOld) return null
-  const yr = String(reqDate).slice(0, 4)
-  const oldD = firstOld.length === 5 ? `${yr}-${firstOld}` : firstOld
-  const a = new Date(oldD + 'T12:00:00'), b = new Date(String(reqDate).slice(0, 10) + 'T12:00:00')
+// 납기변동 태그 — 지난주 대비.
+//   ⚠ 예전에는 비고 글자에서 「맨 처음」 납기를 뽑아 지금과 견줬다.
+//     그러면 몇 달 전 원납기와 비교돼 -40일 같은 큰 수가 나왔고,
+//     이번 주에 무엇이 바뀌었는지는 알 수 없었다.
+//
+//   changes 배열에 {type:'납기변경', from, to, at} 이 쌓이므로
+//   기준일 이후 첫 변경의 from 이 곧 「기준일 시점의 납기」다.
+//   기준일 이후 변경이 없으면 태그를 띄우지 않는다.
+function weekStart(offsetWeeks = 0) {
+  const d = new Date()
+  const dow = (d.getDay() + 6) % 7          // 월=0
+  d.setDate(d.getDate() - dow + offsetWeeks * 7)
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function delayTag(changes, reqDate, sinceDate) {
+  if (!reqDate || !Array.isArray(changes)) return null
+  const since = sinceDate || weekStart(0)   // 이번 주 월요일 = 지난주 이후
+  const list = changes
+    .filter(c => c && c.type === '납기변경' && c.at && new Date(c.at) >= since)
+    .sort((a, b) => new Date(a.at) - new Date(b.at))
+  if (!list.length) return null
+
+  // 기준일 이후 첫 변경의 from 이 기준일 시점의 값이다.
+  //   from 이 없는 옛 기록은 msg('A → B')에서 앞쪽을 꺼낸다.
+  const first = list[0]
+  const base = first.from || String(first.msg || '').split('→')[0].trim()
+  if (!base) return null
+
+  const a = new Date(String(base).slice(0, 10) + 'T12:00:00')
+  const b = new Date(String(reqDate).slice(0, 10) + 'T12:00:00')
   if (isNaN(a) || isNaN(b)) return null
   const diff = Math.round((b - a) / dayMs)
   if (diff === 0) return null
-  return diff
+  return { diff, base: String(base).slice(0, 10), cnt: list.length }
 }
 
 // 비고: 납기변경 이력이 ' / '로 쌓임 → 화면엔 최근 1건만, 전체는 툴팁. 비-납기 메모는 유지.
@@ -626,12 +647,20 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {
+                      // SRev / BRev 를 한 칸에. 좁은 열이라 열을 늘리지 않는다.
                       const rc = lastRevChange(r.changes)
-                      if (!rc) return r.rev || '-'
+                      const pair = (
+                        <span className="inline-flex items-baseline gap-0.5">
+                          <b className="text-violet-600">{r.rev || '-'}</b>
+                          <span className="text-slate-300">/</span>
+                          <b className="text-sky-600">{r.brev || '-'}</b>
+                        </span>
+                      )
+                      if (!rc) return pair
                       return (
                         <span className="inline-flex items-baseline gap-1"
-                          title={`${rc.msg}${rc.at ? ` · ${String(rc.at).slice(0, 10)}` : ''}`}>
-                          <b className="text-violet-600">{r.rev || '-'}</b>
+                          title={`SREV ${rc.msg}${rc.at ? ` · ${String(rc.at).slice(0, 10)}` : ''}`}>
+                          {pair}
                           <span className="text-[10px] text-slate-400">←{rc.from || '-'}</span>
                         </span>
                       )
@@ -641,8 +670,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
                       {md(r.req_date) || '미정'}
-                      {(() => { const t = delayTag(r.note, r.req_date); if (t == null) return null
-                        return <span title={`원납기 대비 ${t>0?'밀림':'당겨짐'}`} className={`px-1 rounded text-[9px] font-bold ${t>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>{t>0?`+${t}일`:`${t}일`}</span> })()}
+                      {(() => { const t = delayTag(r.changes, r.req_date); if (!t) return null
+                        return <span
+                          title={`지난주 대비 ${t.diff>0?'밀림':'당겨짐'} · ${t.base} → ${String(r.req_date).slice(0,10)}${t.cnt>1?` (${t.cnt}회 변경)`:''}`}
+                          className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
+                          {t.diff>0?`+${t.diff}일`:`${t.diff}일`}</span> })()}
                     </span>
                   </td>
                   {isMainRow(r.pn, csCode) ? (<>
@@ -857,7 +889,7 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
           </div>
           <div className="p-1.5 space-y-1.5 max-h-[70vh] overflow-y-auto">
             {(byStatus[col] || []).map(r => {
-              const t = delayTag(r.note, r.req_date)
+              const t = delayTag(r.changes, r.req_date)
               return (
                 <div key={r.id} draggable
                   onDragStart={e => e.dataTransfer.setData('text/plain', r.id)}
@@ -870,7 +902,9 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
                   <div className="text-[10px] text-slate-400 truncate">{r.name}</div>
                   <div className="mt-1 flex items-center gap-1 flex-wrap">
                     <span className={`text-[10px] font-bold ${ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
-                    {t != null && <span className={`px-1 rounded text-[9px] font-bold ${t>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>{t>0?`+${t}`:t}일</span>}
+                    {t && <span title={`지난주 대비 · ${t.base} → ${String(r.req_date).slice(0,10)}`}
+                      className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
+                      {t.diff>0?`+${t.diff}`:t.diff}일</span>}
                     {Number(mdMap?.[r.pn]) > 0 && <span className="text-[9px] text-violet-500 font-bold">{mdMap[r.pn]}MD</span>}
                     {Array.isArray(r.missing_parts) && r.missing_parts.length > 0 && <span className="text-[9px] px-1 rounded bg-red-50 text-red-500 font-bold">결품{r.missing_parts.length}</span>}
                   </div>
