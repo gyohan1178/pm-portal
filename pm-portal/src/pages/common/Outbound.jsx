@@ -458,11 +458,20 @@ export default function Outbound() {
     { key: 'note',  label: '비고',      defaultWidth: 150 },
   ]
 
-  // 박스 불출표 — 정상 + 하네스(표시만). 제외는 안 나옴. 수량은 출고수량(하네스는 참고표시)
+  // 박스 불출표 — 정상 + 현장재고 + 하네스. 제외는 안 나옴.
+  //   ⚠ 출고수량(outQtys)은 전장(normal)에만 채워진다. 재고를 실제로 차감하는
+  //     값이라 현장재고·하네스는 비워 두는 것이 맞다.
+  //     그런데 불출표에는 0으로 찍혀 현장에서 몇 개인지 알 수가 없었다.
+  //     종이에는 BOM 소요(BOM/대 × 대수)를 적어 준다.
   function printIssueSheet() {
     const rows = outOrder.filter(r => mtOf(r.item_id) !== 'exclude')
     if (!rows.length) { toastError('출력할 품목이 없습니다'); return }
-    openPrint(buildSheet('자재 불출표', rows, r => outQtys[r.item_id] || 0, `${outUnits}대`))
+    const qtyFn = r => {
+      const out = Number(outQtys[r.item_id]) || 0
+      if (out > 0) return out
+      return (Number(r.bom_qty) || 0) * (outUnits || 1)
+    }
+    openPrint(buildSheet('자재 불출표', rows, qtyFn, `${outUnits}대`))
   }
   // 하네스 불출표 — 하네스만, 대수(harnessUnits) × BOM/대
   function printHarnessSheet() {
