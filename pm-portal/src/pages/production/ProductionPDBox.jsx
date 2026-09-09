@@ -33,6 +33,9 @@ const partColor = (p) => PART_COLOR[String(p || '').trim()] || 'bg-slate-100 tex
 const dayMs = 86400000
 
 // 가장 최근 리비전변경. PO 연동에서 도면이 바뀌면 쌓인다.
+//   ⚠ 지금 화면에서는 안 쓴다 (REV 열에 ←N 을 빼기로 함).
+//     changes 에는 계속 쌓이므로, 다시 보여줄 때 이 함수를 쓰면 된다.
+// eslint-disable-next-line no-unused-vars
 function lastRevChange(changes) {
   if (!Array.isArray(changes)) return null
   for (let i = changes.length - 1; i >= 0; i--) {
@@ -647,21 +650,23 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {
-                      // SRev / BRev 를 한 칸에. 좁은 열이라 열을 늘리지 않는다.
-                      const rc = lastRevChange(r.changes)
-                      const pair = (
-                        <span className="inline-flex items-baseline gap-0.5">
-                          <b className="text-violet-600">{r.rev || '-'}</b>
-                          <span className="text-slate-300">/</span>
-                          <b className="text-sky-600">{r.brev || '-'}</b>
-                        </span>
-                      )
-                      if (!rc) return pair
+                      // SREV / BREV.
+                      //   둘이 같으면 회색, 다르면 붉게. PD 는 두 리비전이 맞아야 하는데
+                      //   어긋난 것을 찾기 어려웠다. 리비전 변경 이력(←N)은 뺐다.
+                      const sv = (r.rev || '').trim()
+                      const bv = (r.brev || '').trim()
+                      const same = sv && bv && sv === bv
+                      const cls = !sv || !bv ? 'text-slate-400'
+                                : same       ? 'text-slate-500'
+                                             : 'text-rose-600'
                       return (
-                        <span className="inline-flex items-baseline gap-1"
-                          title={`SREV ${rc.msg}${rc.at ? ` · ${String(rc.at).slice(0, 10)}` : ''}`}>
-                          {pair}
-                          <span className="text-[10px] text-slate-400">←{rc.from || '-'}</span>
+                        <span className={`inline-flex items-baseline gap-0.5 font-bold font-mono ${cls}`}
+                          title={!sv || !bv ? 'SREV 또는 BREV 가 아직 없습니다'
+                                 : same ? 'SREV·BREV 같음' : 'SREV·BREV 다름'}>
+                          <span>{sv || '-'}</span>
+                          <span className="opacity-40">/</span>
+                          <span>{bv || '-'}</span>
+                          {!same && sv && bv && <span className="ml-0.5 text-[9px]">⚠</span>}
                         </span>
                       )
                     })()}

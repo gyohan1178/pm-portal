@@ -97,7 +97,7 @@ const COLS = [
   {key:'lines', label:'오더/DEL', defaultWidth:80},
   {key:'division', label:'구분', defaultWidth:60},
   {key:'std_code', label:'기준코드·품명', defaultWidth:160},
-  {key:'item_rev', label:'REV 대조', defaultWidth:110},
+  {key:'item_rev', label:'REV 대조 (S/B)', defaultWidth:150},
   {key:'parent', label:'프로젝트', defaultWidth:95},
   {key:'qty_ordered', label:'발주량', defaultWidth:60},
   {key:'promise_date', label:'납기(약속일)', defaultWidth:100},
@@ -106,7 +106,7 @@ const COLS = [
   {key:'actions', label:'', defaultWidth:150},
 ]
 
-const EMPTY = { po_number:'', ccn:'', order_line:'', del_line:'', item_rev:'', division:'전장', type:'자재', qty_ordered:'', required_date:'', promise_date:'', memo:'' }
+const EMPTY = { po_number:'', ccn:'', order_line:'', del_line:'', item_rev:'', item_brev:'', division:'전장', type:'자재', qty_ordered:'', required_date:'', promise_date:'', memo:'' }
 
 export default function CustomerPO() {
   const { customerId: csCode } = useParams()
@@ -175,7 +175,8 @@ export default function CustomerPO() {
           '구분': p.division || '',
           '기준코드': p.items?.std_code || '',
           '품명': p.items?.name || '',
-          'PO REV': p.item_rev || '',
+          'PO SREV': p.item_rev || '',
+          'PO BREV': p.item_brev || '',
           'NAS 최신 REV': dw?.rev || '',
           '도면대조': st ? REV_STATE[st].label : '',
           '도면경로': st && st !== 'none' ? (dw?.file_path || '') : '',
@@ -281,7 +282,7 @@ export default function CustomerPO() {
   })
 
   function handleEdit(p) {
-    setForm({po_number:p.po_number||'',ccn:p.ccn||'',order_line:p.order_line||'',del_line:p.del_line||'',item_rev:p.item_rev||'',division:p.division||'전장',type:p.type,qty_ordered:p.qty_ordered,required_date:p.required_date||'',promise_date:p.promise_date||'',memo:p.memo||''})
+    setForm({po_number:p.po_number||'',ccn:p.ccn||'',order_line:p.order_line||'',del_line:p.del_line||'',item_rev:p.item_rev||'',item_brev:p.item_brev||'',division:p.division||'전장',type:p.type,qty_ordered:p.qty_ordered,required_date:p.required_date||'',promise_date:p.promise_date||'',memo:p.memo||''})
     setEditId(p.id); setShowForm(true)
   }
 
@@ -298,7 +299,8 @@ export default function CustomerPO() {
         (p.ccn||'').toLowerCase().includes(q) ||
         (p.items?.std_code||'').toLowerCase().includes(q) ||
         (p.items?.name||'').toLowerCase().includes(q) ||
-        (p.item_rev||'').toLowerCase().includes(q))
+        (p.item_rev||'').toLowerCase().includes(q) ||
+        (p.item_brev||'').toLowerCase().includes(q))
     }
     if (chgTab) rows = changedPOs.filter(p => divTab==='전체' || (p.division||'전장')===divTab)
     if (hideIssued) rows = rows.filter(p => !p.material_issued)
@@ -492,7 +494,8 @@ export default function CustomerPO() {
             <div><label className="block text-xs font-bold text-slate-500 mb-1">CCN</label><input value={form.ccn} onChange={f('ccn')} placeholder="CCN" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">오더라인</label><input value={form.order_line} onChange={f('order_line')} placeholder="오더라인" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">DEL라인</label><input value={form.del_line} onChange={f('del_line')} placeholder="DEL라인" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
-            <div><label className="block text-xs font-bold text-slate-500 mb-1">REV</label><input value={form.item_rev} onChange={f('item_rev')} placeholder="REV" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+            <div><label className="block text-xs font-bold text-slate-500 mb-1">SREV</label><input value={form.item_rev} onChange={f('item_rev')} placeholder="SREV" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
+            <div><label className="block text-xs font-bold text-slate-500 mb-1">BREV</label><input value={form.item_brev} onChange={f('item_brev')} placeholder="BREV" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={()=>{setShowForm(false);setEditId(null)}} className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
@@ -557,14 +560,19 @@ export default function CustomerPO() {
                   </td>
                   <td className="px-3 py-2 text-center">
                     {(()=>{ const st=revOf(p); const dw=revMap[p.items?.std_code]
-                      if(!st) return <span className="font-mono text-xs text-slate-600">{p.item_rev||'-'}</span>
+                      // BREV 는 NAS 도면과 대조하지 않는다. 도면 리비전은 SREV 기준이다.
+                      const brev = <span className="ml-1 font-mono text-[11px] text-sky-600">/ {p.item_brev||'-'}</span>
+                      if(!st) return <span className="font-mono text-xs text-slate-600">{p.item_rev||'-'}{brev}</span>
                       const s2=REV_STATE[st]
                       return (
-                        <span title={st==='none'?'NAS에 도면 없음':`PO ${p.item_rev||'-'} / NAS ${dw?.rev||'-'} · ${s2.label}`}
-                          className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold font-mono ${s2.cls}`}>
-                          <span>{s2.dot}</span>
-                          <span>{p.item_rev||'-'}</span>
-                          {st!=='match' && st!=='none' && <span className="opacity-60">→{dw?.rev}</span>}
+                        <span className="inline-flex items-center">
+                          <span title={st==='none'?'NAS에 도면 없음':`PO ${p.item_rev||'-'} / NAS ${dw?.rev||'-'} · ${s2.label}`}
+                            className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[11px] font-bold font-mono ${s2.cls}`}>
+                            <span>{s2.dot}</span>
+                            <span>{p.item_rev||'-'}</span>
+                            {st!=='match' && st!=='none' && <span className="opacity-60">→{dw?.rev}</span>}
+                          </span>
+                          {brev}
                         </span>
                       ) })()}
                   </td>
