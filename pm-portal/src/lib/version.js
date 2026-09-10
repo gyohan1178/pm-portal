@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v4.0.1'
+export const APP_VERSION = 'v4.0.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.0.2',
+    date: '2026-09-08',
+    changes: [
+      '★ 이카운트 발주서에서 납기가 다른데 한 건으로 묶이던 문제 수정 — 같은 업체·같은 날 발주면 납기가 달라도 같은 순번을 받았습니다',
+      '이제 거래처 + 발주일 + 납기일이 같아야 한 건입니다. 정렬도 같이 맞췄습니다',
+      '납기가 비어 있는 건은 따로 묶입니다',
+    ],
+  },
   {
     version: 'v4.0.1',
     date: '2026-09-08',

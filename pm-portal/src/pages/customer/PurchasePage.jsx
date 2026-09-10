@@ -84,26 +84,31 @@ function exportEcount(items, vendors, staffCode) {
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
   const headers = ['일자','순번','납기일자','거래처코드','거래처명','참조','담당자','거래유형','입고창고','통화','환율','프로젝트','배송지','메모','품목코드','품목명','규격','수량','단가','외화금액','공급가액','부가세','적요']
 
-  // 거래처코드 + 발주일자 순 정렬 (같은 묶음끼리 인접)
+  // 거래처코드 + 발주일자 + 납기일자 순 정렬 (같은 묶음끼리 인접)
+  //   ⚠ 납기가 빠져 있어, 같은 업체·같은 날 발주면 납기가 달라도
+  //     한 건으로 묶였다. 이카운트에서는 납기가 다르면 다른 건이다.
   const sorted = [...items].sort((a, b) => {
     const va = vendorMap[a.vendor_id]?.ecount_code || ''
     const vb = vendorMap[b.vendor_id]?.ecount_code || ''
     if (va !== vb) return va.localeCompare(vb)
-    return String(a.order_date||'').localeCompare(String(b.order_date||''))
+    const oa = String(a.order_date||''), ob = String(b.order_date||'')
+    if (oa !== ob) return oa.localeCompare(ob)
+    return String(a.promise_date||'').localeCompare(String(b.promise_date||''))
   })
 
-  // 순번: (거래처코드 + 발주일자) 조합 같으면 동일 순번
+  // 순번: (거래처코드 + 발주일자 + 납기일자) 조합 같으면 동일 순번
   const seqMap = {}; let seq = 0
   const rows = sorted.map((po) => {
     const vendor = po.vendor_id ? vendorMap[po.vendor_id] : null
     const orderYmd = (po.order_date || '').replace(/-/g, '')
-    const gkey = `${vendor?.ecount_code||''}|${orderYmd}`
+    const dueYmd = (po.promise_date || '').replace(/-/g, '')
+    const gkey = `${vendor?.ecount_code||''}|${orderYmd}|${dueYmd}`
     if (!(gkey in seqMap)) { seq += 1; seqMap[gkey] = seq }
     const qty = po.qty_ordered||0, price = po.unit_price||0
     const supply = Math.round(qty*price), vat = Math.round(supply*0.1)
     const spec = [po.items?.manufacturer, po.items?.manufacturer_code].filter(Boolean).join(' ')  // 규격 = 제조사 제조사품번
     //          일자          순번          납기일자                        거래처코드              거래처명 담당자   거래유형 입고창고 통화 환율  프로젝트  배송지 메모        품목코드              품목명              규격  수량 단가  외화 공급가  부가세 적요
-    return [orderYmd || yyyymmdd, String(seqMap[gkey]), po.promise_date?.replace(/-/g,'')||'', vendor?.ecount_code||'', '', '', staffCode || ECOUNT_STAFF_DEFAULT, '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
+    return [orderYmd || yyyymmdd, String(seqMap[gkey]), dueYmd, vendor?.ecount_code||'', '', '', staffCode || ECOUNT_STAFF_DEFAULT, '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
     //                                                                                          거래처명↑ 담당자↑00022      입고창고↑00009        프로젝트↑00012
   })
   const wb = XLSX.utils.book_new()
