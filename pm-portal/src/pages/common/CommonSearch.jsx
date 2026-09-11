@@ -12,18 +12,18 @@ const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
 async function searchItems(q) {
   if (!q.trim()) return []
   const { data, error } = await supabase.from('items')
-    .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, vendors(name), customer_item_codes(customer_code,customers(code,name))')
+    // ⚠ 구매처(vendors)는 가져오지 않는다. 화면에서 지워도 조회로 넘어오면
+    //   개발자도구에서 보인다. 아예 받지 않는다.
+    .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, customer_item_codes(customer_code,customers(code,name))')
     .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer.ilike.%${q}%,manufacturer_code.ilike.%${q}%,spec.ilike.%${q}%`)
     .limit(200)
   if (error) throw error
-  // 재고 합산 + 보관위치 수집
+  // 보관위치만 모은다. 수량은 받지 않는다 — 현장에서 물건을 찾는 화면이다.
   const ids = (data || []).map(d => d.id)
-  const invMap = {}
   const locMap = {}
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: inv } = await supabase.from('inventory').select('item_id,qty,location').in('item_id', ids.slice(i, i + 200))
+    const { data: inv } = await supabase.from('inventory').select('item_id,location').in('item_id', ids.slice(i, i + 200))
     ;(inv || []).forEach(r => {
-      invMap[r.item_id] = (invMap[r.item_id] || 0) + (r.qty || 0)
       if (r.location) {
         if (!locMap[r.item_id]) locMap[r.item_id] = new Set()
         locMap[r.item_id].add(r.location)
@@ -32,7 +32,6 @@ async function searchItems(q) {
   }
   return (data || []).map(d => ({
     ...d,
-    stock: invMap[d.id] || 0,
     location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
   }))
 }
@@ -113,7 +112,9 @@ export default function CommonSearch() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
-                        {['기준코드·품명', '고객사코드', '구분', '제조사·품번', '재고', '위치', '구매처'].map(h =>
+                        {/* 재고·구매처는 넣지 않는다 — 현장에서 물건을 찾는 화면이고,
+                            수량과 협력사는 팀 내부 정보다. 필요하면 통합검색을 쓴다. */}
+                        {['기준코드·품명', '고객사코드', '구분', '제조사·품번', '위치'].map(h =>
                           <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
                       </tr></thead>
                       <tbody>
@@ -138,9 +139,7 @@ export default function CommonSearch() {
                               <div className="text-slate-700">{it.manufacturer || '-'}</div>
                               <div className="font-mono text-[11px] text-slate-400">{it.manufacturer_code || ''}</div>
                             </td>
-                            <td className={`px-3 py-2 text-right font-bold ${it.stock < 0 ? 'text-red-500' : 'text-slate-700'}`}>{it.stock} {it.unit}</td>
                             <td className="px-3 py-2 text-slate-500">{it.location || '-'}</td>
-                            <td className="px-3 py-2 text-slate-500">{it.vendors?.name || '-'}</td>
                           </tr>
                         ))}
                       </tbody>

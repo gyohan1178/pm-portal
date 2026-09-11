@@ -10,6 +10,7 @@ import { downloadProposalExcel } from '../../lib/proposalExcel'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { useMe } from '../../hooks/useProfile'
 import { logActivity } from '../../lib/activityLog'
+import { toastSuccess, toastError } from '../../lib/toast'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -210,6 +211,9 @@ export default function PurchasePage() {
   const [vendorOpen, setVendorOpen] = useState(false)
   const [checked, setChecked] = useState({})
   const [bulkPo, setBulkPo] = useState('')
+  // 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다
+  const [delAsk, setDelAsk] = useState(false)
+  const [delWord, setDelWord] = useState('')
   const [sort, setSort] = useState({ key:null, dir:'asc' })
   const [bulkOrderDate, setBulkOrderDate] = useState('')
   const [bulkPromiseDate, setBulkPromiseDate] = useState('')
@@ -321,6 +325,34 @@ export default function PurchasePage() {
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
     onError:(e)=>alert('오류: '+e.message),
   })
+  // 선택한 건 일괄 삭제.
+  //   ⚠ 되돌릴 수 없어 확인창에 '삭제' 를 직접 치게 한다.
+  //     체크가 여러 건 걸린 채로 잘못 누르면 한꺼번에 날아가기 때문이다.
+  const bulkDelMut = useMutation({
+    mutationFn: async (ids) => {
+      // 이미 입고가 잡힌 건은 지우지 않는다. 재고·매입이 어긋난다.
+      const rows = purchases.filter(p => ids.includes(p.id))
+      const received = rows.filter(p => Number(p.qty_received) > 0)
+      if (received.length) {
+        throw new Error(`입고가 잡힌 건이 ${received.length}건 있습니다 — ` +
+          received.slice(0, 3).map(p => p.po_number || p.items?.std_code).join(', ') +
+          (received.length > 3 ? ' 외' : '') + '. 먼저 입고를 취소하세요.')
+      }
+      const { error } = await supabase.from('purchase_orders').delete().in('id', ids)
+      if (error) throw error
+      logActivity('delete', 'purchase_orders', `${ids.length}건`,
+        rows.slice(0, 5).map(p => `${p.items?.std_code || ''} ${p.vendors?.name || ''}`).join(' / ')
+        + (rows.length > 5 ? ` 외 ${rows.length - 5}건` : ''), null, cs?.name)
+      return ids.length
+    },
+    onSuccess: (n) => {
+      setDelAsk(false); setDelWord(''); setChecked({})
+      qc.invalidateQueries(['purchase'])
+      toastSuccess(`${n}건 삭제`)
+    },
+    onError: (e) => toastError('삭제 실패: ' + e.message),
+  })
+
   const deleteMut = useMutation({
     mutationFn:async(id)=>{
       const po = purchases.find(p=>p.id===id)
@@ -858,6 +890,77 @@ export default function PurchasePage() {
               </button>
             )
           })()}
+
+          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+
+          <button onClick={()=>{ setDelWord(''); setDelAsk(true) }}
+            title="선택한 발주를 지웁니다 — 되돌릴 수 없습니다"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50">
+            🗑 삭제 ({checkedPOs.length})
+          </button>
+        </div>
+      )}
+
+      {/* 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다.
+          체크가 여러 건 걸린 채로 잘못 누르면 한꺼번에 날아가기 때문이다. */}
+      {delAsk && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={()=>setDelAsk(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-md space-y-3"
+            onClick={e=>e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-red-700">🗑 발주 {checkedPOs.length}건 삭제</h3>
+              <p className="text-xs text-slate-400 mt-0.5">되돌릴 수 없습니다.</p>
+            </div>
+
+            <div className="max-h-48 overflow-y-auto rounded-xl border border-slate-200 divide-y divide-slate-100">
+              {checkedPOs.slice(0,50).map(p=>(
+                <div key={p.id} className="px-3 py-1.5 text-xs flex items-center gap-2">
+                  <span className="font-mono text-indigo-600 flex-shrink-0">{p.items?.std_code||'-'}</span>
+                  <span className="text-slate-500 truncate flex-1">{p.items?.name||''}</span>
+                  <span className="text-slate-400 flex-shrink-0">{p.vendors?.name||''}</span>
+                  <span className="font-bold text-slate-600 flex-shrink-0">{(p.qty_ordered||0).toLocaleString()}</span>
+                  {Number(p.qty_received)>0 && (
+                    <span className="px-1 rounded bg-amber-100 text-amber-700 text-[10px] font-bold flex-shrink-0">
+                      입고 {Number(p.qty_received).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+              ))}
+              {checkedPOs.length>50 && (
+                <div className="px-3 py-1.5 text-xs text-slate-400">외 {checkedPOs.length-50}건</div>
+              )}
+            </div>
+
+            {checkedPOs.some(p=>Number(p.qty_received)>0) && (
+              <p className="text-xs font-bold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                ⚠️ 입고가 잡힌 건이 있습니다. 그대로 지우면 재고·매입이 어긋나므로 처리되지 않습니다.
+              </p>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">
+                확인을 위해 <b className="text-red-600">삭제</b> 라고 입력하세요
+              </label>
+              <input value={delWord} onChange={e=>setDelWord(e.target.value)}
+                onKeyDown={e=>{ if(e.key==='Enter'&&delWord.trim()==='삭제') bulkDelMut.mutate(checkedPOs.map(p=>p.id)) }}
+                placeholder="삭제"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-400"/>
+            </div>
+
+            <div className="flex gap-2">
+              <button onClick={()=>setDelAsk(false)}
+                className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600">
+                취소
+              </button>
+              <button
+                onClick={()=>bulkDelMut.mutate(checkedPOs.map(p=>p.id))}
+                disabled={delWord.trim()!=='삭제'||bulkDelMut.isPending}
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
+                {bulkDelMut.isPending ? '삭제 중…' : `${checkedPOs.length}건 삭제`}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
