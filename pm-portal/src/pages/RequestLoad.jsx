@@ -14,6 +14,31 @@ import AnalysisTabs from '../components/AnalysisTabs'
 const n0 = v => (Number(v) || 0).toLocaleString('ko-KR')
 const UNITS = [['month', '월'], ['week', '주'], ['day', '일']]
 const BYS = [['requester', '요청자'], ['dept', '확인부서'], ['customer', '고객사']]
+const DEPTS = [[null, '전체'], ['구매자재팀', '구매자재팀'], ['하네스팀', '하네스팀']]
+
+// 시간 환산 — 미팅에서 건수보다 시간이 와닿는다.
+//   ⚠ 값은 화면에서 바꿀 수 있다. 상대가 "그건 5분이면 되지 않나" 할 때
+//     그 자리에서 다시 계산해 보여 주기 위해서다.
+const MIN_DEF = { check: 3, stock: 2, pick: 3, deliver: 10, reject: 5 }
+const MIN_LABEL = {
+  check:   ['요청서 확인·판단', '장당'],
+  stock:   ['재고 확인·회신',   '품목당'],
+  pick:    ['집품(찾기·담기)',  '불출 품목당'],
+  deliver: ['배달(현장 전달)',  '장당'],
+  reject:  ['반려 처리·회신',   '건당'],
+}
+// 한 기간의 소요 시간(분)
+function minutesOf(r, m) {
+  return (Number(r.req_sheets) || 0) * m.check
+       + (Number(r.req_items)  || 0) * m.stock
+       + (Number(r.issued)     || 0) * m.pick
+       + (Number(r.req_sheets) || 0) * m.deliver
+       + (Number(r.rejected)   || 0) * m.reject
+}
+const hhmm = min => {
+  const h = Math.floor(min / 60), x = Math.round(min % 60)
+  return h > 0 ? `${h}시간 ${x}분` : `${x}분`
+}
 
 async function call(fn, args) {
   const { data, error } = await supabase.rpc(fn, args)
@@ -24,20 +49,23 @@ async function call(fn, args) {
 export default function RequestLoad() {
   const [unit, setUnit] = useState('month')
   const [by, setBy] = useState('requester')
+  const [dept, setDept] = useState(null)
+  const [mins, setMins] = useState(MIN_DEF)
+  const [minOpen, setMinOpen] = useState(false)
 
   const { data: rows = [], isLoading } = useQuery({
-    queryKey: ['reqLoad', unit],
-    queryFn: () => call('pm_request_load', { p_unit: unit }),
+    queryKey: ['reqLoad', unit, dept],
+    queryFn: () => call('pm_request_load', { p_unit: unit, p_dept: dept }),
     staleTime: 5 * 60 * 1000,
   })
   const { data: byRows = [] } = useQuery({
-    queryKey: ['reqLoadBy', by],
-    queryFn: () => call('pm_request_load_by', { p_by: by }),
+    queryKey: ['reqLoadBy', by, dept],
+    queryFn: () => call('pm_request_load_by', { p_by: by, p_dept: dept }),
     staleTime: 5 * 60 * 1000,
   })
   const { data: reasons = [] } = useQuery({
-    queryKey: ['reqReasons'],
-    queryFn: () => call('pm_request_reject_reasons', {}),
+    queryKey: ['reqReasons', dept],
+    queryFn: () => call('pm_request_reject_reasons', { p_dept: dept }),
     staleTime: 5 * 60 * 1000,
   })
 
@@ -48,17 +76,98 @@ export default function RequestLoad() {
     if (!y) return null
     return Math.round((x - y) / y * 100)
   }
+  const curMin = minutesOf(cur, mins)
+  const prevMin = minutesOf(prev, mins)
+  // 차트는 오래된 것이 왼쪽 — 추이는 왼쪽에서 오른쪽으로 읽는다
+  const chart = [...rows].slice(0, 12).reverse().map(r => ({
+    period: r.period,
+    items: r.req_items,
+    total: minutesOf(r, mins),
+    // 반려로 끝난 일에 든 시간 — 확인·재고확인·반려처리
+    waste: (Number(r.rejected) || 0) * (mins.stock + mins.reject),
+  }))
+  const chartMax = Math.max(1, ...chart.map(c => c.total))
 
   return (
     <div className="space-y-4">
       <AnalysisTabs />
 
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">🗂 자재요청 업무량</h1>
-        <p className="text-xs text-slate-400">
-          요청을 받아 확인·회신·불출하기까지 얼마나 손이 가는지 봅니다.
-          품목 단위로 세되, 절차는 요청서마다 한 번씩 도므로 장수도 함께 냅니다.
-        </p>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h1 className="text-lg font-bold text-slate-900">🗂 자재요청 업무량</h1>
+          <p className="text-xs text-slate-400">
+            요청을 받아 확인·회신·불출·배달하기까지 얼마나 손이 가는지 봅니다.
+            품목 단위로 세되, 절차는 요청서마다 한 번씩 도므로 장수도 함께 냅니다.
+          </p>
+        </div>
+        <div className="flex gap-1">
+          {DEPTS.map(([k, l]) => (
+            <button key={l} onClick={() => setDept(k)}
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${
+                dept === k ? 'border-indigo-400 bg-indigo-600 text-white'
+                           : 'border-slate-200 bg-white text-slate-500'}`}>
+              {l}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 소요 시간 — 건수보다 시간이 와닿는다 */}
+      <div className="rounded-xl border-2 border-indigo-200 bg-indigo-50 px-4 py-3">
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="text-xs font-bold text-indigo-500">{cur.period || '-'} 소요 시간</span>
+          <span className="text-2xl font-bold text-indigo-800">{hhmm(curMin)}</span>
+          {prevMin > 0 && (
+            <span className="text-xs text-indigo-500">지난 기간 {hhmm(prevMin)}</span>
+          )}
+          <button onClick={() => setMinOpen(v => !v)}
+            className="ml-auto px-2 py-1 text-[11px] font-bold rounded-lg border border-indigo-300 bg-white text-indigo-700">
+            {minOpen ? '접기' : '⏱ 시간 기준 바꾸기'}
+          </button>
+        </div>
+
+        {/* 무엇에 시간이 드는지 */}
+        <div className="mt-2 grid grid-cols-2 md:grid-cols-5 gap-2">
+          {[['check', (Number(cur.req_sheets)||0) * mins.check, `${n0(cur.req_sheets)}장`],
+            ['stock', (Number(cur.req_items)||0) * mins.stock,  `${n0(cur.req_items)}품목`],
+            ['pick',  (Number(cur.issued)||0)    * mins.pick,   `${n0(cur.issued)}품목`],
+            ['deliver',(Number(cur.req_sheets)||0)* mins.deliver,`${n0(cur.req_sheets)}장`],
+            ['reject',(Number(cur.rejected)||0)  * mins.reject, `${n0(cur.rejected)}건`],
+          ].map(([k, m, cnt]) => (
+            <div key={k} className="bg-white rounded-lg border border-indigo-100 px-2.5 py-2">
+              <p className="text-[10px] font-semibold text-slate-400">{MIN_LABEL[k][0]}</p>
+              <p className="text-sm font-bold text-slate-800">{hhmm(m)}</p>
+              <p className="text-[10px] text-slate-400">{cnt} × {mins[k]}분</p>
+            </div>
+          ))}
+        </div>
+
+        {minOpen && (
+          <div className="mt-2 bg-white rounded-lg border border-indigo-200 px-3 py-2.5">
+            <p className="text-[11px] text-slate-500 mb-2">
+              값을 바꾸면 위 시간이 바로 다시 계산됩니다. 실제와 다르면 고쳐서 보세요.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+              {Object.keys(MIN_DEF).map(k => (
+                <div key={k}>
+                  <label className="block text-[10px] font-bold text-slate-500 mb-0.5">
+                    {MIN_LABEL[k][0]} <span className="text-slate-300">{MIN_LABEL[k][1]}</span>
+                  </label>
+                  <div className="flex items-center gap-1">
+                    <input type="number" min="0" value={mins[k]}
+                      onChange={e => setMins(v => ({ ...v, [k]: Math.max(0, Number(e.target.value) || 0) }))}
+                      className="w-full px-2 py-1 text-sm border border-slate-200 rounded-lg"/>
+                    <span className="text-[11px] text-slate-400">분</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button onClick={() => setMins(MIN_DEF)}
+              className="mt-2 px-2 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500">
+              기본값으로
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 이번 기간 요약 */}
@@ -82,11 +191,45 @@ export default function RequestLoad() {
           <p className="text-sm font-bold text-rose-800">
             {cur.period} 에 {n0(cur.wasted)}건은 불출로 이어지지 않았습니다
             {cur.req_items ? ` (전체의 ${Math.round(cur.wasted / cur.req_items * 100)}%)` : ''}
+            {Number(cur.rejected) > 0 && ` · 반려 처리에만 ${hhmm(Number(cur.rejected) * mins.reject)}`}
           </p>
           <p className="text-xs text-rose-600 mt-0.5">
             확인하고 회신까지 했으나 반려되거나 요청자가 취소한 건입니다.
             요청 단계에서 걸러지면 그만큼 손이 덜 갑니다.
           </p>
+        </div>
+      )}
+
+      {/* 추이 차트 */}
+      {chart.length > 1 && (
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
+            <p className="text-sm font-bold text-slate-700">기간별 소요 시간</p>
+            <div className="flex gap-3 text-[11px] text-slate-500">
+              <span className="inline-flex items-center gap-1">
+                <i className="w-2.5 h-2.5 rounded-sm bg-emerald-500 inline-block"/>불출로 이어진 일
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <i className="w-2.5 h-2.5 rounded-sm bg-rose-400 inline-block"/>반려·취소로 끝난 일
+              </span>
+            </div>
+          </div>
+          <div className="flex items-end gap-3 h-44">
+            {chart.map(c => (
+              <div key={c.period} className="flex-1 flex flex-col items-center justify-end h-full">
+                <span className="text-[11px] font-bold text-slate-700 mb-1">{hhmm(c.total)}</span>
+                <div className="w-full flex flex-col justify-end"
+                  style={{ height: `${Math.max(4, c.total / chartMax * 100)}%` }}>
+                  <div className="bg-rose-400 rounded-t"
+                    style={{ height: `${c.total ? c.waste / c.total * 100 : 0}%` }}/>
+                  <div className="bg-emerald-500"
+                    style={{ height: `${c.total ? (c.total - c.waste) / c.total * 100 : 0}%` }}/>
+                </div>
+                <span className="text-[11px] text-slate-400 mt-1.5">{c.period}</span>
+                <span className="text-[10px] text-slate-300">{n0(c.items)}품목</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
