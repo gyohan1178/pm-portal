@@ -8,6 +8,7 @@ export default function AnalysisTabs() {
     { to: '/purchase-dashboard', label: '💰 매입' },
     { to: '/what-if', label: '🔬 What-if' },
     { to: '/insights', label: '📊 인사이트' },
+    { to: '/request-load', label: '🗂 자재요청 업무량' },
   ]
   return (
     <div className="inline-flex gap-1 p-1 bg-slate-100 rounded-lg mb-3 flex-wrap">

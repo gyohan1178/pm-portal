@@ -23,6 +23,7 @@ const MENU_META = {
   '/production/AX': ['🔧','생산 관리'], '/board': ['🖥','생산 전광판'], '/drawings': ['📐','도면 조회'],
   '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
   '/sales': ['💼','매출 대시보드'], '/cost': ['💵','원가분석'],
+  '/request-load': ['🗂','자재요청 업무량'],
   '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'],
   '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
   '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
@@ -342,6 +343,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/purchase-dashboard" icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
           <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
           <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
+          <MenuItem to="/request-load"       icon="🗂" onNavigate={onNavigate}>자재요청 업무량</MenuItem>
           <MenuItem to="/what-if"            icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
           <MenuItem to="/insights"           icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
         </CollapseSection>
