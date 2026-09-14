@@ -387,6 +387,58 @@ async function saveBOM({ rows, customerId, projectCode, projectName, rev }) {
 export default function BOM() {
   const { customerId: csCode } = useParams()
   const qc = useQueryClient()
+  // 구매이력 — 초도품 승인에서 "이 부품을 언제 어디서 샀는지" 를 요구할 때.
+  //   ⚠ 단가는 넣지 않는다. 고객사로 나가는 자료다.
+  const [histBusy, setHistBusy] = useState(false)
+
+  async function downloadHistory(asm) {
+    setHistBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_purchase_history',
+        { p_project_id: asm.id })
+      if (error) throw error
+      const rows = data || []
+      if (!rows.length) { toastError('낼 자료가 없습니다'); return }
+
+      const XLSX = await import('xlsx')
+      const wb = XLSX.utils.book_new()
+      const sheet = rows.map((r, i) => ({
+        'No': i + 1,
+        'LV': r.lv,
+        '품번': r.std_code,
+        '품명': r.item_name || '',
+        '분류': r.grp || '',
+        '제조사': r.manufacturer || '',
+        '제조사품번': r.maker_code || '',
+        '소요': Number(r.bom_qty) || 0,
+        '단위': r.unit || 'EA',
+        '구매처': r.vendor || '',
+        '발주번호': r.po_number || '',
+        '발주일': r.order_date || '',
+        '입고일': r.recv_date || '',
+        '입고수량': r.recv_qty == null ? '' : Number(r.recv_qty),
+        '비고': r.note || '',
+      }))
+      const ws = XLSX.utils.json_to_sheet(sheet)
+      ws['!cols'] = [{ wch: 5 }, { wch: 4 }, { wch: 18 }, { wch: 36 }, { wch: 8 },
+                     { wch: 16 }, { wch: 20 }, { wch: 8 }, { wch: 6 },
+                     { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
+                     { wch: 10 }, { wch: 18 }]
+      XLSX.utils.book_append_sheet(wb, ws, '구매이력')
+
+      const d = new Date()
+      const p2 = x => String(x).padStart(2, '0')
+      XLSX.writeFile(wb, `구매이력_${asm.code}_`
+        + `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.xlsx`)
+
+      const miss = rows.filter(r => !r.recv_date && r.note === '구매 이력 없음').length
+      if (miss > 0) toastError(`${rows.length}행 · 구매 이력이 없는 품목 ${miss}건`)
+      else toastSuccess(`${rows.length}행`)
+    } catch (e) {
+      toastError('구매이력 만들기 실패: ' + e.message)
+    } finally { setHistBusy(false) }
+  }
+
   const [tab, setTab] = useState('list')
   const [selAssembly, setSelAssembly] = useState(null)
   const [editAsm, setEditAsm] = useState(null)     // 상위품번 수정
@@ -708,6 +760,13 @@ export default function BOM() {
           <span className="text-xs font-semibold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
             {selAssembly.code} · REV {selAssembly.rev || 'A'}
           </span>
+        )}
+        {tab === 'detail' && selAssembly && (
+          <button onClick={() => downloadHistory(selAssembly)} disabled={histBusy}
+            title="초도품 승인용 — 하위품목의 구매처·발주번호·입고일 (단가 제외)"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+            {histBusy ? '만드는 중…' : '📄 구매이력 (밀시트 대체)'}
+          </button>
         )}
         <div className="flex-1" />
         <button onClick={() => downloadCsvTemplate(TEMPLATES.bom.filename, TEMPLATES.bom.headers, TEMPLATES.bom.samples)}
