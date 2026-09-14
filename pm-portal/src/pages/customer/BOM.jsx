@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
+import { downloadPurchaseHistory } from '../../lib/purchaseHistoryExcel'
 import { useCustomer } from '../../hooks/useCustomers'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
@@ -400,36 +401,14 @@ export default function BOM() {
       const rows = data || []
       if (!rows.length) { toastError('낼 자료가 없습니다'); return }
 
-      const XLSX = await import('xlsx')
-      const wb = XLSX.utils.book_new()
-      const sheet = rows.map((r, i) => ({
-        'No': i + 1,
-        'LV': r.lv,
-        '품번': r.std_code,
-        '품명': r.item_name || '',
-        '분류': r.grp || '',
-        '제조사': r.manufacturer || '',
-        '제조사품번': r.maker_code || '',
-        '소요': Number(r.bom_qty) || 0,
-        '단위': r.unit || 'EA',
-        '구매처': r.vendor || '',
-        '발주번호': r.po_number || '',
-        '발주일': r.order_date || '',
-        '입고일': r.recv_date || '',
-        '입고수량': r.recv_qty == null ? '' : Number(r.recv_qty),
-        '비고': r.note || '',
-      }))
-      const ws = XLSX.utils.json_to_sheet(sheet)
-      ws['!cols'] = [{ wch: 5 }, { wch: 4 }, { wch: 18 }, { wch: 36 }, { wch: 8 },
-                     { wch: 16 }, { wch: 20 }, { wch: 8 }, { wch: 6 },
-                     { wch: 18 }, { wch: 14 }, { wch: 12 }, { wch: 12 },
-                     { wch: 10 }, { wch: 18 }]
-      XLSX.utils.book_append_sheet(wb, ws, '구매이력')
-
-      const d = new Date()
-      const p2 = x => String(x).padStart(2, '0')
-      XLSX.writeFile(wb, `구매이력_${asm.code}_`
-        + `${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.xlsx`)
+      await downloadPurchaseHistory({
+        asm: { code: asm.code, name: asm.name, rev: asm.rev },
+        rows,
+        fileName: `구매이력_${asm.code}_`
+          + `${new Date().getFullYear()}`
+          + `${String(new Date().getMonth() + 1).padStart(2, '0')}`
+          + `${String(new Date().getDate()).padStart(2, '0')}.xlsx`,
+      })
 
       const miss = rows.filter(r => !r.recv_date && r.note === '구매 이력 없음').length
       if (miss > 0) toastError(`${rows.length}행 · 구매 이력이 없는 품목 ${miss}건`)
