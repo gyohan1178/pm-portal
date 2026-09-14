@@ -1,6 +1,8 @@
 import { useState, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { refreshProcurement } from '../../lib/refresh'
+import { attachStock } from '../../lib/stockLookup'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
@@ -677,6 +679,84 @@ export default function MaterialRequest() {
       qc.invalidateQueries({ queryKey: ['requestNotice'] })
       qc.invalidateQueries({ queryKey: ['menuAlerts'] })
       qc.invalidateQueries({ queryKey: ['todoList'] })
+    } catch (e) { toastError('되돌리기 실패: ' + e.message) }
+  }
+
+  // 품번 바꾸기 — 같은 물건이 다른 코드로 있거나 대체품을 쓸 때.
+  //   ⚠ 주 사용 코드를 하나로 못 박지 않는다. 대체품을 쓰는 경우가 있어
+  //     그때그때 확인자가 고르는 것이 맞다.
+  const [ciRow, setCiRow] = useState(null)      // 바꿀 요청 줄
+  const [ciCands, setCiCands] = useState([])    // 같은 제조사품번 후보
+  const [ciQ, setCiQ] = useState('')            // 직접 검색어
+  const [ciHits, setCiHits] = useState([])
+  const [ciMemo, setCiMemo] = useState('')
+  const [ciBusy, setCiBusy] = useState(false)
+
+  async function openChangeItem(r) {
+    setCiRow(r); setCiCands([]); setCiQ(''); setCiHits([]); setCiMemo('')
+    try {
+      const { data, error } = await supabase.rpc('pm_request_same_item', { p_id: r.id })
+      if (error) throw error
+      setCiCands(data || [])
+    } catch (e) { toastError('후보 조회 실패: ' + e.message) }
+  }
+
+  async function searchItems(q) {
+    const k = q.trim()
+    if (k.length < 2) { setCiHits([]); return }
+    try {
+      const { data, error } = await supabase.from('items')
+        .select('id,std_code,name,manufacturer,manufacturer_code,unit')
+        .or(`std_code.ilike.%${k}%,name.ilike.%${k}%,manufacturer_code.ilike.%${k}%`)
+        .limit(20)
+      if (error) throw error
+      setCiHits(await attachStock(data || []))
+    } catch (e) { toastError('검색 실패: ' + e.message) }
+  }
+
+  async function doChangeItem(code) {
+    if (!ciRow || !code) return
+    setCiBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_request_change_item',
+        { p_id: ciRow.id, p_std_code: code, p_memo: ciMemo.trim() || null })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      if (r?.ok === false) { toastError(r?.note || '바뀌지 않았습니다'); return }
+      toastSuccess(`${r?.old_code || '-'} → ${r?.new_code}`)
+      setCiRow(null)
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+    } catch (e) { toastError('품번 변경 실패: ' + e.message) }
+    finally { setCiBusy(false) }
+  }
+
+  // 완료 되돌리기 — 실수로 불출·발주 처리한 건을 확인 단계로.
+  //   ⚠ 불출이었으면 출고를 지우고 재고도 되돌린다.
+  //     실물이 나가기 전에만 써야 한다. 이미 나갔으면 재고가 실제보다 많아진다.
+  async function undoDone() {
+    const done = checked.filter(r => r.status === '완료')
+    if (!done.length) return
+    const issued = done.filter(r => r.handle_type === '불출')
+    const msg = `${done.length}건을 확인 단계로 되돌립니다.\n\n`
+      + (issued.length
+          ? `⚠️ 불출된 ${issued.length}건은 출고를 지우고 재고를 되돌립니다.\n`
+            + `실물이 이미 나갔다면 재고가 실제보다 많아집니다.\n\n`
+          : '')
+      + '계속할까요?'
+    if (!confirm(msg)) return
+    const memo = prompt('되돌리는 사유 (선택)', '실수로 처리') ?? ''
+    try {
+      const { data, error } = await supabase.rpc('pm_request_undo_done',
+        { p_ids: done.map(r => r.id), p_memo: memo.trim() || null })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      toastSuccess(`${n(r?.undone ?? 0)}건 되돌림`
+        + (Number(r?.stock_back) > 0 ? ` · 재고 복구 ${n(r.stock_back)}건` : ''))
+      if (r?.note) toastError(r.note)
+      setSel({})
+      qc.invalidateQueries({ queryKey: ['materialRequests'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] })
+      refreshProcurement(qc)
     } catch (e) { toastError('되돌리기 실패: ' + e.message) }
   }
 
@@ -1375,6 +1455,13 @@ export default function MaterialRequest() {
                     ↩ 반려 취소
                   </button>
                 )}
+                {checked.some(r => r.status === '완료') && (
+                  <button onClick={undoDone}
+                    title="실수로 처리한 건을 확인 단계로 되돌립니다 — 불출된 건은 재고도 되돌립니다"
+                    className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">
+                    ↩ 완료 되돌리기
+                  </button>
+                )}
                 </>)}
               </div>
             )}
@@ -1540,9 +1627,18 @@ export default function MaterialRequest() {
                             sel[r.id] ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}`}>
                           <input type="checkbox" checked={!!sel[r.id]} readOnly
                             className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none flex-shrink-0" />
-                          <span className="font-mono font-bold text-indigo-600 w-32 flex-shrink-0 truncate">
-                            {r.std_code || '-'}
-                          </span>
+                          {canEdit && r.item_id && r.status !== '완료' ? (
+                            <button
+                              onClick={e => { e.stopPropagation(); openChangeItem(r) }}
+                              title="품번 바꾸기 — 같은 물건이 다른 코드로 있거나 대체품을 쓸 때"
+                              className="font-mono font-bold text-indigo-600 w-32 flex-shrink-0 truncate text-left hover:underline decoration-dotted">
+                              {r.std_code || '-'}
+                            </button>
+                          ) : (
+                            <span className="font-mono font-bold text-indigo-600 w-32 flex-shrink-0 truncate">
+                              {r.std_code || '-'}
+                            </span>
+                          )}
                           <span className="text-slate-600 flex-1 min-w-0 truncate">{r.item_name}</span>
                           <span className="text-slate-400 w-24 flex-shrink-0 truncate text-right">{r.maker || ''}</span>
                           <span className="font-mono text-slate-400 w-28 flex-shrink-0 truncate text-right">{r.maker_code || ''}</span>
@@ -1917,6 +2013,93 @@ export default function MaterialRequest() {
                 {busy ? '처리 중…' : `${n(reassign.ids.length)}건 → ${reassign.dept}`}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 품번 바꾸기 — 같은 물건이 다른 코드로 있거나 대체품을 쓸 때 */}
+      {ciRow && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setCiRow(null)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-lg space-y-3 max-h-[86vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">🔀 품번 바꾸기</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                요청에 올라온 코드 대신 다른 코드로 불출합니다. 바꾼 기록이 남습니다.
+              </p>
+            </div>
+
+            <div className="rounded-xl bg-slate-50 border border-slate-200 px-3 py-2">
+              <p className="font-mono text-sm font-bold text-slate-700">{ciRow.std_code}</p>
+              <p className="text-xs text-slate-500">{ciRow.item_name}</p>
+              <p className="text-[11px] text-slate-400">
+                {ciRow.maker || '-'} / {ciRow.maker_code || '-'} · {n(ciRow.qty)}{ciRow.unit}
+              </p>
+            </div>
+
+            {ciCands.length > 0 && (
+              <div>
+                <p className="text-xs font-bold text-slate-500 mb-1">
+                  같은 제조사품번 <span className="text-slate-300">({ciCands.length})</span>
+                </p>
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                  {ciCands.map(c => (
+                    <button key={c.std_code} onClick={() => doChangeItem(c.std_code)}
+                      disabled={ciBusy}
+                      className="w-full text-left px-3 py-2 hover:bg-indigo-50 disabled:opacity-40 flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-indigo-600 flex-shrink-0">{c.std_code}</span>
+                      <span className="text-xs text-slate-500 flex-1 min-w-0 truncate">{c.item_name}</span>
+                      <span className={`text-xs font-bold flex-shrink-0 ${
+                        Number(c.stock_qty) >= Number(ciRow.qty) ? 'text-emerald-600'
+                        : Number(c.stock_qty) > 0 ? 'text-amber-600' : 'text-slate-300'}`}>
+                        재고 {n(c.stock_qty)}
+                      </span>
+                      {c.location && <span className="text-[11px] text-slate-400 flex-shrink-0">{c.location}</span>}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div>
+              <p className="text-xs font-bold text-slate-500 mb-1">
+                직접 찾기 <span className="text-slate-300 font-normal">— 대체품은 제조사품번이 다릅니다</span>
+              </p>
+              <input value={ciQ}
+                onChange={e => { setCiQ(e.target.value); searchItems(e.target.value) }}
+                placeholder="품번 · 품명 · 제조사품번 (2자 이상)"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              {ciHits.length > 0 && (
+                <div className="mt-1.5 rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                  {ciHits.map(c => (
+                    <button key={c.id} onClick={() => doChangeItem(c.std_code)}
+                      disabled={ciBusy || c.std_code === ciRow.std_code}
+                      className="w-full text-left px-3 py-2 hover:bg-indigo-50 disabled:opacity-40 flex items-center gap-2">
+                      <span className="font-mono text-xs font-bold text-indigo-600 flex-shrink-0">{c.std_code}</span>
+                      <span className="text-xs text-slate-500 flex-1 min-w-0 truncate">{c.name}</span>
+                      <span className="text-[11px] text-slate-400 flex-shrink-0 truncate max-w-28">{c.manufacturer_code || ''}</span>
+                      <span className={`text-xs font-bold flex-shrink-0 ${
+                        Number(c.stock_qty) > 0 ? 'text-emerald-600' : 'text-slate-300'}`}>
+                        {c.stock_qty == null ? '-' : n(c.stock_qty)}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">바꾸는 사유 (선택)</label>
+              <input value={ciMemo} onChange={e => setCiMemo(e.target.value)}
+                placeholder="예: 대체품 사용 · 주 사용 코드로 변경"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            </div>
+
+            <button onClick={() => setCiRow(null)}
+              className="w-full py-2 text-sm font-semibold rounded-lg border border-slate-200 text-slate-500">
+              닫기
+            </button>
           </div>
         </div>
       )}
