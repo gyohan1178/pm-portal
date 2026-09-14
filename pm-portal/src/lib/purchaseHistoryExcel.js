@@ -105,7 +105,8 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
       // 레벨만큼 들여써서 계층이 보이게 한다
       if (j === 2) { o.indent = lv - 1; o.bold = lv <= 2; o.color = lvText(lv) }
       if (j === 4) { o.align = 'center'; o.bold = true; o.color = GRP_COLOR[r.grp] || 'FF98A0B0' }
-      if (j === 7 || j === 13) { o.align = 'right'; o.fmt = '#,##0.###' }
+      if (j === 7) { o.align = 'right'; o.fmt = '#,##0.0' }        // 소요는 소수 한 자리
+      if (j === 13) { o.align = 'right'; o.fmt = '#,##0.###' }
       if (j === 8) o.align = 'center'
       if (j === 11 || j === 12) o.align = 'center'
       if (j === 14 && noHist) { o.color = 'FFC00000'; o.bold = true }
@@ -114,36 +115,60 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
   })
   ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + rows.length, column: COLS.length } }
 
-  // ── 이력 없음 ── 사유를 채워 넣을 칸을 둔다
+  // ── 이력 없음 ──
+  //   ⚠ 같은 품번이 여러 레벨에 나오므로 품번으로 묶는다.
+  //     행마다 증빙할 필요가 없고, 435줄이 243품번으로 줄어 보기 쉽다.
+  //     소요는 합계, 쓰인 곳 수를 함께 내 어디에 들어가는지 알 수 있게 한다.
   if (none.length) {
+    const byPn = new Map()
+    none.forEach(r => {
+      const k = r.std_code
+      const cur = byPn.get(k)
+      if (cur) {
+        cur.qty += Number(r.bom_qty) || 0
+        cur.cnt += 1
+        cur.lv = Math.min(cur.lv, Number(r.lv) || 1)
+      } else {
+        byPn.set(k, {
+          std_code: k, item_name: r.item_name, grp: r.grp,
+          manufacturer: r.manufacturer, maker_code: r.maker_code, unit: r.unit,
+          qty: Number(r.bom_qty) || 0, cnt: 1, lv: Number(r.lv) || 1,
+        })
+      }
+    })
+    const uniq = [...byPn.values()].sort((a, b) =>
+      a.lv - b.lv || a.std_code.localeCompare(b.std_code))
+
     const NC = [['No', 6], ['LV', 5], ['품번', 18], ['품명', 38], ['분류', 9],
-                ['제조사', 16], ['제조사품번', 20], ['소요', 8], ['단위', 6],
-                ['사유', 26], ['비고', 26]]
+                ['제조사', 16], ['제조사품번', 20], ['소요 합계', 10], ['단위', 6],
+                ['쓰인 곳', 8], ['사유', 26], ['비고', 26]]
     const ns = wb.addWorksheet('이력 없음', {
       pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
     })
     header(ns, NC, `구매 이력이 확인되지 않은 품목 — ${asm.code}`,
-      `${none.length}건 · 사급·지급자재이거나 시스템 도입 전에 매입한 품목일 수 있습니다.`
+      `${uniq.length}품번 (BOM ${none.length}줄) · 사급·지급자재이거나 시스템 도입 전에 매입한 품목일 수 있습니다.`
       + ' 노란 칸에 사유를 적어 주세요.')
-    none.forEach((r, i) => {
+    uniq.forEach((r, i) => {
       const rr = 5 + i
-      const lv = Number(r.lv) || 1
-      const vals = [i + 1, lv, r.std_code, r.item_name || '', r.grp || '',
+      const vals = [i + 1, r.lv, r.std_code, r.item_name || '', r.grp || '',
                     r.manufacturer || '', r.maker_code || '',
-                    Number(r.bom_qty) || 0, r.unit || 'EA', null, null]
+                    r.qty, r.unit || 'EA', r.cnt, null, null]
       vals.forEach((v, j) => {
         const o = {}
         if (j === 0) { o.align = 'center'; o.color = 'FF98A0B0' }
-        if (j === 1) { o.align = 'center'; o.bold = true; o.color = lvText(lv) }
-        if (j === 2) { o.indent = lv - 1; o.bold = true }
+        if (j === 1) { o.align = 'center'; o.bold = true; o.color = lvText(r.lv) }
+        if (j === 2) { o.bold = true }
         if (j === 4) { o.align = 'center'; o.bold = true; o.color = GRP_COLOR[r.grp] || 'FF98A0B0' }
-        if (j === 7) { o.align = 'right'; o.fmt = '#,##0.###' }
+        if (j === 7) { o.align = 'right'; o.fmt = '#,##0.0' }
         if (j === 8) o.align = 'center'
-        if (j >= 9) o.fill = 'FFFFF2CC'     // 채워 넣을 칸
+        // 여러 곳에 쓰이면 눈에 띄게 — 어디에 들어가는지가 사유 판단에 도움이 된다
+        if (j === 9) { o.align = 'center'; o.color = r.cnt > 1 ? 'FF7C5CD6' : 'FF98A0B0'
+                       o.bold = r.cnt > 1 }
+        if (j >= 10) o.fill = 'FFFFF2CC'     // 채워 넣을 칸
         cell(ns, rr, j + 1, v, o)
       })
     })
-    ns.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + none.length, column: NC.length } }
+    ns.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + uniq.length, column: NC.length } }
   }
 
   // ── 요약 ──
@@ -171,7 +196,9 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
   box(7, '전체', rows.length, 'BOM 하위품목 중 매입 대상', 'FF1F2430')
   box(8, '이력 확인', has.length,
       rows.length ? `${Math.round(has.length / rows.length * 100)}%` : '', 'FF12A05F')
-  box(9, '이력 없음', none.length, '사급·지급자재이거나 시스템 도입 전 매입', 'FFC00000')
+  box(9, '이력 없음', none.length,
+      `${new Set(none.map(r => r.std_code)).size}품번 · 사급·지급자재이거나 시스템 도입 전 매입`,
+      'FFC00000')
   box(10, '해당 없음', etc.length, '하위 부품으로 구성되는 어셈블리 등', 'FF98A0B0')
 
   // 레벨별
