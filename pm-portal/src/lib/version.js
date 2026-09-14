@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v4.3.1'
+export const APP_VERSION = 'v4.3.2'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.3.2',
+    date: '2026-09-14',
+    changes: [
+      '⚠️ 구매이력 엑셀을 열면 「내용에 문제가 있습니다 — 복구하겠습니까」 가 뜨던 문제 수정',
+      '원인 둘 — 셀 들여쓰기(indent) 설정과, 빈 값을 빈 문자열로 넣은 것. 둘 다 엑셀이 파일을 깨진 것으로 봅니다',
+      '계층은 품번 앞 공백으로 표현합니다. 보이는 모양은 같습니다',
+      '빈 칸은 값을 넣지 않고 서식만 둡니다',
+    ],
+  },
   {
     version: 'v4.3.1',
     date: '2026-09-14',

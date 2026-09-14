@@ -28,13 +28,19 @@ const GRP_COLOR = {
 }
 
 const F = '맑은 고딕'
+
+// ⚠ alignment 의 indent 는 쓰지 않는다.
+//   엑셀이 "내용에 문제가 있습니다" 로 복구를 물어보던 원인이었다.
+//   계층은 품번 앞 공백으로 표현한다.
+const pad = lv => '　'.repeat(Math.max(0, (lv || 1) - 1))
+
 const cell = (ws, r, c, v, o = {}) => {
   const x = ws.getCell(r, c)
-  x.value = v
+  // 빈 문자열 대신 값을 넣지 않는다. 빈 문자열은 공유문자열에 빈 항목을 만든다.
+  if (v !== '' && v != null) x.value = v
   x.font = { name: F, size: o.size || 9, bold: !!o.bold,
              color: { argb: o.color || 'FF1F2430' } }
-  x.alignment = { horizontal: o.align || 'left', vertical: 'middle', wrapText: !!o.wrap,
-                  indent: o.indent || 0 }
+  x.alignment = { horizontal: o.align || 'left', vertical: 'middle', wrapText: !!o.wrap }
   if (o.fmt) x.numFmt = o.fmt
   x.border = BOX
   if (o.fill) x.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: o.fill } }
@@ -92,18 +98,18 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
     const bg = lvFill(lv)
     const noHist = !r.recv_date && r.note === '구매 이력 없음'
     const vals = [
-      i + 1, lv, r.std_code, r.item_name || '', r.grp || '',
-      r.manufacturer || '', r.maker_code || '',
+      i + 1, lv, pad(lv) + r.std_code, r.item_name, r.grp,
+      r.manufacturer, r.maker_code,
       Number(r.bom_qty) || 0, r.unit || 'EA',
-      r.vendor || '', r.po_number || '', r.order_date || '', r.recv_date || '',
-      r.recv_qty == null ? '' : Number(r.recv_qty), r.note || '',
+      r.vendor, r.po_number, r.order_date, r.recv_date,
+      r.recv_qty == null ? null : Number(r.recv_qty), r.note,
     ]
     vals.forEach((v, j) => {
       const o = { fill: noHist ? 'FFFDF3F3' : bg }
       if (j === 0) { o.align = 'center'; o.color = 'FF98A0B0' }
       if (j === 1) { o.align = 'center'; o.bold = true; o.color = lvText(lv) }
       // 레벨만큼 들여써서 계층이 보이게 한다
-      if (j === 2) { o.indent = lv - 1; o.bold = lv <= 2; o.color = lvText(lv) }
+      if (j === 2) { o.bold = lv <= 2; o.color = lvText(lv) }
       if (j === 4) { o.align = 'center'; o.bold = true; o.color = GRP_COLOR[r.grp] || 'FF98A0B0' }
       if (j === 7) { o.align = 'right'; o.fmt = '#,##0.0' }        // 소요는 소수 한 자리
       if (j === 13) { o.align = 'right'; o.fmt = '#,##0.###' }
@@ -150,8 +156,8 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
       + ' 노란 칸에 사유를 적어 주세요.')
     uniq.forEach((r, i) => {
       const rr = 5 + i
-      const vals = [i + 1, r.lv, r.std_code, r.item_name || '', r.grp || '',
-                    r.manufacturer || '', r.maker_code || '',
+      const vals = [i + 1, r.lv, r.std_code, r.item_name, r.grp,
+                    r.manufacturer, r.maker_code,
                     r.qty, r.unit || 'EA', r.cnt, null, null]
       vals.forEach((v, j) => {
         const o = {}
