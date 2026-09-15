@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { downloadLotAudit } from '../../lib/lotAuditExcel'
@@ -47,6 +47,53 @@ export default function LotManage() {
   const [editLot, setEditLot] = useState(null)     // 수정할 로트
   const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
   const [showDone, setShowDone] = useState(false)  // 소진분 포함
+
+  // 로트관리 대상 품목 관리.
+  //   ⚠ 지금까지 화면에 켜는 곳이 없어 SQL 로 직접 바꿔야 했다.
+  const [mgrOpen, setMgrOpen] = useState(false)
+  const [mq, setMq] = useState('')
+  const [mHits, setMHits] = useState([])
+  const mTimer = useRef(null)
+
+  // 대상이 아닌 품목을 찾는다 — 켜려는 것이니 lot_managed 로 거르지 않는다
+  const searchAll = useCallback((v) => {
+    setMq(v)
+    clearTimeout(mTimer.current)
+    if (v.trim().length < 2) { setMHits([]); return }
+    mTimer.current = setTimeout(async () => {
+      const t = v.trim()
+      const { data } = await supabase.from('items')
+        .select('id,std_code,name,manufacturer,manufacturer_code,shelf_months,lot_managed')
+        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
+        .limit(20)
+      setMHits(data || [])
+    }, 250)
+  }, [])
+
+  const toggleMut = useMutation({
+    mutationFn: async ({ id, on, std_code }) => {
+      if (!on) {
+        // 끄기 전에 남은 로트가 있는지 본다.
+        //   화면에 이미 불러온 목록으로 센다 — 조회를 한 번 줄이고 권한도 안 탄다.
+        const alive = (byItem[id] || []).filter(l => Number(l.qty_left) > 0)
+        if (alive.length && !confirm(
+          `${std_code} 에 잔량이 남은 로트가 ${alive.length}건 있습니다.\n\n`
+          + '대상에서 빼도 로트 기록은 지워지지 않지만 화면에 보이지 않게 됩니다.\n계속할까요?')) {
+          throw new Error('__CANCEL__')
+        }
+      }
+      const { error } = await supabase.from('items').update({ lot_managed: on }).eq('id', id)
+      if (error) throw error
+      return { std_code, on }
+    },
+    onSuccess: (r) => {
+      toastSuccess(`${r.std_code} · 로트관리 ${r.on ? '대상' : '제외'}`)
+      setMHits(h => h.map(x => x.std_code === r.std_code ? { ...x, lot_managed: r.on } : x))
+      qc.invalidateQueries({ queryKey: ['lotSummary'] })
+      qc.invalidateQueries({ queryKey: ['lotList'] })
+    },
+    onError: (e) => { if (e.message !== '__CANCEL__') toastError('변경 실패: ' + e.message) },
+  })
 
   // 실사표 — 장부 수치가 서로 맞지 않아 실물을 세야 할 때 쓴다
   const [auditBusy, setAuditBusy] = useState(false)
@@ -166,6 +213,13 @@ export default function LotManage() {
             className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
             📥 엑셀
           </button>
+          {canEdit && (
+            <button onClick={() => { setMq(''); setMHits([]); setMgrOpen(true) }}
+              title="로트관리할 품목을 고릅니다"
+              className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white">
+              ⚙ 대상 품목
+            </button>
+          )}
           <button onClick={downloadAudit} disabled={auditBusy}
             title="실물을 세어 적어 넣는 표 — 로트관리 시작 이후 출고 목록도 함께"
             className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 disabled:opacity-40">
@@ -246,6 +300,14 @@ export default function LotManage() {
                     <p className="text-[11px] text-slate-400">잔량</p>
                     <p className="text-lg font-bold text-slate-800">{n(s.total_left)}</p>
                     <p className="text-[10px] text-slate-400">{s.lot_cnt}개 로트</p>
+                    {/* 재고와 로트 합이 어긋나면 알려 준다.
+                        로트가 모자라 못 뺀 경우가 여기서 드러난다. */}
+                    {Number(s.gap) !== 0 && (
+                      <p className="text-[10px] font-bold text-rose-600 mt-0.5"
+                        title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
+                        ⚠ 재고와 {Number(s.gap) > 0 ? '+' : ''}{n(s.gap)} 차이
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -375,6 +437,98 @@ export default function LotManage() {
       {shelfFor && (
         <ShelfEdit item={shelfFor} onClose={() => setShelfFor(null)}
           onDone={() => { refresh(); setShelfFor(null) }} />
+      )}
+
+      {/* 로트관리 대상 품목 — 화면에서 켜고 끈다 */}
+      {mgrOpen && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
+          onClick={() => setMgrOpen(false)}>
+          <div className="bg-white rounded-2xl p-5 w-full max-w-2xl space-y-3 max-h-[86vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">⚙ 로트관리 대상 품목</h3>
+              <p className="text-xs text-slate-400 mt-0.5">
+                시리얼·제조년월을 따로 관리할 품목을 고릅니다. 보증기간은 입고일부터 셉니다.
+              </p>
+            </div>
+
+            {/* 지금 대상 */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 mb-1">
+                지금 대상 <span className="text-slate-300">({sum.length}종)</span>
+              </p>
+              {sum.length === 0 ? (
+                <p className="text-xs text-slate-400 px-3 py-2 rounded-xl border border-slate-200">
+                  아직 없습니다. 아래에서 찾아 추가하세요.
+                </p>
+              ) : (
+                <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                  {sum.map(it => (
+                    <div key={it.item_id} className="px-3 py-2 flex items-center gap-2 text-xs">
+                      <span className="font-mono font-bold text-indigo-600 flex-shrink-0">{it.std_code}</span>
+                      <span className="text-slate-600 flex-1 min-w-0 truncate">{it.item_name}</span>
+                      <span className="text-slate-400 flex-shrink-0">{it.maker || ''}</span>
+                      <span className="text-slate-500 flex-shrink-0">
+                        로트 {n(it.lot_cnt ?? 0)}
+                      </span>
+                      <button
+                        onClick={() => toggleMut.mutate({ id: it.item_id, on: false, std_code: it.std_code })}
+                        disabled={toggleMut.isPending}
+                        className="px-2 py-0.5 rounded-lg border border-rose-200 text-rose-600 font-bold flex-shrink-0 disabled:opacity-40">
+                        제외
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 추가 */}
+            <div>
+              <p className="text-xs font-bold text-slate-500 mb-1">품목 찾아 추가</p>
+              <input value={mq} onChange={e => searchAll(e.target.value)}
+                placeholder="품번 · 품명 · 제조사 · 제조사품번 (2자 이상)"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              {mHits.length > 0 && (
+                <div className="mt-1.5 rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-72 overflow-y-auto">
+                  {mHits.map(h => (
+                    <div key={h.id} className="px-3 py-2 flex items-center gap-2 text-xs">
+                      <span className="font-mono font-bold text-indigo-600 flex-shrink-0">{h.std_code}</span>
+                      <span className="text-slate-600 flex-1 min-w-0 truncate">{h.name}</span>
+                      <span className="text-slate-400 flex-shrink-0 truncate max-w-28">
+                        {h.manufacturer || ''} {h.manufacturer_code || ''}
+                      </span>
+                      {h.lot_managed ? (
+                        <span className="px-2 py-0.5 rounded-lg bg-emerald-50 text-emerald-700 font-bold flex-shrink-0">
+                          대상
+                        </span>
+                      ) : (
+                        <button
+                          onClick={() => toggleMut.mutate({ id: h.id, on: true, std_code: h.std_code })}
+                          disabled={toggleMut.isPending}
+                          className="px-2 py-0.5 rounded-lg border border-indigo-300 text-indigo-700 font-bold flex-shrink-0 disabled:opacity-40">
+                          + 추가
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {mq.trim().length >= 2 && mHits.length === 0 && (
+                <p className="text-xs text-slate-400 mt-1.5">찾는 품목이 없습니다.</p>
+              )}
+            </div>
+
+            <p className="text-[11px] text-slate-400 leading-relaxed">
+              대상에서 빼도 이미 넣은 로트 기록은 지워지지 않습니다. 화면에 보이지 않을 뿐입니다.
+            </p>
+
+            <button onClick={() => setMgrOpen(false)}
+              className="w-full py-2 text-sm font-semibold rounded-lg border border-slate-200 text-slate-500">
+              닫기
+            </button>
+          </div>
+        </div>
       )}
     </div>
   )
