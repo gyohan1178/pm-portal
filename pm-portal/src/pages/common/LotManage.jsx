@@ -2,6 +2,7 @@ import { useState, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { downloadLotAudit } from '../../lib/lotAuditExcel'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit } from '../../hooks/useProfile'
 
@@ -46,6 +47,30 @@ export default function LotManage() {
   const [editLot, setEditLot] = useState(null)     // 수정할 로트
   const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
   const [showDone, setShowDone] = useState(false)  // 소진분 포함
+
+  // 실사표 — 장부 수치가 서로 맞지 않아 실물을 세야 할 때 쓴다
+  const [auditBusy, setAuditBusy] = useState(false)
+  async function downloadAudit() {
+    setAuditBusy(true)
+    try {
+      const [a, b] = await Promise.all([
+        supabase.rpc('pm_lot_audit_sheet'),
+        supabase.rpc('pm_lot_recent_out', { p_since: null }),
+      ])
+      if (a.error) throw a.error
+      if (!a.data?.length) { toastError('로트관리 품목이 없습니다'); return }
+      const d = new Date()
+      const p2 = x => String(x).padStart(2, '0')
+      await downloadLotAudit({
+        rows: a.data,
+        outs: b.error ? [] : (b.data || []),
+        fileName: `로트실사표_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}.xlsx`,
+      })
+      if (b.error) toastError('출고 목록은 담지 못했습니다: ' + b.error.message)
+    } catch (e) {
+      toastError('실사표 만들기 실패: ' + e.message)
+    } finally { setAuditBusy(false) }
+  }
 
   const { data: sum = [], isLoading } = useQuery({
     queryKey: ['lotSummary'],
@@ -140,6 +165,11 @@ export default function LotManage() {
           <button onClick={exportXl}
             className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
             📥 엑셀
+          </button>
+          <button onClick={downloadAudit} disabled={auditBusy}
+            title="실물을 세어 적어 넣는 표 — 로트관리 시작 이후 출고 목록도 함께"
+            className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 disabled:opacity-40">
+            {auditBusy ? '만드는 중…' : '📋 실사표'}
           </button>
         </div>
       </div>
