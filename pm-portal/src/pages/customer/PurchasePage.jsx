@@ -328,8 +328,10 @@ export default function PurchasePage() {
   // 선택한 건 일괄 삭제.
   //   ⚠ 되돌릴 수 없어 확인창에 '삭제' 를 직접 치게 한다.
   //     체크가 여러 건 걸린 채로 잘못 누르면 한꺼번에 날아가기 때문이다.
+  const [delProg, setDelProg] = useState(null)
   const bulkDelMut = useMutation({
     mutationFn: async (ids) => {
+      const onProg = (done, total) => setDelProg(`${done}/${total}`)
       // 이미 입고가 잡힌 건은 지우지 않는다. 재고·매입이 어긋난다.
       const rows = purchases.filter(p => ids.includes(p.id))
       const received = rows.filter(p => Number(p.qty_received) > 0)
@@ -338,19 +340,25 @@ export default function PurchasePage() {
           received.slice(0, 3).map(p => p.po_number || p.items?.std_code).join(', ') +
           (received.length > 3 ? ' 외' : '') + '. 먼저 입고를 취소하세요.')
       }
-      const { error } = await supabase.from('purchase_orders').delete().in('id', ids)
-      if (error) throw error
+      // ⚠ 한 번에 다 보내면 URL 이 너무 길어 서버가 400 으로 거부한다.
+      //   1,229건이면 45,000자가 넘는다. 100건씩 나눠 보낸다.
+      for (let i = 0; i < ids.length; i += 100) {
+        const chunk = ids.slice(i, i + 100)
+        const { error } = await supabase.from('purchase_orders').delete().in('id', chunk)
+        if (error) throw new Error(`${i + 1}번째부터 실패: ${error.message}`)
+        onProg?.(Math.min(i + chunk.length, ids.length), ids.length)
+      }
       logActivity('delete', 'purchase_orders', `${ids.length}건`,
         rows.slice(0, 5).map(p => `${p.items?.std_code || ''} ${p.vendors?.name || ''}`).join(' / ')
         + (rows.length > 5 ? ` 외 ${rows.length - 5}건` : ''), null, cs?.name)
       return ids.length
     },
     onSuccess: (n) => {
-      setDelAsk(false); setDelWord(''); setChecked({})
+      setDelAsk(false); setDelWord(''); setChecked({}); setDelProg(null)
       qc.invalidateQueries(['purchase'])
       toastSuccess(`${n}건 삭제`)
     },
-    onError: (e) => toastError('삭제 실패: ' + e.message),
+    onError: (e) => { setDelProg(null); toastError('삭제 실패: ' + e.message) },
   })
 
   const deleteMut = useMutation({
@@ -957,7 +965,7 @@ export default function PurchasePage() {
                 onClick={()=>bulkDelMut.mutate(checkedPOs.map(p=>p.id))}
                 disabled={delWord.trim()!=='삭제'||bulkDelMut.isPending}
                 className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-40 disabled:cursor-not-allowed">
-                {bulkDelMut.isPending ? '삭제 중…' : `${checkedPOs.length}건 삭제`}
+                {bulkDelMut.isPending ? `삭제 중… ${delProg || ''}` : `${checkedPOs.length}건 삭제`}
               </button>
             </div>
           </div>

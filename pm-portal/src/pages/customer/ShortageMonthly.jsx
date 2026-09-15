@@ -171,7 +171,13 @@ export default function ShortageMonthly({ csId }) {
     const codes = items.filter(it => selEx.has(it.item_id)).map(it => it.std_code)
     setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.add(i)); return n })
     setSelEx(new Set())
-    const { error } = await supabase.from('items').update({ stock_managed: false }).in('id', ids)
+    // ⚠ 한 번에 다 보내면 주소가 너무 길어 서버가 400 으로 거부한다.
+    let error = null
+    for (let i = 0; i < ids.length; i += 100) {
+      const r = await supabase.from('items')
+        .update({ stock_managed: false }).in('id', ids.slice(i, i + 100))
+      if (r.error) { error = r.error; break }
+    }
     if (error) {
       toastError('제외 실패: ' + error.message)
       setExcluded(prev => { const n = new Set(prev); ids.forEach(i => n.delete(i)); return n })

@@ -119,7 +119,11 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
       cell(ws, rr, j + 1, v, o)
     })
   })
-  ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + rows.length, column: COLS.length } }
+  // ⚠ 자동필터는 넣지 않는다.
+  //   엑셀이 자동필터가 있으면 _xlnm._FilterDatabase 이름 정의를 함께 기대하는데,
+  //   ExcelJS 로는 시트 한정(localSheetId) 이름을 만들 수 없어
+  //   "내용에 문제가 있습니다" 로 복구를 물어본다.
+  //   필요하면 받은 뒤 Ctrl+Shift+L 로 켜면 된다.
 
   // ── 이력 없음 ──
   //   ⚠ 같은 품번이 여러 레벨에 나오므로 품번으로 묶는다.
@@ -174,7 +178,7 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
         cell(ns, rr, j + 1, v, o)
       })
     })
-    ns.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + uniq.length, column: NC.length } }
+    // 자동필터는 넣지 않는다 (위 설명 참고)
   }
 
   // ── 요약 ──

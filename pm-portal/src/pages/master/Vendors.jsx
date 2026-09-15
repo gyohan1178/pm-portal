@@ -120,8 +120,13 @@ export default function Vendors() {
   // 선택한 협력사에 결제조건 일괄 지정 — 품의서 결제방식으로 바로 이어진다
   const bulkTermsMut = useMutation({
     mutationFn: async ({ ids, terms }) => {
-      const { error } = await supabase.from('vendors')
-        .update({ payment_terms: terms || null }).in('id', ids)
+      // ⚠ 한 번에 다 보내면 주소가 너무 길어질 수 있다. 나눠 보낸다.
+      let error = null
+      for (let i = 0; i < ids.length; i += 100) {
+        const r = await supabase.from('vendors')
+          .update({ payment_terms: terms || null }).in('id', ids.slice(i, i + 100))
+        if (r.error) { error = r.error; break }
+      }
       if (error) throw error
       return ids.length
     },
