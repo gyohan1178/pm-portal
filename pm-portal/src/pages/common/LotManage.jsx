@@ -157,28 +157,75 @@ export default function LotManage() {
     soon: sum.reduce((s, x) => s + Number(x.soon_cnt || 0), 0),
   }), [sum])
 
-  function exportXl() {
+  async function exportXl() {
     if (!lots.length) { toastError('내보낼 로트가 없습니다'); return }
-    const rows = lots.map(l => ({
-      '기준코드': l.std_code || '', '품명': l.item_name || '',
-      '제조사': l.maker || '', '형번': l.maker_code || '',
-      '시리얼': l.serial_no || '', '제조': l.made_ym || '',
-      '입고일': l.in_date || '', '구매처': l.vendor_name || '',
-      '보증(개월)': l.shelf_months ?? '',
-      '만료일': l.expire_date || '',
-      '남은일수': l.days_left ?? '',
-      '입고수량': Number(l.qty_in) || 0,
-      '잔량': Number(l.qty_left) || 0,
-      '상태': l.expired ? '기한 초과' : (l.days_left <= 90 ? '임박' : '사용 가능'),
-    }))
+
+    // 사용이력 — 소진일과 「누가 언제 썼나」를 내려면 필요하다
+    let uses = []
+    try {
+      const { data, error } = await supabase.rpc('pm_lot_use_list', { p_item_id: null })
+      if (error) throw error
+      uses = data || []
+    } catch { /* 이력이 없어도 현황은 낸다 */ }
+
+    // 로트마다 마지막으로 쓴 날 = 소진일
+    const lastUse = {}
+    uses.forEach(u => {
+      const d = String(u.used_date || '')
+      if (!d) return
+      if (!lastUse[u.lot_id] || d > lastUse[u.lot_id]) lastUse[u.lot_id] = d
+    })
+    const useCnt = {}
+    uses.forEach(u => { useCnt[u.lot_id] = (useCnt[u.lot_id] || 0) + 1 })
+
+    const rows = lots.map(l => {
+      const done = Number(l.qty_left) <= 0
+      return {
+        '기준코드': l.std_code || '', '품명': l.item_name || '',
+        '제조사': l.maker || '', '형번': l.maker_code || '',
+        '시리얼': l.serial_no || '', '제조': l.made_ym || '',
+        '입고일': l.in_date || '', '구매처': l.vendor_name || '',
+        '보증(개월)': l.shelf_months ?? '',
+        '만료일': l.expire_date || '',
+        '남은일수': l.days_left ?? '',
+        '입고수량': Number(l.qty_in) || 0,
+        '잔량': Number(l.qty_left) || 0,
+        // 소진일은 마지막으로 쓴 날이다. 이력이 없으면 알 수 없다.
+        '소진일': done ? (lastUse[l.id] || '(이력 없음)') : '',
+        '사용횟수': useCnt[l.id] || 0,
+        '상태': done ? '소진'
+              : l.expired ? '기한 초과'
+              : (l.days_left <= 90 ? '임박' : '사용 가능'),
+      }
+    })
     const ws = XLSX.utils.json_to_sheet(rows)
     ws['!cols'] = [{ wch: 16 }, { wch: 32 }, { wch: 13 }, { wch: 14 }, { wch: 13 },
                    { wch: 10 }, { wch: 11 }, { wch: 11 }, { wch: 10 }, { wch: 11 },
-                   { wch: 9 }, { wch: 9 }, { wch: 8 }, { wch: 10 }]
+                   { wch: 9 }, { wch: 9 }, { wch: 8 }, { wch: 11 }, { wch: 9 }, { wch: 10 }]
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '로트')
+
+    if (uses.length) {
+      const ur = uses.map(u => ({
+        '기준코드': u.std_code || '', '품명': u.item_name || '',
+        '시리얼': u.serial_no || '', '제조': u.made_ym || '',
+        '입고일': u.in_date || '',
+        '사용일': u.used_date || '', '수량': Number(u.qty) || 0,
+        '품번': u.pn || '', '호기': u.hogi || '',
+        '내용': u.memo || '',
+        '로트 잔량': Number(u.qty_left) || 0,
+        '소진': u.is_done ? '소진' : '',
+      }))
+      const us = XLSX.utils.json_to_sheet(ur)
+      us['!cols'] = [{ wch: 16 }, { wch: 32 }, { wch: 13 }, { wch: 10 }, { wch: 11 },
+                     { wch: 11 }, { wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 40 },
+                     { wch: 10 }, { wch: 8 }]
+      XLSX.utils.book_append_sheet(wb, us, '사용이력')
+    }
+
     XLSX.writeFile(wb, `로트현황_${today()}.xlsx`)
-    toastSuccess(`${n(rows.length)}건 내보냄`)
+    toastSuccess(`${n(rows.length)}건 내보냄`
+      + (uses.length ? ` · 사용이력 ${n(uses.length)}건` : ''))
   }
 
   return (
