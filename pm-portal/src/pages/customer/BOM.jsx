@@ -863,13 +863,17 @@ export default function BOM() {
               <tbody>
                 {preview.rows.slice(0, 200).map((r, i) => {
                   const parent = withPrefix(r['상위PN'] ?? r['상위품번'], PARENT_PREFIX[String(csCode || '').toLowerCase()] || '')
-                  const pn = String(r['PN'] ?? r['하위품번'] ?? '').replace(/\.0$/, '').trim()
+                  // ⚠ 저장과 같은 규칙으로 보여 준다.
+                  //   예전에는 화면에 AX- 를 글자로 박아 두어,
+                  //   Edwards·CSK BOM 을 올릴 때 AX-ED-… AX-CS-… 로 보였다.
+                  const pn = withPrefix(r['PN'] ?? r['하위품번'],
+                                        PREFIX[String(csCode || '').toLowerCase()] || '')
                   const lv = r['LEVEL'] ?? r['LV'] ?? 1
                   return (
                     <tr key={i} className="border-b border-slate-100">
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{parent}</td>
                       <td className="px-3 py-1.5"><span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(lv)}`}>L{lv}</span></td>
-                      <td className="px-3 py-1.5 font-mono text-xs text-indigo-600">AX-{pn}</td>
+                      <td className="px-3 py-1.5 font-mono text-xs text-indigo-600">{pn}</td>
                       <td className="px-3 py-1.5 text-slate-700 max-w-[200px] truncate">{r['Description'] ?? r['품명'] ?? ''}</td>
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{r['MFG PN'] ?? r['제조사품번'] ?? ''}</td>
                       <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{r['실수량'] ?? r['QTY'] ?? r['수량'] ?? ''}</td>

@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v4.6.0'
+export const APP_VERSION = 'v4.6.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.6.1',
+    date: '2026-09-15',
+    changes: [
+      '⚠️ BOM 업로드 미리보기에서 품번 앞에 AX- 가 잘못 붙던 문제 수정 — Edwards 는 AX-ED-…, CSK 는 AX-CS-… 로 보였습니다',
+      '화면에 AX- 를 글자로 박아 두었던 것이 원인입니다. 저장 규칙과 같게 고쳤습니다',
+      '저장 자체는 처음부터 정상이었습니다. 미리보기만 잘못 보였습니다',
+    ],
+  },
   {
     version: 'v4.6.0',
     date: '2026-09-15',
