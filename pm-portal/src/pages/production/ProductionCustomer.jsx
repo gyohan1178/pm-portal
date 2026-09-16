@@ -17,17 +17,26 @@ const STATUS_COLOR = {
 async function fetchByCustomer(code) {
   const all = []
   for (let from = 0; ; from += 1000) {
-    // PO 번호를 함께 가져온다 — 화면에서 어느 발주 건인지 보이게
     const { data, error } = await supabase.from('production')
-      .select('*, purchase_orders(po_number)').eq('customer_code', code)
+      .select('*').eq('customer_code', code)
       .order('req_date', { ascending: true }).order('id')
       .range(from, from + 999)
     if (error) throw error
-    // 중첩으로 오는 것을 평평하게 — 화면에서 r.po_number 로 쓴다
-    all.push(...(data || []).map(r => ({ ...r, po_number: r.purchase_orders?.po_number || null })))
+    all.push(...(data || []))
     if (!data || data.length < 1000) break
   }
-  return all
+
+  // PO 번호를 붙인다.
+  //   ⚠ production ↔ purchase_orders 에 외래키가 없어 조인(select 중첩)이 안 된다.
+  //     따로 받아서 이어 준다.
+  const poIds = [...new Set(all.map(r => r.po_id).filter(Boolean))]
+  const poMap = {}
+  for (let i = 0; i < poIds.length; i += 200) {
+    const { data: po } = await supabase.from('purchase_orders')
+      .select('id,po_number').in('id', poIds.slice(i, i + 200))
+    ;(po || []).forEach(p => { poMap[p.id] = p.po_number })
+  }
+  return all.map(r => ({ ...r, po_number: r.po_id ? (poMap[r.po_id] || null) : null }))
 }
 
 function dday(s) {

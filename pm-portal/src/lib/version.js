@@ -1,6 +1,14 @@
-export const APP_VERSION = 'v4.7.0'
+export const APP_VERSION = 'v4.7.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.7.1',
+    date: '2026-09-16',
+    changes: [
+      '⚠️ v4.7.0 에서 생산관리가 안 뜨던 문제 수정 — PO 번호를 가져오려고 넣은 조인이 400 오류를 냈습니다',
+      'production 과 purchase_orders 사이에 외래키가 없어 조인이 안 됩니다. PO 번호를 따로 받아 붙이도록 고쳤습니다',
+    ],
+  },
   {
     version: 'v4.7.0',
     date: '2026-09-16',
