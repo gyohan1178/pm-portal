@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v4.6.1'
+export const APP_VERSION = 'v4.7.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.7.0',
+    date: '2026-09-16',
+    changes: [
+      '★ 생산관리 표에 PO 번호가 나옵니다 — 호기 옆. Sub Assy 에서 어느 발주 건인지 보입니다',
+    ],
+  },
   {
     version: 'v4.6.1',
     date: '2026-09-15',

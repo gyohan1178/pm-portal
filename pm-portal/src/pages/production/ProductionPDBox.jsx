@@ -588,6 +588,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </>
                 )}
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
+                <th rowSpan={2} className="px-2 py-1.5 font-bold">PO</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">REV</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
@@ -648,6 +649,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     </>
                   )}
                   <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
+                  {/* 어느 발주 건인지 — Sub Assy 에서 특히 필요하다 */}
+                  <td className="px-2 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">
+                    {r.po_number || <span className="text-slate-300">-</span>}
+                  </td>
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {
                       // SREV / BREV.

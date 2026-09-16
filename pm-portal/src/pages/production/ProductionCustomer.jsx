@@ -17,12 +17,14 @@ const STATUS_COLOR = {
 async function fetchByCustomer(code) {
   const all = []
   for (let from = 0; ; from += 1000) {
+    // PO 번호를 함께 가져온다 — 화면에서 어느 발주 건인지 보이게
     const { data, error } = await supabase.from('production')
-      .select('*').eq('customer_code', code)
+      .select('*, purchase_orders(po_number)').eq('customer_code', code)
       .order('req_date', { ascending: true }).order('id')
       .range(from, from + 999)
     if (error) throw error
-    all.push(...(data || []))
+    // 중첩으로 오는 것을 평평하게 — 화면에서 r.po_number 로 쓴다
+    all.push(...(data || []).map(r => ({ ...r, po_number: r.purchase_orders?.po_number || null })))
     if (!data || data.length < 1000) break
   }
   return all
