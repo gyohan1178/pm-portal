@@ -183,9 +183,15 @@ export default function Inventory() {
   // 브랜드별 실사 양식 — 현재 필터된 품목으로 실사수량 빈칸 엑셀 생성
   function downloadAuditTemplate() {
     if (!rows.length) { toastError('대상 품목이 없습니다.'); return }
-    const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'세부구분':catOf(r.items),'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','단위':r.items?.unit,'현재고(참고)':r.qty,'실사수량':''}))
+    // 보관위치를 앞쪽에 둔다 — 실사는 위치를 찾아가서 하는 일이다
+    const data=[...rows]
+      .sort((a,b)=>String(a.location||'ㅎ').localeCompare(String(b.location||'ㅎ'))
+                 || String(a.items?.std_code||'').localeCompare(String(b.items?.std_code||'')))
+      .map(r=>({'보관위치':r.location||'(미지정)','기준코드':r.items?.std_code,'품명':r.items?.name,'세부구분':catOf(r.items),'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','단위':r.items?.unit,'현재고(참고)':r.qty,'실사수량':'','비고':''}))
+    const ws=XLSX.utils.json_to_sheet(data)
+    ws['!cols']=[{wch:12},{wch:18},{wch:34},{wch:10},{wch:16},{wch:20},{wch:6},{wch:12},{wch:10},{wch:20}]
     const wb=XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'실사')
+    XLSX.utils.book_append_sheet(wb,ws,'실사')
     const tag = brandFilter==='전체' ? '전체' : brandFilter
     XLSX.writeFile(wb,`실사양식_${tag}_${new Date().toISOString().split('T')[0]}.xlsx`)
   }
