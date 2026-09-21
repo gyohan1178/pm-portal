@@ -1,21 +1,35 @@
 // 원가분석 순수 계산 코어 (DOM 무관). AXCELIS costanalysis 이식.
 // PM-Portal 매핑: 매입가 = items.purchase_price (단일), 구매처 = vendors.name
 
+// 구간 마진 기본값 (매입가 KRW 기준, 큰 구간부터).
+//   pm_settings 의 'quote_margin' 에 저장된 값이 있으면 화면이 그걸 넘겨준다.
+export const DEFAULT_TIERS = [
+  { min: 1000000, pct: 0.20 },
+  { min: 100000, pct: 0.25 },
+  { min: 10000, pct: 0.35 },
+  { min: 0, pct: 0.45 },
+]
+
 export const DEFAULT_CFG = {
   buyRate: 1450,   // 기준매입환율 (수입품 달러원가 역산용)
   sellRate: 1250,  // 판매환율
   realRate: 0,     // 실환율 (0이면 미사용)
   laborMarg: 0.25, // 작업비 마진
   rebate: 0,       // 리베이트 %
+  tiers: DEFAULT_TIERS,
 }
 
-// 구간 마진 (매입가 KRW 기준, 큰 구간부터)
-export function tierMargin(buyKrw) {
+// 구간 마진. tiers 를 안 주면 기본 구간을 쓴다 — 기존 호출부는 그대로 동작한다.
+//   ⚠ 구간은 큰 금액부터 훑는다. 설정에서 순서가 섞여 들어와도 되도록 정렬해 둔다.
+export function tierMargin(buyKrw, tiers) {
   const v = Number(buyKrw) || 0
-  if (v >= 1_000_000) return 0.20
-  if (v >= 100_000) return 0.25
-  if (v >= 10_000) return 0.35
-  return 0.45
+  const list = (Array.isArray(tiers) && tiers.length ? tiers : DEFAULT_TIERS)
+    .filter((t) => t && Number.isFinite(Number(t.min)) && Number.isFinite(Number(t.pct)))
+    .slice()
+    .sort((a, b) => Number(b.min) - Number(a.min))
+  if (!list.length) return 0.45
+  for (const t of list) if (v >= Number(t.min)) return Number(t.pct)
+  return Number(list[list.length - 1].pct)
 }
 
 // 구매처명 → 수입/국내 자동 판정
@@ -88,7 +102,7 @@ export function suggestPrice(items, cfg = DEFAULT_CFG, laborKrw = 0) {
   let usd = 0
   for (const it of items) {
     if (!it.counted) continue
-    const margin = it.marginOverride != null ? Number(it.marginOverride) : tierMargin(it.buyKrw)
+    const margin = it.marginOverride != null ? Number(it.marginOverride) : tierMargin(it.buyKrw, cfg.tiers)
     usd += it.buyKrw / (1 - margin) / sellRate * it.qty
   }
   const labor = Number(laborKrw) || 0

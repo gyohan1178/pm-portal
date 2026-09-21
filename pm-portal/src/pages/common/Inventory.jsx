@@ -89,7 +89,7 @@ export default function Inventory() {
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
-  // 재고 실사 — 엑셀 업로드(기준코드/품번 + 실사수량) → 현재고 덮어쓰기
+  // 재고 실사 — 엑셀 업로드(기준코드/품번 + 실사수량 + 보관위치) → 현재고·위치 덮어쓰기
   function onAuditFile(e) {
     const f = e.target.files?.[0]; if (!f) return
     const reader = new FileReader()
@@ -101,7 +101,11 @@ export default function Inventory() {
         const raw = j['실사수량'] ?? j['실사'] ?? j['수량'] ?? j['재고'] ?? j['qty']
         // 실사수량이 비어있으면 건너뜀(덮어쓰지 않음) — 브랜드별 일부 실사 안전
         if (code == null || raw == null || String(raw).trim() === '') return null
-        return { std_code: String(code).trim(), qty: Number(raw) || 0 }
+        // 보관위치는 실사양식이 앞쪽에 내보내는 칸이다. 현장에서 고쳐 오면 그 값이 맞다.
+        //   비었거나 「(미지정)」이면 건드리지 않는다 — 있던 위치를 지우면 안 된다.
+        const locRaw = String(j['보관위치'] ?? j['위치'] ?? j['location'] ?? '').trim()
+        const location = !locRaw || locRaw === '(미지정)' ? null : locRaw
+        return { std_code: String(code).trim(), qty: Number(raw) || 0, location }
       }).filter(Boolean)
       setAuditRows(rows); setShowAudit(true)
     }
@@ -118,14 +122,16 @@ export default function Inventory() {
         if (error) throw error
         ;(its || []).forEach(it => { idMap[it.std_code] = it.id })
       }
-      // item_id별 최종 수량 (중복 std_code는 마지막 값) + 미매칭 수집
+      // item_id별 최종 값 (중복 std_code는 마지막 줄이 이긴다) + 미매칭 수집
       const byId = {}; const skipped = []
       for (const r of rows) {
         const itemId = idMap[r.std_code]
         if (!itemId) { skipped.push(r.std_code); continue }
-        byId[itemId] = r.qty
+        byId[itemId] = r
       }
-      const payload = Object.entries(byId).map(([item_id, qty]) => ({ item_id, qty }))
+      const payload = Object.entries(byId).map(([item_id, r]) => ({
+        item_id, qty: r.qty, fileLoc: r.location ?? null,
+      }))
 
       // upsert 는 빠뜨린 컬럼을 null 로 덮어써 위치가 지워진다.
       //   기존 위치를 미리 읽어 함께 넣으면, 한 번에 보내면서도 위치가 남는다.
@@ -137,10 +143,14 @@ export default function Inventory() {
           .select('item_id,location').in('item_id', ids.slice(i, i + 300))
         ;(data || []).forEach(r => locMap.set(r.item_id, r.location ?? null))
       }
-      const merged = payload.map(p => ({
-        item_id: p.item_id, qty: p.qty,
-        location: locMap.has(p.item_id) ? locMap.get(p.item_id) : null,
-      }))
+      //   파일에 위치가 적혀 있으면 그 값으로 바꾸고, 비어 있으면 있던 위치를 지킨다.
+      let locChanged = 0
+      const merged = payload.map(p => {
+        const dbLoc = locMap.has(p.item_id) ? locMap.get(p.item_id) : null
+        const location = p.fileLoc != null ? p.fileLoc : dbLoc
+        if (p.fileLoc != null && p.fileLoc !== dbLoc) locChanged += 1
+        return { item_id: p.item_id, qty: p.qty, location }
+      })
 
       let applied = 0
       for (let i = 0; i < merged.length; i += 500) {
@@ -149,11 +159,13 @@ export default function Inventory() {
         if (error) throw error
         applied += chunk.length
       }
-      return { applied, skipped }
+      return { applied, skipped, locChanged }
     },
-    onSuccess: ({ applied, skipped }) => {
+    onSuccess: ({ applied, skipped, locChanged }) => {
       qc.invalidateQueries(['inventory'])
-      toastSuccess(`실사 반영 완료: ${applied}건` + (skipped.length ? ` · 미매칭 ${skipped.length}건 제외` : ''))
+      toastSuccess(`실사 반영 완료: ${applied}건`
+        + (locChanged ? ` · 위치 ${locChanged}건 변경` : '')
+        + (skipped.length ? ` · 미매칭 ${skipped.length}건 제외` : ''))
       setShowAudit(false); setAuditRows([])
     },
   })
@@ -261,7 +273,8 @@ export default function Inventory() {
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <p className="text-sm font-bold text-indigo-700">📤 재고 실사 미리보기 — {auditRows.length}건</p>
-                <p className="text-[11px] text-slate-400 mt-0.5">현재고를 실사수량으로 덮어씁니다. 엑셀 열: <b>기준코드</b>(또는 품번) + <b>실사수량</b>(또는 수량/재고)</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">현재고를 실사수량으로 덮어씁니다. 엑셀 열: <b>기준코드</b>(또는 품번) + <b>실사수량</b>(또는 수량/재고) + <b>보관위치</b>(선택)</p>
+                <p className="text-[11px] text-slate-400">보관위치가 적혀 있으면 그 값으로 바꾸고, 비었거나 「(미지정)」이면 있던 위치를 그대로 둡니다.</p>
               </div>
               <div className="flex gap-2">
                 <button onClick={() => { setShowAudit(false); setAuditRows([]) }} className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">취소</button>
@@ -276,6 +289,7 @@ export default function Inventory() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-indigo-50 z-10"><tr className="border-b border-indigo-100 text-indigo-400">
                   <th className="px-3 py-2 text-left font-bold">기준코드</th>
+                  <th className="px-3 py-2 text-left font-bold">보관위치</th>
                   <th className="px-3 py-2 text-right font-bold">현재고</th>
                   <th className="px-3 py-2 text-right font-bold">실사수량</th>
                   <th className="px-3 py-2 text-right font-bold">차이</th>
@@ -286,6 +300,7 @@ export default function Inventory() {
                     return (
                       <tr key={i} className="border-t border-slate-50">
                         <td className="px-3 py-1.5 font-mono font-semibold text-slate-700">{r.std_code}{!known && <span className="ml-1 text-[10px] text-amber-500">신규/미매칭</span>}</td>
+                        <td className="px-3 py-1.5 font-mono text-slate-500">{r.location || <span className="text-slate-300">유지</span>}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{known ? cur : '-'}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.qty}</td>
                         <td className={`px-3 py-1.5 text-right tabular-nums ${diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-500' : 'text-slate-300'}`}>{diff === null ? '-' : (diff > 0 ? '+' + diff : diff)}</td>

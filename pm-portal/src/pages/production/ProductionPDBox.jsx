@@ -125,6 +125,18 @@ function noteDisplay(note) {
   return { text, count: napgi.length, full }
 }
 
+// 조회할 때 이어 붙인 값은 production 의 컬럼이 아니다.
+//   그대로 UPDATE / UPSERT 로 보내면 PostgREST 가 400 을 돌려준다.
+//   po_number 는 v4.7.0 에서 purchase_orders 를 따로 받아 붙인 값이다.
+//   _ 로 시작하는 것(_month 등)도 화면용이라 함께 뺀다.
+const DERIVED = ['po_number']
+const stripDerived = (o) => {
+  const p = { ...o }
+  DERIVED.forEach((k) => { delete p[k] })
+  Object.keys(p).forEach((k) => { if (k.startsWith('_')) delete p[k] })
+  return p
+}
+
 const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수', po_received: true, req_date: '', machine_date: '', arrival_date: '', harness_issue: '', harness_done: '', part_issue: '', elec_done: '', note: '', manager: '', part: '', memo: '' }
 
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
@@ -245,8 +257,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // 저장 (신규/편집) — 완료상태는 건드리지 않음
   const saveMut = useMutation({
     mutationFn: async (rec) => {
-      const patch = { ...rec }
-      delete patch.id; delete patch._month
+      const patch = stripDerived(rec)
+      delete patch.id
       patch.updated_at = new Date().toISOString()
       if (rec.id) {
         const { error } = await supabase.from('production').update(patch).eq('id', rec.id)
@@ -295,7 +307,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             if (f === 'missing_parts') { patch.missing_parts = rec.missing_parts || [] }
             else if (rec[f] !== undefined && rec[f] !== '') patch[f] = rec[f]
           }
-          toUpdate.push({ ...exist, ...patch })
+          toUpdate.push(stripDerived({ ...exist, ...patch }))
         } else {
           toInsert.push({
             id: 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),

@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect } from 'react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
-import { toastError } from '../../lib/toast'
-import { tierMargin, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
+import { toastError, toastSuccess } from '../../lib/toast'
+import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const money = (v, cur) =>
@@ -27,8 +27,11 @@ const newLine = (p = {}) => ({
   unitPrice: 0, alternative: '', remarks: '',
   materialKrw: 0, laborKrw: 0, vendor: '', origin: 'dom', marginPct: null,
   noPrice: 0, partCount: 0, laborSrc: null, parts: null,
+  ltDays: null, moq: null,
   ...p,
 })
+
+const FALLBACK_MCFG = { tiers: DEFAULT_TIERS, laborMarg: DEFAULT_CFG.laborMarg }
 
 const lineCost = (l) => num(l.materialKrw) + num(l.laborKrw)
 
@@ -36,12 +39,39 @@ const lineCost = (l) => num(l.materialKrw) + num(l.laborKrw)
 const sumParts = (parts) =>
   (parts || []).reduce((a, p) => a + (p.excluded || p.buyKrw == null ? 0 : num(p.buyKrw) * num(p.qty)), 0)
 
-// 매입원가(원) → 매출단가. 마진은 금액대별 자동(20/25/35/45%).
-function priceFrom(costKrw, currency, sellRate, marginOverride) {
-  const c = num(costKrw)
-  if (c <= 0) return 0
-  const m = marginOverride != null ? num(marginOverride) : tierMargin(c)
-  const krw = c / (1 - m)
+// 줄 단가 산출. 원가분석 「권장단가」와 같은 규칙을 쓴다.
+//   ① 줄에 마진율을 직접 적었으면 그 값으로 덩어리 계산 (직접 지정이 최우선)
+//   ② ASSY 는 부품마다 구간마진을 먹이고, 작업비는 작업비마진을 따로 먹인다
+//   ③ 단품은 그 품목 매입가로 구간을 고른다
+//   ⚠ 자재비 칸을 손으로 고쳐 부품 합계와 어긋나면 부품별 계산을 쓰지 않는다.
+//     그 줄은 더 이상 부품표가 대표하지 못하기 때문이다.
+function linePrice(line, currency, sellRate, mcfg) {
+  const mat = num(line.materialKrw)
+  const labor = num(line.laborKrw)
+  if (mat <= 0 && labor <= 0) return 0
+  const tiers = mcfg?.tiers
+  const laborMarg = num(mcfg?.laborMarg)
+  let krw = 0
+
+  if (line.marginPct != null) {
+    krw = (mat + labor) / (1 - num(line.marginPct))
+  } else {
+    const parts = Array.isArray(line.parts)
+      ? line.parts.filter((p) => !p.excluded && p.buyKrw != null)
+      : []
+    const partsSum = parts.reduce((a, p) => a + num(p.buyKrw) * num(p.qty), 0)
+    const usable = line.kind === 'assy' && parts.length > 0 && Math.abs(partsSum - mat) < 1
+
+    if (usable) {
+      for (const pt of parts) {
+        krw += (num(pt.buyKrw) / (1 - tierMargin(pt.buyKrw, tiers))) * num(pt.qty)
+      }
+    } else if (mat > 0) {
+      krw = mat / (1 - tierMargin(mat, tiers))
+    }
+    if (labor > 0) krw += labor / (1 - laborMarg)
+  }
+
   return currency === 'KRW' ? Math.round(krw) : krw / (num(sellRate) || 1)
 }
 
@@ -81,6 +111,57 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [err, setErr] = useState('')
 
   const sellRate = num(cfg.sellRate) || 1250
+  const qc = useQueryClient()
+
+  // 마진 구간 · 작업비 마진 — 공용 설정(pm_settings). 없으면 기본값으로 돈다.
+  const { data: mcfg = FALLBACK_MCFG } = useQuery({
+    queryKey: ['quoteMarginCfg'],
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_settings')
+        .select('value').eq('key', 'quote_margin').maybeSingle()
+      const v = data?.value || {}
+      return {
+        tiers: Array.isArray(v.tiers) && v.tiers.length ? v.tiers : DEFAULT_TIERS,
+        laborMarg: Number.isFinite(Number(v.laborMarg)) ? Number(v.laborMarg) : DEFAULT_CFG.laborMarg,
+      }
+    },
+    staleTime: 10 * 60 * 1000,
+  })
+
+  // 설정이 늦게 오거나 구간을 고치면 담겨 있는 줄의 단가를 다시 뽑는다.
+  //   ⚠ mcfg 객체가 아니라 「내용」으로 비교한다. 창을 다시 켜서 같은 값을 또 받아올 때
+  //     손으로 고쳐 둔 단가가 도로 계산되면 안 된다.
+  const mcfgKey = JSON.stringify(mcfg)
+  useEffect(() => {
+    if (!isSales) return
+    setLines((ls) => (ls.length ? ls.map((l) => ({ ...l, unitPrice: linePrice(l, currency, sellRate, mcfg) })) : ls))
+  }, [mcfgKey])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── 임시저장 (보관함) ────────────────────────────────────────────
+  //   채번을 하지 않아 견적번호를 쓰지 않는다. 확정 저장할 때 비로소 번호가 붙는다.
+  const [draftId, setDraftId] = useState(null)
+  const [draftOpen, setDraftOpen] = useState(false)
+  const { data: drafts = [] } = useQuery({
+    queryKey: ['quoteDrafts'],
+    queryFn: async () => {
+      const { data } = await supabase.from('pm_quote_drafts')
+        .select('id,title,quote_kind,created_by,updated_at')
+        .order('updated_at', { ascending: false }).limit(100)
+      return data || []
+    },
+    staleTime: 60 * 1000,
+  })
+
+  // ── 마진 구간 설정 ──────────────────────────────────────────────
+  const [cfgOpen, setCfgOpen] = useState(false)
+  const [tierDraft, setTierDraft] = useState(null)
+  function openCfg() {
+    setTierDraft({
+      tiers: (mcfg.tiers || DEFAULT_TIERS).map((t) => ({ min: t.min, pct: t.pct })),
+      laborMarg: mcfg.laborMarg,
+    })
+    setCfgOpen(true)
+  }
 
   const { data: vendors = [] } = useQuery({
     queryKey: ['quoteVendors'],
@@ -125,7 +206,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (proj) {
         const { data: rows } = await supabase
           .from('bom')
-          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, vendors(name))')
+          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, lt_days, moq, vendors(name))')
           .eq('customer_id', customerId).eq('project_id', proj.id)
           .eq('quote_excluded', false)   // 원가분석에서 제외 지정한 부품은 견적에서도 빠진다
           .order('seq').order('created_at')
@@ -136,6 +217,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           manufacturer: b.items?.manufacturer || '',
           manufacturer_code: b.items?.manufacturer_code || '',
           purchase_price: b.items?.purchase_price ?? null,
+          lt_days: b.items?.lt_days ?? null, moq: b.items?.moq ?? null,
           vendor: b.items?.vendors?.name || '',
           registered: !!b.items,
         }))
@@ -148,39 +230,49 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         const { data: lb } = await supabase.rpc('pm_labor_latest', { p_codes: [proj.code] })
         if (lb && lb[0]) { laborKrw = num(lb[0].labor_krw); laborSrc = lb[0] }
 
-        setLines((ls) => [...ls, newLine({
+        const parts = c.items.map((r) => ({
+          uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
+          manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
+          buyKrw: r.buyKrw, qty: r.qty, origin: r.origin, unit: r.unit || '',
+          vendor: r.vendor || '', status: r.status, excluded: r.excluded,
+          ltDays: r.lt_days ?? null, moq: r.moq ?? null,
+        }))
+        // 어셈블리 납기는 가장 늦게 들어오는 부품이 정한다 → 최장 L/T
+        const ltMax = parts.reduce(
+          (a, x) => (x.excluded || x.ltDays == null ? a : Math.max(a, num(x.ltDays))), 0)
+
+        const nl = newLine({
           kind: 'assy',
           std_code: proj.code, description: proj.name || '', rev: proj.rev || '',
           unit: 'EA', qty: 1,
           materialKrw: c.totalBuyKrw, laborKrw, laborSrc,
           origin: c.impKrw > c.domKrw ? 'imp' : 'dom',
           noPrice, partCount: c.items.length,
+          ltDays: ltMax || null,
           // 세부견적용 부품 목록 — 화면에서 제외·단가 조정 가능
-          parts: c.items.map((r) => ({
-            uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
-            manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
-            buyKrw: r.buyKrw, qty: r.qty, origin: r.origin,
-            vendor: r.vendor || '', status: r.status, excluded: r.excluded,
-          })),
-          unitPrice: isSales ? priceFrom(c.totalBuyKrw + laborKrw, currency, sellRate) : 0,
-        })])
+          parts,
+        })
+        nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
+        setLines((ls) => [...ls, nl])
         setAddCode('')
         return
       }
 
       const { data } = await supabase
-        .from('items').select('std_code, name, unit, purchase_price, vendors(name)')
+        .from('items').select('std_code, name, unit, purchase_price, lt_days, moq, vendors(name)')
         .eq('std_code', code).maybeSingle()
       if (!data) { setErr(`${code} 는 어셈블리·품목 어디에도 없습니다.`); return }
       const mat = num(data.purchase_price)
-      setLines((ls) => [...ls, newLine({
+      const nl = newLine({
         kind: 'item',
         std_code: data.std_code, description: data.name || '',
         unit: data.unit || 'EA', qty: 1,
         materialKrw: mat, vendor: data.vendors?.name || '',
         noPrice: mat > 0 ? 0 : 1, partCount: 1,
-        unitPrice: isSales ? priceFrom(mat, currency, sellRate) : 0,
-      })])
+        ltDays: data.lt_days ?? null, moq: data.moq ?? null,
+      })
+      nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
+      setLines((ls) => [...ls, nl])
       setAddCode('')
     } catch (e) {
       setErr('조회 실패: ' + e.message)
@@ -194,7 +286,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const patchCost = (key, p) => setLines((ls) => ls.map((l) => {
     if (l.key !== key) return l
     const n = { ...l, ...p }
-    return isSales ? { ...n, unitPrice: priceFrom(lineCost(n), currency, sellRate, n.marginPct) } : n
+    return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
   }))
 
   // 세부 부품 수정 → 자재비 재합산 → 매출단가 재산출
@@ -204,7 +296,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     const materialKrw = sumParts(parts)
     const noPrice = parts.filter((x) => !x.excluded && (x.buyKrw == null || x.status === 'unreg')).length
     const n = { ...l, parts, materialKrw, noPrice }
-    return isSales ? { ...n, unitPrice: priceFrom(lineCost(n), currency, sellRate, n.marginPct) } : n
+    return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
   }))
 
   const remove = (key) => setLines((ls) => ls.filter((l) => l.key !== key))
@@ -212,16 +304,19 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   function switchCurrency(next) {
     setCurrency(next)
     if (!isSales) return
-    setLines((ls) => ls.map((l) => ({ ...l, unitPrice: priceFrom(lineCost(l), next, sellRate, l.marginPct) })))
+    setLines((ls) => ls.map((l) => ({ ...l, unitPrice: linePrice(l, next, sellRate, mcfg) })))
   }
 
   function switchKind(next) {
     setQuoteKind(next)
     setSavedNo(''); setErr('')
     if (next === 'sales') {
-      setLines((ls) => ls.map((l) => ({ ...l, unitPrice: priceFrom(lineCost(l), currency, sellRate, l.marginPct) })))
+      setLines((ls) => ls.map((l) => ({ ...l, unitPrice: linePrice(l, currency, sellRate, mcfg) })))
     }
   }
+
+  // 어셈블리든 단품이든 가장 늦게 들어오는 것이 전체 납기를 정한다.
+  const ltMaxAll = lines.reduce((a, l) => Math.max(a, num(l.ltDays)), 0)
 
   const totals = useMemo(() => {
     const amount = lines.reduce((a, l) => a + num(l.qty) * num(l.unitPrice), 0)
@@ -233,6 +328,105 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     const marginPct = revenueKrw > 0 ? marginKrw / revenueKrw : 0
     return { amount, materialKrw, laborKrw, costKrw, revenueKrw, marginKrw, marginPct }
   }, [lines, currency, sellRate])
+
+  // L/T·MOQ 는 품목 마스터(items)에 바로 저장한다.
+  //   ⚠ 매입가와 다르다. 매입가는 이 견적에만 적용되고 마스터를 바꾸지 않는다.
+  async function saveItemField(stdCode, patchObj) {
+    if (!stdCode) return
+    const { error } = await supabase.from('items').update(patchObj).eq('std_code', stdCode)
+    if (error) toastError('L/T·MOQ 저장 실패: ' + error.message)
+  }
+
+  const draftPayload = () => ({
+    v: 1, quoteKind, currency, quoteDate, issuedTo, vendorId, attn, projectName,
+    validityDays, leadTime, deliveryNote, memo, lines, customerId, customerName,
+  })
+
+  const draftMut = useMutation({
+    mutationFn: async () => {
+      if (!lines.length) throw new Error('품목이 없습니다.')
+      const { data: { user } } = await supabase.auth.getUser()
+      const row = {
+        title: projectName || lines[0]?.std_code || '(제목 없음)',
+        quote_kind: quoteKind, customer_id: customerId || null,
+        payload: draftPayload(), updated_at: new Date().toISOString(),
+      }
+      if (draftId) {
+        const { error } = await supabase.from('pm_quote_drafts').update(row).eq('id', draftId)
+        if (error) throw error
+        return draftId
+      }
+      row.created_by = user?.email || null
+      const { data, error } = await supabase.from('pm_quote_drafts').insert(row).select('id').single()
+      if (error) throw error
+      return data.id
+    },
+    onSuccess: (id) => {
+      setDraftId(id); setErr('')
+      toastSuccess('보관함에 넣었습니다 — 다른 PC 에서도 이어서 할 수 있습니다')
+      qc.invalidateQueries({ queryKey: ['quoteDrafts'] })
+    },
+    onError: (e) => setErr('임시저장 실패: ' + e.message),
+  })
+
+  const draftDelMut = useMutation({
+    mutationFn: async (id) => {
+      const { error } = await supabase.from('pm_quote_drafts').delete().eq('id', id)
+      if (error) throw error
+      return id
+    },
+    onSuccess: (id) => {
+      if (id === draftId) setDraftId(null)
+      qc.invalidateQueries({ queryKey: ['quoteDrafts'] })
+      toastSuccess('보관함에서 지웠습니다')
+    },
+    onError: (e) => toastError('삭제 실패: ' + e.message),
+  })
+
+  async function loadDraft(id) {
+    const { data, error } = await supabase.from('pm_quote_drafts')
+      .select('*').eq('id', id).maybeSingle()
+    if (error || !data) { setErr('불러오기 실패: ' + (error?.message || '없는 항목')); return }
+    const d = data.payload || {}
+    setQuoteKind(d.quoteKind || 'sales')
+    setCurrency(d.currency || 'USD')
+    setQuoteDate(d.quoteDate || todayISO())
+    setIssuedTo(d.issuedTo || '')
+    setVendorId(d.vendorId || '')
+    setAttn(d.attn || '')
+    setProjectName(d.projectName || '')
+    setValidityDays(d.validityDays ?? 15)
+    setLeadTime(d.leadTime || 'L/T 8W')
+    setDeliveryNote(d.deliveryNote || '(To be discussed later)')
+    setMemo(d.memo || '')
+    setLines(Array.isArray(d.lines) ? d.lines : [])
+    setDraftId(id); setSavedNo(''); setErr(''); setDraftOpen(false)
+    toastSuccess('보관해 둔 견적을 불러왔습니다')
+  }
+
+  const cfgMut = useMutation({
+    mutationFn: async (v) => {
+      const tiers = (v.tiers || [])
+        .map((t) => ({ min: num(t.min), pct: num(t.pct) }))
+        .filter((t) => t.pct > 0 && t.pct < 1)
+        .sort((a, b) => b.min - a.min)
+      if (!tiers.length) throw new Error('구간이 하나도 없습니다.')
+      if (!tiers.some((t) => t.min === 0)) throw new Error('맨 아래 구간(0원 이상)이 있어야 합니다.')
+      const { data: { user } } = await supabase.auth.getUser()
+      const { error } = await supabase.from('pm_settings').upsert({
+        key: 'quote_margin',
+        value: { tiers, laborMarg: num(v.laborMarg) },
+        updated_at: new Date().toISOString(), updated_by: user?.email || null,
+      }, { onConflict: 'key' })
+      if (error) throw error
+    },
+    onSuccess: () => {
+      setCfgOpen(false)
+      qc.invalidateQueries({ queryKey: ['quoteMarginCfg'] })
+      toastSuccess('마진 구간을 저장했습니다 — 담겨 있는 줄의 단가가 다시 계산됩니다')
+    },
+    onError: (e) => toastError('마진 구간 저장 실패: ' + e.message),
+  })
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -296,7 +490,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       }
       return no
     },
-    onSuccess: (no) => { setSavedNo(no); setErr('') },
+    onSuccess: (no) => {
+      setSavedNo(no); setErr('')
+      // 확정됐으니 보관함에 남겨 둘 이유가 없다.
+      if (draftId) {
+        supabase.from('pm_quote_drafts').delete().eq('id', draftId).then(() => {
+          setDraftId(null); qc.invalidateQueries({ queryKey: ['quoteDrafts'] })
+        })
+      }
+    },
     onError: (e) => setErr(e.message),
   })
 
@@ -321,7 +523,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       '작업비(원)': num(l.laborKrw),
       '원가계(원)': lineCost(l),
       '원가합계(원)': num(l.qty) * lineCost(l),
-      마진율: isSales ? (l.marginPct != null ? num(l.marginPct) : tierMargin(lineCost(l))) : '',
+      // 실제로 붙은 마진율. 구간으로 되짚지 않는다 —
+      //   부품마다 구간이 달라 한 값으로 되짚을 수 없고, 단가를 손으로 고쳤을 수도 있다.
+      마진율: (() => {
+        if (!isSales) return ''
+        const rev = currency === 'KRW' ? num(l.unitPrice) : num(l.unitPrice) * sellRate
+        return rev > 0 ? (rev - lineCost(l)) / rev : ''
+      })(),
       [`단가(${cur})`]: num(l.unitPrice),
       [`합계(${cur})`]: num(l.qty) * num(l.unitPrice),
       구매처: l.vendor,
@@ -459,7 +667,17 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </button>
         <button onClick={() => setLines((ls) => [...ls, newLine()])}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
+        <button onClick={openCfg} title="금액대별 마진율을 고칩니다"
+          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 마진구간</button>
         <div className="flex-1" />
+        <button onClick={() => draftMut.mutate()} disabled={draftMut.isPending || !lines.length}
+          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
+          {draftMut.isPending ? '보관 중…' : draftId ? '📝 보관 갱신' : '📝 임시저장'}
+        </button>
+        <button onClick={() => setDraftOpen(true)}
+          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+          📂 보관함{drafts.length ? ` ${drafts.length}` : ''}
+        </button>
         <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !lines.length}
           className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
           {saveMut.isPending ? '저장 중…' : '💾 저장'}
@@ -476,6 +694,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         <div className="no-print rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 font-semibold">
           ✅ 저장 완료 — {isSales ? '매출' : '매입'}견적 <b>{savedNo}</b>
           {isSales && totals.laborKrw > 0 && ' · 작업비가 이력에 기록되어 다음 견적에서 자동으로 불러옵니다.'}
+        </div>
+      )}
+
+      {draftId && !savedNo && (
+        <div className="no-print rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">
+          📝 보관함에 들어 있는 견적입니다 — <b>아직 견적번호가 붙지 않았습니다.</b> 확정하려면 <b>💾 저장</b> 을 누르세요.
         </div>
       )}
 
@@ -603,6 +827,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5">
                     <input value={l.std_code} onChange={(e) => patch(l.key, { std_code: e.target.value })} className="qi font-mono w-full" />
                     {l.kind === 'assy' && <span className="no-print text-[10px] font-bold text-sky-600">ASSY</span>}
+                    {(l.ltDays != null || l.moq != null) && (
+                      <div className="no-print text-[10px] text-slate-400 mt-0.5 flex gap-1.5">
+                        {l.ltDays != null && (
+                          <span title={l.kind === 'assy' ? '부품 중 가장 긴 납기' : '표준 납기'}>
+                            L/T {l.ltDays}일{l.kind === 'assy' && <span className="text-slate-300"> 최장</span>}
+                          </span>
+                        )}
+                        {l.moq != null && (
+                          <span className={num(l.qty) > 0 && num(l.qty) < num(l.moq) ? 'text-amber-600 font-bold' : ''}
+                            title={num(l.qty) < num(l.moq) ? `MOQ 미달 — 최소 ${l.moq} 이상` : ''}>
+                            MOQ {l.moq}{num(l.qty) > 0 && num(l.qty) < num(l.moq) ? ' ⚠' : ''}
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="py-1.5">
                     <input value={l.description} onChange={(e) => patch(l.key, { description: e.target.value })} className="qi w-full" />
@@ -688,6 +927,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                               <th className="px-2 py-1.5 w-24 text-right">매입가(원)</th>
                               <th className="px-2 py-1.5 w-16 text-right">수량</th>
                               <th className="px-2 py-1.5 w-12 text-center">단위</th>
+                              <th className="px-2 py-1.5 w-16 text-right" title="발주 후 입고까지 걸리는 일수">L/T(일)</th>
+                              <th className="px-2 py-1.5 w-16 text-right" title="최소 주문수량">MOQ</th>
                               <th className="px-2 py-1.5 w-24 text-right">소계(원)</th>
                               <th className="px-2 py-1.5 w-14 text-center">구분</th>
                               <th className="px-2 py-1.5 w-28 text-left">구매처</th>
@@ -719,6 +960,24 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                 </td>
                                 <td className="px-2 py-1 text-right text-slate-500">{pt.qty}</td>
                                 <td className="px-2 py-1 text-center text-slate-400">{pt.unit || '-'}</td>
+                                <td className="px-2 py-1 text-right">
+                                  <input type="number" value={pt.ltDays ?? ''} placeholder="-"
+                                    onChange={(e) => patchPart(l.key, pt.uid, {
+                                      ltDays: e.target.value === '' ? null : Number(e.target.value) })}
+                                    onBlur={(e) => saveItemField(pt.std_code, {
+                                      lt_days: e.target.value === '' ? null : Number(e.target.value) })}
+                                    className="qi w-full text-right" />
+                                </td>
+                                <td className="px-2 py-1 text-right">
+                                  <input type="number" value={pt.moq ?? ''} placeholder="-"
+                                    onChange={(e) => patchPart(l.key, pt.uid, {
+                                      moq: e.target.value === '' ? null : Number(e.target.value) })}
+                                    onBlur={(e) => saveItemField(pt.std_code, {
+                                      moq: e.target.value === '' ? null : Number(e.target.value) })}
+                                    className={`qi w-full text-right ${
+                                      pt.moq != null && num(pt.qty) * num(l.qty) < num(pt.moq)
+                                        ? 'text-amber-600 font-bold' : ''}`} />
+                                </td>
                                 <td className="px-2 py-1 text-right font-semibold">
                                   {pt.excluded || pt.buyKrw == null ? '—' : won(num(pt.buyKrw) * num(pt.qty))}
                                 </td>
@@ -737,6 +996,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                         · 하위 부품을 가진 중간 어셈블리는 자동으로 제외됩니다(상하위 중복 방지).
                         · <span className="text-amber-600">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>.
                         여기서 고친 매입가는 이 견적에만 적용되고 품목 마스터는 바뀌지 않습니다.
+                        · <b className="text-slate-500">L/T·MOQ 는 반대로 품목 마스터에 바로 저장됩니다</b> — 한 번 적어두면 다음 견적에서 그대로 떠오릅니다.
+                        MOQ 는 이 줄 수량까지 곱한 소요량과 견줘 미달이면 주황색으로 표시합니다.
                       </p>
                     </td>
                   </tr>
@@ -762,14 +1023,115 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </table>
 
         <div className="mt-4 text-xs text-slate-600 space-y-1">
-          <div className="flex gap-2"><span className="w-24 text-slate-400">Lead Time</span>
-            <input value={leadTime} onChange={(e) => setLeadTime(e.target.value)} className="qi flex-1" /></div>
+          <div className="flex gap-2 items-center"><span className="w-24 text-slate-400">Lead Time</span>
+            <input value={leadTime} onChange={(e) => setLeadTime(e.target.value)} className="qi flex-1" />
+            {ltMaxAll > 0 && (
+              <button type="button" onClick={() => setLeadTime(`L/T ${Math.ceil(ltMaxAll / 7)}W`)}
+                title="품목에 적힌 납기 중 가장 긴 것"
+                className="no-print shrink-0 px-2 py-0.5 text-[10px] font-bold rounded border border-sky-200 text-sky-600 bg-sky-50 hover:bg-sky-100">
+                최장 {ltMaxAll}일 → L/T {Math.ceil(ltMaxAll / 7)}W 넣기
+              </button>
+            )}
+          </div>
           <div className="flex gap-2"><span className="w-24 text-slate-400">Validity</span>
             <span>{validityDays} days from the date of quotation ({validUntil})</span></div>
           <div className="flex gap-2"><span className="w-24 text-slate-400">Remarks</span>
             <input value={memo} onChange={(e) => setMemo(e.target.value)} className="qi flex-1" placeholder="특이사항" /></div>
         </div>
       </div>
+
+      {/* 보관함 — 채번 전 견적을 넣어 두는 곳 */}
+      {draftOpen && (
+        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setDraftOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-5 py-3 border-b border-slate-200">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">📂 보관함</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">견적번호를 따지 않고 넣어 둔 것들입니다. 확정 저장하면 여기서 사라집니다.</p>
+              </div>
+              <button onClick={() => setDraftOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="overflow-y-auto">
+              {!drafts.length && <p className="py-12 text-center text-sm text-slate-400">보관해 둔 견적이 없습니다.</p>}
+              {drafts.map((d) => (
+                <div key={d.id} className={`flex items-center gap-3 px-5 py-2.5 border-b border-slate-100 ${d.id === draftId ? 'bg-indigo-50/60' : ''}`}>
+                  <span className={`shrink-0 px-1.5 py-0.5 text-[10px] font-bold rounded ${d.quote_kind === 'sales' ? 'bg-indigo-100 text-indigo-700' : 'bg-amber-100 text-amber-700'}`}>
+                    {d.quote_kind === 'sales' ? '매출' : '매입'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-slate-700 truncate">{d.title || '(제목 없음)'}</p>
+                    <p className="text-[10px] text-slate-400">
+                      {String(d.updated_at || '').slice(0, 16).replace('T', ' ')}{d.created_by ? ` · ${d.created_by}` : ''}
+                    </p>
+                  </div>
+                  <button onClick={() => loadDraft(d.id)}
+                    className="shrink-0 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">불러오기</button>
+                  <button onClick={() => { if (confirm(`「${d.title || '제목 없음'}」 을 보관함에서 지울까요?`)) draftDelMut.mutate(d.id) }}
+                    className="shrink-0 text-slate-300 hover:text-rose-500">✕</button>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 마진 구간 설정 — 모든 PC 공통 */}
+      {cfgOpen && tierDraft && (
+        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setCfgOpen(false)}>
+          <div className="bg-white rounded-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between px-5 py-3 border-b border-slate-200">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800">⚙ 마진 구간</h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">부품 <b>한 개 매입가</b>가 어느 구간에 드는지로 마진율이 정해집니다.</p>
+              </div>
+              <button onClick={() => setCfgOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
+            </div>
+            <div className="px-5 py-4 space-y-2">
+              <div className="flex items-center gap-2 text-[11px] font-semibold text-slate-400">
+                <span className="flex-1 text-right pr-1">이 금액 이상 (원)</span>
+                <span className="w-20 text-right">마진율 %</span><span className="w-6" />
+              </div>
+              {tierDraft.tiers.map((t, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <input type="text" inputMode="numeric"
+                    value={Number(t.min || 0).toLocaleString('ko-KR')}
+                    onChange={(e) => setTierDraft((s0) => ({ ...s0, tiers: s0.tiers.map((x, k) => k === i
+                      ? { ...x, min: Number(String(e.target.value).replace(/[^0-9]/g, '')) || 0 } : x) }))}
+                    className="flex-1 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+                  <input type="number" step="0.5"
+                    value={Math.round(Number(t.pct || 0) * 1000) / 10}
+                    onChange={(e) => setTierDraft((s0) => ({ ...s0, tiers: s0.tiers.map((x, k) => k === i
+                      ? { ...x, pct: (Number(e.target.value) || 0) / 100 } : x) }))}
+                    className="w-20 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+                  <button onClick={() => setTierDraft((s0) => ({ ...s0, tiers: s0.tiers.filter((_, k) => k !== i) }))}
+                    className="w-6 text-slate-300 hover:text-rose-500">✕</button>
+                </div>
+              ))}
+              <button onClick={() => setTierDraft((s0) => ({ ...s0, tiers: [...s0.tiers, { min: 0, pct: 0.45 }] }))}
+                className="px-2 py-1 text-[11px] font-bold rounded border border-slate-200 text-slate-500 hover:bg-slate-50">＋ 구간 추가</button>
+
+              <div className="pt-3 mt-2 border-t border-slate-100 flex items-center gap-2">
+                <span className="flex-1 text-xs font-semibold text-slate-500 text-right pr-1">작업비 마진율 %</span>
+                <input type="number" step="0.5"
+                  value={Math.round(Number(tierDraft.laborMarg || 0) * 1000) / 10}
+                  onChange={(e) => setTierDraft((s0) => ({ ...s0, laborMarg: (Number(e.target.value) || 0) / 100 }))}
+                  className="w-20 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+                <span className="w-6" />
+              </div>
+
+              <p className="text-[10px] text-slate-400 pt-1">· 맨 아래 구간은 <b>0</b> 으로 두세요. 어디에도 안 걸리는 금액이 없어야 합니다.</p>
+              <p className="text-[10px] text-slate-400">· <b>모든 PC 에 공통</b>으로 적용됩니다. 저장하면 지금 담겨 있는 줄의 단가가 다시 계산됩니다.</p>
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200">
+              <button onClick={() => setCfgOpen(false)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
+              <button onClick={() => cfgMut.mutate(tierDraft)} disabled={cfgMut.isPending}
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {cfgMut.isPending ? '저장 중…' : '저장'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
