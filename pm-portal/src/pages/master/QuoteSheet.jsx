@@ -89,6 +89,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [projectName, setProjectName] = useState('')
   const [validityDays, setValidityDays] = useState(15)
   const [leadTime, setLeadTime] = useState('L/T 8W')
+  // 손으로 고치기 전까지는 품목 납기를 따라간다. 한 번 고치면 그 값을 지킨다.
+  const [leadTouched, setLeadTouched] = useState(false)
   const [deliveryNote, setDeliveryNote] = useState('(To be discussed later)')
   const [memo, setMemo] = useState('')
 
@@ -289,13 +291,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
   }))
 
-  // 세부 부품 수정 → 자재비 재합산 → 매출단가 재산출
+  // 세부 부품 수정 → 자재비 재합산 → 최장 L/T 재산출 → 매출단가 재산출
   const patchPart = (key, uid, p) => setLines((ls) => ls.map((l) => {
     if (l.key !== key || !l.parts) return l
     const parts = l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x))
     const materialKrw = sumParts(parts)
     const noPrice = parts.filter((x) => !x.excluded && (x.buyKrw == null || x.status === 'unreg')).length
-    const n = { ...l, parts, materialKrw, noPrice }
+    // 부품 L/T 를 고치거나 체크를 풀면 어셈블리 납기도 따라 바뀌어야 한다.
+    const ltMax = parts.reduce((a, x) => (x.excluded || x.ltDays == null ? a : Math.max(a, num(x.ltDays))), 0)
+    const n = { ...l, parts, materialKrw, noPrice, ltDays: ltMax || null }
     return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
   }))
 
@@ -317,6 +321,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   // 어셈블리든 단품이든 가장 늦게 들어오는 것이 전체 납기를 정한다.
   const ltMaxAll = lines.reduce((a, l) => Math.max(a, num(l.ltDays)), 0)
+  const ltWeeks = ltMaxAll > 0 ? Math.ceil(ltMaxAll / 7) : 0
+
+  // 품목에 적힌 납기가 정해지면 Lead Time 칸을 채운다.
+  //   ⚠ 사용자가 한 번이라도 직접 고쳤으면 건드리지 않는다.
+  useEffect(() => {
+    if (leadTouched || !ltWeeks) return
+    setLeadTime(`L/T ${ltWeeks}W`)
+  }, [ltWeeks, leadTouched])
 
   const totals = useMemo(() => {
     const amount = lines.reduce((a, l) => a + num(l.qty) * num(l.unitPrice), 0)
@@ -396,7 +408,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setAttn(d.attn || '')
     setProjectName(d.projectName || '')
     setValidityDays(d.validityDays ?? 15)
-    setLeadTime(d.leadTime || 'L/T 8W')
+    setLeadTime(d.leadTime || 'L/T 8W'); setLeadTouched(true)
     setDeliveryNote(d.deliveryNote || '(To be discussed later)')
     setMemo(d.memo || '')
     setLines(Array.isArray(d.lines) ? d.lines : [])
@@ -827,18 +839,40 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5">
                     <input value={l.std_code} onChange={(e) => patch(l.key, { std_code: e.target.value })} className="qi font-mono w-full" />
                     {l.kind === 'assy' && <span className="no-print text-[10px] font-bold text-sky-600">ASSY</span>}
-                    {(l.ltDays != null || l.moq != null) && (
-                      <div className="no-print text-[10px] text-slate-400 mt-0.5 flex gap-1.5">
-                        {l.ltDays != null && (
-                          <span title={l.kind === 'assy' ? '부품 중 가장 긴 납기' : '표준 납기'}>
-                            L/T {l.ltDays}일{l.kind === 'assy' && <span className="text-slate-300"> 최장</span>}
-                          </span>
-                        )}
-                        {l.moq != null && (
-                          <span className={num(l.qty) > 0 && num(l.qty) < num(l.moq) ? 'text-amber-600 font-bold' : ''}
-                            title={num(l.qty) < num(l.moq) ? `MOQ 미달 — 최소 ${l.moq} 이상` : ''}>
-                            MOQ {l.moq}{num(l.qty) > 0 && num(l.qty) < num(l.moq) ? ' ⚠' : ''}
-                          </span>
+                    {/* 어셈블리는 부품에서 뽑은 최장 납기를 보여주기만 하고,
+                        단품은 여기가 유일한 입력 자리라 직접 적을 수 있게 둔다. */}
+                    {l.kind === 'assy' ? (
+                      (l.ltDays != null || l.moq != null) && (
+                        <div className="no-print text-[10px] text-slate-400 mt-0.5 flex gap-1.5">
+                          {l.ltDays != null && (
+                            <span title="부품 중 가장 긴 납기">
+                              L/T {l.ltDays}일<span className="text-slate-300"> 최장</span>
+                            </span>
+                          )}
+                        </div>
+                      )
+                    ) : (
+                      <div className="no-print text-[10px] text-slate-400 mt-0.5 flex items-center gap-1">
+                        <span>L/T</span>
+                        <input type="number" value={l.ltDays ?? ''} placeholder="-"
+                          title="표준 납기(일) — 적으면 품목 마스터에 저장됩니다"
+                          onChange={(e) => patch(l.key, {
+                            ltDays: e.target.value === '' ? null : Number(e.target.value) })}
+                          onBlur={(e) => saveItemField(l.std_code, {
+                            lt_days: e.target.value === '' ? null : Number(e.target.value) })}
+                          className="qi w-9 text-right" />
+                        <span>일 · MOQ</span>
+                        <input type="number" value={l.moq ?? ''} placeholder="-"
+                          title="최소 주문수량 — 적으면 품목 마스터에 저장됩니다"
+                          onChange={(e) => patch(l.key, {
+                            moq: e.target.value === '' ? null : Number(e.target.value) })}
+                          onBlur={(e) => saveItemField(l.std_code, {
+                            moq: e.target.value === '' ? null : Number(e.target.value) })}
+                          className={`qi w-11 text-right ${
+                            l.moq != null && num(l.qty) > 0 && num(l.qty) < num(l.moq)
+                              ? 'text-amber-600 font-bold' : ''}`} />
+                        {l.moq != null && num(l.qty) > 0 && num(l.qty) < num(l.moq) && (
+                          <span className="text-amber-600 font-bold" title={`최소 ${l.moq} 이상`}>⚠ 미달</span>
                         )}
                       </div>
                     )}
@@ -1024,13 +1058,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
         <div className="mt-4 text-xs text-slate-600 space-y-1">
           <div className="flex gap-2 items-center"><span className="w-24 text-slate-400">Lead Time</span>
-            <input value={leadTime} onChange={(e) => setLeadTime(e.target.value)} className="qi flex-1" />
-            {ltMaxAll > 0 && (
-              <button type="button" onClick={() => setLeadTime(`L/T ${Math.ceil(ltMaxAll / 7)}W`)}
-                title="품목에 적힌 납기 중 가장 긴 것"
-                className="no-print shrink-0 px-2 py-0.5 text-[10px] font-bold rounded border border-sky-200 text-sky-600 bg-sky-50 hover:bg-sky-100">
-                최장 {ltMaxAll}일 → L/T {Math.ceil(ltMaxAll / 7)}W 넣기
-              </button>
+            <input value={leadTime}
+              onChange={(e) => { setLeadTouched(true); setLeadTime(e.target.value) }}
+              className="qi flex-1" />
+            {ltWeeks > 0 && (
+              leadTouched && leadTime !== `L/T ${ltWeeks}W` ? (
+                <button type="button" onClick={() => { setLeadTouched(false); setLeadTime(`L/T ${ltWeeks}W`) }}
+                  title="품목에 적힌 납기 중 가장 긴 것으로 되돌립니다"
+                  className="no-print shrink-0 px-2 py-0.5 text-[10px] font-bold rounded border border-sky-200 text-sky-600 bg-sky-50 hover:bg-sky-100">
+                  ↩ 최장 {ltMaxAll}일 → L/T {ltWeeks}W
+                </button>
+              ) : (
+                <span className="no-print shrink-0 text-[10px] text-slate-400" title="품목에 적힌 납기 중 가장 긴 것">
+                  자동 · 최장 {ltMaxAll}일
+                </span>
+              )
             )}
           </div>
           <div className="flex gap-2"><span className="w-24 text-slate-400">Validity</span>
