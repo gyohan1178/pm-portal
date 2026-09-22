@@ -2,17 +2,19 @@ import { LOGO_B64 } from '../poAssets'
 import { todayISO } from '../utils'
 import { qtyText, parentList } from './partReport'
 import { fetchPurchaseDocs, drawPurchaseRecord, wrapLines } from './purchaseRecord'
+import { isDwgPart, pickDwg, renderDrawing } from './drawings'
 
 // 초도품 자재 확인 PPT — FAI Navigator v3.2 「품목별 PPT」 이식
 //
 //   한 품목 = 한 장.
 //     ① PART REPORT REGISTRATION  Part Report 원본 표 모양 발췌 (이 품목 줄 = 노란 형광펜)
-//     ② ACTUAL PART USED          구매 명세표 — 포털 발주·입고 기록으로 그린다 (단가 없음)
+//     ② DRAWING                   16·17번대만 — 연결한 도면 폴더에서 1쪽 (품번 위치 형광)
+//     ③ ACTUAL PART USED          구매전표 — 포털 발주·입고 기록으로 이카운트 양식을 그린다 (금액 칸 없음)
 //   VERIFICATION ☐OK ☐NG · Remark 는 품질이 채우도록 비워 둔다.
 //
 //   ⚠ 원본과 다른 곳
-//     · 증빙은 폴더의 ERP 명세표 PDF 대신, 포털 기록으로 그린 명세표 (purchaseRecord.js)
-//     · 도면 칸(16·17번대)은 도면 폴더 연결이 들어올 때 붙인다 — 지금은 2칸 배치
+//     · 증빙은 폴더의 명세표 스캔 대신, 포털 기록으로 그린 구매전표 (purchaseRecord.js)
+//     · 사양서(CPS) 왼쪽 칸 옵션은 옮기지 않음
 //     · 판정 수정이 아직 없어 체크 칸은 전부 빈칸
 
 const XF = 'Calibri, Arial, "Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", sans-serif'
@@ -22,7 +24,6 @@ const CLS_EN = { generic: 'Generic', limited: 'Limited', sole: 'Sole', uncls: 'U
 const PNL = { y: 2.42, h: 4.45, lx: 0.45, rx: 6.78, w: 6.1, imgY: 3.34, imgH: 3.38 }
 
 const tick = () => new Promise((res) => setTimeout(res, 0))
-const loadImg = (src) => new Promise((res) => { const i = new Image(); i.onload = () => res(i); i.onerror = () => res(null); i.src = src })
 function contain(iw, ih, bx, by, bw, bh) { const s = Math.min(bw / iw, bh / ih); const w = iw * s, h = ih * s; return { x: bx + (bw - w) / 2, y: by + (bh - h) / 2, w, h } }
 
 /* ① Part Report 원본 표 모양 발췌 */
@@ -103,11 +104,13 @@ function pptPanel(pptx, s, x, y, w, h, num, title, sub) {
   s.addText(title, { x: x + 0.64, y: y + 0.17, w: w - 0.9, h: 0.3, fontFace: PF, fontSize: 13, bold: true, color: C_SUB, charSpacing: 1, valign: 'middle', margin: 0 })
   if (sub) s.addText(sub, { x: x + 0.25, y: y + 0.55, w: w - 0.5, h: 0.32, fontFace: PF, fontSize: 11.5, color: C_INK, valign: 'middle', margin: 0 })
 }
-function pptImage(pptx, s, im, x, y, w, h) {
+function pptImage(pptx, s, im, x, y, w, h, jpg) {
   s.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: 'FFFFFF' }, line: { color: C_LINE, width: 0.5 } })
   const p = contain(im.w, im.h, x + 0.06, y + 0.06, w - 0.12, h - 0.12)
-  s.addImage({ data: im.canvas.toDataURL('image/png'), x: p.x, y: y + 0.06, w: p.w, h: p.h })
+  // 표 그림은 위에 붙이고(PNG), 도면은 가운데(JPG — 파일이 작다)
+  s.addImage({ data: jpg ? im.canvas.toDataURL('image/jpeg', 0.82) : im.canvas.toDataURL('image/png'), x: p.x, y: jpg ? p.y : y + 0.06, w: p.w, h: p.h })
 }
+const DW_EN = { exact: 'matches Part Report', rev: 'same revision', mismatch: 'Part Report: Rev ' }
 function emptyBox(pptx, s, x, y, w, h, text) {
   s.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: 'FFFFFF' }, line: { color: C_LINE, width: 0.5, dashType: 'dash' } })
   s.addText(text, { x, y, w, h, fontFace: PF, fontSize: 14, color: 'B0B7C3', align: 'center', valign: 'middle' })
@@ -124,11 +127,11 @@ export function recOf(r) {
  * rows : 만들 품목 (화면 순서)
  * noOf : (r, i) => 표지 번호
  * onProgress(i, total, pn), askStop(i) → 'save' | 'cancel' | null(계속)
- * 반환: { bytes, slides, done, stopped, noRec }
+ * dwgIdx : 연결한 도면 폴더 (drawings.indexDwg) — 없으면 도면 칸에 「폴더 미연결」
+ * 반환: { bytes, slides, done, stopped, noRec, dwg: { n, ok, miss } }
  */
-export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop }) {
+export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx }) {
   const { default: PptxGenJS } = await import('pptxgenjs')
-  const logo = await loadImg(LOGO_B64)
   onProgress?.(0, rows.length, '발주·입고 기록 불러오는 중')
   const docs = await fetchPurchaseDocs(rows.filter((r) => r.e.v !== 'ASSY').map(recOf).filter(Boolean))
 
@@ -139,6 +142,7 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop }) {
   const cv = pptx.addSlide() // 표지는 다 만든 뒤 채운다 — 중간에 멈추면 만든 건수만 적히게
 
   let done = rows.length, stopped = false, noRec = 0
+  const dwg = { n: 0, ok: 0, miss: 0 }
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], P = r.P, a = r.e.act, isAssy = r.e.v === 'ASSY'
     onProgress?.(i, rows.length, P.pn)
@@ -159,19 +163,46 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop }) {
       { x: cx, y: 1.9, w: 1.2, h: 0.4, fontFace: PF, valign: 'middle', margin: 0 })
       cx += 1.2
     }
-    // ① Part Report 발췌
-    pptPanel(pptx, s, PNL.lx, PNL.y, PNL.w, PNL.h, 1, 'PART REPORT REGISTRATION', `Original excerpt — Part report ${rep.top.pn} ${rep.top.rev}`)
-    pptImage(pptx, s, excerptCanvas(rep, P), PNL.lx + 0.25, PNL.imgY, PNL.w - 0.5, PNL.imgH)
-    // ② 실제 사용 — 구매 명세표
+    // 16·17번대는 도면 칸을 둔다 — 왼쪽 위 ① 발췌, 왼쪽 아래 ② 도면, 오른쪽 ③ 실제 사용
+    const hasDwg = isDwgPart(P)
+    const L = hasDwg ? { x: 0.45, w: 7.25 } : { x: PNL.lx, w: PNL.w }
+    const R = hasDwg ? { x: 7.93, w: 4.95 } : { x: PNL.rx, w: PNL.w }
+    const TOP = PNL.y, BOT = PNL.y + PNL.h
+    const ex = excerptCanvas(rep, P)
+    if (hasDwg) {
+      dwg.n++
+      const need = (L.w - 0.5) * ex.h / ex.w
+      const h1 = Math.min(2.6, Math.max(1.3, need + 0.7))
+      pptPanel(pptx, s, L.x, TOP, L.w, h1, 1, 'PART REPORT REGISTRATION', null)
+      pptImage(pptx, s, ex, L.x + 0.25, TOP + 0.55, L.w - 0.5, h1 - 0.67)
+      const y2 = TOP + h1 + 0.12, h2 = BOT - y2
+      pptPanel(pptx, s, L.x, y2, L.w, h2, 2, 'DRAWING', null)
+      const pk = dwgIdx ? pickDwg(P, dwgIdx) : null
+      if (pk && pk.file) {
+        const info = pk.got ? `  —  Rev ${pk.got}` + (pk.status === 'mismatch' ? `  (${DW_EN.mismatch}${pk.want})` : pk.want ? `  (${DW_EN[pk.status] || ''})` : '') : ''
+        s.addText(`${pk.file.name}${info}  · sheet 1`, { x: L.x + 2.2, y: y2 + 0.17, w: L.w - 2.45, h: 0.3, fontFace: PF, fontSize: 9.5, color: pk.status === 'mismatch' ? C_RED : C_MUT, align: 'right', valign: 'middle', margin: 0 })
+        const im = await renderDrawing(pk.file, [P.pn])
+        if (im.canvas) { dwg.ok++; pptImage(pptx, s, im, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, true) }
+        else { dwg.miss++; emptyBox(pptx, s, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, 'Drawing could not be opened') }
+      } else {
+        dwg.miss++
+        emptyBox(pptx, s, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67,
+          !dwgIdx ? 'Drawing folder not connected' : pk && pk.wantFile ? `Drawing not found — ${pk.wantFile}` : 'Drawing not found')
+      }
+    } else {
+      pptPanel(pptx, s, L.x, TOP, L.w, PNL.h, 1, 'PART REPORT REGISTRATION', `Original excerpt — Part report ${rep.top.pn} ${rep.top.rev}`)
+      pptImage(pptx, s, ex, L.x + 0.25, PNL.imgY, L.w - 0.5, PNL.imgH)
+    }
+    // 실제 사용 — 구매전표 (도면 칸이 있으면 ③, 없으면 ②)
     const sub = isAssy ? 'In-house assembly — see sub-components'
       : `Manufacturer:  ${a.mfr || '—'}      MFR P/N:  ${a.mpn || '—'}`
-    pptPanel(pptx, s, PNL.rx, PNL.y, PNL.w, PNL.h, 2, 'ACTUAL PART USED', sub)
+    pptPanel(pptx, s, R.x, TOP, R.w, PNL.h, hasDwg ? 3 : 2, 'ACTUAL PART USED', sub)
     const rec = isAssy ? null : recOf(r)
     const doc = rec && docs.get(rec.poId)
-    if (doc) pptImage(pptx, s, drawPurchaseRecord(doc, rec.poId, logo), PNL.rx + 0.25, PNL.imgY, PNL.w - 0.5, PNL.imgH)
+    if (doc) pptImage(pptx, s, drawPurchaseRecord(doc, rec.poId), R.x + 0.25, PNL.imgY, R.w - 0.5, PNL.imgH)
     else {
       if (!isAssy) noRec++
-      emptyBox(pptx, s, PNL.rx + 0.25, PNL.imgY, PNL.w - 0.5, PNL.imgH, isAssy ? 'In-house assembly' : 'No purchase record')
+      emptyBox(pptx, s, R.x + 0.25, PNL.imgY, R.w - 0.5, PNL.imgH, isAssy ? 'In-house assembly' : 'No purchase record')
     }
     // Remark — 품질이 적도록 비워 둔다
     s.addText([{ text: 'Remark  ', options: { bold: true, color: C_SUB } }, { text: ' ', options: { color: C_INK } }],
@@ -194,13 +225,13 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop }) {
     { text: `Source: Axcelis Part Report ${rep.top.pn} ${rep.top.rev}${created ? ` (${created})` : ''}`, options: { breakLine: true } },
     { text: `Jinsuntech Co., Ltd. · ${todayISO()}` },
   ], { x: 0.8, y: 4.05, w: 7.1, h: 1.15, fontFace: PF, fontSize: 12, color: C_SUB, valign: 'top', margin: 0 })
-  cv.addText('Each page: ① Part Report registration (highlighted row = this part)  ·  ② Actual part used (purchase record, highlighted row = this part)  ·  Verification to be completed by Quality.',
+  cv.addText('Each page: ① Part Report registration (highlighted row = this part)  ·  ② Drawing (16x/17x parts, sheet 1)  ·  ③ Actual part used (purchase slip, highlighted row = this part)  ·  Verification to be completed by Quality.',
     { x: 0.8, y: 6.55, w: 11.7, h: 0.35, fontFace: PF, fontSize: 10, color: C_MUT, margin: 0 })
 
   onProgress?.(done, rows.length, 'PPT 파일로 묶는 중')
   await tick()
   const bytes = await pptx.write({ outputType: 'uint8array' })
-  return { bytes, slides: done + 1, done, stopped, noRec }
+  return { bytes, slides: done + 1, done, stopped, noRec, dwg }
 }
 
 export const pptName = (rep) => `FAI_Material_Verification_${rep.top.pn}_Rev${rep.top.rev}_${todayISO().replace(/-/g, '')}.pptx`

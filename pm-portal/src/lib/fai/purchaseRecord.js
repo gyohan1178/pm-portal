@@ -2,14 +2,15 @@ import { supabase } from '../supabase'
 import { fetchAll } from '../paginate'
 import { todayISO } from '../utils'
 
-// 구매 명세표 (Purchase Record) — 초도품 PPT 의 「② 실제 사용 자재」 증빙
+// 구매전표 — 초도품 PPT 의 「실제 사용 자재」 증빙 (이카운트 「구 매 전 표」 양식)
 //
 //   원래는 ERP 명세표 PDF 를 폴더에서 찾아 붙였다.
-//   포털에는 발주·입고 기록이 이미 있으니 그걸로 명세표를 직접 그린다.
+//   포털에는 발주·입고 기록이 이미 있으니 그걸로 이카운트 구매전표 모양을 직접 그린다.
+//   양식: 전표번호·DATE·구매처 / 일자·품목코드·품목명[규격]·수량(단위포함). 단가·공급가액·부가세 칸은 뺐다.
 //
 //   ⚠ 단가·금액은 조회부터 하지 않는다 (고객사로 나가는 자료).
 //   ⚠ 같은 발주서의 다른 줄 중 Axcelis 품목(AX-)만 싣는다 — 다른 고객사 품번이 새지 않게.
-//   ⚠ 제조사·제조사품번은 지금 기준코드 DB(items) 값이다. 발주 줄 제조사 칸이 생기면 바꾼다.
+//   제조사·제조사품번 = 발주 줄의 mfr·mfr_code. 비어 있으면 기준코드 DB(items) 값 (화면 판정과 같은 규칙).
 
 const CH = 100
 
@@ -22,7 +23,7 @@ export async function fetchPurchaseDocs(recs) {
   const lines = []
   for (let i = 0; i < numbers.length; i += CH) {
     const part = await fetchAll(() => supabase.from('purchase_orders')
-      .select('id,po_number,order_date,qty_ordered,status,vendor_id,vendors(name),items(std_code,name,unit,manufacturer,manufacturer_code)')
+      .select('id,po_number,order_date,qty_ordered,status,mfr,mfr_code,vendor_id,vendors(name),items(std_code,name,unit,manufacturer,manufacturer_code)')
       .eq('order_type', 'purchase').in('po_number', numbers.slice(i, i + CH))
       .order('id'))
     lines.push(...part)
@@ -56,10 +57,11 @@ export async function fetchPurchaseDocs(recs) {
     const it = l.items || {}
     if (!/^AX-/i.test(it.std_code || '')) continue
     const r = rcv.get(l.id)
+    const onPo = !!(l.mfr || l.mfr_code)
     d.lines.push({
-      poId: l.id, pn: String(it.std_code || '').replace(/^AX-/i, ''), name: it.name || '',
-      mfr: it.manufacturer || '', mpn: it.manufacturer_code || '', unit: it.unit || 'EA',
-      qty: l.qty_ordered, rcvQty: r ? r.qty : null, rcvDate: r ? (r.first && r.first !== r.last ? `${r.first} ~ ${r.last}` : r.last) : '',
+      poId: l.id, code: it.std_code || '', pn: String(it.std_code || '').replace(/^AX-/i, ''), name: it.name || '',
+      mfr: (onPo ? l.mfr : it.manufacturer) || '', mpn: (onPo ? l.mfr_code : it.manufacturer_code) || '', unit: it.unit || 'EA',
+      qty: l.qty_ordered, rcvQty: r ? r.qty : null, rcvDate: r ? r.last : '', orderDate: l.order_date || '',
     })
   }
   for (const d of docs.values()) d.lines.sort((a, b) => a.pn.localeCompare(b.pn))
@@ -70,20 +72,18 @@ export async function fetchPurchaseDocs(recs) {
   return out
 }
 
-/* ================= 그리기 ================= */
-const XF = 'Calibri, Arial, "Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", sans-serif'
+/* ================= 그리기 — 이카운트 구매전표 모양 ================= */
+const XF = '"Malgun Gothic", "맑은 고딕", "Noto Sans CJK KR", "Apple SD Gothic Neo", Arial, sans-serif'
 const COLS = [
-  { t: 'No', w: 40, a: 'c' },
-  { t: 'Part No', w: 124, b: 1 },
-  { t: 'Description', w: 206, wrap: 1 },
-  { t: 'Manufacturer', w: 150, wrap: 1 },
-  { t: 'MFR P/N', w: 224, wrap: 1, b: 1 },
-  { t: 'PO Qty', w: 72, a: 'r' },
-  { t: 'Received', w: 122, a: 'c', wrap: 1 },
-  { t: 'Rcv Qty', w: 76, a: 'r' },
+  { t: '일자', w: 92, a: 'c' },
+  { t: '품목코드', w: 170, b: 1 },
+  { t: '품목명[규격]', w: 446, wrap: 1 },
+  { t: '수량(단위포함)', w: 154, a: 'r' },
 ]
-const MAXROWS = 8
-const num = (v) => (v == null || v === '' ? '' : (Math.round(Number(v) * 1000) / 1000).toLocaleString('en-US'))
+const MAXROWS = 14
+const num = (v) => (v == null || v === '' ? '' : (Math.round(Number(v) * 1000) / 1000).toLocaleString('ko-KR'))
+const mmdd = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const unitOf = (u) => (/^(EA|EACH)$/i.test(u || '') || !u ? 'EA' : u)
 
 export function wrapLines(ctx, text, w) {
   const out = []
@@ -104,100 +104,102 @@ export function wrapLines(ctx, text, w) {
   return out.length ? out : ['']
 }
 
-// 보여 줄 줄 고르기 — 길면 해당 품목 앞뒤만 남기고 「… N줄 더」로 줄인다
+// 보여 줄 줄 고르기 — 길면 해당 품목 앞뒤만 남기고 「… N줄」로 줄인다
 export function windowLines(lines, poId, max = MAXROWS) {
   const at = Math.max(0, lines.findIndex((l) => l.poId === poId))
-  if (lines.length <= max) return { list: lines.map((l, i) => ({ ...l, no: i + 1 })), before: 0, after: 0 }
+  if (lines.length <= max) return { list: lines.slice(), before: 0, after: 0 }
   let s = Math.max(0, at - Math.floor((max - 1) / 2))
   s = Math.min(s, lines.length - max)
-  return {
-    list: lines.slice(s, s + max).map((l, i) => ({ ...l, no: s + i + 1 })),
-    before: s, after: lines.length - s - max,
-  }
+  return { list: lines.slice(s, s + max), before: s, after: lines.length - s - max }
 }
 
-// doc: fetchPurchaseDocs 의 묶음, poId: 이 품목의 발주 줄. logo: 불러온 Image (없어도 됨)
-export function drawPurchaseRecord(doc, poId, logo) {
-  const W = COLS.reduce((t, c) => t + c.w, 0) + 2, FS = 20, LH = 25, PAD = 7
+// 줄 한 개의 표시값 — 입고됐으면 입고일·입고수량, 아니면 발주일·발주수량
+export function slipCells(l) {
+  const got = l.rcvQty != null && l.rcvDate
+  const spec = [l.mfr, l.mpn].filter(Boolean).join(' ')
+  return [
+    mmdd(got ? l.rcvDate : l.orderDate),
+    l.code,
+    l.name + (spec ? ` [${spec}]` : ''),
+    num(got ? l.rcvQty : l.qty) + unitOf(l.unit),
+  ]
+}
+
+// doc: fetchPurchaseDocs 의 묶음, poId: 이 품목의 발주 줄
+export function drawPurchaseRecord(doc, poId) {
+  const W = COLS.reduce((t, c) => t + c.w, 0) + 2, FS = 19, LH = 24, PAD = 7
   const c = document.createElement('canvas'), ctx = c.getContext('2d')
   const win = windowLines(doc.lines, poId)
   const rows = [{ cells: COLS.map((x) => x.t), head: true }]
-  if (win.before) rows.push({ gap: `… ${win.before} more line(s) above` })
-  win.list.forEach((l) => rows.push({
-    cells: [l.no, l.pn, l.name, l.mfr, l.mpn, num(l.qty), l.rcvDate || '—', num(l.rcvQty)],
-    hit: l.poId === poId,
-  }))
-  if (win.after) rows.push({ gap: `… ${win.after} more line(s) below` })
+  if (win.before) rows.push({ gap: `… 위 ${win.before}줄` })
+  win.list.forEach((l) => rows.push({ cells: slipCells(l), hit: l.poId === poId }))
+  if (win.after) rows.push({ gap: `… 아래 ${win.after}줄` })
   rows.forEach((r) => {
     if (r.gap) { r.h = LH + PAD; return }
     ctx.font = `${r.head || r.hit ? 'bold ' : ''}${FS}px ${XF}`
-    r.lines = r.cells.map((v, i) => (COLS[i].wrap ? wrapLines(ctx, v, COLS[i].w - PAD * 2) : [String(v ?? '')]))
+    r.lines = r.cells.map((v, i) => (COLS[i].wrap || r.head ? wrapLines(ctx, v, COLS[i].w - PAD * 2) : [String(v ?? '')]))
     r.h = Math.max(...r.lines.map((l) => l.length)) * LH + PAD * 2
   })
-  const TOP = 150, FOOT = 40
+  const TOP = 168, FOOT = 38
   const H = TOP + rows.reduce((t, r) => t + r.h, 0) + FOOT
   c.width = W; c.height = H
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, W, H)
   ctx.textBaseline = 'top'
-  // 머리 — 제목 · 로고
-  ctx.fillStyle = '#1f2430'; ctx.font = `bold 32px ${XF}`
-  ctx.fillText('PURCHASE RECORD', 4, 8)
-  const tw = ctx.measureText('PURCHASE RECORD').width
-  ctx.fillStyle = '#667380'; ctx.font = `20px ${XF}`
-  ctx.fillText('구매 명세표', tw + 16, 18)
-  if (logo && logo.width) {
-    const lh = 48, lw = logo.width * lh / logo.height
-    ctx.drawImage(logo, W - lw - 4, 4, lw, lh)
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1
+  // 제목
+  ctx.fillStyle = '#000'; ctx.font = `bold 34px ${XF}`
+  const title = '구 매 전 표', tw = ctx.measureText(title).width
+  ctx.fillText(title, (W - tw) / 2, 8)
+  ctx.beginPath(); ctx.moveTo((W - tw) / 2, 50.5); ctx.lineTo((W + tw) / 2, 50.5); ctx.stroke()
+  // 머리 칸 — 왼쪽 전표번호·DATE / 오른쪽 구매처·구매자
+  const box = (x, y, rowsKV, kw, bw) => {
+    rowsKV.forEach(([k, v], i) => {
+      const yy = y + i * 34
+      ctx.strokeRect(x + 0.5, yy + 0.5, kw, 34); ctx.strokeRect(x + kw + 0.5, yy + 0.5, bw - kw, 34)
+      ctx.fillStyle = '#000'; ctx.font = `bold 17px ${XF}`
+      const kt = ctx.measureText(k).width; ctx.fillText(k, x + (kw - kt) / 2, yy + 8)
+      ctx.font = `17px ${XF}`; ctx.fillText(fit(ctx, v, bw - kw - 12), x + kw + 8, yy + 8)
+    })
   }
-  // 발주 정보 칸
-  const info = [['PO No.', doc.no], ['PO Date', doc.date || '—'], ['Supplier', doc.vendor || '—'], ['Buyer', 'Jinsuntech Co., Ltd.']]
-  const iy = 62, ih = 74, iw = (W - 2) / info.length
-  info.forEach(([k, v], i) => {
-    const x = 1 + i * iw
-    ctx.fillStyle = '#eef1f3'; ctx.fillRect(x, iy, iw, 28)
-    ctx.strokeStyle = '#8c8c8c'; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, iy + 0.5, iw - 1, ih - 1)
-    ctx.beginPath(); ctx.moveTo(x, iy + 28.5); ctx.lineTo(x + iw, iy + 28.5); ctx.stroke()
-    ctx.fillStyle = '#5a6570'; ctx.font = `bold 17px ${XF}`; ctx.fillText(k, x + PAD, iy + 5)
-    ctx.fillStyle = '#1f2430'; ctx.font = `${i === 0 ? 'bold ' : ''}21px ${XF}`
-    ctx.fillText(fit(ctx, v, iw - PAD * 2), x + PAD, iy + 38)
-  })
+  const lw = Math.round(W * 0.5), rw = Math.round(W * 0.42)
+  box(1, 66, [['전표번호', `${doc.no}  [ 1 / 1 ]`], ['DATE', (doc.date || '').replace(/-/g, '/')]], 104, lw)
+  box(W - rw - 2, 66, [['구매처', doc.vendor || '—'], ['구매자', '진선테크 구매자재팀']], 90, rw)
   // 표
   let y = TOP
   rows.forEach((r) => {
     if (r.gap) {
-      ctx.fillStyle = '#f7f8fa'; ctx.fillRect(1, y, W - 2, r.h)
-      ctx.strokeStyle = '#8c8c8c'; ctx.strokeRect(1.5, y + 0.5, W - 3, r.h)
-      ctx.fillStyle = '#98a0b0'; ctx.font = `italic 17px ${XF}`; ctx.fillText(r.gap, PAD + 40, y + PAD / 2 + 3)
+      ctx.strokeStyle = '#000'; ctx.strokeRect(1.5, y + 0.5, W - 3, r.h)
+      ctx.fillStyle = '#777'; ctx.font = `15px ${XF}`; ctx.fillText(r.gap, COLS[0].w + PAD + 2, y + PAD / 2 + 4)
       y += r.h; return
     }
-    ctx.fillStyle = r.head ? '#e7e6e6' : r.hit ? '#fff200' : '#fff'
+    ctx.fillStyle = r.head ? '#f2f2f2' : r.hit ? '#fff200' : '#fff'
     ctx.fillRect(1, y, W - 2, r.h)
     let x = 1
     r.lines.forEach((ls, i) => {
       const col = COLS[i]
       ctx.fillStyle = '#000'
-      ctx.font = `${r.head || (r.hit && col.b) ? 'bold ' : ''}${FS}px ${XF}`
+      ctx.font = `${r.head || (r.hit && (i === 1 || i === 2)) ? 'bold ' : ''}${FS}px ${XF}`
       ls.forEach((l, k) => {
-        const lw = ctx.measureText(l).width
-        const tx = col.a === 'r' && !r.head ? x + col.w - PAD - lw : col.a === 'c' || r.head ? x + (col.w - lw) / 2 : x + PAD
+        const w0 = ctx.measureText(l).width
+        const tx = r.head || col.a === 'c' ? x + (col.w - w0) / 2 : col.a === 'r' ? x + col.w - PAD - w0 : x + PAD
         ctx.fillText(l, tx, y + PAD + k * LH)
       })
       x += col.w
     })
-    ctx.strokeStyle = '#8c8c8c'; ctx.lineWidth = 1
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1
     ctx.strokeRect(1.5, y + 0.5, W - 3, r.h)
     x = 1; COLS.slice(0, -1).forEach((col) => { x += col.w; ctx.beginPath(); ctx.moveTo(x + 0.5, y); ctx.lineTo(x + 0.5, y + r.h); ctx.stroke() })
-    if (r.hit) { // 품번·제조사품번 빨간 네모 (원래 증빙 PDF 표시와 같게)
+    if (r.hit) { // 품목코드·품목명 빨간 네모
       ctx.strokeStyle = '#e0505f'; ctx.lineWidth = 3
-      const x1 = 1 + COLS[0].w, x4 = 1 + COLS.slice(0, 4).reduce((t, cc) => t + cc.w, 0)
-      ctx.strokeRect(x1 + 2, y + 2, COLS[1].w - 4, r.h - 4)
-      ctx.strokeRect(x4 + 2, y + 2, COLS[4].w - 4, r.h - 4)
+      const x1 = 1 + COLS[0].w
+      ctx.strokeRect(x1 + 2, y + 2, COLS[1].w + COLS[2].w - 4, r.h - 4)
+      ctx.lineWidth = 1
     }
     y += r.h
   })
-  ctx.fillStyle = '#98a0b0'; ctx.font = `16px ${XF}`
-  ctx.fillText(`Generated from Jinsuntech purchasing / receiving records · ${todayISO()}`, 4, y + 10)
-  const n = `${doc.lines.length} Axcelis line(s)`
+  ctx.fillStyle = '#888'; ctx.font = `14px ${XF}`
+  ctx.fillText(`진선테크 PM Portal 발주·입고 기록 · 출력 ${todayISO()}`, 4, y + 10)
+  const n = `Axcelis 품목 ${doc.lines.length}줄`
   ctx.fillText(n, W - ctx.measureText(n).width - 4, y + 10)
   return { canvas: c, w: W, h: H }
 }

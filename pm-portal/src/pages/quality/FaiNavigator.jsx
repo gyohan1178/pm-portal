@@ -1,4 +1,4 @@
-import { useState, useMemo, useCallback, useRef, Fragment } from 'react'
+import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -9,6 +9,7 @@ import { downloadSheet } from '../../lib/exportSheet'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { buildFaiPpt, pickSaveTarget, saveBytes, pptName } from '../../lib/fai/pptBuild'
+import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle } from '../../lib/fai/drawings'
 import {
   parseReport, buildRows, buildBuyIndex, normAx, V, CLS_LABEL, CLS_BADGE, qtyText, parentList,
 } from '../../lib/fai/partReport'
@@ -18,10 +19,11 @@ import {
 //   Part Report(.htm) 를 올리면 품목표를 만들고, 품번별 발주 이력을 붙여 판정한다.
 //   판단 로직은 lib/fai/partReport.js (v3.2 원본과 같은 결과가 나오는지 대조함).
 //
-//   ⚠ 1단계 한계 — 「실제 사용 제조사」는 아직 기준코드 DB(items)의 제조사를 쓴다.
+//   「실제 사용 제조사」= 발주 줄의 mfr·mfr_code (v4.12.1~). 발주 줄이 비어 있으면 기준코드 DB(items) 값으로 대신한다.
 //     발주 줄에 제조사 칸이 생기면(다음 단계) 그 값으로 바뀐다.
 //   ⚠ 증빙 폴더·도면·판정 수정 저장은 다음 단계에서 옮긴다.
-//   2단계 — 품목별 PPT (저장 위치 선택). 증빙은 포털 발주·입고 기록으로 그린 구매 명세표(단가 없음).
+//   2단계 — 품목별 PPT (저장 위치 선택). 증빙은 포털 발주·입고 기록으로 그린 이카운트 구매전표 모양(금액 칸 없음).
+//     16·17번대는 PC 도면 폴더를 연결하면 도면 1쪽이 붙는다 (lib/fai/drawings.js).
 //     PPT 라이브러리는 버튼을 누를 때만 불러온다 (lib/fai/pptBuild.js).
 
 const APP_VER = 'v3.2 (포털 2단계)'
@@ -58,7 +60,7 @@ async function fetchBuyRecs(pns) {
   const pos = []
   for (let i = 0; i < ids.length; i += 200) {
     const part = await fetchAll(() => supabase.from('purchase_orders')
-      .select('id,item_id,po_number,order_date,qty_ordered,status,vendors(name)')
+      .select('id,item_id,po_number,order_date,qty_ordered,status,mfr,mfr_code,vendors(name)')
       .eq('order_type', 'purchase').in('item_id', ids.slice(i, i + 200))
       .order('id'))
     pos.push(...part)
@@ -67,8 +69,11 @@ async function fetchBuyRecs(pns) {
     .filter((p) => p.status !== '취소')
     .map((p) => {
       const it = byId.get(p.item_id) || {}
+      // 발주 줄에 제조사가 적혀 있으면 그 값(실제 산 것), 없으면 기준코드 DB
+      const onPo = !!(p.mfr || p.mfr_code)
       return {
-        poId: p.id, ax: normAx(it.std_code), mfr: it.manufacturer || '', mpn: it.manufacturer_code || '',
+        poId: p.id, ax: normAx(it.std_code), mfrSrc: onPo ? 'po' : 'item',
+        mfr: (onPo ? p.mfr : it.manufacturer) || '', mpn: (onPo ? p.mfr_code : it.manufacturer_code) || '',
         vendor: p.vendors?.name || '', date: p.order_date || '', qty: p.qty_ordered, doc: p.po_number || '',
       }
     })
@@ -117,6 +122,10 @@ export default function FaiNavigator() {
   const fileRef = useRef(null)
   const { rowProps } = useRowSelect(useCallback((u) => setSel(u), []))
   const [ppt, setPpt] = useState(null) // { i, n, txt } 만드는 중
+  const [dwg, setDwg] = useState(null) // 연결한 도면 폴더 색인
+  const [dwgBusy, setDwgBusy] = useState('')
+  const [dwgLast, setDwgLast] = useState('') // 지난번 폴더 이름 (다시 연결 버튼)
+  const canDir = typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
   const stopRef = useRef(false)
 
   function loadFile(f) {
@@ -154,6 +163,13 @@ export default function FaiNavigator() {
   const base = rows.filter((r) => r.e.v !== 'ASSY')
   const cnt = (g) => base.filter((r) => V[r.e.v].grp === g).length
   const linked = base.filter((r) => r.e.act.src).length
+  const dwgStat = useMemo(() => {
+    const ps = [...new Map(rows.filter((r) => isDwgPart(r.P)).map((r) => [r.P.pn, r.P])).values()]
+    const st = { n: ps.length, ok: 0, bad: 0, miss: 0 }
+    if (dwg) for (const P of ps) { const k = pickDwg(P, dwg); if (k?.file) { st.ok++; if (k.status === 'mismatch') st.bad++ } else st.miss++ }
+    return st
+  }, [rows, dwg])
+  const itemFallback = (buy?.recs || []).filter((x) => x.mfrSrc === 'item').length
 
   const view = useMemo(() => {
     const q = filt.q.trim().toUpperCase()
@@ -186,7 +202,7 @@ export default function FaiNavigator() {
         meta: [
           ['명칭', rep.top.name], ['기준 Part Report', rep.fileName || ''],
           ['보기', opt.mode === 'uniq' ? '고유 품번 합산' : 'BOM 전개 순서'],
-          ['실제 사용 제조사', '기준코드 DB 제조사 (발주 줄 제조사 칸 도입 전)'],
+          ['실제 사용 제조사', '발주 줄의 제조사 (비어 있으면 기준코드 DB 제조사)'],
           ['작성', `${todayISO()} · FAI Navigator ${APP_VER} © 김교한`],
         ],
         rows: out.map((r, i) => {
@@ -213,6 +229,46 @@ export default function FaiNavigator() {
     } catch (e) { toastError('엑셀 내보내기 실패: ' + e.message) }
   }
 
+  // 도면 폴더 — 파일은 올리지 않고 이 PC 에서만 읽는다. 폴더 위치는 브라우저가 기억(다음엔 「다시 연결」 한 번)
+  useEffect(() => {
+    let off = false
+    ;(async () => {
+      try {
+        const h = await loadHandle('dwg')
+        if (!h || off) return
+        setDwgLast(h.name)
+        if ((await h.queryPermission({ mode: 'read' })) === 'granted') await readDwg(h, true)
+      } catch { /* 기억된 폴더 없음 */ }
+    })()
+    return () => { off = true }
+  }, [])
+  async function readDwg(dh, quiet) {
+    setDwgBusy(`${dh.name} 폴더 훑는 중…`)
+    try {
+      const files = await walkDir(dh, (seen, n) => setDwgBusy(`${dh.name} 폴더 훑는 중… ${seen.toLocaleString('ko-KR')}개 (PDF ${n.toLocaleString('ko-KR')})`))
+      const idx = indexDwg(files, dh.name)
+      if (!idx.count) { toastError('PDF 도면이 없는 폴더입니다'); return }
+      setDwg(idx); setDwgLast(dh.name)
+      try { await saveHandle('dwg', dh) } catch { /* 기억 못 해도 이번엔 쓸 수 있다 */ }
+      if (!quiet) toastSuccess(`도면 폴더 ${dh.name} — PDF ${idx.count.toLocaleString('ko-KR')}개`)
+    } catch (e) { toastError('도면 폴더를 읽지 못했습니다: ' + (e?.message || e)) }
+    finally { setDwgBusy('') }
+  }
+  async function chooseDwg() {
+    try { await readDwg(await window.showDirectoryPicker({ id: 'pm-fai-dwg', mode: 'read' })) }
+    catch (e) { if (e?.name !== 'AbortError') toastError('폴더를 열지 못했습니다: ' + (e?.message || e)) }
+  }
+  async function relinkDwg() {
+    try {
+      const h = await loadHandle('dwg')
+      if (!h) return chooseDwg()
+      let p = await h.queryPermission({ mode: 'read' })
+      if (p !== 'granted') p = await h.requestPermission({ mode: 'read' })
+      if (p !== 'granted') { toastError('폴더 읽기 권한이 없습니다'); return }
+      await readDwg(h)
+    } catch { toastError('지난 폴더를 열지 못했습니다 — 다시 골라주세요') }
+  }
+
   // 품목별 PPT — 저장 위치를 먼저 고르고(버튼 누른 순간에만 창을 띄울 수 있다) 만든 뒤 그 자리에 쓴다
   async function makePpt() {
     if (ppt) return
@@ -226,7 +282,7 @@ export default function FaiNavigator() {
     setPpt({ i: 0, n: out.length, txt: '준비 중' })
     try {
       const res = await buildFaiPpt({
-        rep, rows: out,
+        rep, rows: out, dwgIdx: dwg,
         noOf: (r, i) => (opt.mode === 'uniq' ? i + 1 : r.no),
         onProgress: (i, n, txt) => setPpt({ i, n, txt }),
         askStop: async (i) => {
@@ -237,7 +293,8 @@ export default function FaiNavigator() {
       })
       const saved = await saveBytes(target, res.bytes, name)
       toastSuccess((res.stopped ? `중지 — ${res.done}건만 저장 · ` : '') + `PPT ${res.slides}장 저장 (${(res.bytes.length / 1048576).toFixed(1)}MB) — ${saved}`
-        + (res.noRec ? ` · 발주 기록 없는 품목 ${res.noRec}건` : ''))
+        + (res.noRec ? ` · 발주 기록 없는 품목 ${res.noRec}건` : '')
+        + (res.dwg.n ? ` · 도면 ${res.dwg.ok}/${res.dwg.n}장` + (dwg ? '' : ' (도면 폴더 미연결)') : ''))
     } catch (e) {
       if (e && e.cancel) toastSuccess('PPT 만들기를 멈췄습니다 (저장 안 함)')
       else toastError('PPT 만들기 실패: ' + (e?.message || e))
@@ -299,6 +356,36 @@ export default function FaiNavigator() {
           onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = '' }} />
       </div>
 
+      {rep && (
+        <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-3 flex-wrap">
+          <div className="text-xl">📐</div>
+          <div className="flex-1 min-w-[240px]">
+            <p className="text-sm font-bold text-slate-700">② 도면 폴더 <span className="text-[11px] font-semibold text-slate-400">— PPT 의 16·17번대 도면 칸 (선택)</span></p>
+            {dwgBusy ? <p className="text-xs text-indigo-600 mt-0.5">⏳ {dwgBusy}</p>
+              : dwg ? (
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  ✔ {dwg.name} — PDF {dwg.count.toLocaleString('ko-KR')}개 · 16·17번대 {dwgStat.n}개 중 <b>{dwgStat.ok}개 연결</b>
+                  {dwgStat.bad > 0 && <span className="text-rose-600"> · ⚠ 리비전 불일치 {dwgStat.bad}</span>}
+                  {dwgStat.miss > 0 && <span className="text-amber-600"> · 폴더에 없음 {dwgStat.miss}</span>}
+                </p>
+              ) : (
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {canDir ? 'Windchill 에서 받은 도면 PDF 폴더를 고르세요. 파일은 서버에 올라가지 않고 이 PC 에서만 읽습니다.' : '폴더 연결은 크롬·엣지에서만 됩니다.'}
+                  {dwgStat.n > 0 && ` (이 리포트의 16·17번대 ${dwgStat.n}개)`}
+                </p>
+              )}
+          </div>
+          {canDir && dwgLast && !dwg && (
+            <button onClick={relinkDwg} disabled={!!dwgBusy}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">↻ 지난 폴더 다시 연결: {dwgLast}</button>
+          )}
+          {canDir && (
+            <button onClick={chooseDwg} disabled={!!dwgBusy}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{dwg ? '다른 폴더' : '폴더 선택'}</button>
+          )}
+        </div>
+      )}
+
       {!rep ? null : (
         <>
           {/* 옵션 */}
@@ -329,10 +416,11 @@ export default function FaiNavigator() {
               발주 이력을 못 불러왔습니다 — {buyErr.message}. 판정이 모두 「이력 없음」으로 보일 수 있습니다.
             </div>
           )}
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
-            ⚠ 지금은 <b>실제 사용 제조사 = 기준코드 DB 의 제조사</b>입니다. 발주 줄에 제조사 칸이 생기면 발주마다 실제 제조사로 바뀝니다.
-            같은 품목을 다른 제조사로 산 적이 있으면 아직 구분되지 않습니다.
-          </div>
+          {itemFallback > 0 && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-800">
+              ⚠ 발주 {itemFallback.toLocaleString('ko-KR')}줄은 발주 줄에 제조사가 비어 있어 <b>기준코드 DB 의 제조사</b>로 대신 판정했습니다.
+            </div>
+          )}
 
           {/* 지표 */}
           <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
@@ -385,7 +473,7 @@ export default function FaiNavigator() {
               📑 엑셀 {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
             </button>
             <button onClick={makePpt} disabled={!view.length || !!ppt}
-              title="저장할 곳을 고른 뒤 품목마다 한 장씩 만듭니다 (① Part Report 발췌 · ② 구매 명세표 — 단가 없음)"
+              title="저장할 곳을 고른 뒤 품목마다 한 장씩 만듭니다 (Part Report 발췌 · 16·17번대 도면 · 구매전표 — 금액 칸 없음)"
               className="px-3 py-1.5 font-bold rounded-lg border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40">
               📊 PPT {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
             </button>
