@@ -8,6 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useRowSelect } from '../../hooks/useRowSelect'
+import { buildFaiPpt, pickSaveTarget, saveBytes, pptName } from '../../lib/fai/pptBuild'
 import {
   parseReport, buildRows, buildBuyIndex, normAx, V, CLS_LABEL, CLS_BADGE, qtyText, parentList,
 } from '../../lib/fai/partReport'
@@ -19,9 +20,11 @@ import {
 //
 //   ⚠ 1단계 한계 — 「실제 사용 제조사」는 아직 기준코드 DB(items)의 제조사를 쓴다.
 //     발주 줄에 제조사 칸이 생기면(다음 단계) 그 값으로 바뀐다.
-//   ⚠ 증빙 폴더·도면·PPT·판정 수정 저장은 다음 단계에서 옮긴다.
+//   ⚠ 증빙 폴더·도면·판정 수정 저장은 다음 단계에서 옮긴다.
+//   2단계 — 품목별 PPT (저장 위치 선택). 증빙은 포털 발주·입고 기록으로 그린 구매 명세표(단가 없음).
+//     PPT 라이브러리는 버튼을 누를 때만 불러온다 (lib/fai/pptBuild.js).
 
-const APP_VER = 'v3.2 (포털 1단계)'
+const APP_VER = 'v3.2 (포털 2단계)'
 const LS_OPT = 'pm_fai_opt'
 const LS_REP = 'pm_fai_rep'
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }
@@ -65,7 +68,7 @@ async function fetchBuyRecs(pns) {
     .map((p) => {
       const it = byId.get(p.item_id) || {}
       return {
-        ax: normAx(it.std_code), mfr: it.manufacturer || '', mpn: it.manufacturer_code || '',
+        poId: p.id, ax: normAx(it.std_code), mfr: it.manufacturer || '', mpn: it.manufacturer_code || '',
         vendor: p.vendors?.name || '', date: p.order_date || '', qty: p.qty_ordered, doc: p.po_number || '',
       }
     })
@@ -113,6 +116,8 @@ export default function FaiNavigator() {
   const [drag, setDrag] = useState(false)
   const fileRef = useRef(null)
   const { rowProps } = useRowSelect(useCallback((u) => setSel(u), []))
+  const [ppt, setPpt] = useState(null) // { i, n, txt } 만드는 중
+  const stopRef = useRef(false)
 
   function loadFile(f) {
     if (!f) return
@@ -206,6 +211,39 @@ export default function FaiNavigator() {
         }),
       })
     } catch (e) { toastError('엑셀 내보내기 실패: ' + e.message) }
+  }
+
+  // 품목별 PPT — 저장 위치를 먼저 고르고(버튼 누른 순간에만 창을 띄울 수 있다) 만든 뒤 그 자리에 쓴다
+  async function makePpt() {
+    if (ppt) return
+    const out = selRows.length ? selRows : view
+    if (!out.length) { toastError('내보낼 품목이 없습니다'); return }
+    if (out.length > 150 && !window.confirm(`${out.length}건을 만듭니다. 몇 분 걸릴 수 있습니다. 계속할까요?\n(일부만 필요하면 표에서 골라서 다시 누르세요)`)) return
+    const name = pptName(rep)
+    const target = await pickSaveTarget(name)
+    if (!target) return // 저장 창에서 취소
+    stopRef.current = false
+    setPpt({ i: 0, n: out.length, txt: '준비 중' })
+    try {
+      const res = await buildFaiPpt({
+        rep, rows: out,
+        noOf: (r, i) => (opt.mode === 'uniq' ? i + 1 : r.no),
+        onProgress: (i, n, txt) => setPpt({ i, n, txt }),
+        askStop: async (i) => {
+          if (!stopRef.current) return null
+          stopRef.current = false
+          return i && window.confirm(`${i}건까지 만들었습니다.\n\n[확인] 지금까지 만든 ${i}건만 PPT로 저장\n[취소] 저장하지 않고 멈춤`) ? 'save' : 'cancel'
+        },
+      })
+      const saved = await saveBytes(target, res.bytes, name)
+      toastSuccess((res.stopped ? `중지 — ${res.done}건만 저장 · ` : '') + `PPT ${res.slides}장 저장 (${(res.bytes.length / 1048576).toFixed(1)}MB) — ${saved}`
+        + (res.noRec ? ` · 발주 기록 없는 품목 ${res.noRec}건` : ''))
+    } catch (e) {
+      if (e && e.cancel) toastSuccess('PPT 만들기를 멈췄습니다 (저장 안 함)')
+      else toastError('PPT 만들기 실패: ' + (e?.message || e))
+    } finally {
+      setPpt(null)
+    }
   }
 
   const kpis = [
@@ -346,7 +384,24 @@ export default function FaiNavigator() {
               className="ml-auto px-3 py-1.5 font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
               📑 엑셀 {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
             </button>
+            <button onClick={makePpt} disabled={!view.length || !!ppt}
+              title="저장할 곳을 고른 뒤 품목마다 한 장씩 만듭니다 (① Part Report 발췌 · ② 구매 명세표 — 단가 없음)"
+              className="px-3 py-1.5 font-bold rounded-lg border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40">
+              📊 PPT {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
+            </button>
           </div>
+
+          {ppt && (
+            <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 flex items-center gap-3 text-xs">
+              <span className="font-bold text-orange-700 whitespace-nowrap">PPT 만드는 중</span>
+              <div className="flex-1 h-2 rounded-full bg-orange-100 overflow-hidden">
+                <div className="h-full bg-orange-400 transition-all" style={{ width: `${ppt.n ? Math.round((ppt.i / ppt.n) * 100) : 0}%` }} />
+              </div>
+              <span className="tabular-nums text-orange-700 whitespace-nowrap">{ppt.i.toLocaleString('ko-KR')} / {ppt.n.toLocaleString('ko-KR')} · {ppt.txt}</span>
+              <button onClick={() => { stopRef.current = true; setPpt((p) => p && { ...p, txt: '멈추는 중…' }) }}
+                className="px-2.5 py-1 rounded-lg border border-orange-300 bg-white text-orange-700 font-bold hover:bg-orange-100">멈추기</button>
+            </div>
+          )}
 
           {/* 표 */}
           <ResizableTable cols={COLS} storageKey="fai-navigator-cols" sortKey={sort.k} sortDir={sort.d} onSort={onSort}>
