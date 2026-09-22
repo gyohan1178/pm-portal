@@ -6,8 +6,9 @@ import { attachStock } from '../../lib/stockLookup'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
+import { todayISO } from '../../lib/utils'
 
-const today = () => new Date().toISOString().split('T')[0]
+const today = () => todayISO()
 
 // 호기별 키팅은 AXCELIS 만 하지만, 다품목 출고는 고객사마다 쓴다.
 //   CSK 는 여러 프로젝트 자재를 한 번에 빼기 때문이다.

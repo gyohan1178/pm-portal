@@ -14,6 +14,7 @@ import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
+import { todayISO } from '../../lib/utils'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -210,7 +211,7 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
       customer_id: customerId, code,
       name: String(selfRow?.['Description'] || selfRow?.['품명'] || lines[0]['상위품명'] || lines[0]['Parent Desc'] || '').trim(),
       rev: String((selfRow?.['REV'] ?? lines[0]['REV']) || 'A').trim(),
-      status: '진행중', start_date: new Date().toISOString().split('T')[0],
+      status: '진행중', start_date: todayISO(),
     }
   })
   // upsert는 한 번에 (onConflict customer_id,code)
@@ -343,7 +344,7 @@ async function saveBOM({ rows, customerId, projectCode, projectName, rev }) {
   // 프로젝트 생성/업데이트
   const { data: proj, error: projErr } = await supabase
     .from('projects')
-    .upsert({ customer_id: customerId, code: projectCode, name: projectName, rev: rev || 'A', status: '진행중', start_date: new Date().toISOString().split('T')[0] },
+    .upsert({ customer_id: customerId, code: projectCode, name: projectName, rev: rev || 'A', status: '진행중', start_date: todayISO() },
       { onConflict: 'customer_id,code', ignoreDuplicates: false })
     .select('id').single()
   if (projErr) throw projErr

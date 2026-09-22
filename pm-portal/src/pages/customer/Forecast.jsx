@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
-import { quarterOf, fmt1 } from '../../lib/utils'
+import { quarterOf, fmt1, todayISO } from '../../lib/utils'
 import {useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -188,7 +188,7 @@ export default function Forecast() {
   const saveMut = useMutation({
     mutationFn: async () => {
       const batch_id = crypto.randomUUID()
-      const received = new Date().toISOString().split('T')[0]
+      const received = todayISO()
       // std_code → item_id 매칭
       const { data: prevB } = await supabase.from('forecasts').select('batch_id').eq('customer_id', cs.id).limit(1)
       const hadPrev = (prevB || []).length > 0

@@ -4,6 +4,7 @@ import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
+import { todayISO } from '../../lib/utils'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const money = (v, cur) =>
@@ -12,7 +13,6 @@ const money = (v, cur) =>
     : num(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const won = (v) => Math.round(num(v)).toLocaleString('ko-KR')
 const pct = (v) => (num(v) * 100).toFixed(1) + '%'
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 const AX = (s) => {
   const t = String(s ?? '').trim().replace(/^AX-/i, '')

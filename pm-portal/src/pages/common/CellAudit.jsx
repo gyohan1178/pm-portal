@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { todayISO } from '../../lib/utils'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -52,7 +53,7 @@ export default function CellAudit() {
       const { data } = await supabase.from('pm_stock_audit')
         .select('item_id,counted_qty,diff,applied,memo')
         .eq('location', location)
-        .eq('audit_date', new Date().toISOString().slice(0, 10))
+        .eq('audit_date', todayISO())
       return data || []
     },
   })

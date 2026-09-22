@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx'
+import { todayISO } from './utils'
 
 // 표준 엑셀 추출 — 페이지마다 제각각인 XLSX 코드를 이 함수로 통일.
 // rows: 객체 배열, filename: 확장자 제외, sheetName: 시트명
@@ -14,7 +15,7 @@ export function exportXlsx(rows, filename, sheetName = 'Sheet1') {
     })
   }
   XLSX.utils.book_append_sheet(wb, ws, sheetName)
-  const date = new Date().toISOString().split('T')[0]
+  const date = todayISO()
   XLSX.writeFile(wb, `${filename}_${date}.xlsx`)
 }
 
@@ -24,6 +25,6 @@ export function exportXlsxMulti(sheets, filename) {
   sheets.forEach(({ name, rows }) => {
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows || []), name)
   })
-  const date = new Date().toISOString().split('T')[0]
+  const date = todayISO()
   XLSX.writeFile(wb, `${filename}_${date}.xlsx`)
 }

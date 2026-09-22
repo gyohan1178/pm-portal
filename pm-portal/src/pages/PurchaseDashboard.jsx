@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError } from '../lib/toast'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
+import { todayISO } from '../lib/utils'
 
 const CS_COLORS = {
   '에드워드': { light:'bg-rose-50',    border:'border-rose-200',    text:'text-rose-700',    hex:'#f43f5e' },
@@ -100,7 +101,7 @@ async function downloadReport(d, year) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `매입현황_${year}년${new Date().getMonth() + 1}월_${new Date().toISOString().slice(0, 10)}.html`
+  a.download = `매입현황_${year}년${new Date().getMonth() + 1}월_${todayISO()}.html`
   a.click()
   URL.revokeObjectURL(url)
 }

@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
+import { todayISO, ymdKST } from '../../lib/utils'
 
 // production 테이블: ax_pdbox 이관 + customer_code. 날짜는 'YYYY-MM-DD' text.
 async function fetchProduction() {
@@ -33,8 +34,8 @@ function urgency(n) {
 export default function ProductionDashboard() {
   const { data: rows = [], isLoading } = useQuery({ queryKey: ['production'], queryFn: fetchProduction })
 
-  const today = new Date().toISOString().split('T')[0]
-  const in7 = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0]
+  const today = todayISO()
+  const in7 = ymdKST(new Date(Date.now() + 7 * 86400000))
 
   const delayed = rows.filter(r => r.req_date && r.req_date < today)
   const urgent = rows.filter(r => r.req_date && r.req_date >= today && r.req_date <= in7)

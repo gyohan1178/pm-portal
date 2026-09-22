@@ -4,6 +4,7 @@
 //   테두리·천 단위 쉼표·열 너비·인쇄 설정까지 넣어 열자마자 쓸 수 있게 한다.
 
 import ExcelJS from 'exceljs'
+import { todayISO } from './utils'
 
 const F = 8                                   // 글자 크기
 const MONEY = '#,##0'
@@ -154,7 +155,7 @@ export async function downloadProposalExcel(d) {
     { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
   const a = document.createElement('a')
   a.href = url
-  a.download = `구매품의서_${new Date().toISOString().split('T')[0]}.xlsx`
+  a.download = `구매품의서_${todayISO()}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
   void bodyStart

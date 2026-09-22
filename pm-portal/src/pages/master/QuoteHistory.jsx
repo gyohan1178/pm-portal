@@ -7,6 +7,7 @@ import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
+import { todayISO } from '../../lib/utils'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const won = (v) => Math.round(num(v)).toLocaleString('ko-KR')
@@ -171,7 +172,7 @@ export default function QuoteHistory() {
   // 견적서에서 그 품번을 담으면 pm_labor_latest 가 이 값을 자동으로 불러온다.
   // 같은 날 다시 저장하면 덮어쓴다(upsert). 0 을 넣으면 오늘 기록을 지운다.
   async function saveLabor(code, val) {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayISO()
     const labor = Number(val)
 
     if (val === '' || labor === 0) {
@@ -240,7 +241,7 @@ export default function QuoteHistory() {
     if (!rows.length) { toastError('내보낼 데이터가 없습니다'); return }
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), isSales ? '매출견적이력' : '매입견적이력')
-    XLSX.writeFile(wb, `견적이력_${isSales ? '매출' : '매입'}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, `견적이력_${isSales ? '매출' : '매입'}_${todayISO()}.xlsx`)
   }
 
   // 내보낼 행 만들기 (엑셀·CSV 공용)
@@ -290,7 +291,7 @@ export default function QuoteHistory() {
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `견적이력_${isSales ? '매출' : '매입'}_${new Date().toISOString().slice(0, 10)}.csv`
+    a.download = `견적이력_${isSales ? '매출' : '매입'}_${todayISO()}.csv`
     a.click()
     setTimeout(() => URL.revokeObjectURL(url), 1000)
     toastSuccess(`CSV ${rows.length}행 내보냄`)

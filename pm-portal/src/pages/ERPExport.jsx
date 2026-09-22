@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
 import * as XLSX from 'xlsx'
+import { todayISO } from '../lib/utils'
 
 const CUSTOMERS = [
   { id: 'ax', name: 'AXCELIS' }, { id: 'ed', name: 'Edwards' },
@@ -53,9 +54,12 @@ export default function ERPExport() {
           '상태': p.status,
         }))
       } else if (selType === 'stock') {
-        const { data: inv } = await supabase
+        // ⚠ 재고가 2,400건이 넘는다. 한 번에 받으면 1,000건에서 잘려 뒤쪽이 통째로 빠졌다.
+        //   item_id 가 겹치지 않는 값이라 이것으로 줄을 세워 끝까지 받는다.
+        const inv = await fetchAll(() => supabase
           .from('inventory')
           .select('*, items(std_code, name, type, unit, safety_stock)')
+          .order('item_id'))
         data = (inv || []).map(r => ({
           '기준코드': r.items?.std_code,
           '품명': r.items?.name,
@@ -97,7 +101,7 @@ export default function ERPExport() {
       if (!data.length) { toastError('추출할 데이터가 없습니다'); return }
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), EXPORT_TYPES.find(t => t.key === selType)?.label)
-      XLSX.writeFile(wb, `ERP_${selType}_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `ERP_${selType}_${todayISO()}.xlsx`)
     } catch (err) {
       toastError('추출 오류: ' + err.message)
     } finally {

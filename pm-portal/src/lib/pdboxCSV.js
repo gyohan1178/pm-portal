@@ -1,3 +1,4 @@
+import { todayISO } from './utils'
 // ─────────────────────────────────────────────────────────────
 // PD BOX CSV 입출력 — 명세 5·6 (AXCELIS v30.6 pbExportCSV / pbImportCSV)
 // 미불출 다중행 전개/병합, 품번+호기 upsert
@@ -49,7 +50,7 @@ export function exportPDBoxCSV(rows, csCode) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = `PDBOX_${new Date().toISOString().slice(0, 10)}.csv`
+  a.download = `PDBOX_${todayISO()}.csv`
   a.click()
   URL.revokeObjectURL(url)
 }

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { MAIN_PNS } from './mainPns'
 import { isMainRow } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
+import { todayISO } from '../../lib/utils'
 
 // 🖥 AXCELIS PD 생산 전광판 — 밀도형
 //  · 전장 완료예정일 기준 D-day (납품일 − 품질MD)
@@ -34,7 +35,7 @@ function stepLabel(r) {
 }
 
 async function fetchBoard() {
-  const today = new Date().toISOString().slice(0, 10)
+  const today = todayISO()
   const [{ data: prod }, { data: items }, { count: shippedToday }] = await Promise.all([
     supabase.from('production')
       .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts')
@@ -88,7 +89,7 @@ export default function ProductionBoard() {
   })
 
   const view = useMemo(() => {
-    const today = new Date().toISOString().slice(0, 10)
+    const today = todayISO()
     const main = rows.filter(r => isMainRow(r.pn, r.customer_code) && r.req_date)
     const enriched = main.map(r => {
       const m = meta[r.pn] || {}

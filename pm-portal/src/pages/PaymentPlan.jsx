@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { ResizableTable } from '../components/ResizableTable'
+import { todayISO } from '../lib/utils'
 
 // 표 열 너비 — 마우스로 조정 가능하며 브라우저에 저장된다
 const COLS = [
@@ -22,7 +23,6 @@ const COLS = [
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 const eok = (v) => (Number(v) / 100000000).toFixed(2)
 const num = (v) => Number(v) || 0
-const todayISO = () => new Date().toISOString().slice(0, 10)
 
 // 발주는 한 번, 결제는 여러 달에 나눠 하는 건을 관리한다.
 //

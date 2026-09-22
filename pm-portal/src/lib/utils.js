@@ -62,8 +62,14 @@ export const catOf = item => {
 // 'YYYY-MM' → 'YYYY-Qn'
 export const quarterOf = m => { const [y, mm] = String(m).split('-'); return `${y}-Q${Math.floor(((+mm || 1) - 1) / 3) + 1}` }
 
-// 오늘 날짜 YYYY-MM-DD
-export const todayISO = () => new Date().toISOString().split('T')[0]
+// 한국 날짜 'YYYY-MM-DD'.
+//   ⚠ toISOString() 은 세계표준시(UTC)라 한국 오전 9시 전에는 「어제」가 나온다.
+//     입고일 기본값이 전날로 찍히던 원인이다. 한국은 서머타임이 없어 +9시간으로 고정한다.
+//   계산한 날짜(Date)를 넘겨도 된다 — 그 순간이 한국에서 며칠인지 돌려준다.
+export const ymdKST = (d = new Date()) => new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 10)
+
+// 오늘 날짜 YYYY-MM-DD (한국 기준)
+export const todayISO = () => ymdKST()
 
 // 소수 1자리 (정수는 정수로)
 export const fmt1 = n => { const v = Math.round(Number(n) * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1) }

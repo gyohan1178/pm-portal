@@ -7,9 +7,10 @@ import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
 import { ResizableTable } from '../../components/ResizableTable'
+import { todayISO, ymdKST } from '../../lib/utils'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => todayISO()
 const dday = (d) => d ? Math.ceil((new Date(d) - new Date(new Date().toDateString())) / 86400000) : null
 
 const ST = {
@@ -516,7 +517,7 @@ export default function MaterialRequest() {
                      { wch: 10 }, { wch: 9 }, { wch: 17 }, { wch: 9 }, { wch: 20 }, { wch: 11 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '자재요청이력')
-      XLSX.writeFile(wb, `자재요청이력_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      XLSX.writeFile(wb, `자재요청이력_${todayISO()}.xlsx`)
       toastSuccess(`${n(rows.length)}건 내보냄`)
     } catch (e) {
       toastError('내보내기 실패: ' + e.message)
@@ -1876,7 +1877,7 @@ export default function MaterialRequest() {
                   <button key={l}
                     onClick={() => {
                       const x = new Date(); x.setDate(x.getDate() + d)
-                      setReadyForm(v => ({ ...v, date: x.toISOString().slice(0, 10) }))
+                      setReadyForm(v => ({ ...v, date: ymdKST(x) }))
                     }}
                     className="px-2 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
                     {l}

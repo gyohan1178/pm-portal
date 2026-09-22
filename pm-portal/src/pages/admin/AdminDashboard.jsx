@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { todayISO } from '../../lib/utils'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
 const PRIORITY = ['높음', '보통', '낮음']
@@ -18,7 +19,7 @@ const PR_CLS = {
   '낮음': 'bg-slate-50 text-slate-400 border-slate-200',
 }
 
-const today = () => new Date().toISOString().split('T')[0]
+const today = () => todayISO()
 const dday = (d) => (d ? Math.round((new Date(d) - new Date(today())) / 86400000) : null)
 
 function ddayCls(n) {

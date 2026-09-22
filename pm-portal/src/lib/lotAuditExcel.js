@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import { todayISO } from './utils'
 
 // 로트 실사표.
 //
@@ -50,7 +51,7 @@ export async function downloadLotAudit({ rows, outs = [], fileName }) {
   const wb = new ExcelJS.Workbook()
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()
-  const ymd = new Date().toISOString().slice(0, 10)
+  const ymd = todayISO()
 
   // 품목 단위로 묶는다 — 실사는 품목을 찾아가서 하는 일이다
   const byItem = new Map()

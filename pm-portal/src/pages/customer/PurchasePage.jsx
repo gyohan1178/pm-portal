@@ -1,7 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { useCustomer } from '../../hooks/useCustomers'
-import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
+import { PROC_CATS, catOf, todayISO, ymdKST } from '../../lib/utils'
 import { useParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -16,10 +16,12 @@ import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import { printForeignPO } from '../../lib/foreignPO'
+import { genPoNumber } from '../../lib/poNumber'
+import { must } from '../../lib/db'
 
 
 function monthAgoStr() {
-  const d = new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().split('T')[0]
+  const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
 async function fetchVendors() {
@@ -29,7 +31,7 @@ async function fetchVendors() {
 }
 async function fetchPurchases(csId) {
   if (!csId) return []
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
   const data = await fetchAll(() => supabase
     .from('purchase_orders')
     .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code,unit), vendors(name,ecount_code,payment_terms), projects(code,name)')
@@ -59,17 +61,6 @@ async function fetchPurchaseHistory(csId, from, to) {
   }))
 }
 
-async function genPoNumber(dateStr) {
-  // 발주일 기준으로 번호를 만든다 (과거 날짜로 등록해도 그 날짜 번호가 나오도록)
-  const d = dateStr ? new Date(dateStr) : new Date()
-  const yy = String(d.getFullYear()).slice(2)
-  const mm = String(d.getMonth()+1).padStart(2,'0')
-  const dd = String(d.getDate()).padStart(2,'0')
-  const prefix = `JS-${yy}${mm}${dd}-`
-  const { data } = await supabase.from('purchase_orders').select('po_number').like('po_number',`${prefix}%`)
-  const nums = (data||[]).map(r=>parseInt(r.po_number?.replace(prefix,''))||0)
-  return `${prefix}${String((nums.length?Math.max(...nums):0)+1).padStart(2,'0')}`
-}
 
 // 이카운트 담당자 코드 — 발주서를 내려받은 사람으로 찍힌다.
 //   여기 없는 계정은 기본값(김교한)을 쓴다.
@@ -229,8 +220,8 @@ export default function PurchasePage() {
   const [bomChecked, setBomChecked] = useState({})
   // 현황
   const [hFrom, setHFrom] = useState(monthAgoStr())
-  const [hTo, setHTo] = useState(new Date().toISOString().split('T')[0])
-  const [hQuery, setHQuery] = useState({ from:monthAgoStr(), to:new Date().toISOString().split('T')[0] })
+  const [hTo, setHTo] = useState(todayISO())
+  const [hQuery, setHQuery] = useState({ from:monthAgoStr(), to:todayISO() })
   const [hItem, setHItem] = useState('')
   const [proposalMeta, setProposalMeta] = useState({})  // po.id -> {pay, note}
   const [overview, setOverview] = useState('')
@@ -293,11 +284,12 @@ export default function PurchasePage() {
         // 납기가 다르면 다른 발주서이므로 새 번호를 받는다.
         let q = supabase.from('purchase_orders')
           .select('po_number')
-          .eq('vendor_id', selVendor || null)
           .eq('order_date', data.order_date)
           .not('po_number', 'is', null)
+        // ⚠ 업체가 비었을 때 eq(null) 은 오류가 난다(null 은 is 로 비교). 전에는 그 오류를 삼켜 늘 새 번호가 나왔다.
+        q = selVendor ? q.eq('vendor_id', selVendor) : q.is('vendor_id', null)
         q = data.promise_date ? q.eq('promise_date', data.promise_date) : q.is('promise_date', null)
-        const { data: same } = await q.limit(1)
+        const same = must(await q.limit(1), '같은 발주서 찾기')
         poNum = same?.[0]?.po_number || await genPoNumber(data.order_date)
       }
       const payload = { vendor_id:selVendor||null, po_number:poNum, type:data.type, qty_ordered:Number(data.qty_ordered), order_date:data.order_date||null, promise_date:data.promise_date||null, unit_price:data.unit_price?Number(data.unit_price):null, memo:data.memo||null,
@@ -615,7 +607,7 @@ export default function PurchasePage() {
     return [p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code]
       .some(x => (x || '').toLowerCase().includes(q))
   }), [purchases, typeTab, filterOrderDate, q, dueFilter, dueFrom, dueTo])
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
   const sortVal = (p,k)=>({
     po_number:p.po_number||'', order_date:p.order_date||'', std_code:p.items?.std_code||'',
     mfg:p.items?.manufacturer||'', type:catOf(p.items), parent:p.projects?.code||'',
@@ -822,7 +814,7 @@ export default function PurchasePage() {
             📥 현황 엑셀
           </button>
           <div className="flex-1"/>
-          <button onClick={()=>{setForm({...EMPTY,order_date:new Date().toISOString().split('T')[0]});setEditId(null);setSelItem(null);setSelVendor('');setVendorSearch('');setItemSearch('');setLines([]);setShowBom(false);setBomProject(null);setShowForm(!showForm)}}
+          <button onClick={()=>{setForm({...EMPTY,order_date:todayISO()});setEditId(null);setSelItem(null);setSelVendor('');setVendorSearch('');setItemSearch('');setLines([]);setShowBom(false);setBomProject(null);setShowForm(!showForm)}}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
             ➕ 구매발주 추가
           </button>

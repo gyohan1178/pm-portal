@@ -8,7 +8,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, fetchAllRows } from '../../lib/supabase'
 import { logActivity } from '../../lib/activityLog'
-import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf } from '../../lib/utils'
+import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
 
 const CUSTOMERS = [
   { code: 'ax', name: 'AXCELIS' }, { code: 'ed', name: 'Edwards' },
@@ -331,7 +331,7 @@ export default function ShortageForecast() {
       ws['!cols'] = [{ wch: 14 }, { wch: 28 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 11 }, { wch: 10 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '실사')
-      XLSX.writeFile(wb, `소요기준_실사양식_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `소요기준_실사양식_${todayISO()}.xlsx`)
     } catch (e) {
       toastError('엑셀 생성 오류: ' + (e?.message || e))
     }
@@ -364,7 +364,7 @@ export default function ShortageForecast() {
       XLSX.utils.book_append_sheet(wb, ws1, '선발주제안_ASSY')
       const ws2 = XLSX.utils.json_to_sheet(s2); ws2['!cols'] = [{ wch: 14 }, { wch: 26 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 7 }, { wch: 9 }, { wch: 11 }, { wch: 9 }, { wch: 9 }, { wch: 24 }]
       XLSX.utils.book_append_sheet(wb, ws2, '선택자재')
-      XLSX.writeFile(wb, `선발주제안_ASSY_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `선발주제안_ASSY_${todayISO()}.xlsx`)
     } catch (e) { toastError('엑셀 생성 오류: ' + (e?.message || e)) }
   }
 
@@ -373,7 +373,7 @@ export default function ShortageForecast() {
       if (!filtered.length) { toastError('내보낼 데이터가 없습니다'); return }
       const periodLabel = period === 'quarter' ? '분기' : '월'
       const fixed = ['기준코드', '품명', '세부구분', '제조사', '제조사품번', '구매처', '현재고', 'LT(주)', '첫부족월']
-      const today = new Date().toISOString().split('T')[0]
+      const today = todayISO()
 
       // 3분할(소요·입고·과부족): 품목 1행, 월마다 3칸, 월 병합헤더 + 과부족 음수 빨강
       if (metric === 'all') {

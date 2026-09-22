@@ -10,6 +10,7 @@ import CustomerPOUpload from './CustomerPOUpload'
 import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
+import { todayISO } from '../../lib/utils'
 
 // 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
 const CARD_CLS = {
@@ -22,7 +23,7 @@ const CARD_CLS = {
 
 async function fetchCustomerPOs(csId, showAll) {
   if (!csId) return []
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
   const make = () => {
     let qb = supabase
       .from('purchase_orders')
@@ -208,7 +209,7 @@ export default function CustomerPO() {
         sheetName: '고객사PO',
         title: `고객사 PO 목록${revTab ? ' — 도면 요청 필요' : chgTab ? ' — 변경 이력' : ''}`,
         meta: cond,
-        fileName: `고객사PO${tag}_${new Date().toISOString().slice(0, 10)}.xlsx`,
+        fileName: `고객사PO${tag}_${todayISO()}.xlsx`,
       })
     } catch (e) {
       toastError('내보내기 실패: ' + e.message)
@@ -373,7 +374,7 @@ export default function CustomerPO() {
     ]
   }, [filtered, changedPOs, revMap])
 
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
 
   if (error) return <div className="text-center py-12 text-red-500 text-sm">오류: {error.message}</div>

@@ -4,7 +4,7 @@ import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
-import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf } from '../../lib/utils'
+import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
 import { logActivity } from '../../lib/activityLog'
 import * as XLSX from 'xlsx'
 
@@ -23,7 +23,7 @@ export async function fetchMonthly(csId) {
   return rows
 }
 
-const TODAY = new Date(new Date().toISOString().split('T')[0])
+const TODAY = new Date(todayISO())
 
 // 긴급도 = 발주 데드라인(첫 부족월 - LT) 기준
 function tierOf(firstShort, ltWeeks) {
@@ -251,7 +251,7 @@ export default function ShortageMonthly({ csId }) {
       ws['!cols'] = [{ wch: 7 }, { wch: 8 }, { wch: 15 }, { wch: 16 }, { wch: 18 }, { wch: 30 }, { wch: 14 }, { wch: 6 }, { wch: 7 }, { wch: 8 }, { wch: 8 }, ...months.map(() => ({ wch: 7 }))]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '쇼티지통합')
-      XLSX.writeFile(wb, `쇼티지통합_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `쇼티지통합_${todayISO()}.xlsx`)
     } catch (e) { toastError('엑셀 생성 오류: ' + (e?.message || e)) }
   }
 

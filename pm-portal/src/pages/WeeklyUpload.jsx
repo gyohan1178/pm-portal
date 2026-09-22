@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import EcountUpload from './EcountUpload'
 import * as XLSX from 'xlsx'
+import { todayISO } from '../lib/utils'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -75,7 +76,7 @@ function parseExcel(file, weekFrom, weekTo, submitter) {
           note:       hi('비고'),
         }
 
-        const today = new Date().toISOString().split('T')[0]
+        const today = todayISO()
         const parsed = []
         for (let i = headerRow+1; i < rows.length; i++) {
           const r = rows[i]

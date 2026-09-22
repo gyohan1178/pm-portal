@@ -12,10 +12,11 @@ import { logActivity } from '../../lib/activityLog'
 import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
+import { todayISO, ymdKST } from '../../lib/utils'
 
-function todayStr() { return new Date().toISOString().split('T')[0] }
+function todayStr() { return todayISO() }
 function monthAgoStr() {
-  const d = new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().split('T')[0]
+  const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
 async function fetchVendors() {
@@ -101,7 +102,7 @@ async function processDirectInbound({ item_id, qty, unit_price, customer_id, mem
   if (error) throw error
 }
 
-const today = new Date().toISOString().split('T')[0]
+const today = todayISO()
 
 export default function Inbound() {
   const qc = useQueryClient()

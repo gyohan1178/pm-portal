@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import PurchaseDashboard from './PurchaseDashboard'
+import { ymdKST } from '../lib/utils'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -420,7 +421,7 @@ export default function WeeklyReport() {
           </div>
           <div className="text-right">
             <p className="text-xs font-semibold text-slate-300">진선테크 구매자재</p>
-            <p className="text-[11px] text-slate-500 mt-0.5 font-mono">작성일 {today.toISOString().split('T')[0]}</p>
+            <p className="text-[11px] text-slate-500 mt-0.5 font-mono">작성일 {ymdKST(today)}</p>
           </div>
         </div>
 
@@ -429,7 +430,7 @@ export default function WeeklyReport() {
           const thisWeekDays = getWeekDays(week.from)
           const nextWeekDays = getWeekDays(nextWeek.from)
           const calItems = d?.calItems||[]
-          const todayStr = today.toISOString().split('T')[0]
+          const todayStr = ymdKST(today)
 
           function openEdit(item) {
                 setCalModal({ date: item.target_date, type: item.category==='schedule_outbound'?'outbound':'consignment', editId: item.id })

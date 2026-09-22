@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { MAIN_PNS } from '../production/mainPns'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { todayISO } from '../../lib/utils'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const dday = (d) => {
@@ -71,7 +72,7 @@ export default function ScheduleChanges() {
                      { wch: 11 }, { wch: 7 }, { wch: 11 }, { wch: 10 }]
       const wb = XLSX.utils.book_new()
       XLSX.utils.book_append_sheet(wb, ws, '일정변경')
-      XLSX.writeFile(wb, `납품일정변경${pdOnly ? '_PDBOX' : ''}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+      XLSX.writeFile(wb, `납품일정변경${pdOnly ? '_PDBOX' : ''}_${todayISO()}.xlsx`)
       toastSuccess(`${rows.length}건 내보냄`)
     } catch (e) {
       toastError('내보내기 실패: ' + (e?.message || e))

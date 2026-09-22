@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
+import { todayISO } from '../../lib/utils'
 
 // 🗄 데이터 백업 — Supabase 무료플랜용. 주요 테이블을 엑셀(시트별)로 원클릭 다운로드.
 // 주 1회 클릭 → 파일을 회사 NAS/드라이브에 보관하는 루틴 권장.
@@ -54,7 +55,7 @@ export default function Backup() {
       }
     }
 
-    const stamp = new Date().toISOString().slice(0, 10)
+    const stamp = todayISO()
     XLSX.writeFile(wb, `PM포털_백업_${stamp}.xlsx`)
     try { localStorage.setItem('pm_last_backup', new Date().toISOString()) } catch {}
     setDone({ totalRows, failed, stamp })

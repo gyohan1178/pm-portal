@@ -1,9 +1,11 @@
 import { supabase } from '../lib/supabase'
+import { fetchAll } from './paginate'
+import { must } from './db'
+import { ymdKST } from './utils'
 
 // customers code → id 매핑 캐시
 async function getCustomers() {
-  const { data } = await supabase.from('customers').select('id, code, name')
-  return data || []
+  return must(await supabase.from('customers').select('id, code, name'), '고객사 조회') || []
 }
 
 async function fetchShortageFor(customerIds) {
@@ -24,7 +26,7 @@ async function fetchShortageFor(customerIds) {
         supabase.from('forecast_shortage_cache')
           .select('item_id,std_code,name,customer_id,year_month,current_stock,demand,incoming,projected,lt_weeks')
           .eq('customer_id', cid).order('item_id').range(i * 1000, i * 1000 + 999)
-          .then(r => r.data || [])
+          .then(r => must(r, '부족자재 조회') || [])
       )
     }
     const chunks = await Promise.all(reqs)
@@ -34,26 +36,32 @@ async function fetchShortageFor(customerIds) {
 }
 
 async function fetchPOsFor(customerIds) {
-  const perCustomer = await Promise.all(customerIds.map(cid =>
+  // 고객사 PO(파는 쪽). 완료·취소는 뺀다.
+  //   취소 건이 남으면 납품 임박이 부풀려진다 — 고객사 PO 화면과 같은 기준.
+  //   ⚠ 1,000행 제한이 있어 fetchAll 로 끝까지 받는다.
+  const perCustomer = await Promise.all(customerIds.map(cid => fetchAll(() =>
     supabase.from('purchase_orders').select('*')
-      .eq('customer_id', cid).eq('order_type', 'customer_po').neq('status', '완료')
-      .then(r => r.data || [])
-  ))
+      .eq('customer_id', cid).eq('order_type', 'customer_po')
+      .not('status', 'in', '(완료,취소)')
+      .order('id')
+  )))
   return perCustomer.flat()
 }
 
 // 구매발주 — 자재를 사 오는 쪽. 위 fetchPOsFor 는 고객사 PO(파는 쪽)다.
 async function fetchBuyPOsFor(customerIds) {
-  const per = await Promise.all(customerIds.map(cid =>
+  const per = await Promise.all(customerIds.map(cid => fetchAll(() =>
     supabase.from('purchase_orders')
       .select('id,po_number,promise_date,order_date,qty_ordered,qty_received,qty_remaining,unit_price,status,customer_id,item_id,vendor_id, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
       .eq('customer_id', cid)
       .eq('order_type', 'purchase')          // neq 는 null 을 걸러내 못 잡는다
       // 지난 것(지연)과 앞으로 2주(예정)를 함께 가져온다
-      .lte('promise_date', new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10))
-      .neq('status', '취소')
-      .then(r => r.data || [])
-  ))
+      .lte('promise_date', ymdKST(new Date(Date.now() + 14 * 86400000)))
+      // ⚠ 완료까지 받으면 AX 2,936건 · VM 1,127건이라 1,000건에서 잘려
+      //   정작 안 들어온 발주가 계산에서 빠졌다. 완료는 트리거가 다 받았을 때 찍으므로 빼도 된다.
+      .not('status', 'in', '(완료,취소)')
+      .order('id')
+  )))
   return per.flat()
 }
 
@@ -69,7 +77,7 @@ async function fetchProdFor(codes) {
       reqs.push(
         supabase.from('production').select('*')
           .eq('customer_code', code.toUpperCase()).order('id').range(i * 1000, i * 1000 + 999)
-          .then(r => r.data || [])
+          .then(r => must(r, '생산 조회') || [])
       )
     }
     return (await Promise.all(reqs)).flat()

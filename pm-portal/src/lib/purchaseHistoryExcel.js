@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs'
+import { todayISO } from './utils'
 
 // 구매이력 (밀시트 대체) — 초도품 승인용.
 //
@@ -76,7 +77,7 @@ export async function downloadPurchaseHistory({ asm, rows, fileName }) {
   const wb = new ExcelJS.Workbook()
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()
-  const ymd = new Date().toISOString().slice(0, 10)
+  const ymd = todayISO()
 
   const has = rows.filter(r => r.recv_date)
   const none = rows.filter(r => !r.recv_date && r.note === '구매 이력 없음')

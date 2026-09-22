@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
+import { todayISO } from '../../lib/utils'
 
 const GW = 80, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
 // 배치도 확대 단계. 13px 이 기본(18px 대비 약 70%)이며,
@@ -435,7 +436,7 @@ export default function RackLayout() {
         ws2['!cols'] = [{ wch: 8 }, { wch: 16 }, { wch: 7 }, { wch: 7 }, { wch: 6 }, { wch: 6 }]
         XLSX.utils.book_append_sheet(wb, ws2, '기둥·설비')
       }
-      XLSX.writeFile(wb, `창고배치도_${new Date().toISOString().split('T')[0]}.xlsx`)
+      XLSX.writeFile(wb, `창고배치도_${todayISO()}.xlsx`)
       toastSuccess(`랙 ${rows.length}면 내보냄`)
     } catch (e) {
       toastError('내보내기 실패: ' + (e?.message || e))

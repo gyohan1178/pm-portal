@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
+import { todayISO } from '../../lib/utils'
 
 const STATUS_STYLE = {
   '진행중': 'bg-blue-50 text-blue-600',
@@ -22,7 +23,7 @@ const CS_MAP = {
 
 async function fetchPOs(csCode) {
   if (!csCode) return []
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
 
   // 1. code로 customer_id 조회
   const { data: cs, error: csErr } = await supabase
@@ -62,7 +63,7 @@ export default function PurchaseOrders() {
   })
 
   const filtered = typeTab === '전체' ? pos : pos.filter(p => p.type === typeTab)
-  const today = new Date().toISOString().split('T')[0]
+  const today = todayISO()
 
   async function handleCSVUpload(e) {
     const file = e.target.files[0]

@@ -7,12 +7,12 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
 import { buildLabelZpl } from '../../lib/labelZpl'
-import { catOf } from '../../lib/utils'
+import { catOf, todayISO, ymdKST } from '../../lib/utils'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 import * as XLSX from 'xlsx'
 
 function monthAgoStr() {
-  const d = new Date(); d.setMonth(d.getMonth()-1); return d.toISOString().split('T')[0]
+  const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
 async function fetchProjects(customerId) {
@@ -115,9 +115,9 @@ export default function Outbound() {
   const [stockWarning, setStockWarning] = useState(null)
   // 출고 현황
   const [hFrom, setHFrom] = useState(monthAgoStr())
-  const [hTo, setHTo] = useState(new Date().toISOString().split('T')[0])
+  const [hTo, setHTo] = useState(todayISO())
   const [hCustomer, setHCustomer] = useState('')
-  const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: new Date().toISOString().split('T')[0], customerId:'' })
+  const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayISO(), customerId:'' })
 
   const { data: customers=[] } = useCustomers()
   const { data: projects=[] } = useQuery({

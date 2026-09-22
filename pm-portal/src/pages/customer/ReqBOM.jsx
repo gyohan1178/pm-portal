@@ -11,7 +11,8 @@ import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import ShortageTabs from '../../components/ShortageTabs'
-import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS } from '../../lib/utils'
+import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS, todayISO } from '../../lib/utils'
+import { genPoNumber } from '../../lib/poNumber'
 
 // 입력 디바운스
 function useDebounced(val, ms=250) {
@@ -84,17 +85,6 @@ async function fetchVendors() {
   return data || []
 }
 
-async function genPoNumber() {
-  const d = new Date()
-  const yy = String(d.getFullYear()).slice(2)
-  const mm = String(d.getMonth()+1).padStart(2,'0')
-  const dd = String(d.getDate()).padStart(2,'0')
-  const prefix = `JS-${yy}${mm}${dd}-`
-  const { data } = await supabase.from('purchase_orders').select('po_number').like('po_number',`${prefix}%`)
-  const nums = (data||[]).map(r=>parseInt(r.po_number?.replace(prefix,''))||0)
-  const seq = (nums.length ? Math.max(...nums) : 0) + 1
-  return `${prefix}${String(seq).padStart(2,'0')}`
-}
 
 async function createPurchaseOrders({ items, csId, vendorId, promiseDate, poNumber }) {
   const finalPoNumber = poNumber || await genPoNumber()
@@ -417,7 +407,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'소요량조회')
-    XLSX.writeFile(wb,`소요량조회_${new Date().toISOString().split('T')[0]}.xlsx`)
+    XLSX.writeFile(wb,`소요량조회_${todayISO()}.xlsx`)
   }
 
   return (

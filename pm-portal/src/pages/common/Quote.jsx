@@ -4,6 +4,7 @@ import VendorPicker from '../../components/VendorPicker'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { todayISO } from '../../lib/utils'
 
 async function searchItems(keyword) {
   if (!keyword || keyword.length < 1) return []
@@ -48,7 +49,7 @@ export default function Quote() {
   const [selItem, setSelItem] = useState(null)
   const [selVendor, setSelVendor] = useState('')
   const [unitPrice, setUnitPrice] = useState('')
-  const [quoteDate, setQuoteDate] = useState(new Date().toISOString().split('T')[0])
+  const [quoteDate, setQuoteDate] = useState(todayISO())
   const [validUntil, setValidUntil] = useState('')
   const [memo, setMemo] = useState('')
   const [searching, setSearching] = useState(false)

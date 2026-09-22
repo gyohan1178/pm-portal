@@ -5,9 +5,10 @@ import { supabase } from '../../lib/supabase'
 import { downloadLotAudit } from '../../lib/lotAuditExcel'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit } from '../../hooks/useProfile'
+import { todayISO } from '../../lib/utils'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => todayISO()
 const MONO = "ui-monospace, Menlo, Consolas, monospace"
 
 // 브랜드를 두 칸으로 나눈다.

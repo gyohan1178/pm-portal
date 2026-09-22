@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { PROC_CATS, catOf } from '../../lib/utils'
+import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
@@ -189,7 +189,7 @@ export default function Inventory() {
     const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':r.location||'','최종업데이트':r.updated_at?.split('T')[0]}))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'재고현황')
-    XLSX.writeFile(wb,`재고현황_${new Date().toISOString().split('T')[0]}.xlsx`)
+    XLSX.writeFile(wb,`재고현황_${todayISO()}.xlsx`)
   }
 
   // 브랜드별 실사 양식 — 현재 필터된 품목으로 실사수량 빈칸 엑셀 생성
@@ -205,7 +205,7 @@ export default function Inventory() {
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,ws,'실사')
     const tag = brandFilter==='전체' ? '전체' : brandFilter
-    XLSX.writeFile(wb,`실사양식_${tag}_${new Date().toISOString().split('T')[0]}.xlsx`)
+    XLSX.writeFile(wb,`실사양식_${tag}_${todayISO()}.xlsx`)
   }
 
   if (error) return <div className="text-center py-12 text-red-500 text-sm">오류: {error.message}</div>

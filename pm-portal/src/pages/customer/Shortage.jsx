@@ -12,7 +12,8 @@ import CustomerTabs from '../../components/CustomerTabs'
 import VendorPicker from '../../components/VendorPicker'
 import ShortageTabs from '../../components/ShortageTabs'
 import ShortageMonthly, { fetchMonthly } from './ShortageMonthly'
-import { getCategoryCode, ITEM_CATEGORIES } from '../../lib/utils'
+import { getCategoryCode, ITEM_CATEGORIES, todayISO } from '../../lib/utils'
+import { genPoNumber } from '../../lib/poNumber'
 
 function fmtNum(v) {
   const r = Math.round((v||0)*100)/100
@@ -57,17 +58,6 @@ async function fetchShortage(csId) {
   }).sort((a,b)=>b.orderNeed-a.orderNeed)
 }
 
-async function genPoNumber() {
-  const d = new Date()
-  const yy = String(d.getFullYear()).slice(2)
-  const mm = String(d.getMonth()+1).padStart(2,'0')
-  const dd = String(d.getDate()).padStart(2,'0')
-  const prefix = `JS-${yy}${mm}${dd}-`
-  const { data } = await supabase.from('purchase_orders').select('po_number').like('po_number',`${prefix}%`)
-  const nums = (data||[]).map(r=>parseInt(r.po_number?.replace(prefix,''))||0)
-  const seq = (nums.length ? Math.max(...nums) : 0) + 1
-  return `${prefix}${String(seq).padStart(2,'0')}`
-}
 
 async function createPurchaseOrders({ items, csId, vendorId, promiseDate, poNumber }) {
   const finalPoNumber = poNumber || await genPoNumber()
@@ -262,7 +252,7 @@ export default function Shortage() {
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'부족자재')
-    XLSX.writeFile(wb,`부족자재_${new Date().toISOString().split('T')[0]}.xlsx`)
+    XLSX.writeFile(wb,`부족자재_${todayISO()}.xlsx`)
   }
 
   const COLS = [

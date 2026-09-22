@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
-import { catOf } from '../../lib/utils'
+import { catOf, todayISO } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useRowSelect } from '../../hooks/useRowSelect'
@@ -313,7 +313,7 @@ export default function Items() {
     }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), '기준코드DB')
-    XLSX.writeFile(wb, `기준코드DB_${new Date().toISOString().split('T')[0]}.xlsx`)
+    XLSX.writeFile(wb, `기준코드DB_${todayISO()}.xlsx`)
   }
 
   const f = k => e => setForm(prev => ({...prev, [k]: e.target.value}))

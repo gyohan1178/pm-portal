@@ -1,3 +1,4 @@
+import { todayISO } from './utils'
 // 매입 대시보드를 화면 그대로 HTML 로 뽑는다.
 //
 //   ⚠ 예전 판은 요약 문장을 지어내고 화면과 다른 표를 만들었다.
@@ -84,7 +85,7 @@ function barChart(months, csList) {
  * vendors : pm_vendor_purchase_yearly 결과. 협력사별 월 표를 만든다.
  */
 export function buildPurchaseReport({ months, csChart, csList, year, vendors = [] }) {
-  const ymd = new Date().toISOString().slice(0, 10)
+  const ymd = todayISO()
   const totActual = csChart.reduce((a, c) => a + (Number(c.actual) || 0), 0)
   const totPending = csChart.reduce((a, c) => a + (Number(c.pending) || 0), 0)
   const grand = totActual + totPending
