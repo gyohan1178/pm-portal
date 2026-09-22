@@ -33,6 +33,15 @@ const newLine = (p = {}) => ({
 
 const FALLBACK_MCFG = { tiers: DEFAULT_TIERS, laborMarg: DEFAULT_CFG.laborMarg }
 
+// 어셈블리 자재비 — 십원 자리에서 반올림(=100원 단위).
+//   부품 수량이 소수로 전개돼 17,867,162.57 처럼 나오던 것을 정리한다.
+//   ⚠ 단품 매입가에는 쓰지 않는다. 55원짜리 단자가 100원이 되어 단가가 틀어진다.
+const round100 = (v) => Math.round(num(v) / 100) * 100
+
+// 달러 단가 — 센트(소수 둘째 자리)까지 올림. 19564.85692 → 19564.86
+//   ⚠ 2.19 × 100 이 219.00000000000003 이 되어 2.20 으로 튀는 부동소수 오차를 막는다.
+const ceilCent = (v) => Math.ceil(num(v) * 100 - 1e-7) / 100
+
 const lineCost = (l) => num(l.materialKrw) + num(l.laborKrw)
 
 // 세부 부품에서 자재비를 다시 합산 (제외 체크·단가 수정 반영)
@@ -60,7 +69,8 @@ function linePrice(line, currency, sellRate, mcfg) {
       ? line.parts.filter((p) => !p.excluded && p.buyKrw != null)
       : []
     const partsSum = parts.reduce((a, p) => a + num(p.buyKrw) * num(p.qty), 0)
-    const usable = line.kind === 'assy' && parts.length > 0 && Math.abs(partsSum - mat) < 1
+    // 자재비를 100원 단위로 반올림해 두므로 부품합과 최대 50원 차이가 난다. 그 안이면 같은 것으로 본다.
+    const usable = line.kind === 'assy' && parts.length > 0 && Math.abs(partsSum - mat) <= 50.0001
 
     if (usable) {
       for (const pt of parts) {
@@ -72,7 +82,7 @@ function linePrice(line, currency, sellRate, mcfg) {
     if (labor > 0) krw += labor / (1 - laborMarg)
   }
 
-  return currency === 'KRW' ? Math.round(krw) : krw / (num(sellRate) || 1)
+  return currency === 'KRW' ? Math.round(krw) : ceilCent(krw / (num(sellRate) || 1))
 }
 
 export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind }) {
@@ -247,7 +257,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           kind: 'assy',
           std_code: proj.code, description: proj.name || '', rev: proj.rev || '',
           unit: 'EA', qty: 1,
-          materialKrw: c.totalBuyKrw, laborKrw, laborSrc,
+          materialKrw: round100(c.totalBuyKrw), laborKrw, laborSrc,
           origin: c.impKrw > c.domKrw ? 'imp' : 'dom',
           noPrice, partCount: c.items.length,
           ltDays: ltMax || null,
@@ -295,7 +305,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const patchPart = (key, uid, p) => setLines((ls) => ls.map((l) => {
     if (l.key !== key || !l.parts) return l
     const parts = l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x))
-    const materialKrw = sumParts(parts)
+    const materialKrw = round100(sumParts(parts))
     const noPrice = parts.filter((x) => !x.excluded && (x.buyKrw == null || x.status === 'unreg')).length
     // 부품 L/T 를 고치거나 체크를 풀면 어셈블리 납기도 따라 바뀌어야 한다.
     const ltMax = parts.reduce((a, x) => (x.excluded || x.ltDays == null ? a : Math.max(a, num(x.ltDays))), 0)
@@ -881,7 +891,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                     <input value={l.description} onChange={(e) => patch(l.key, { description: e.target.value })} className="qi w-full" />
                     {h && (
                       <div className="no-print text-[10px] text-indigo-500 mt-0.5">
-                        직전 {h.unit_price} {h.currency} · {h.quote_date} ({h.quote_no})
+                        직전 {money(h.unit_price, h.currency)} {h.currency} · {h.quote_date} ({h.quote_no})
                         {num(h.labor_krw) > 0 && ` · 작업비 ${won(h.labor_krw)}`}
                       </div>
                     )}
