@@ -29,6 +29,7 @@ const CodeMapUpload = lazy(() => import('./pages/master/CodeMapUpload'))
 const Vendors = lazy(() => import('./pages/master/Vendors'))
 const PriceHistory = lazy(() => import('./pages/master/PriceHistory'))
 const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
+const FaiNavigator = lazy(() => import('./pages/quality/FaiNavigator'))
 const RequestLoad = lazy(() => import('./pages/RequestLoad'))
 const SalesQuote = lazy(() => import('./pages/master/SalesQuote'))
 const QuoteHistory = lazy(() => import('./pages/master/QuoteHistory'))
@@ -137,6 +138,7 @@ export default function App() {
         <Route path="inventory" element={<Inventory />} />
         <Route path="quote"     element={<Quote />} />
         <Route path="cost"      element={<CostAnalysis />} />
+        <Route path="quality/fai" element={<FaiNavigator />} />
         <Route path="request-load" element={<RequestLoad />} />
         <Route path="sales-quote"   element={<SalesQuote />} />
         <Route path="quote-history"  element={<QuoteHistory />} />

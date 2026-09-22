@@ -131,6 +131,7 @@ export const SECTIONS = [
   { key: 'mat',    label: '📦 자재' },
   { key: 'buy',    label: '🛒 구매' },
   { key: 'sales',  label: '🤝 영업' },
+  { key: 'quality', label: '🔬 품질' },
   { key: 'report', label: '📊 분석' },
   { key: 'master', label: '⚙️ 기초자료' },
 ]
@@ -163,6 +164,8 @@ export function sectionOfPath(pathname) {
       || pathname === '/sales' || pathname === '/cost'
       || pathname === '/what-if' || pathname === '/insights') return 'report'
   if (pathname.startsWith('/master') || pathname === '/erp' || pathname === '/activity') return 'master'
+  // 품질 — 초도품 자재 매칭 등
+  if (pathname.startsWith('/quality')) return 'quality'
   // 고객사 하위 경로: 마지막 세그먼트로 판정
   if (pathname.startsWith('/customer/')) {
     if (pathname.endsWith('/short')) return 'buy'   // 자재 상황판 — 부족 확인 후 발주로 이어지므로 구매
@@ -174,7 +177,7 @@ export function sectionOfPath(pathname) {
 }
 
 // 제한 계정의 기본 착지 경로 (접근 불가 페이지 진입 시 여기로)
-const SECTION_LANDING = { todo: '/todo', floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items' }
+const SECTION_LANDING = { todo: '/todo', floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items', quality: '/quality/fai' }
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
   const a = allowedSections(profile)

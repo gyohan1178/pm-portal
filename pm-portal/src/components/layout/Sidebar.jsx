@@ -27,6 +27,7 @@ const MENU_META = {
   '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'],
   '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
   '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
+  '/quality/fai': ['🧾','초도품 자재 매칭'],
   '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
 }
 
@@ -333,6 +334,13 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
           <MenuItem to="/schedule-changes" icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
+        </CollapseSection>
+        )}
+
+        {/* 🔬 품질 — 초도품(FAI) 등 품질 제출 자료 */}
+        {canAccessSection(profile, 'quality') && (
+        <CollapseSection label="🔬 품질" sKey="quality">
+          <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
         </CollapseSection>
         )}
 
