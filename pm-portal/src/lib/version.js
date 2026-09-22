@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v4.8.4'
+export const APP_VERSION = 'v4.8.5'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.8.5',
+    date: '2026-09-22',
+    changes: [
+      '⚠️ 견적에 품번을 넣을 때 조회가 실패하면 이제 오류를 그대로 보여줍니다',
+      '전에는 실패해도 하위품목이 0건인 것처럼, 단품은 「어디에도 없습니다」 로 보였습니다',
+      '작업비 이력을 못 불러오면 막지 않고 알림만 띄웁니다 — 작업비를 직접 넣으면 됩니다',
+    ],
+  },
   {
     version: 'v4.8.4',
     date: '2026-09-22',

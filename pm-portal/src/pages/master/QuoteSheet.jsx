@@ -218,17 +218,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (!code) return
     setAdding(true); setErr('')
     try {
-      const { data: proj } = await supabase
+      // ⚠ 조회 오류를 반드시 드러낸다. 삼키면 「하위품목이 없는 것」처럼 보인다.
+      //   (v4.8.3 배포 중에 lt_days 칸이 지워져 부품이 0건으로 보였던 사례)
+      const { data: proj, error: pErr } = await supabase
         .from('projects').select('id, code, name, rev')
         .eq('customer_id', customerId).eq('code', code).maybeSingle()
+      if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
 
       if (proj) {
-        const { data: rows } = await supabase
+        const { data: rows, error: bErr } = await supabase
           .from('bom')
           .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
           .eq('customer_id', customerId).eq('project_id', proj.id)
           .eq('quote_excluded', false)   // 원가분석에서 제외 지정한 부품은 견적에서도 빠진다
           .order('seq').order('created_at')
+        if (bErr) throw new Error('하위품목 조회 — ' + bErr.message)
 
         const mapped = (rows || []).map((b, i) => ({
           uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
@@ -245,12 +249,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         const noPrice = c.items.filter((r) => !r.excluded && r.status !== 'ok').length
 
         // 초도품 여부 — 생산 전광판이 쓰는 items.is_prototype 과 같은 기준
-        const { data: pit } = await supabase.from('items')
+        const { data: pit, error: tErr } = await supabase.from('items')
           .select('is_prototype').eq('std_code', proj.code).maybeSingle()
+        if (tErr) throw new Error('초도품 여부 조회 — ' + tErr.message)
 
         // 최신 작업비 자동 조회
         let laborKrw = 0, laborSrc = null
-        const { data: lb } = await supabase.rpc('pm_labor_latest', { p_codes: [proj.code] })
+        const { data: lb, error: lErr } = await supabase.rpc('pm_labor_latest', { p_codes: [proj.code] })
+        // 작업비는 없어도 견적은 짤 수 있다. 막지 말고 알리기만 한다.
+        if (lErr) toastError('작업비 이력을 못 불러왔습니다 — 작업비를 직접 넣어 주세요 (' + lErr.message + ')')
         if (lb && lb[0]) { laborKrw = num(lb[0].labor_krw); laborSrc = lb[0] }
 
         const parts = c.items.map((r) => ({
@@ -282,9 +289,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         return
       }
 
-      const { data } = await supabase
+      const { data, error: iErr } = await supabase
         .from('items').select('std_code, name, unit, purchase_price, lt_weeks, moq, is_prototype, vendors(name)')
         .eq('std_code', code).maybeSingle()
+      // 조회가 실패한 것과 정말 없는 것을 구분한다. 전에는 둘 다 「어디에도 없습니다」였다.
+      if (iErr) throw new Error('품목 조회 — ' + iErr.message)
       if (!data) { setErr(`${code} 는 어셈블리·품목 어디에도 없습니다.`); return }
       const mat = num(data.purchase_price)
       const nl = newLine({
