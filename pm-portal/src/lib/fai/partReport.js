@@ -5,6 +5,7 @@
  *        mpnMatch · evaluateAuto · evaluate · buildRows)
  *  ⚠ 판단 로직은 원본 그대로다. 바꾼 것은 전역 상태(REP·BUYIDX·MAN·SET)를
  *    인자로 받게 한 것뿐이다. 원본과 같은 결과가 나오는지 시험으로 대조했다.
+ *  ⚠ 딱 한 곳 원본과 다르다 — 제조사품번 비교 순서(pickHit). 사용금지를 놓치지 않게 고쳤다.
  *  ⚠ 증빙 폴더·도면·PPT 는 아직 옮기지 않았다(다음 단계).
  */
 
@@ -158,6 +159,22 @@ export function mpnMatch(a, b) {
   return s.length >= 5 && l.startsWith(s) // 포장단위 접미(-100 등) 허용
 }
 
+// 산 품번과 맞는 등록 줄 고르기 — ⚠ 원본과 다른 곳 (2026-09-22 결정 A)
+//   원본은 등록 목록 위에서부터 「앞부분만 같아도」 처음 걸리는 줄을 골랐다.
+//   그러면 ABC123(Approved) 이 ABC123-X(Do Not Use) 보다 위에 있을 때,
+//   ABC123-X 를 사도 「등록품 일치」가 되어 사용금지를 놓친다.
+//   ① 품번이 정확히 같은 줄 → ② 제조사까지 같은 앞부분 일치 → ③ 앞부분 일치 순으로 찾는다.
+export function pickHit(mfrs, act) {
+  const want = normMpn(act.mpn)
+  if (!want) return null
+  const exact = mfrs.find((m) => normMpn(m.mpn) === want)
+  if (exact) return exact
+  const cands = mfrs.filter((m) => mpnMatch(m.mpn, act.mpn))
+  if (!cands.length) return null
+  const mf = normMfr(act.mfr)
+  return (mf && cands.find((m) => normMfr(m.mfr) === mf)) || cands[0]
+}
+
 export const normVo = (t) => {
   t = String(t || '').trim(); if (!t) return ''
   if (/부적합|^NG|non.?conform|reject/i.test(t)) return 'NG_M'
@@ -190,7 +207,7 @@ export function evaluateAuto(P, ctx) {
   const has = act.mpn || act.mfr || act.vendor || act.date || act.doc
   if (cat === 'nomfr') { out.v = has ? 'NOMFR_OK' : 'NOMFR'; out.note = nomfrKind(P); return out }
   if (!act.mpn && !act.mfr) { out.v = has ? 'NOMPN' : 'NOREC'; return out }
-  const hit = act.mpn ? P.mfrs.find((m) => mpnMatch(m.mpn, act.mpn)) : null
+  const hit = act.mpn ? pickHit(P.mfrs, act) : null
   if (hit) {
     out.hit = hit
     if (/Do Not Use/i.test(hit.status)) out.v = 'DNU'
