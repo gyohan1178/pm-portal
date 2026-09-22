@@ -1,10 +1,11 @@
-import { useState, createContext, useContext } from 'react'
+import { useState, createContext, useContext, Fragment } from 'react'
 import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { primaryCsCode } from '../../lib/customers'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { toastError } from '../../lib/toast'
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
@@ -30,6 +31,9 @@ const MENU_META = {
   '/quality/fai': ['🧾','초도품 자재 매칭'],
   '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
 }
+
+// 사이드바 그룹 기본 순서 — 계정에 저장된 순서가 없거나, 새로 생긴 그룹이 있을 때 쓴다
+const DEFAULT_GROUPS = ['mat', 'buy', 'sales', 'floor', 'quality', 'report', 'master', 'etc']
 
 const CUSTOMERS = [
   { id:'ax',  name:'AXCELIS', color:'#4F46E5' },
@@ -120,15 +124,19 @@ function MenuItem({ to, icon, children, end, onNavigate, badge }) {
   )
 }
 
-function CollapseSection({ label, sKey, defaultOpen = true, children }) {
+// mover — 「메뉴 정리」 중일 때 그룹 이름 옆에 붙는 ▲▼ (그룹 순서 바꾸기)
+function CollapseSection({ label, sKey, defaultOpen = true, children, mover = null }) {
   const [open, toggle] = usePersistOpen(`sidebar_${sKey}`, defaultOpen)
   return (
     <div>
-      <button onClick={toggle}
-        className="w-full flex items-center justify-between px-4 pt-2 pb-0.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-slate-600 transition-colors">
-        {label}
-        <span className={`text-slate-300 transition-transform duration-200 ${open ? '' : '-rotate-90'}`}>▾</span>
-      </button>
+      <div className="flex items-center">
+        <button onClick={toggle}
+          className="flex-1 flex items-center justify-between px-4 pt-2 pb-0.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-slate-600 transition-colors">
+          {label}
+          <span className={`text-slate-300 transition-transform duration-200 ${open ? '' : '-rotate-90'}`}>▾</span>
+        </button>
+        {mover}
+      </div>
       {open && <div className="pb-1">{children}</div>}
     </div>
   )
@@ -223,9 +231,158 @@ export default function Sidebar({ onNavigate, profile }) {
     const next = hidden.includes(to) ? hidden.filter(x => x !== to) : [...hidden, to]
     setHidden(next); savePrefs(favorites, next)
   }
-  const resetPrefs = () => { setFavorites([]); setHidden([]); savePrefs([], []) }
+  // 그룹 순서 — pm_profiles.menu_group_order 에 계정별로 저장한다.
+  //   목록에 없는 그룹(새로 생긴 그룹)은 기본 자리 순서대로 뒤에 붙는다.
+  const [groupOrder, setGroupOrder] = useState(() => profile?.menu_group_order || [])
+  const orderedGroups = [
+    ...groupOrder.filter((k) => DEFAULT_GROUPS.includes(k)),
+    ...DEFAULT_GROUPS.filter((k) => !groupOrder.includes(k)),
+  ]
+  async function saveGroupOrder(next) {
+    setGroupOrder(next)
+    const { error } = await supabase.rpc('pm_save_menu_group_order', { p_order: next })
+    if (error) toastError('그룹 순서 저장 실패 — ' + error.message)
+  }
+  // 권한이 없어 안 보이는 그룹은 건너뛰고, 보이는 그룹끼리만 자리를 바꾼다.
+  const groupVisible = {
+    mat: canAccessSection(profile, 'mat'), buy: canAccessSection(profile, 'buy'),
+    sales: canAccessSection(profile, 'sales'), floor: canAccessSection(profile, 'floor'),
+    quality: canAccessSection(profile, 'quality'), report: canAccessSection(profile, 'report'),
+    master: canAccessSection(profile, 'master'), etc: canAccessSection(profile, 'master'),
+  }
+  function moveGroup(k, dir) {
+    const list = [...orderedGroups]
+    const i = list.indexOf(k)
+    let j = i + dir
+    while (j >= 0 && j < list.length && !groupVisible[list[j]]) j += dir
+    if (j < 0 || j >= list.length) return
+    ;[list[i], list[j]] = [list[j], list[i]]
+    saveGroupOrder(list)
+  }
+  const mover = (k) => {
+    if (!editing) return null
+    const vis = orderedGroups.filter((g) => groupVisible[g])
+    const at = vis.indexOf(k)
+    const btn = 'w-5 h-5 text-[10px] rounded text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 disabled:opacity-20 disabled:hover:bg-transparent'
+    return (
+      <span className="flex pr-2 pt-1.5">
+        <button className={btn} disabled={at <= 0} onClick={() => moveGroup(k, -1)} title="위로">▲</button>
+        <button className={btn} disabled={at < 0 || at >= vis.length - 1} onClick={() => moveGroup(k, 1)} title="아래로">▼</button>
+      </span>
+    )
+  }
+
+  const resetPrefs = () => {
+    setFavorites([]); setHidden([]); savePrefs([], [])
+    if (groupOrder.length) saveGroupOrder([])
+  }
 
   const prefs = { favorites, hidden, editing, toggleFav, toggleHide }
+
+  // 그룹별 메뉴 — 순서는 orderedGroups 가 정한다
+  const GROUP_EL = {
+    mat: (mv) => (<>
+        {/* 📦 자재 */}
+        {canAccessSection(profile, 'mat') && (
+        <CollapseSection mover={mv} label="📦 자재" sKey="mat">
+          <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
+          <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
+          <MenuItem to="/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
+          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
+          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
+          <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>
+          <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    buy: (mv) => (<>
+        {/* 🛒 구매 — 부족 확인부터 발주·입고·단가까지 한 흐름 */}
+        {canAccessSection(profile, 'buy') && (
+        <CollapseSection mover={mv} label="🛒 구매" sKey="buy">
+          <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
+          <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
+          <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
+          <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
+          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    sales: (mv) => (<>
+        {/* 🤝 영업 */}
+        {canAccessSection(profile, 'sales') && (
+        <CollapseSection mover={mv} label="🤝 영업" sKey="sales">
+          <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
+          <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
+          <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    floor: (mv) => (<>
+        {/* 자재 요청 — 현장 섹션 권한이 없어도 보이게 (누구나 요청 가능) */}
+        {!canAccessSection(profile, 'floor') && (
+          <div className="py-1 border-b border-slate-200">
+            <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
+          </div>
+        )}
+
+        {/* 🏭 현장 */}
+        {canAccessSection(profile, 'floor') && (
+        <CollapseSection mover={mv} label="🏭 현장" sKey="floor">
+          <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
+          <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
+          <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
+          <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
+          <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
+          <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
+          <MenuItem to="/schedule-changes" icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    quality: (mv) => (<>
+        {/* 🔬 품질 — 초도품(FAI) 등 품질 제출 자료 */}
+        {canAccessSection(profile, 'quality') && (
+        <CollapseSection mover={mv} label="🔬 품질" sKey="quality">
+          <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    report: (mv) => (<>
+        {/* 📊 분석 */}
+        {canAccessSection(profile, 'report') && (
+        <CollapseSection mover={mv} label="📊 분석" sKey="report" defaultOpen={false}>
+          <MenuItem to="/weekly"             icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
+          <MenuItem to="/purchase-dashboard" icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
+          <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
+          <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
+          <MenuItem to="/request-load"       icon="🗂" onNavigate={onNavigate}>자재요청 업무량</MenuItem>
+          <MenuItem to="/what-if"            icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
+          <MenuItem to="/insights"           icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    master: (mv) => (<>
+        {/* ⚙️ 기초자료 — 자주 보는 마스터만 */}
+        {canAccessSection(profile, 'master') && (
+        <CollapseSection mover={mv} label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
+          <MenuItem to="/master/items" icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
+          <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>
+          <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
+        </CollapseSection>
+        )}
+    </>),
+    etc: (mv) => (<>
+        {/* 🔧 기타 — 가끔 쓰는 것. 기본 접힘 */}
+        {canAccessSection(profile, 'master') && (
+        <CollapseSection mover={mv} label="🔧 기타" sKey="etc" defaultOpen={false}>
+          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
+          <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
+          <MenuItem to="/erp"    icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
+          {isAdmin && <MenuItem to="/activity" icon="🗂" onNavigate={onNavigate}>활동 이력 · 용량</MenuItem>}
+          {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
+        </CollapseSection>
+        )}
+    </>),
+  }
 
   return (
     <MenuPrefsCtx.Provider value={prefs}>
@@ -273,109 +430,20 @@ export default function Sidebar({ onNavigate, profile }) {
               ? 'bg-indigo-100 text-indigo-700' : 'text-slate-400 hover:text-slate-600'}`}>
             {editing ? '✓ 정리 완료' : '⚙ 메뉴 정리'}
           </button>
-          {editing && (favorites.length > 0 || hidden.length > 0) && (
+          {editing && (favorites.length > 0 || hidden.length > 0 || groupOrder.length > 0) && (
             <button onClick={resetPrefs} className="text-[10px] text-slate-400 hover:text-rose-500">초기화</button>
           )}
         </div>
         {editing && (
           <p className="px-4 pb-2 text-[10px] text-slate-400 leading-relaxed">
             ★ 자주 쓰는 메뉴 · ✕ 안 쓰는 메뉴 숨기기<br/>
+            ▲▼ 그룹 순서 바꾸기<br/>
             설정은 계정에 저장됩니다.
           </p>
         )}
 
-        {/* 📦 자재 */}
-        {canAccessSection(profile, 'mat') && (
-        <CollapseSection label="📦 자재" sKey="mat">
-          <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
-          <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
-          <MenuItem to="/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
-          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
-          <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
-          <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>
-          <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 🛒 구매 — 부족 확인부터 발주·입고·단가까지 한 흐름 */}
-        {canAccessSection(profile, 'buy') && (
-        <CollapseSection label="🛒 구매" sKey="buy">
-          <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
-          <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
-          <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
-          <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
-          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 🤝 영업 */}
-        {canAccessSection(profile, 'sales') && (
-        <CollapseSection label="🤝 영업" sKey="sales">
-          <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
-          <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
-          <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 자재 요청 — 현장 섹션 권한이 없어도 보이게 (누구나 요청 가능) */}
-        {!canAccessSection(profile, 'floor') && (
-          <div className="py-1 border-b border-slate-200">
-            <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
-          </div>
-        )}
-
-        {/* 🏭 현장 */}
-        {canAccessSection(profile, 'floor') && (
-        <CollapseSection label="🏭 현장" sKey="floor">
-          <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
-          <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
-          <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
-          <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
-          <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
-          <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
-          <MenuItem to="/schedule-changes" icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 🔬 품질 — 초도품(FAI) 등 품질 제출 자료 */}
-        {canAccessSection(profile, 'quality') && (
-        <CollapseSection label="🔬 품질" sKey="quality">
-          <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 📊 분석 */}
-        {canAccessSection(profile, 'report') && (
-        <CollapseSection label="📊 분석" sKey="report" defaultOpen={false}>
-          <MenuItem to="/weekly"             icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
-          <MenuItem to="/purchase-dashboard" icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
-          <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
-          <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
-          <MenuItem to="/request-load"       icon="🗂" onNavigate={onNavigate}>자재요청 업무량</MenuItem>
-          <MenuItem to="/what-if"            icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
-          <MenuItem to="/insights"           icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* ⚙️ 기초자료 — 자주 보는 마스터만 */}
-        {canAccessSection(profile, 'master') && (
-        <CollapseSection label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
-          <MenuItem to="/master/items" icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
-          <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>
-          <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
-        </CollapseSection>
-        )}
-
-        {/* 🔧 기타 — 가끔 쓰는 것. 기본 접힘 */}
-        {canAccessSection(profile, 'master') && (
-        <CollapseSection label="🔧 기타" sKey="etc" defaultOpen={false}>
-          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
-          <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
-          <MenuItem to="/erp"    icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
-          {isAdmin && <MenuItem to="/activity" icon="🗂" onNavigate={onNavigate}>활동 이력 · 용량</MenuItem>}
-          {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}
-        </CollapseSection>
-        )}
+        {/* 그룹 — 계정마다 순서를 바꿀 수 있다 (메뉴 정리 ▲▼) */}
+        {orderedGroups.map((k) => <Fragment key={k}>{GROUP_EL[k]?.(mover(k))}</Fragment>)}
 
         {/* 하단 고정 — 관리자/회원/도움말 */}
         <div className="mt-auto border-t border-slate-200 pt-1">

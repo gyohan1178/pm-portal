@@ -1,6 +1,16 @@
-export const APP_VERSION = 'v4.10.0'
+export const APP_VERSION = 'v4.11.0'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.11.0',
+    date: '2026-09-22',
+    changes: [
+      '★ 사이드바 그룹 순서를 바꿀 수 있습니다 — 「⚙ 메뉴 정리」 를 누르면 그룹 이름 옆에 ▲▼ 가 나옵니다',
+      '계정에 저장되어 어느 PC 에서 들어가도 같은 순서입니다. 「초기화」 로 기본 순서로 돌아갑니다',
+      '권한이 없어 안 보이는 그룹은 건너뛰고 보이는 그룹끼리만 자리를 바꿉니다',
+      'SQL: pm_menu_group_order_260922.sql 실행 필요',
+    ],
+  },
   {
     version: 'v4.10.0',
     date: '2026-09-22',
