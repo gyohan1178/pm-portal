@@ -1,6 +1,17 @@
-export const APP_VERSION = 'v4.8.3'
+export const APP_VERSION = 'v4.8.4'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.8.4',
+    date: '2026-09-22',
+    changes: [
+      '★ 견적 납기 기본값 — 초도품(FA) 8W · 양산 6W. Lead Time 옆에서 고릅니다',
+      '담긴 품목에 초도품(items.is_prototype)이 하나라도 있으면 자동으로 초도품이 됩니다',
+      '부품 최장 L/T 가 기본값보다 길면 그 값을 씁니다 — 가장 늦게 오는 부품보다 빨리 낼 수는 없습니다',
+      '⚠️ 견적 L/T 를 기존 칸 items.lt_weeks(주) 로 바꿨습니다 — 발주·부족예측·BOM 화면이 쓰던 그 값이 그대로 딸려옵니다',
+      'v4.8.0 에서 따로 만든 lt_days(일) 칸은 쓰지 않습니다 — quote_lt_cleanup_260922.sql 로 정리',
+    ],
+  },
   {
     version: 'v4.8.3',
     date: '2026-09-22',
