@@ -18,10 +18,15 @@ const eok = (v) => {
 }
 const pctS = (v, d = 1) => (v == null ? '—' : (v > 0 ? '+' : '') + v.toFixed(d) + '%')
 
-export function printCostReport() {
+// PDF 로 저장할 때의 파일 이름은 브라우저가 document.title 로 짓는다.
+//   그냥 인쇄하면 탭 이름(JS 통합포털…)이 그대로 파일명이 되므로, 인쇄하는 동안만 바꿔 준다.
+export function printCostReport(name) {
+  const title = document.title
+  document.title = name || '구매자재팀 원가 실적 보고'
   document.body.classList.add('printing-costreport')
   const done = () => {
     document.body.classList.remove('printing-costreport')
+    document.title = title
     window.removeEventListener('afterprint', done)
   }
   window.addEventListener('afterprint', done)
@@ -30,12 +35,15 @@ export function printCostReport() {
 
 export default function CostReport({
   year, start, basisLabel, buy, st, cover, fixed, goal,
-  custs, topItems, kindSum, ledger, susp, today,
+  custs, topItems, kindSum, ledger, susp, today, monthly,
 }) {
   // 오른 것·내린 것 각각 큰 순서로 다섯 개
   const up = useMemo(() => topItems.filter((t) => t.diff < 0).sort((a, b) => a.diff - b.diff).slice(0, 5), [topItems])
   const down = useMemo(() => topItems.filter((t) => t.diff > 0).sort((a, b) => b.diff - a.diff).slice(0, 5), [topItems])
   const upSum = up.reduce((a, t) => a + t.diff, 0)
+  const upShare = st.loss ? (-upSum / st.loss) * 100 : 0
+  const mon = monthly || []
+  const maxBuy = Math.max(1, ...mon.map((m) => m.buy))
 
   const Row = ({ t, children }) => (
     <div className="mb-3">
@@ -99,8 +107,9 @@ export default function CostReport({
             (금액으로 {eok(Math.abs(st.net))}원 {st.net >= 0 ? '절감' : '증가'}).
           </li>
           <li>
-            상승분은 소수 품목에 몰려 있습니다 — 상위 5품목이 <b className="text-rose-600">{eok(-upSum)}원</b>,
-            대부분 수입 부품의 환율·관세 영향입니다. 나머지 품목은 관리되고 있습니다.
+            오른 품목 전체 <b className="text-rose-600">{eok(st.loss)}원</b> 가운데 상위 5품목이
+            <b className="text-rose-600"> {eok(-upSum)}원({upShare.toFixed(0)}%)</b>으로, 상승분이 소수 품목에 몰려 있습니다.
+            같은 기간 단가가 내린 품목도 <b className="text-emerald-600">{eok(st.save)}원</b> 있습니다.
           </li>
           <li>
             절감 활동(업체변경·대체품·단가인하 등)으로 <b className="text-emerald-600">{eok(fixed)}원</b>을 확보했습니다.
@@ -109,7 +118,35 @@ export default function CostReport({
         </ul>
       </Row>
 
-      {/* ③ 고객사별 */}
+      {/* ③ 월별 추이 */}
+      <Row t="월별 추이">
+        {mon.length ? (
+          <>
+            <div className="flex items-end gap-2 h-[92px] px-1">
+              {mon.map((m) => {
+                const h = Math.max(3, Math.round((m.buy / maxBuy) * 78))
+                return (
+                  <div key={m.key} className="flex-1 flex flex-col items-center justify-end gap-0.5">
+                    <span className={`text-[9px] font-bold tabular-nums ${m.chg == null ? 'text-slate-300' : m.chg > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                      {pctS(m.chg)}
+                    </span>
+                    <div className="w-full rounded-t bg-indigo-400" style={{ height: h }} />
+                    <span className="text-[9px] text-slate-400 tabular-nums">{eok(m.buy)}</span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex gap-2 px-1 mt-0.5">
+              {mon.map((m) => (
+                <span key={m.key} className="flex-1 text-center text-[10px] font-semibold text-slate-500">{m.key.slice(5)}월</span>
+              ))}
+            </div>
+            <p className="text-[9.5px] text-slate-400 mt-1">막대 = 구매액 · 위 숫자 = 그 달의 구매단가 변동률(플러스면 올랐다는 뜻)</p>
+          </>
+        ) : <p className="text-[11.5px] text-slate-400">집계 기간에 입고가 없습니다.</p>}
+      </Row>
+
+      {/* ④ 고객사별 */}
       <Row t="고객사별">
         <table className="w-full text-[11.5px]">
           <thead>
@@ -134,7 +171,7 @@ export default function CostReport({
         </table>
       </Row>
 
-      {/* ④ 오른 품목 · 내린 품목 */}
+      {/* ⑤ 오른 품목 · 내린 품목 */}
       <div className="grid grid-cols-2 gap-4">
         <Row t="단가가 오른 품목 (상위 5)">
           <table className="w-full text-[11px]">
@@ -172,7 +209,7 @@ export default function CostReport({
         </Row>
       </div>
 
-      {/* ⑤ 절감 활동 */}
+      {/* ⑥ 절감 활동 */}
       <Row t="절감 활동 실적">
         {kindSum.length ? (
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-[11.5px] mb-1.5">
@@ -195,7 +232,7 @@ export default function CostReport({
         </table>
       </Row>
 
-      {/* ⑥ 기준 설명 — 경영진이 「그 기준이 뭐냐」 물었을 때의 답 */}
+      {/* ⑦ 기준 설명 — 경영진이 「그 기준이 뭐냐」 물었을 때의 답 */}
       <div className="mt-3 pt-2 border-t border-slate-200 text-[10px] text-slate-400 leading-relaxed">
         <b className="text-slate-500">기준단가</b> — {basisLabel}.
         품목마다 「작년 이맘때 같은 물건을 얼마에 샀나」를 수량 가중평균으로 잡고, 이번 입고 단가와 견줍니다.
