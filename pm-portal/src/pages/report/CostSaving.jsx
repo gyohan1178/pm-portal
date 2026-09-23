@@ -8,7 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
-import { computeSaving, candKey, byItem, byVendor, stdTotals, SAVING_KINDS } from '../../lib/costSaving'
+import { computeSaving, candKey, byItem, byVendor, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
 //
@@ -24,6 +24,9 @@ const man = (v) => (Math.abs(Number(v) || 0) >= 10000 ? n((Number(v) || 0) / 100
 const yearOf = (d) => String(d || '').slice(0, 4)
 const thisYear = () => todayISO().slice(0, 4)
 const monthsBack = (k) => { const d = new Date(); d.setMonth(d.getMonth() - k); return d.toISOString().slice(0, 10) }
+// 포털로 입고를 받기 시작한 날. 그 전 입고는 단가가 덜 채워져 있어 지표에서 뺀다.
+//   ⚠ 화면(🎯 목표·집계 기준)에서 바꿀 수 있다. 바꾼 값은 pm_settings 에 남는다.
+const DEFAULT_START = '2026-07-01'
 
 async function fetchInbound() {
   // 기준단가 계산에 직전 12개월이 필요하니 넉넉히 3년치를 본다
@@ -37,12 +40,14 @@ async function fetchInbound() {
     po_number: r.purchase_orders?.po_number || '', vendor: r.purchase_orders?.vendors?.name || '',
   }))
 }
-const fetchStd = async () => must(await supabase.from('pm_std_price').select('item_id,std_code,price'), '표준단가 조회') || []
+// ⚠ 표준단가는 1,000개가 넘는다. 기본 조회는 1,000행에서 잘리므로 끝까지 받는다.
+const fetchStd = () => fetchAll(() => supabase.from('pm_std_price')
+  .select('id,item_id,std_code,price,base_date,source').order('id'))
 const fetchLedger = async () => must(await supabase.from('pm_cost_saving').select('*').order('ym', { ascending: false }), '실적 대장 조회') || []
 const fetchSkip = async () => must(await supabase.from('pm_cost_saving_skip').select('key'), '숨긴 후보 조회') || []
 const fetchTarget = async () => {
   const r = must(await supabase.from('pm_settings').select('value').eq('key', 'cost_saving_target').maybeSingle(), '목표 조회')
-  return r?.value || { year: Number(thisYear()), amount: 0 }
+  return r?.value || { year: Number(thisYear()), amount: 0, start: DEFAULT_START }
 }
 
 const KPI = ({ t, v, n: note, tone = '' }) => (
@@ -82,7 +87,10 @@ export default function CostSaving() {
     }
     return m
   }, [stdRows])
-  const calc = useMemo(() => computeSaving(inbound, { stdOf }), [inbound, stdOf])
+  // 집계 시작일 — 포털로 입고를 받기 시작한 날. 그 전 자료는 단가가 덜 채워져 있어 지표를 망친다.
+  const start = target?.start || DEFAULT_START
+  const seen = useMemo(() => inbound.filter((r) => !start || String(r.movement_date) >= start), [inbound, start])
+  const calc = useMemo(() => computeSaving(seen, { stdOf }), [seen, stdOf])
   const skipSet = useMemo(() => new Set(skips.map((s) => s.key)), [skips])
   const doneSet = useMemo(() => new Set(ledger.map((l) => `${l.item_id}|${l.ym}`)), [ledger])
 
@@ -95,6 +103,7 @@ export default function CostSaving() {
   const autoSave = yRows.reduce((a, r) => a + (r.diff > 0 ? r.diff : 0), 0)
   const autoLoss = yRows.reduce((a, r) => a + (r.diff < 0 ? -r.diff : 0), 0)
   const st = useMemo(() => stdTotals(yRows), [yRows])           // 표준단가로 잰 것만
+  const susp = useMemo(() => suspects(yRows), [yRows])          // 표준단가가 어긋나 보이는 줄
   const cover = buy ? (st.buy / buy) * 100 : 0                   // 표준단가가 있는 구매 비중
   const fixed = yLedger.reduce((a, l) => a + (Number(l.amount) || 0), 0)
   const goal = Number(target?.amount) || 0
@@ -255,31 +264,47 @@ export default function CostSaving() {
       qc.invalidateQueries({ queryKey: ['csLedger'] }); toastSuccess('지웠습니다')
     } catch (e) { toastError(e.message) }
   }
-  async function saveTarget(v) {
+  async function saveTarget(v, s) {
     try {
-      must(await supabase.from('pm_settings').upsert({ key: 'cost_saving_target', value: { year: Number(year), amount: Number(v) || 0 }, updated_at: new Date().toISOString() }), '목표 저장')
-      qc.invalidateQueries({ queryKey: ['csTarget'] }); setTargetOpen(false); toastSuccess('목표를 저장했습니다')
+      const value = { year: Number(year), amount: Number(v) || 0, start: String(s || '').slice(0, 10) || null }
+      must(await supabase.from('pm_settings').upsert({ key: 'cost_saving_target', value, updated_at: new Date().toISOString() }), '목표 저장')
+      qc.invalidateQueries({ queryKey: ['csTarget'] }); setTargetOpen(false); toastSuccess('저장했습니다')
     } catch (e) { toastError(e.message) }
   }
 
   async function exportXlsx() {
+    // 대장이 비어 있어도 계산 명세는 나가야 한다 — 보고는 이 표로 한다
+    const rows = tab === 'ledger' && yLedger.length
+      ? yLedger.map((l, i) => ({
+        No: i + 1, 인정월: l.ym, 유형: l.kind, 기준코드: l.std_code, 품명: l.item_name,
+        구매처: l.vendor_name, 발주번호: l.po_number,
+        기준단가: Number(l.base_price) || '', 적용단가: Number(l.new_price) || '', 수량: Number(l.qty) || '',
+        절감액: Number(l.amount) || 0, 사유: l.note, 상태: l.status,
+      }))
+      : yRows.map((r, i) => ({
+        No: i + 1, 입고일: r.movement_date, 기준코드: r.std_code, 품명: r.name,
+        구매처: r.vendor, 발주번호: r.po_number,
+        기준: r.basis === 'std' ? '표준단가' : r.basis === 'susp' ? '표준단가 점검필요' : r.basis === 'avg' ? '12개월평균' : '기준없음',
+        표준단가: r.std ? Math.round(r.std) : '',
+        기준단가: r.base ? Math.round(r.base) : '', 입고단가: Math.round(r.price), 수량: r.qty,
+        구매액: Math.round(r.buy), 기준금액: r.base ? Math.round(r.baseBuy) : '',
+        절감액: Math.round(r.diff), '차이율(%)': r.base ? Number(r.pct.toFixed(1)) : '',
+      }))
+    if (!rows.length) { toastError(`${year}년 입고 기록이 없습니다`); return }
     try {
       await downloadSheet({
-        title: `원가절감 실적 — ${year}년`,
+        title: `원가절감 ${tab === 'ledger' && yLedger.length ? '실적 대장' : '계산 명세'} — ${year}년`,
         sheetName: '원가절감',
         fileName: `원가절감_${year}_${todayISO()}.xlsx`,
         meta: [
-          ['확정 절감액', won(fixed)], ['연간 목표', won(goal)],
-          ['구매액(입고 기준)', won(buy)], ['자동 계산 단가효과', won(autoSave - autoLoss)],
-          ['기준', '기준단가 = 직전 12개월 가중평균 · 수량 = 실제 입고수량'],
+          ['표준단가 대비 절감', won(st.net)], ['절감율', st.baseBuy ? st.pct.toFixed(1) + '%' : '—'],
+          ['구매액(입고 기준)', won(buy)], ['표준단가 적용률', cover.toFixed(0) + '%'],
+          ['확정 절감액(대장)', won(fixed)], ['연간 목표', won(goal)],
+          ['집계 시작일', start || '전체 (제한 없음)'],
+          ['기준', '표준단가(DB단가) → 없으면 직전 12개월 가중평균 · 수량 = 실제 입고수량'],
           ['작성', `${todayISO()} · 진선테크 구매자재팀`],
         ],
-        rows: yLedger.map((l, i) => ({
-          No: i + 1, 인정월: l.ym, 유형: l.kind, 기준코드: l.std_code, 품명: l.item_name,
-          구매처: l.vendor_name, 발주번호: l.po_number,
-          기준단가: Number(l.base_price) || '', 적용단가: Number(l.new_price) || '', 수량: Number(l.qty) || '',
-          절감액: Number(l.amount) || 0, 사유: l.note, 상태: l.status,
-        })),
+        rows,
       })
     } catch (e) { toastError('엑셀 내보내기 실패: ' + e.message) }
   }
@@ -293,6 +318,11 @@ export default function CostSaving() {
           <p className="text-[13px] text-slate-400 mt-0.5">
             입고 단가를 <b className="text-slate-500">표준단가(DB단가)</b>와 견주어 절감액을 계산합니다. 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 봅니다.
             따로 인정할 건(업체변경·대체품 등)은 실적 대장에 남기세요.
+          </p>
+          <p className="text-[11.5px] text-slate-400 mt-1">
+            집계 시작일 <b className="text-indigo-600">{start || '전체'}</b>
+            <span className="text-slate-300"> — 그 전 입고는 지표에서 뺍니다 </span>
+            <button onClick={() => setTargetOpen(true)} className="text-indigo-500 font-bold underline decoration-dotted">바꾸기</button>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -319,8 +349,8 @@ export default function CostSaving() {
           n={goal ? `목표 ${man(goal)}원 대비 ${Math.round((fixed / goal) * 100)}%` : '연간 목표 미설정'} />
         <KPI t="등록 대기 후보" v={n(cand.length) + '건'} tone={cand.length ? 'info' : ''}
           n={cand.length ? `${man(cand.reduce((a, r) => a + r.diff, 0))}원어치 — 대장 탭에서 등록` : '새 후보 없음'} />
-        <KPI t="표준단가 없는 구매" v={man(buy - st.buy) + '원'} tone={buy - st.buy > 0 ? 'warn' : ''}
-          n="표준단가를 넣으면 이 금액도 절감 계산에 들어옵니다" />
+        <KPI t="표준단가 점검 필요" v={n(susp.length) + '건'} tone={susp.length ? 'warn' : ''}
+          n={susp.length ? '표준단가와 5배 넘게 차이 — 지표에서 뺐습니다. 아래 표 확인' : '표준단가가 크게 어긋난 건 없음'} />
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
@@ -335,6 +365,36 @@ export default function CostSaving() {
 
       {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p> : tab === 'kpi' ? (
         <>
+          {susp.length > 0 && (
+            <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4">
+              <p className="text-sm font-bold text-rose-700">⚠ 표준단가 점검 필요 {susp.length}건</p>
+              <p className="text-[11px] text-slate-500 mb-2">표준단가와 입고단가가 5배 넘게 벌어진 건입니다. 단위(EA↔M)·환율·품번이 어긋났을 가능성이 큽니다. 지표에서는 뺐습니다.</p>
+              <table className="w-full text-xs">
+                <thead><tr className="text-slate-400 text-left">
+                  <th className="py-1">입고일</th><th className="py-1">기준코드 / 품명</th>
+                  <th className="py-1 text-right">표준단가</th><th className="py-1 text-right">입고단가</th>
+                  <th className="py-1 text-right">배수</th><th className="py-1 text-right">수량</th><th className="py-1">구매처</th>
+                </tr></thead>
+                <tbody>
+                  {susp.slice(0, 15).map((r) => (
+                    <tr key={r.id} className="border-t border-rose-100">
+                      <td className="py-1.5 text-slate-500">{r.movement_date}</td>
+                      <td className="py-1.5"><span className="font-mono text-indigo-600">{r.std_code}</span>
+                        <div className="text-[11px] text-slate-400 truncate max-w-[240px]">{r.name}</div></td>
+                      <td className="py-1.5 text-right tabular-nums">{n(r.std)}</td>
+                      <td className="py-1.5 text-right tabular-nums font-bold">{n(r.price)}</td>
+                      <td className="py-1.5 text-right tabular-nums text-rose-600 font-bold">
+                        {r.price > r.std ? `${(r.price / r.std).toFixed(0)}배 비쌈` : `${(r.std / r.price).toFixed(0)}배 쌈`}</td>
+                      <td className="py-1.5 text-right tabular-nums text-slate-500">{n(r.qty)}</td>
+                      <td className="py-1.5 text-slate-500 truncate max-w-[110px]">{r.vendor}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {susp.length > 15 && <p className="text-[11px] text-slate-400 mt-1">… 외 {susp.length - 15}건. 엑셀로 내보내면 전부 보입니다.</p>}
+            </div>
+          )}
+
           {/* 월별 */}
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-sm font-bold text-slate-700">월별 절감</p>
@@ -588,13 +648,21 @@ export default function CostSaving() {
       {targetOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setTargetOpen(false)}>
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
-            <h3 className="text-base font-bold text-slate-900">🎯 {year}년 절감 목표</h3>
+            <h3 className="text-base font-bold text-slate-900">🎯 {year}년 절감 목표 · 집계 기준</h3>
+            <label className="block text-[11px] font-bold text-slate-400">연간 목표 (원)</label>
             <input type="number" defaultValue={goal} id="cs-goal"
               className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg text-right" />
             <p className="text-[11px] text-slate-400">원 단위로 적습니다. 예: 3000만원 → 30000000</p>
+            <label className="block text-[11px] font-bold text-slate-400 pt-1">집계 시작일</label>
+            <input type="date" defaultValue={start} id="cs-start"
+              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+            <p className="text-[11px] text-slate-400">
+              포털로 입고를 받기 시작한 날을 적습니다. 이 날짜 <b className="text-slate-500">이전 입고는 지표에서 아예 뺍니다</b> —
+              그때 자료는 단가가 덜 채워져 있어 절감율이 망가집니다.
+            </p>
             <div className="flex justify-end gap-2">
               <button onClick={() => setTargetOpen(false)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">취소</button>
-              <button onClick={() => saveTarget(document.getElementById('cs-goal').value)}
+              <button onClick={() => saveTarget(document.getElementById('cs-goal').value, document.getElementById('cs-start').value)}
                 className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">저장</button>
             </div>
           </div>

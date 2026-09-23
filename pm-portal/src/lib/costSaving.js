@@ -11,6 +11,7 @@
 
 const MONTH = (d) => String(d || '').slice(0, 7)
 const num = (v) => Number(v) || 0
+const ODD = 5   // 표준단가와 이만큼 넘게 벌어지면 「의심」
 
 // 12개월 전 날짜 (YYYY-MM-DD) — 글자만 바꾼다.
 //   ⚠ new Date 로 계산하면 시간대 때문에 하루가 밀린다 (한국 시간 브라우저에서 실제로 밀렸다)
@@ -47,12 +48,15 @@ export function computeSaving(rows, opt = {}) {
     }
     const avg = q > 0 ? amt / q : null      // 직전 12개월 가중평균
     const std = stdPrice(r)                  // 표준단가(DB단가)
-    const base = std ?? avg
-    const basis = std ? 'std' : avg != null ? 'avg' : ''
     const price = num(r.unit_price), qty = num(r.qty)
+    // 표준단가와 입고단가가 5배 넘게 벌어지면 단위·환율·품번이 어긋난 것으로 본다.
+    //   그대로 두면 지표가 통째로 망가지므로 「의심」으로 빼고 따로 보여 준다.
+    const odd = !!std && (price > std * ODD || price < std / ODD)
+    const base = (std && !odd) ? std : avg
+    const basis = (std && !odd) ? 'std' : odd ? 'susp' : avg != null ? 'avg' : ''
     const diff = base == null ? 0 : (base - price) * qty
     const pct = base ? ((base - price) / base) * 100 : 0
-    out.push({ ...r, base, basis, std, avg, price, qty, buy: price * qty, baseBuy: (base ?? price) * qty, diff, pct, first: base == null })
+    out.push({ ...r, base, basis, std, avg, odd, price, qty, buy: price * qty, baseBuy: (base ?? price) * qty, diff, pct, first: base == null })
     past.push({ date: r.movement_date, qty, price })
     hist.set(key, past)
   }
@@ -104,6 +108,12 @@ export function byVendor(rows) {
     m.set(k, x)
   }
   return [...m.values()].sort((a, b) => b.buy - a.buy)
+}
+
+// 표준단가와 너무 벌어져 지표에서 뺀 줄 (단위·환율·품번 확인용)
+export function suspects(rows) {
+  return rows.filter((r) => r.basis === 'susp')
+    .sort((a, b) => Math.abs(b.std - b.price) * b.qty - Math.abs(a.std - a.price) * a.qty)
 }
 
 // 표준단가로 잰 것만 모아 합계 (엑셀 절감율과 같은 계산)
