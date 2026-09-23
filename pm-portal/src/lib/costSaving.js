@@ -1,10 +1,12 @@
-// 원가절감 계산 — 입고 기록에서 단가 변화를 금액으로 바꾼다.
+// 원가절감 계산 — 입고 기록을 기준단가와 견줘 금액으로 바꾼다.
 //
-//   기준단가 = 그 입고 직전 12개월의 「가중평균 매입가」 (같은 품목, 입고수량으로 가중)
+//   기준단가 ① 표준단가(pm_std_price) — 엑셀에서 쓰던 DB단가. 있으면 이것을 쓴다.
+//            ② 없으면 그 입고 직전 12개월의 「가중평균 매입가」
 //   절감액   = (기준단가 − 이번 입고단가) × 이번 입고수량   ← 실제 입고수량 기준
 //
-//   ⚠ 이 숫자는 시장가가 내려서 생긴 것도 섞여 있다. 그래서 이건 「후보」이고,
-//     실적으로 인정할 것만 대장(pm_cost_saving)에 등록한다.
+//   ⚠ 표준단가 기준(①)이 팀이 대표 보고에 쓰던 방식이다. 지표의 「절감율」도
+//     엑셀과 같게 표준단가 기준 금액(= 표준단가 × 수량)으로 나눈다.
+//   ⚠ ②로 계산한 것은 시장가 하락도 섞이므로 「후보」로만 본다.
 //   ⚠ 단가가 없는 입고(발주 외 입고 등)는 계산에서 뺀다.
 
 const MONTH = (d) => String(d || '').slice(0, 7)
@@ -21,11 +23,13 @@ export function minus12m(ymd) {
 /**
  * rows: 입고 기록 [{ id, item_id, qty, unit_price, movement_date, po_number, vendor, std_code, name }]
  *       (날짜 오름차순일 필요 없음 — 안에서 정렬한다)
- * opt : { minPct: 3, minAmount: 30000 }  후보로 띄울 최소 조건
+ * opt : { minPct: 3, minAmount: 30000, stdOf: Map(item_id|std_code → 표준단가) }
  * 반환: { rows: [...계산된 입고], months: [{ ym, buy, save, loss }], cand: [...후보] }
  */
 export function computeSaving(rows, opt = {}) {
   const minPct = opt.minPct ?? 3, minAmount = opt.minAmount ?? 30000
+  const stdOf = opt.stdOf || new Map()
+  const stdPrice = (r) => num(stdOf.get(r.item_id) ?? stdOf.get(r.std_code)) || null
   const use = (rows || [])
     .filter((r) => r.movement_date && num(r.qty) > 0 && num(r.unit_price) > 0)
     .sort((a, b) => String(a.movement_date).localeCompare(String(b.movement_date)))
@@ -41,11 +45,14 @@ export function computeSaving(rows, opt = {}) {
       if (h.date < from) continue          // 12개월보다 오래된 것은 뺀다
       q += h.qty; amt += h.qty * h.price
     }
-    const base = q > 0 ? amt / q : null     // 직전 12개월 가중평균
+    const avg = q > 0 ? amt / q : null      // 직전 12개월 가중평균
+    const std = stdPrice(r)                  // 표준단가(DB단가)
+    const base = std ?? avg
+    const basis = std ? 'std' : avg != null ? 'avg' : ''
     const price = num(r.unit_price), qty = num(r.qty)
     const diff = base == null ? 0 : (base - price) * qty
     const pct = base ? ((base - price) / base) * 100 : 0
-    out.push({ ...r, base, price, qty, buy: price * qty, diff, pct, first: base == null })
+    out.push({ ...r, base, basis, std, avg, price, qty, buy: price * qty, baseBuy: (base ?? price) * qty, diff, pct, first: base == null })
     past.push({ date: r.movement_date, qty, price })
     hist.set(key, past)
   }
@@ -54,8 +61,9 @@ export function computeSaving(rows, opt = {}) {
   const mm = new Map()
   for (const r of out) {
     const ym = MONTH(r.movement_date)
-    const m = mm.get(ym) || { ym, buy: 0, save: 0, loss: 0, n: 0 }
+    const m = mm.get(ym) || { ym, buy: 0, save: 0, loss: 0, n: 0, stdBuy: 0, stdDiff: 0 }
     m.buy += r.buy; m.n++
+    if (r.basis === 'std') { m.stdBuy += r.baseBuy; m.stdDiff += r.diff }
     if (r.diff > 0) m.save += r.diff; else m.loss += -r.diff
     mm.set(ym, m)
   }
@@ -77,8 +85,9 @@ export function byItem(rows) {
   const m = new Map()
   for (const r of rows) {
     const k = r.item_id
-    const x = m.get(k) || { item_id: k, std_code: r.std_code, name: r.name, buy: 0, diff: 0, qty: 0, n: 0, last: '' }
+    const x = m.get(k) || { item_id: k, std_code: r.std_code, name: r.name, buy: 0, diff: 0, qty: 0, n: 0, last: '', std: null, price: 0 }
     x.buy += r.buy; x.diff += r.diff; x.qty += r.qty; x.n++
+    x.std = r.std ?? x.std; x.price = r.price
     if (String(r.movement_date) > x.last) x.last = r.movement_date
     m.set(k, x)
   }
@@ -95,6 +104,17 @@ export function byVendor(rows) {
     m.set(k, x)
   }
   return [...m.values()].sort((a, b) => b.buy - a.buy)
+}
+
+// 표준단가로 잰 것만 모아 합계 (엑셀 절감율과 같은 계산)
+export function stdTotals(rows) {
+  let save = 0, loss = 0, baseBuy = 0, buy = 0, n = 0
+  for (const r of rows) {
+    if (r.basis !== 'std') continue
+    n++; baseBuy += r.baseBuy; buy += r.buy
+    if (r.diff > 0) save += r.diff; else loss += -r.diff
+  }
+  return { save, loss, net: save - loss, baseBuy, buy, n, pct: baseBuy ? ((save - loss) / baseBuy) * 100 : 0 }
 }
 
 export const SAVING_KINDS = ['단가인하', '업체변경', '대체품', '사양변경', '발주통합', '물류', '클레임', '기타']

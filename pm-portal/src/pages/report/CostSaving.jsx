@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -6,16 +6,17 @@ import { must } from '../../lib/db'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
+import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
-import { computeSaving, candKey, byItem, byVendor, SAVING_KINDS } from '../../lib/costSaving'
+import { computeSaving, candKey, byItem, byVendor, stdTotals, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
 //
-//   ① 지표(자동)  입고 단가가 직전 12개월 가중평균보다 싸면 그만큼을 금액으로 계산한다.
-//                 시장가 하락도 섞여 있어 「후보」로만 본다.
+//   ① 지표(자동)  입고 단가를 표준단가(DB단가)와 견줘 절감액을 계산한다.
+//                 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 본다(후보용).
 //   ② 실적 대장    후보에서 골라 등록하거나 직접 적는다. 대표 보고 숫자는 이 대장이 기준.
 //
-//   기준단가 = 직전 12개월 가중평균 · 수량 = 실제 입고수량 (2026-09-23 확정)
+//   기준단가 = 표준단가(pm_std_price) → 없으면 직전 12개월 가중평균 · 수량 = 실제 입고수량
 
 const n = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 const won = (v) => n(v) + '원'
@@ -36,6 +37,7 @@ async function fetchInbound() {
     po_number: r.purchase_orders?.po_number || '', vendor: r.purchase_orders?.vendors?.name || '',
   }))
 }
+const fetchStd = async () => must(await supabase.from('pm_std_price').select('item_id,std_code,price'), '표준단가 조회') || []
 const fetchLedger = async () => must(await supabase.from('pm_cost_saving').select('*').order('ym', { ascending: false }), '실적 대장 조회') || []
 const fetchSkip = async () => must(await supabase.from('pm_cost_saving_skip').select('key'), '숨긴 후보 조회') || []
 const fetchTarget = async () => {
@@ -63,13 +65,24 @@ export default function CostSaving() {
   const [year, setYear] = useState(thisYear())
   const [form, setForm] = useState(null)    // 등록 모달
   const [targetOpen, setTargetOpen] = useState(false)
+  const [stdQ, setStdQ] = useState('')
+  const stdFileRef = useRef(null)
 
   const { data: inbound = [], isLoading, error } = useQuery({ queryKey: ['csInbound'], queryFn: fetchInbound, staleTime: 5 * 60 * 1000 })
   const { data: ledger = [] } = useQuery({ queryKey: ['csLedger'], queryFn: fetchLedger })
   const { data: skips = [] } = useQuery({ queryKey: ['csSkip'], queryFn: fetchSkip })
   const { data: target } = useQuery({ queryKey: ['csTarget'], queryFn: fetchTarget })
+  const { data: stdRows = [] } = useQuery({ queryKey: ['csStd'], queryFn: fetchStd, staleTime: 5 * 60 * 1000 })
 
-  const calc = useMemo(() => computeSaving(inbound), [inbound])
+  const stdOf = useMemo(() => {
+    const m = new Map()
+    for (const r of stdRows) {
+      if (r.item_id) m.set(r.item_id, Number(r.price))
+      if (r.std_code) m.set(r.std_code, Number(r.price))
+    }
+    return m
+  }, [stdRows])
+  const calc = useMemo(() => computeSaving(inbound, { stdOf }), [inbound, stdOf])
   const skipSet = useMemo(() => new Set(skips.map((s) => s.key)), [skips])
   const doneSet = useMemo(() => new Set(ledger.map((l) => `${l.item_id}|${l.ym}`)), [ledger])
 
@@ -81,6 +94,8 @@ export default function CostSaving() {
   const buy = yRows.reduce((a, r) => a + r.buy, 0)
   const autoSave = yRows.reduce((a, r) => a + (r.diff > 0 ? r.diff : 0), 0)
   const autoLoss = yRows.reduce((a, r) => a + (r.diff < 0 ? -r.diff : 0), 0)
+  const st = useMemo(() => stdTotals(yRows), [yRows])           // 표준단가로 잰 것만
+  const cover = buy ? (st.buy / buy) * 100 : 0                   // 표준단가가 있는 구매 비중
   const fixed = yLedger.reduce((a, l) => a + (Number(l.amount) || 0), 0)
   const goal = Number(target?.amount) || 0
   const years = [...new Set([...calc.rows.map((r) => yearOf(r.movement_date)), ...ledger.map((l) => String(l.ym).slice(0, 4)), thisYear()])]
@@ -95,12 +110,13 @@ export default function CostSaving() {
     }
     yRows.forEach((r) => {
       const x = m.get(String(r.movement_date).slice(0, 7)); if (!x) return
-      x.buy += r.buy; if (r.diff > 0) x.auto += r.diff
+      x.buy += r.buy
+      if (r.basis === 'std') x.auto += r.diff        // 표준단가 기준 순액 (오른 것은 깎인다)
     })
     yLedger.forEach((l) => { const x = m.get(String(l.ym)); if (x) x.fixed += Number(l.amount) || 0 })
     return [...m.values()]
   }, [yRows, yLedger, year])
-  const maxM = Math.max(1, ...months.map((m) => Math.max(m.fixed, m.auto)))
+  const maxM = Math.max(1, ...months.map((m) => Math.max(m.fixed, Math.abs(m.auto))))
 
   const kindSum = useMemo(() => {
     const m = new Map(SAVING_KINDS.map((k) => [k, 0]))
@@ -110,6 +126,88 @@ export default function CostSaving() {
 
   const topItems = useMemo(() => byItem(yRows).sort((a, b) => b.diff - a.diff), [yRows])
   const vendors = useMemo(() => byVendor(yRows), [yRows])
+
+  /* ---- 표준단가 ---- */
+  const lastPrice = useMemo(() => {
+    const m = new Map()
+    for (const r of calc.rows) {
+      const k = r.std_code || r.item_id
+      const x = m.get(k)
+      if (!x || String(r.movement_date) > x.d) m.set(k, { d: String(r.movement_date), p: r.price })
+    }
+    return m
+  }, [calc.rows])
+  const nameOf = useMemo(() => {
+    const m = new Map()
+    for (const r of calc.rows) if (r.std_code && !m.has(r.std_code)) m.set(r.std_code, r.name)
+    return m
+  }, [calc.rows])
+  const stdView = useMemo(() => {
+    const q = stdQ.trim().toUpperCase()
+    return stdRows
+      .map((r) => ({ ...r, price: Number(r.price), name: nameOf.get(r.std_code) || '', last: lastPrice.get(r.std_code)?.p || null }))
+      .filter((r) => !q || r.std_code.toUpperCase().includes(q) || (r.name || '').toUpperCase().includes(q))
+      .sort((a, b) => a.std_code.localeCompare(b.std_code))
+  }, [stdRows, stdQ, nameOf, lastPrice])
+
+  const reloadStd = () => qc.invalidateQueries({ queryKey: ['csStd'] })
+  async function patchStd(code, price) {
+    if (!(price > 0)) { toastError('단가는 0보다 커야 합니다'); return }
+    try {
+      must(await supabase.from('pm_std_price').update({ price, updated_at: new Date().toISOString() }).eq('std_code', code), '표준단가 수정')
+      reloadStd(); toastSuccess(`${code} 표준단가 ${n(price)}원`)
+    } catch (e) { toastError(e.message) }
+  }
+  async function delStd(code) {
+    if (!window.confirm(`${code} 표준단가를 지울까요?`)) return
+    try {
+      must(await supabase.from('pm_std_price').delete().eq('std_code', code), '표준단가 삭제')
+      reloadStd(); toastSuccess('지웠습니다')
+    } catch (e) { toastError(e.message) }
+  }
+  // 엑셀 올리기 — 품목코드·단가 두 칸만 보면 된다
+  async function uploadStd(file) {
+    if (!file) return
+    try {
+      const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' })
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+      const pick = (r, keys) => { for (const k of Object.keys(r)) if (keys.some((x) => String(k).replace(/\s/g, '').includes(x))) return r[k]; return '' }
+      const payload = []
+      for (const r of rows) {
+        const code = String(pick(r, ['품목코드', '기준코드', '품번', 'PN'])).trim().replace(/^AX-/i, '')
+        const price = Number(String(pick(r, ['DB단가', '표준단가', '단가', 'PRICE'])).replace(/[,₩\s]/g, ''))
+        if (!code || !(price > 0)) continue
+        payload.push({ std_code: 'AX-' + code, price, base_date: todayISO(), source: '엑셀 업로드' })
+      }
+      if (!payload.length) { toastError('품목코드·단가 칸을 찾지 못했습니다'); return }
+      // 기준코드 DB 와 연결
+      const codes = payload.map((p) => p.std_code)
+      const items = []
+      for (let i = 0; i < codes.length; i += 200) {
+        items.push(...(must(await supabase.from('items').select('id,std_code').in('std_code', codes.slice(i, i + 200)), '품목 조회') || []))
+      }
+      const idOf = new Map(items.map((i) => [i.std_code, i.id]))
+      payload.forEach((p) => { p.item_id = idOf.get(p.std_code) || null })
+      for (let i = 0; i < payload.length; i += 200) {
+        must(await supabase.from('pm_std_price').upsert(payload.slice(i, i + 200), { onConflict: 'std_code' }), '표준단가 저장')
+      }
+      reloadStd()
+      toastSuccess(`표준단가 ${payload.length.toLocaleString('ko-KR')}개 올림 · 기준코드 연결 ${idOf.size.toLocaleString('ko-KR')}개`)
+    } catch (e) { toastError('엑셀 올리기 실패: ' + e.message) }
+  }
+  async function exportStd() {
+    try {
+      await downloadSheet({
+        title: '표준단가 (DB단가)', sheetName: '표준단가', fileName: `표준단가_${todayISO()}.xlsx`,
+        meta: [['품목수', String(stdRows.length)], ['작성', `${todayISO()} · 진선테크 구매자재팀`]],
+        rows: stdView.map((r) => ({
+          기준코드: r.std_code, 품명: r.name, 표준단가: Math.round(r.price),
+          최근입고단가: r.last ? Math.round(r.last) : '', 차이: r.last ? Math.round(r.price - r.last) : '',
+          기준일: r.base_date || '', 출처: r.source || '',
+        })),
+      })
+    } catch (e) { toastError('내보내기 실패: ' + e.message) }
+  }
 
   /* ---- 등록 ---- */
   function openFrom(r) {
@@ -193,8 +291,8 @@ export default function CostSaving() {
           <p className="text-[11px] font-semibold text-slate-400">📊 분석</p>
           <h1 className="text-xl font-extrabold text-slate-900">원가절감 실적</h1>
           <p className="text-[13px] text-slate-400 mt-0.5">
-            입고 단가를 <b className="text-slate-500">직전 12개월 가중평균</b>과 견주어 절감 후보를 찾고, 인정한 것만 실적 대장에 남깁니다.
-            대표 보고 숫자는 <b className="text-slate-500">확정 절감액(대장)</b> 기준입니다.
+            입고 단가를 <b className="text-slate-500">표준단가(DB단가)</b>와 견주어 절감액을 계산합니다. 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 봅니다.
+            따로 인정할 건(업체변경·대체품 등)은 실적 대장에 남기세요.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -212,19 +310,21 @@ export default function CostSaving() {
 
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-        <KPI t="확정 절감액 (대장)" v={man(fixed) + '원'} tone="ok"
+        <KPI t="표준단가 대비 절감" v={man(st.net) + '원'} tone="ok"
+          n={`절감 ${man(st.save)} · 상승 ${man(st.loss)} · ${n(st.n)}건`} />
+        <KPI t="절감율" v={st.baseBuy ? st.pct.toFixed(1) + '%' : '—'} tone="ok"
+          n={`표준단가 기준 ${man(st.baseBuy)}원 → 실구매 ${man(st.buy)}원`} />
+        <KPI t="구매액 (입고 기준)" v={man(buy) + '원'} n={`${n(yRows.length)}건 입고 · 표준단가 적용 ${cover.toFixed(0)}%`} />
+        <KPI t="확정 절감액 (대장)" v={man(fixed) + '원'} tone="info"
           n={goal ? `목표 ${man(goal)}원 대비 ${Math.round((fixed / goal) * 100)}%` : '연간 목표 미설정'} />
-        <KPI t="자동 계산 단가효과" v={man(autoSave - autoLoss) + '원'} tone="info"
-          n={`절감 ${man(autoSave)} · 상승 ${man(autoLoss)} (시장가 포함)`} />
-        <KPI t="구매액 (입고 기준)" v={man(buy) + '원'} n={`${n(yRows.length)}건 입고`} />
-        <KPI t="절감율" v={buy ? ((fixed / buy) * 100).toFixed(1) + '%' : '—'} n="확정 절감액 ÷ 구매액" />
         <KPI t="등록 대기 후보" v={n(cand.length) + '건'} tone={cand.length ? 'info' : ''}
           n={cand.length ? `${man(cand.reduce((a, r) => a + r.diff, 0))}원어치 — 대장 탭에서 등록` : '새 후보 없음'} />
-        <KPI t="단가 상승" v={man(autoLoss) + '원'} tone={autoLoss ? 'warn' : ''} n="올라간 품목 — 협상 대상" />
+        <KPI t="표준단가 없는 구매" v={man(buy - st.buy) + '원'} tone={buy - st.buy > 0 ? 'warn' : ''}
+          n="표준단가를 넣으면 이 금액도 절감 계산에 들어옵니다" />
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-        {[['kpi', '지표'], ['ledger', `실적 대장 ${yLedger.length ? `(${yLedger.length})` : ''}`]].map(([k, l]) => (
+        {[['kpi', '지표'], ['ledger', `실적 대장 ${yLedger.length ? `(${yLedger.length})` : ''}`], ['std', `표준단가 ${stdRows.length ? `(${stdRows.length})` : ''}`]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{l}</button>
         ))}
@@ -238,7 +338,7 @@ export default function CostSaving() {
           {/* 월별 */}
           <div className="rounded-xl border border-slate-200 bg-white p-4">
             <p className="text-sm font-bold text-slate-700">월별 절감</p>
-            <p className="text-[11px] text-slate-400 mb-3">진한 막대 = 확정(대장) · 연한 막대 = 자동 계산</p>
+            <p className="text-[11px] text-slate-400 mb-3">진한 막대 = 확정(대장) · 연한 막대 = 표준단가 대비 절감</p>
             <div className="flex items-end gap-2 h-40">
               {months.map((m) => (
                 <div key={m.ym} className="flex-1 flex flex-col items-center gap-1">
@@ -310,6 +410,56 @@ export default function CostSaving() {
             </table>
           </div>
         </>
+      ) : tab === 'std' ? (
+        <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div>
+              <p className="text-sm font-bold text-slate-700">표준단가 (DB단가)</p>
+              <p className="text-[11px] text-slate-400">이 단가와 입고 단가를 견주어 절감액이 계산됩니다. 품번은 AX- 없이 적어도 됩니다.</p>
+            </div>
+            <input value={stdQ} onChange={(e) => setStdQ(e.target.value)} placeholder="품번·품명 검색"
+              className="ml-auto px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
+            {canEdit && (
+              <>
+                <button onClick={() => stdFileRef.current?.click()}
+                  title="엑셀 파일에 품목코드·단가 두 칸만 있으면 됩니다"
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">📤 엑셀로 올리기</button>
+                <input ref={stdFileRef} type="file" accept=".xlsx,.xls,.csv" className="hidden"
+                  onChange={(e) => { uploadStd(e.target.files?.[0]); e.target.value = '' }} />
+              </>
+            )}
+            <button onClick={exportStd} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">📑 내려받기</button>
+          </div>
+          <table className="w-full text-xs">
+            <thead><tr className="text-slate-400 text-left">
+              <th className="py-1">기준코드 / 품명</th><th className="py-1 text-right">표준단가</th>
+              <th className="py-1 text-right">최근 입고단가</th><th className="py-1 text-right">차이</th>
+              <th className="py-1">기준일 · 출처</th><th className="w-10" />
+            </tr></thead>
+            <tbody>
+              {stdView.slice(0, 200).map((r) => (
+                <tr key={r.std_code} className="border-t border-slate-100">
+                  <td className="py-1.5"><span className="font-mono text-indigo-600">{r.std_code}</span>
+                    <div className="text-[11px] text-slate-400 truncate max-w-[260px]">{r.name}</div></td>
+                  <td className="py-1.5 text-right">
+                    {canEdit ? (
+                      <input type="number" defaultValue={Math.round(r.price)}
+                        onBlur={(e) => Number(e.target.value) !== Math.round(r.price) && patchStd(r.std_code, Number(e.target.value))}
+                        className="w-24 px-2 py-1 text-right border border-slate-200 rounded-lg" />
+                    ) : <span className="tabular-nums">{n(r.price)}</span>}
+                  </td>
+                  <td className="py-1.5 text-right tabular-nums text-slate-500">{r.last ? n(r.last) : '—'}</td>
+                  <td className={`py-1.5 text-right tabular-nums font-bold ${r.last ? (r.price - r.last >= 0 ? 'text-emerald-600' : 'text-rose-600') : 'text-slate-300'}`}>
+                    {r.last ? n(r.price - r.last) : '—'}</td>
+                  <td className="py-1.5 text-slate-400">{r.base_date || '—'} {r.source ? `· ${r.source}` : ''}</td>
+                  <td className="py-1.5 text-right">{canEdit && <button onClick={() => delStd(r.std_code)} className="text-slate-300 hover:text-rose-600">×</button>}</td>
+                </tr>
+              ))}
+              {!stdView.length && <tr><td colSpan={6} className="py-8 text-center text-slate-400">표준단가가 없습니다. 엑셀로 올리거나 SQL 로 넣으세요.</td></tr>}
+            </tbody>
+          </table>
+          {stdView.length > 200 && <p className="text-[11px] text-slate-400">… 200줄까지만 보입니다. 검색으로 좁혀 보세요.</p>}
+        </div>
       ) : (
         <>
           {/* 후보 */}
@@ -452,7 +602,7 @@ export default function CostSaving() {
       )}
 
       <p className="text-[11px] text-slate-400">
-        기준단가는 그 입고 직전 12개월의 가중평균 매입가입니다. 자동 계산에는 시장가 변동도 섞여 있으니, 팀 실적은 대장에 등록한 것만 셉니다.
+        기준단가는 표준단가(pm_std_price)이고, 없는 품목만 직전 12개월 가중평균으로 봅니다. 절감율은 엑셀과 같게 「표준단가 기준 금액」으로 나눕니다.
       </p>
     </div>
   )
