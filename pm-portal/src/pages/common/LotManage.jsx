@@ -11,25 +11,6 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
 const MONO = "ui-monospace, Menlo, Consolas, monospace"
 
-// 브랜드를 두 칸으로 나눈다.
-//   BECKHOFF 는 형번이 넷이라 왼쪽을 통째로 쓰고,
-//   나머지 셋은 오른쪽에 세로로 쌓아 한 화면에 담는다.
-function splitByBrand(rows) {
-  const by = new Map()
-  rows.forEach(r => {
-    const b = (r.maker || '기타').trim() || '기타'
-    if (!by.has(b)) by.set(b, [])
-    by.get(b).push(r)
-  })
-  const main = []      // 왼쪽 — 품목이 가장 많은 브랜드
-  const rest = []      // 오른쪽 — 나머지
-  const sorted = [...by.entries()].sort((a, b) => b[1].length - a[1].length)
-  sorted.forEach(([name, items], i) => {
-    (i === 0 ? main : rest).push({ name, items })
-  })
-  return { main, rest }
-}
-
 // 로트 관리.
 //
 //   시리얼과 보증기간을 관리해야 하는 품목은 여덟 종뿐이다.
@@ -48,6 +29,8 @@ export default function LotManage() {
   const [editLot, setEditLot] = useState(null)     // 수정할 로트
   const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
   const [showDone, setShowDone] = useState(false)  // 소진분 포함
+  const [q, setQ] = useState('')                   // 품번·형번·제조사·시리얼로 찾기
+  const [only, setOnly] = useState('')             // '' | 초과 | 임박 | 차이 | 미설정
 
   // 로트관리 대상 품목 관리.
   //   ⚠ 지금까지 화면에 켜는 곳이 없어 SQL 로 직접 바꿔야 했다.
@@ -156,7 +139,29 @@ export default function LotManage() {
     items: sum.length,
     expired: sum.reduce((s, x) => s + Number(x.expired_cnt || 0), 0),
     soon: sum.reduce((s, x) => s + Number(x.soon_cnt || 0), 0),
+    gap: sum.filter((x) => Number(x.gap) !== 0).length,
+    noShelf: sum.filter((x) => !x.shelf_months).length,
   }), [sum])
+
+  // 급한 것이 위로 — 기한 초과 → 만료가 가까운 것 → 형번 순
+  //   품목이 늘어도 맨 위만 보면 「오늘 뭘 먼저 써야 하나」가 나온다.
+  const view = useMemo(() => {
+    const k = q.trim().toUpperCase()
+    const hit = (x) => {
+      if (only === '초과' && !(Number(x.expired_cnt) > 0)) return false
+      if (only === '임박' && !(x.next_days != null && x.next_days >= 0 && x.next_days <= 90)) return false
+      if (only === '차이' && Number(x.gap) === 0) return false
+      if (only === '미설정' && x.shelf_months) return false
+      if (!k) return true
+      // 시리얼로도 찾는다 — 클레임 날 때 「이 로트 어디 있나」를 먼저 보게 된다
+      const serials = (byItem[x.item_id] || []).map((l) => l.serial_no).join(' ')
+      return [x.maker_code, x.std_code, x.item_name, x.maker, serials]
+        .some((v) => String(v || '').toUpperCase().includes(k))
+    }
+    const rank = (x) => (Number(x.expired_cnt) > 0 ? -1e9 : (x.next_days ?? 1e8))
+    return sum.filter(hit).sort((a, b) => rank(a) - rank(b)
+      || String(a.maker_code || a.std_code).localeCompare(String(b.maker_code || b.std_code)))
+  }, [sum, q, only, byItem])
 
   async function exportXl() {
     if (!lots.length) { toastError('내보낼 로트가 없습니다'); return }
@@ -235,80 +240,98 @@ export default function LotManage() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">🏷 로트 관리</h1>
           <p className="text-xs text-slate-400">
-            보증기간이 있는 품목입니다. 오래 있은 것부터 내보내세요.
+            보증기간이 있는 품목입니다. 오래 있은 것부터 내보내세요. 급한 것이 맨 위에 옵니다.
           </p>
         </div>
-        <div className="flex gap-1.5">
-          {canEdit && (
-            <button onClick={() => setAddFor({})}
-              className="px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white">
-              ＋ 로트 등록
-            </button>
-          )}
-          <button onClick={() => setOpenItems(
-              Object.keys(openItems).some(k => openItems[k])
-                ? {}
-                : Object.fromEntries(sum.map(x => [x.item_id, true])))}
-            className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">
-            {Object.keys(openItems).some(k => openItems[k]) ? '모두 접기' : '모두 펼치기'}
+        {/* 매일 쓰는 건 「로트 등록」 하나다. 나머지는 눈에 덜 띄게 둔다. */}
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <button onClick={downloadAudit} disabled={auditBusy}
+            title="실물을 세어 적어 넣는 표 — 로트관리 시작 이후 출고 목록도 함께"
+            className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40">
+            {auditBusy ? '만드는 중…' : '📋 실사표'}
           </button>
-          <label className="flex items-center gap-1.5 px-2.5 py-2 text-xs text-slate-500 cursor-pointer">
+          <button onClick={exportXl}
+            className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">📥 엑셀</button>
+          {canEdit && (
+            <button onClick={() => { setMq(''); setMHits([]); setMgrOpen(true) }}
+              title="로트관리할 품목을 고릅니다"
+              className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 대상 품목</button>
+          )}
+          <label className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 cursor-pointer">
             <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)}
               className="w-3.5 h-3.5 accent-indigo-600" />
             소진분 포함
           </label>
-          <button onClick={exportXl}
-            className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
-            📥 엑셀
+          <button onClick={() => setOpenItems(
+              Object.keys(openItems).some(k => openItems[k])
+                ? {}
+                : Object.fromEntries(view.map(x => [x.item_id, true])))}
+            className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+            {Object.keys(openItems).some(k => openItems[k]) ? '모두 접기' : '모두 펼치기'}
           </button>
           {canEdit && (
-            <button onClick={() => { setMq(''); setMHits([]); setMgrOpen(true) }}
-              title="로트관리할 품목을 고릅니다"
-              className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white">
-              ⚙ 대상 품목
+            <button onClick={() => setAddFor({})}
+              className="ml-1 px-3.5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+              ＋ 로트 등록
             </button>
           )}
-          <button onClick={downloadAudit} disabled={auditBusy}
-            title="실물을 세어 적어 넣는 표 — 로트관리 시작 이후 출고 목록도 함께"
-            className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 disabled:opacity-40">
-            {auditBusy ? '만드는 중…' : '📋 실사표'}
-          </button>
         </div>
       </div>
 
-      {(stat.expired > 0 || stat.soon > 0) && (
-        <div className="flex gap-2 flex-wrap">
-          {stat.expired > 0 && (
-            <div className="flex-1 min-w-[160px] rounded-xl border-2 border-rose-300 bg-rose-50 px-3.5 py-2.5">
-              <p className="text-xs font-bold text-rose-700">
-                기한 초과 {stat.expired}건 — 사용하지 마세요
-              </p>
-            </div>
-          )}
-          {stat.soon > 0 && (
-            <div className="flex-1 min-w-[160px] rounded-xl border-2 border-amber-300 bg-amber-50 px-3.5 py-2.5">
-              <p className="text-xs font-bold text-amber-700">
-                3개월 내 만료 {stat.soon}건 — 먼저 쓰세요
-              </p>
-            </div>
-          )}
-        </div>
-      )}
+      {/* 지표 — 0이어도 늘 보인다. 아무것도 없으면 「문제없음」인지 「자료가 없는지」 알 수 없다. */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+        {[
+          ['기한 초과', stat.expired, '쓰면 안 됩니다', 'rose', '초과'],
+          ['3개월 내 만료', stat.soon, '먼저 쓰세요', 'amber', '임박'],
+          ['재고와 차이', stat.gap, '로트가 모자라거나 남습니다', 'indigo', '차이'],
+          ['보증기간 미설정', stat.noShelf, '만료일을 못 셉니다', 'slate', '미설정'],
+        ].map(([t, v, s, tone, key]) => (
+          <button key={t} onClick={() => setOnly(only === key ? '' : key)}
+            className={`text-left rounded-xl border-2 px-3.5 py-2.5 transition ${
+              only === key ? 'ring-2 ring-offset-1 ring-indigo-300 ' : ''}${
+              v > 0
+                ? { rose: 'border-rose-300 bg-rose-50', amber: 'border-amber-300 bg-amber-50',
+                    indigo: 'border-indigo-300 bg-indigo-50', slate: 'border-slate-300 bg-slate-50' }[tone]
+                : 'border-slate-200 bg-white'}`}>
+            <p className="text-[11px] font-bold text-slate-400">{t}</p>
+            <p className={`text-xl font-extrabold tabular-nums ${v > 0
+              ? { rose: 'text-rose-600', amber: 'text-amber-600', indigo: 'text-indigo-600', slate: 'text-slate-600' }[tone]
+              : 'text-slate-300'}`}>{n(v)}<span className="text-xs font-bold">건</span></p>
+            <p className="text-[10px] text-slate-400">{v > 0 ? s : '없음'}</p>
+          </button>
+        ))}
+      </div>
+
+      {/* 찾기 — 클레임 날 때 시리얼로 바로 찾는다 */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <input value={q} onChange={e => setQ(e.target.value)}
+          placeholder="형번 · 기준코드 · 품명 · 제조사 · 시리얼"
+          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-80" />
+        {only && (
+          <button onClick={() => setOnly('')}
+            className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700">
+            {only} 만 보는 중 ✕
+          </button>
+        )}
+        <span className="text-xs text-slate-400">{n(view.length)}종 / 전체 {n(sum.length)}종</span>
+      </div>
 
       {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
       {!isLoading && !sum.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">등록된 로트가 없습니다</p>
-          <p className="text-xs text-slate-400 mt-1">
-            입고할 때 ＋ 로트 등록으로 시리얼을 기록하세요
-          </p>
+          <p className="text-xs text-slate-400 mt-1">입고할 때 ＋ 로트 등록으로 시리얼을 기록하세요</p>
+        </div>
+      )}
+      {!isLoading && sum.length > 0 && !view.length && (
+        <div className="rounded-xl border border-slate-200 bg-white p-10 text-center text-sm text-slate-400">
+          찾는 품목이 없습니다.
         </div>
       )}
 
-      {/* 브랜드 두 칸 — 왼쪽에 형번이 많은 브랜드, 오른쪽에 나머지 */}
-      {(() => {
-        const { main, rest } = splitByBrand(sum)
-        const card = (s) => {
+      {/* 한 줄에 한 품목 — 급한 것이 위로. 품목이 늘어도 위만 보면 된다. */}
+      <div className="space-y-1.5">
+        {view.map(s => {
           const open = !!openItems[s.item_id]
           const rows = byItem[s.item_id] || []
           const days = s.next_days
@@ -316,163 +339,124 @@ export default function LotManage() {
           const soon = !urgent && days != null && days <= 90
           return (
             <div key={s.item_id}
-              className={`rounded-xl border-2 overflow-hidden ${
+              className={`rounded-xl border bg-white overflow-hidden ${
                 urgent ? 'border-rose-300' : soon ? 'border-amber-300' : 'border-slate-200'}`}>
 
-              {/* 머리 — 먼저 쓸 것 */}
-              <div className="bg-white px-4 py-3">
-                <div className="flex items-start gap-3 flex-wrap">
-                  <div className="flex-1 min-w-[180px]">
-                    <div className="flex items-baseline gap-2 flex-wrap">
-                      <span className="text-sm font-bold text-slate-800"
-                        style={{ fontFamily: MONO }}>{s.maker_code || s.std_code}</span>
-                      <span className="text-[11px] text-slate-400">{s.maker}</span>
-                      {canEdit ? (
-                        <button onClick={() => setShelfFor(s)}
-                          title="보증기간 수정"
-                          className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${
-                            s.shelf_months ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                                           : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
-                          {s.shelf_months ? `보증 ${s.shelf_months}개월` : '⚠ 보증기간 미설정'}
-                        </button>
-                      ) : (
-                        <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500">
-                          {s.shelf_months ? `보증 ${s.shelf_months}개월` : '보증 미설정'}
+              <div className="flex items-center gap-3 px-3 py-2.5 flex-wrap">
+                {/* 상태 — 색 막대 하나로 */}
+                <span className={`w-1.5 h-9 rounded-full flex-shrink-0 ${
+                  urgent ? 'bg-rose-500' : soon ? 'bg-amber-400' : 'bg-emerald-400'}`} />
+
+                {/* 형번 · 품명 */}
+                <div className="min-w-[190px] flex-1">
+                  <div className="flex items-baseline gap-2 flex-wrap">
+                    <span className="text-sm font-bold text-slate-800" style={{ fontFamily: MONO }}>
+                      {s.maker_code || s.std_code}
+                    </span>
+                    <span className="text-[11px] text-slate-400">{s.maker}</span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 truncate max-w-[340px]">{s.item_name}</p>
+                </div>
+
+                {/* 먼저 쓸 로트 — 이 화면의 답 */}
+                <div className="min-w-[230px] flex-1">
+                  {s.next_serial ? (
+                    <div className={`rounded-lg px-2.5 py-1.5 flex items-center gap-2 flex-wrap ${
+                      urgent ? 'bg-rose-600' : soon ? 'bg-amber-500' : 'bg-slate-50 border border-slate-200'}`}>
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap ${
+                        urgent || soon ? 'bg-white/20 text-white' : 'bg-white text-slate-400 border border-slate-200'}`}>
+                        {urgent ? '기한 초과' : '먼저 사용'}
+                      </span>
+                      <span className={`text-sm font-bold ${urgent || soon ? 'text-white' : 'text-slate-700'}`}
+                        style={{ fontFamily: MONO }}>{s.next_serial}</span>
+                      <span className={`text-[11px] ${urgent || soon ? 'text-white/80' : 'text-slate-400'}`}>{n(s.next_qty)}개</span>
+                      {s.next_expire && (
+                        <span className={`ml-auto text-[11px] whitespace-nowrap ${urgent || soon ? 'text-white/90' : 'text-slate-400'}`}>
+                          {s.next_expire}
+                          {days != null && <b className="ml-1.5">{days < 0 ? `${-days}일 지남` : `${days}일`}</b>}
                         </span>
                       )}
                     </div>
-                    <p className="text-xs text-slate-500 mt-0.5">{s.item_name}</p>
-                  </div>
-
-                  <div className="text-right">
-                    <p className="text-[11px] text-slate-400">잔량</p>
-                    <p className="text-lg font-bold text-slate-800">{n(s.total_left)}</p>
-                    <p className="text-[10px] text-slate-400">{s.lot_cnt}개 로트</p>
-                    {/* 재고와 로트 합이 어긋나면 알려 준다.
-                        로트가 모자라 못 뺀 경우가 여기서 드러난다. */}
-                    {Number(s.gap) !== 0 && (
-                      <p className="text-[10px] font-bold text-rose-600 mt-0.5"
-                        title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
-                        ⚠ 재고와 {Number(s.gap) > 0 ? '+' : ''}{n(s.gap)} 차이
-                      </p>
-                    )}
-                  </div>
+                  ) : (
+                    <span className="text-[11px] text-slate-300">남은 로트 없음</span>
+                  )}
                 </div>
 
-                {/* 먼저 쓸 로트 — 가장 크게 */}
-                {s.next_serial && (
-                  <div className={`mt-2.5 rounded-lg px-3.5 py-2.5 flex items-center gap-3 flex-wrap ${
-                    urgent ? 'bg-rose-600' : soon ? 'bg-amber-500' : 'bg-slate-800'}`}>
-                    <span className="px-1.5 py-0.5 rounded bg-white/20 text-[10px] font-bold text-white">
-                      {urgent ? '기한 초과' : '먼저 사용'}
-                    </span>
-                    <span className="text-lg font-bold text-white" style={{ fontFamily: MONO }}>
-                      {s.next_serial}
-                    </span>
-                    <span className="text-xs text-white/80">
-                      {n(s.next_qty)}개
-                    </span>
-                    <span className="ml-auto text-xs text-white/90 whitespace-nowrap">
-                      {s.next_expire && (
-                        <>
-                          {s.next_expire} 까지
-                          {days != null && (
-                            <b className="ml-1.5">
-                              {days < 0 ? `${-days}일 지남` : `${days}일`}
-                            </b>
-                          )}
-                        </>
-                      )}
-                    </span>
-                  </div>
+                {/* 잔량 */}
+                <div className="text-right w-24 flex-shrink-0">
+                  <p className="text-base font-bold text-slate-800 tabular-nums leading-tight">{n(s.total_left)}</p>
+                  <p className="text-[10px] text-slate-400">{s.lot_cnt}개 로트</p>
+                  {Number(s.gap) !== 0 && (
+                    <p className="text-[10px] font-bold text-rose-600" title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
+                      ⚠ 재고와 {Number(s.gap) > 0 ? '+' : ''}{n(s.gap)}
+                    </p>
+                  )}
+                </div>
+
+                {/* 보증 */}
+                {canEdit ? (
+                  <button onClick={() => setShelfFor(s)} title="보증기간 수정"
+                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap flex-shrink-0 ${
+                      s.shelf_months ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                     : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                    {s.shelf_months ? `보증 ${s.shelf_months}개월` : '⚠ 보증 미설정'}
+                  </button>
+                ) : (
+                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500 whitespace-nowrap flex-shrink-0">
+                    {s.shelf_months ? `보증 ${s.shelf_months}개월` : '보증 미설정'}
+                  </span>
                 )}
 
-                <div className="flex gap-1.5 mt-2">
-                  <button onClick={() => setOpenItems(v => ({ ...v, [s.item_id]: !v[s.item_id] }))}
-                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500">
-                    {open ? '접기 ▲' : `로트 ${s.lot_cnt}개 보기 ▼`}
-                    {Number(s.done_cnt) > 0 && (
-                      <span className="ml-1 text-slate-400">· 소진 {s.done_cnt}</span>
-                    )}
-                  </button>
+                {/* 버튼 */}
+                <div className="flex gap-1.5 flex-shrink-0">
                   {canEdit && (
                     <button onClick={() => setAddFor({
                         item_id: s.item_id, std_code: s.std_code,
                         item_name: s.item_name, maker: s.maker, maker_code: s.maker_code })}
-                      className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50">
-                      ＋ 이 품목 로트 추가
-                    </button>
+                      title="이 품목에 로트 추가"
+                      className="px-2 py-1.5 text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50">＋</button>
                   )}
+                  <button onClick={() => setOpenItems(v => ({ ...v, [s.item_id]: !v[s.item_id] }))}
+                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 whitespace-nowrap">
+                    {open ? '접기 ▲' : `로트 ${s.lot_cnt} ▼`}
+                    {Number(s.done_cnt) > 0 && <span className="ml-1 text-slate-400">·소진 {s.done_cnt}</span>}
+                  </button>
                 </div>
               </div>
 
-              {/* 상세 — 펼쳤을 때 */}
+              {/* 펼친 로트 — 한 줄에 다 들어간다 (2열이 아니라 가로가 넓다) */}
               {open && (
                 <div className="border-t border-slate-100 divide-y divide-slate-50 bg-slate-50/50">
                   {rows.map(l => (
                     <div key={l.id}
-                      className={`px-4 py-2.5 text-xs ${
+                      className={`px-3 py-2 text-xs flex items-center gap-3 flex-wrap ${
                         Number(l.qty_left) <= 0 ? 'bg-slate-100/70 text-slate-400'
                           : l.expired ? 'bg-rose-50/60' : ''}`}>
-                      {/* 두 칸 배치라 한 줄에 다 넣으면 가로로 넘친다.
-                          시리얼·수량을 위에, 날짜·구매처를 아래에 둔다. */}
-                      <div className="flex items-center gap-2">
-                        <span className="w-5 text-center text-[10px] font-bold text-slate-400 flex-shrink-0">
-                          {l.fifo_rank}
-                        </span>
-                        <span className="text-sm font-bold text-slate-800 flex-shrink-0"
-                          style={{ fontFamily: MONO }}>
-                          {l.serial_no}
-                        </span>
-                        <span className="text-slate-400 whitespace-nowrap">
-                          {l.made_ym || '제조 미상'}
-                        </span>
-                        <span className="ml-auto whitespace-nowrap">
-                          <b className="text-slate-800">{n(l.qty_left)}</b>
-                          <span className="text-slate-300"> / {n(l.qty_in)}</span>
-                        </span>
-                        {canEdit && (
-                          <button onClick={() => setEditLot(l)}
-                            title="수정 · 삭제"
-                            className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-2.5 mt-1 pl-7 text-[11px]">
-                        <span className="text-slate-500 whitespace-nowrap">
-                          입고 {l.in_date}
-                        </span>
-                        <span className={`whitespace-nowrap font-semibold ${
-                          l.expired ? 'text-rose-600' : l.days_left <= 90 ? 'text-amber-600' : 'text-slate-500'}`}>
-                          ~ {l.expire_date}
-                        </span>
-                        <span className="text-slate-400 whitespace-nowrap truncate">
-                          입고처 {l.vendor_name || '—'}
-                        </span>
-                      </div>
+                      <span className="w-5 text-center text-[10px] font-bold text-slate-400 flex-shrink-0">{l.fifo_rank}</span>
+                      <span className="text-sm font-bold text-slate-800 min-w-[130px]" style={{ fontFamily: MONO }}>{l.serial_no}</span>
+                      <span className="text-slate-400 whitespace-nowrap w-20">{l.made_ym || '제조 미상'}</span>
+                      <span className="text-slate-500 whitespace-nowrap w-28">입고 {l.in_date}</span>
+                      <span className={`whitespace-nowrap w-28 font-semibold ${
+                        l.expired ? 'text-rose-600' : l.days_left <= 90 ? 'text-amber-600' : 'text-slate-500'}`}>
+                        ~ {l.expire_date}
+                      </span>
+                      <span className="text-slate-400 truncate flex-1 min-w-[90px]">{l.vendor_name || '—'}</span>
+                      <span className="whitespace-nowrap tabular-nums">
+                        <b className="text-slate-800">{n(l.qty_left)}</b><span className="text-slate-300"> / {n(l.qty_in)}</span>
+                      </span>
+                      {canEdit && (
+                        <button onClick={() => setEditLot(l)} title="수정 · 삭제"
+                          className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
+                      )}
                     </div>
                   ))}
+                  {!rows.length && <p className="px-3 py-3 text-[11px] text-slate-400">남은 로트가 없습니다 — 「소진분 포함」을 켜면 지난 것도 보입니다.</p>}
                 </div>
               )}
             </div>
           )
-        }
-        // 브랜드 머리 + 그 아래 품목 카드들
-        const group = (g) => (
-          <div key={g.name} className="space-y-2">
-            <div className="flex items-baseline gap-2 px-0.5">
-              <h3 className="text-sm font-bold text-slate-700">{g.name}</h3>
-              <span className="text-[11px] text-slate-400">{g.items.length}종</span>
-            </div>
-            {g.items.map(card)}
-          </div>
-        )
-        return (
-          <div className="grid lg:grid-cols-2 gap-4 items-start">
-            <div className="space-y-4">{main.map(group)}</div>
-            <div className="space-y-4">{rest.map(group)}</div>
-          </div>
-        )
-      })()}
+        })}
+      </div>
 
       {addFor && (
         <LotAdd preset={addFor} onClose={() => setAddFor(null)}
