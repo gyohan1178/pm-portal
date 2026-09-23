@@ -116,8 +116,10 @@ function group(rows, keyOf) {
   return [...m.values()]
     .map((x) => ({
       ...x, net: x.save - x.loss,
-      pct: x.stdBase ? ((x.save - x.loss) / x.stdBase) * 100 : null,   // 표준단가가 하나도 없으면 null (— 로 보여 준다)
-      cover: x.buy ? (x.stdBuy / x.buy) * 100 : 0,                     // 표준단가로 잰 구매액 비중
+      pct: x.stdBase ? ((x.save - x.loss) / x.stdBase) * 100 : null,   // 절감율(플러스 = 아꼈다)
+      // 구매단가 변동률 — 플러스면 「올랐다」. 경영진 보고는 이 부호로 읽는 게 자연스럽다.
+      chg: x.stdBase ? ((x.stdBuy - x.stdBase) / x.stdBase) * 100 : null,
+      cover: x.buy ? (x.stdBuy / x.buy) * 100 : 0,                     // 기준단가로 잰 구매액 비중
     }))
     .sort((a, b) => b.buy - a.buy)
 }
@@ -145,7 +147,11 @@ export function stdTotals(rows) {
     n++; baseBuy += r.baseBuy; buy += r.buy
     if (r.diff > 0) save += r.diff; else loss += -r.diff
   }
-  return { save, loss, net: save - loss, baseBuy, buy, n, pct: baseBuy ? ((save - loss) / baseBuy) * 100 : 0 }
+  return {
+    save, loss, net: save - loss, baseBuy, buy, n,
+    pct: baseBuy ? ((save - loss) / baseBuy) * 100 : 0,       // 절감율 (플러스 = 아꼈다)
+    chg: baseBuy ? ((buy - baseBuy) / baseBuy) * 100 : 0,     // 구매단가 변동률 (플러스 = 올랐다)
+  }
 }
 
 export const SAVING_KINDS = ['단가인하', '업체변경', '대체품', '사양변경', '발주통합', '물류', '클레임', '기타']

@@ -8,6 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
+import CostReport, { printCostReport } from './CostReport'
 import { computeSaving, candKey, byItem, byVendor, byCustomer, byBase, custOf, CUST_NAME, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
@@ -72,7 +73,9 @@ export default function CostSaving() {
   const [targetOpen, setTargetOpen] = useState(false)
   const [stdQ, setStdQ] = useState('')
   const [split, setSplit] = useState('cust')   // 고객사별 / 구매처별
-  const [basis, setBasis] = useState('db')     // 기준단가: db(DB단가) / avg(최근 실구매 가중평균)
+  // 기준단가 기본값은 「최근 실구매 가중평균」 — DB단가는 누가 언제 정했는지 설명이 안 되고,
+  //   에드워드는 아예 관리한 적이 없다. 실구매 평균은 「작년 이맘때 얼마에 샀나」라 한 줄로 설명된다.
+  const [basis, setBasis] = useState('avg')    // avg(최근 실구매 가중평균) / db(DB단가 — 내부 점검용)
   const stdFileRef = useRef(null)
 
   const { data: inbound = [], isLoading, error } = useQuery({ queryKey: ['csInbound'], queryFn: fetchInbound, staleTime: 5 * 60 * 1000 })
@@ -81,33 +84,35 @@ export default function CostSaving() {
   const { data: target } = useQuery({ queryKey: ['csTarget'], queryFn: fetchTarget })
   const { data: stdRows = [] } = useQuery({ queryKey: ['csStd'], queryFn: fetchStd, staleTime: 5 * 60 * 1000 })
 
-  // 기준 두 가지 — ① DB단가(작년에 정한 목표가)  ② 최근 실구매 가중평균(실제로 산 값)
-  //   ①은 환율·원자재가 오르면 구조적으로 마이너스가 난다. ②는 「직전 기간 대비」를 본다.
+  // 기준 두 가지 — ① 최근 실구매 가중평균(보고 기준)  ② DB단가(작년 목표가 — 내부 점검용)
+  //   ⚠ useBasis 는 stdOf 보다 반드시 먼저 선언한다 — useMemo 의 의존성 배열에서 바로 읽히므로
+  //     뒤에 두면 TDZ 로 화면이 통째로 죽는다.
+  const hasAvg = useMemo(() => stdRows.some((r) => Number(r.price_avg) > 0), [stdRows])
+  const useBasis = basis === 'avg' && !hasAvg ? 'db' : basis      // 실구매 자료가 아직 없으면 DB단가로
   const stdOf = useMemo(() => {
     const m = new Map()
     for (const r of stdRows) {
-      const p = Number(basis === 'avg' ? r.price_avg : r.price)
+      const p = Number(useBasis === 'avg' ? r.price_avg : r.price)
       if (!(p > 0)) continue
       if (r.item_id) m.set(r.item_id, p)
       if (r.std_code) m.set(r.std_code, p)
     }
     return m
-  }, [stdRows, basis])
-  const hasAvg = useMemo(() => stdRows.some((r) => Number(r.price_avg) > 0), [stdRows])
+  }, [stdRows, useBasis])
   // 그 품목의 기준단가가 언제 자료인지 — 「26년 상반기」 · 「25년」
   const baseLabelOf = useMemo(() => {
     const m = new Map()
-    const lab = (r) => (basis === 'avg'
+    const lab = (r) => (useBasis === 'avg'
       ? String(r.avg_base || '').replace(/ 실구매.*$/, '') || '기간 미상'
       : String(r.source || '').split(' · ')[0].replace(/ (구매이력|발주입고내역)$/, '') || '출처 미상')
     for (const r of stdRows) {
-      const p = Number(basis === 'avg' ? r.price_avg : r.price)
+      const p = Number(useBasis === 'avg' ? r.price_avg : r.price)
       if (!(p > 0)) continue
       if (r.item_id) m.set(r.item_id, lab(r))
       if (r.std_code) m.set(r.std_code, lab(r))
     }
     return m
-  }, [stdRows, basis])
+  }, [stdRows, useBasis])
   // 집계 시작일 — 포털로 입고를 받기 시작한 날. 그 전 자료는 단가가 덜 채워져 있어 지표를 망친다.
   const start = target?.start || DEFAULT_START
   const seen = useMemo(() => inbound.filter((r) => !start || String(r.movement_date) >= start), [inbound, start])
@@ -328,7 +333,7 @@ export default function CostSaving() {
           ['구매액(입고 기준)', won(buy)], ['표준단가 적용률', cover.toFixed(0) + '%'],
           ['확정 절감액(대장)', won(fixed)], ['연간 목표', won(goal)],
           ['집계 시작일', start || '전체 (제한 없음)'],
-          ['기준단가', basis === 'avg' ? '최근 실구매 가중평균' : '표준단가(DB단가)'],
+          ['기준단가', useBasis === 'avg' ? '최근 실구매 가중평균' : 'DB단가(목표가)'],
           ['기준', '표준단가(DB단가) → 없으면 직전 12개월 가중평균 · 수량 = 실제 입고수량'],
           ['작성', `${todayISO()} · 진선테크 구매자재팀`],
         ],
@@ -355,18 +360,18 @@ export default function CostSaving() {
           {/* 기준단가 — 무엇과 견줄 것인가 */}
           <div className="flex items-center gap-1.5 mt-2">
             <span className="text-[11px] font-bold text-slate-400">기준단가</span>
-            {[['db', 'DB단가', '작년에 정한 목표가'], ['avg', '최근 실구매', '직전 기간에 실제로 산 값']].map(([k, l, tip]) => (
+            {[['avg', '최근 실구매', '직전 기간에 실제로 산 값 — 보고 기준'], ['db', 'DB단가', '작년에 정한 목표가 — 내부 점검용']].map(([k, l, tip]) => (
               <button key={k} onClick={() => setBasis(k)} title={tip}
                 disabled={k === 'avg' && !hasAvg}
-                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${basis === k
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${useBasis === k
                   ? 'border-violet-300 bg-violet-50 text-violet-700'
                   : k === 'avg' && !hasAvg ? 'border-slate-100 text-slate-300 cursor-not-allowed'
                     : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{l}</button>
             ))}
             <span className="text-[10.5px] text-slate-400">
-              {basis === 'db'
-                ? '작년 목표가와 견줍니다 — 환율·자재값이 오르면 구조적으로 마이너스가 납니다'
-                : '직전 기간 실구매 가중평균과 견줍니다 — 「전보다 싸게 샀나」를 봅니다'}
+              {useBasis === 'db'
+                ? '작년에 정한 목표가와 견줍니다 — 내부 점검용. 환율·자재값이 오르면 구조적으로 마이너스가 납니다'
+                : '직전 기간 실구매 가중평균과 견줍니다 — 「작년 이맘때 얼마에 샀나」. 보고는 이 기준으로 합니다'}
               {!hasAvg && <b className="text-rose-500"> · 실구매 기준은 pm_std_price_avg SQL 을 돌려야 켜집니다</b>}
             </span>
           </div>
@@ -386,21 +391,22 @@ export default function CostSaving() {
 
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-        <KPI t={(basis === 'avg' ? '실구매 평균' : '표준단가') + ' 대비 절감'} v={man(st.net) + '원'} tone="ok"
-          n={`절감 ${man(st.save)} · 상승 ${man(st.loss)} · ${n(st.n)}건`} />
-        <KPI t="절감율" v={st.baseBuy ? st.pct.toFixed(1) + '%' : '—'} tone="ok"
-          n={`${basis === 'avg' ? '실구매 평균' : '표준단가'} 기준 ${man(st.baseBuy)}원 → 실구매 ${man(st.buy)}원`} />
-        <KPI t="구매액 (입고 기준)" v={man(buy) + '원'} n={`${n(yRows.length)}건 입고 · 표준단가 적용 ${cover.toFixed(0)}%`} />
-        <KPI t="확정 절감액 (대장)" v={man(fixed) + '원'} tone="info"
+        <KPI t="단가 변동액" v={man(st.net) + '원'} tone={st.net >= 0 ? 'ok' : 'warn'}
+          n={`내린 품목 +${man(st.save)} · 오른 품목 −${man(st.loss)} · ${n(st.n)}건`} />
+        <KPI t="구매단가 변동률" v={st.baseBuy ? (st.chg > 0 ? '+' : '') + st.chg.toFixed(1) + '%' : '—'}
+          tone={st.chg > 0 ? 'warn' : 'ok'}
+          n={`기준 ${man(st.baseBuy)}원 → 실구매 ${man(st.buy)}원 · 플러스면 올랐다는 뜻`} />
+        <KPI t="구매액 (입고 기준)" v={man(buy) + '원'} n={`${n(yRows.length)}건 입고 · 기준단가 적용 ${cover.toFixed(0)}%`} />
+        <KPI t="절감 활동 실적" v={man(fixed) + '원'} tone="info"
           n={goal ? `목표 ${man(goal)}원 대비 ${Math.round((fixed / goal) * 100)}%` : '연간 목표 미설정'} />
         <KPI t="등록 대기 후보" v={n(cand.length) + '건'} tone={cand.length ? 'info' : ''}
           n={cand.length ? `${man(cand.reduce((a, r) => a + r.diff, 0))}원어치 — 대장 탭에서 등록` : '새 후보 없음'} />
-        <KPI t="표준단가 점검 필요" v={n(susp.length) + '건'} tone={susp.length ? 'warn' : ''}
-          n={susp.length ? '표준단가와 5배 넘게 차이 — 지표에서 뺐습니다. 아래 표 확인' : '표준단가가 크게 어긋난 건 없음'} />
+        <KPI t="단가 검증 필요" v={n(susp.length) + '건'} tone={susp.length ? 'warn' : ''}
+          n={susp.length ? '기준단가와 5배 넘게 차이 — 지표에서 뺐습니다. 아래 표 확인' : '기준단가가 크게 어긋난 건 없음'} />
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-        {[['kpi', '지표'], ['ledger', `실적 대장 ${yLedger.length ? `(${yLedger.length})` : ''}`], ['std', `표준단가 ${stdRows.length ? `(${stdRows.length})` : ''}`]].map(([k, l]) => (
+        {[['kpi', '지표'], ['report', '📄 보고서'], ['ledger', `실적 대장 ${yLedger.length ? `(${yLedger.length})` : ''}`], ['std', `기준단가 ${stdRows.length ? `(${stdRows.length})` : ''}`]].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{l}</button>
         ))}
@@ -476,7 +482,7 @@ export default function CostSaving() {
             {/* 고객사별 · 구매처별 — 대표 보고는 이 표로 갈라서 한다 */}
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-bold text-slate-700">{{ cust: '고객사별', vendor: '구매처별', base: '기준 시점별' }[split]} 절감율</p>
+                <p className="text-sm font-bold text-slate-700">{{ cust: '고객사별', vendor: '구매처별', base: '기준 시점별' }[split]} 단가 변동</p>
                 <div className="flex gap-1">
                   {[['cust', '고객사'], ['vendor', '구매처'], ['base', '기준 시점']].map(([k, l]) => (
                     <button key={k} onClick={() => setSplit(k)}
@@ -489,8 +495,8 @@ export default function CostSaving() {
                 <thead><tr className="text-slate-400 text-left">
                   <th className="py-1">{{ cust: '고객사', vendor: '구매처', base: '기준 시점' }[split]}</th>
                   <th className="py-1 text-right">구매액</th>
-                  <th className="py-1 text-right">절감액</th>
-                  <th className="py-1 text-right">절감율</th>
+                  <th className="py-1 text-right">단가 변동액</th>
+                  <th className="py-1 text-right">변동률</th>
                   <th className="py-1 text-right">적용률</th>
                 </tr></thead>
                 <tbody>
@@ -502,8 +508,8 @@ export default function CostSaving() {
                       </td>
                       <td className="py-1.5 text-right tabular-nums text-slate-600">{man(v.buy)}</td>
                       <td className={`py-1.5 text-right tabular-nums font-bold ${v.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{man(v.net)}</td>
-                      <td className={`py-1.5 text-right tabular-nums font-bold ${v.pct == null ? 'text-slate-300' : v.pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {v.pct == null ? '—' : v.pct.toFixed(1) + '%'}
+                      <td className={`py-1.5 text-right tabular-nums font-bold ${v.chg == null ? 'text-slate-300' : v.chg > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                        {v.chg == null ? '—' : (v.chg > 0 ? '+' : '') + v.chg.toFixed(1) + '%'}
                       </td>
                       <td className="py-1.5 text-right tabular-nums text-slate-400">{v.cover.toFixed(0)}%</td>
                     </tr>
@@ -512,7 +518,7 @@ export default function CostSaving() {
                 </tbody>
               </table>
               <p className="text-[10.5px] text-slate-400 mt-2 leading-snug">
-                절감율은 표준단가로 잰 것만 세고, 「적용률」은 그 구매액 비중입니다. 적용률이 낮으면 절감율도 덜 믿을 만합니다.
+                변동률은 기준단가로 잴 수 있는 것만 셉니다. 플러스면 단가가 올랐다는 뜻이고, 「적용률」이 낮으면 그만큼 덜 믿을 만합니다.
               </p>
             </div>
           </div>
@@ -540,6 +546,21 @@ export default function CostSaving() {
               </tbody>
             </table>
           </div>
+        </>
+      ) : tab === 'report' ? (
+        <>
+          <div className="flex items-center justify-between no-print">
+            <p className="text-[12px] text-slate-400">
+              그대로 인쇄하거나 PDF 로 저장해 제출하시면 됩니다. 숫자는 지금 화면 기준(기준단가 {useBasis === 'avg' ? '최근 실구매' : 'DB단가'} · {year}년)으로 채워집니다.
+            </p>
+            <button onClick={printCostReport}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">🖨 인쇄 · PDF</button>
+          </div>
+          <CostReport
+            year={year} start={start} today={todayISO()}
+            basisLabel={useBasis === 'avg' ? '최근 실구매 가중평균' : 'DB단가(작년 목표가)'}
+            buy={buy} st={st} cover={cover} fixed={fixed} goal={goal}
+            custs={custs} topItems={topItems} kindSum={kindSum} ledger={yLedger} susp={susp} />
         </>
       ) : tab === 'std' ? (
         <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3">
