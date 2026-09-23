@@ -128,6 +128,8 @@ export const CUST_NAME = { AX: 'AXCELIS', ED: '에드워드', VM: 'VM', CS: 'CSK
 
 export const byCustomer = (rows) => group(rows, (r) => custOf(r.std_code))
 export const byVendor = (rows) => group(rows, (r) => r.vendor)
+// 기준이 언제 자료냐로 가르기 — 「26년 상반기 기준은 −0.5%, 25년 기준은 −12%(작년 대비 인상분)」을 보려고
+export const byBase = (rows) => group(rows, (r) => r.stdLabel || '기준 없음')
 
 // 표준단가와 너무 벌어져 지표에서 뺀 줄 (단위·환율·품번 확인용)
 export function suspects(rows) {

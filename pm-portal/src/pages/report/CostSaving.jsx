@@ -8,7 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
-import { computeSaving, candKey, byItem, byVendor, byCustomer, custOf, CUST_NAME, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
+import { computeSaving, candKey, byItem, byVendor, byCustomer, byBase, custOf, CUST_NAME, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
 //
@@ -94,6 +94,20 @@ export default function CostSaving() {
     return m
   }, [stdRows, basis])
   const hasAvg = useMemo(() => stdRows.some((r) => Number(r.price_avg) > 0), [stdRows])
+  // 그 품목의 기준단가가 언제 자료인지 — 「26년 상반기」 · 「25년」
+  const baseLabelOf = useMemo(() => {
+    const m = new Map()
+    const lab = (r) => (basis === 'avg'
+      ? String(r.avg_base || '').replace(/ 실구매.*$/, '') || '기간 미상'
+      : String(r.source || '').split(' · ')[0].replace(/ (구매이력|발주입고내역)$/, '') || '출처 미상')
+    for (const r of stdRows) {
+      const p = Number(basis === 'avg' ? r.price_avg : r.price)
+      if (!(p > 0)) continue
+      if (r.item_id) m.set(r.item_id, lab(r))
+      if (r.std_code) m.set(r.std_code, lab(r))
+    }
+    return m
+  }, [stdRows, basis])
   // 집계 시작일 — 포털로 입고를 받기 시작한 날. 그 전 자료는 단가가 덜 채워져 있어 지표를 망친다.
   const start = target?.start || DEFAULT_START
   const seen = useMemo(() => inbound.filter((r) => !start || String(r.movement_date) >= start), [inbound, start])
@@ -101,7 +115,10 @@ export default function CostSaving() {
   const skipSet = useMemo(() => new Set(skips.map((s) => s.key)), [skips])
   const doneSet = useMemo(() => new Set(ledger.map((l) => `${l.item_id}|${l.ym}`)), [ledger])
 
-  const yRows = calc.rows.filter((r) => yearOf(r.movement_date) === year)
+  const yRows = useMemo(() => calc.rows
+    .filter((r) => yearOf(r.movement_date) === year)
+    .map((r) => ({ ...r, stdLabel: baseLabelOf.get(r.item_id) || baseLabelOf.get(r.std_code) || '' })),
+    [calc.rows, year, baseLabelOf])
   const yLedger = ledger.filter((l) => String(l.ym).slice(0, 4) === year)
   const cand = calc.cand.filter((r) => yearOf(r.movement_date) === year
     && !skipSet.has(candKey(r)) && !doneSet.has(`${r.item_id}|${String(r.movement_date).slice(0, 7)}`))
@@ -143,7 +160,8 @@ export default function CostSaving() {
   const topItems = useMemo(() => byItem(yRows).sort((a, b) => b.diff - a.diff), [yRows])
   const vendors = useMemo(() => byVendor(yRows), [yRows])
   const custs = useMemo(() => byCustomer(yRows), [yRows])
-  const splitRows = split === 'cust' ? custs : vendors
+  const bases = useMemo(() => byBase(yRows), [yRows])
+  const splitRows = split === 'cust' ? custs : split === 'base' ? bases : vendors
 
   /* ---- 표준단가 ---- */
   const lastPrice = useMemo(() => {
@@ -458,9 +476,9 @@ export default function CostSaving() {
             {/* 고객사별 · 구매처별 — 대표 보고는 이 표로 갈라서 한다 */}
             <div className="rounded-xl border border-slate-200 bg-white p-4">
               <div className="flex items-center justify-between mb-2">
-                <p className="text-sm font-bold text-slate-700">{split === 'cust' ? '고객사별' : '구매처별'} 절감율</p>
+                <p className="text-sm font-bold text-slate-700">{{ cust: '고객사별', vendor: '구매처별', base: '기준 시점별' }[split]} 절감율</p>
                 <div className="flex gap-1">
-                  {[['cust', '고객사'], ['vendor', '구매처']].map(([k, l]) => (
+                  {[['cust', '고객사'], ['vendor', '구매처'], ['base', '기준 시점']].map(([k, l]) => (
                     <button key={k} onClick={() => setSplit(k)}
                       className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${split === k
                         ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{l}</button>
@@ -469,14 +487,14 @@ export default function CostSaving() {
               </div>
               <table className="w-full text-xs">
                 <thead><tr className="text-slate-400 text-left">
-                  <th className="py-1">{split === 'cust' ? '고객사' : '구매처'}</th>
+                  <th className="py-1">{{ cust: '고객사', vendor: '구매처', base: '기준 시점' }[split]}</th>
                   <th className="py-1 text-right">구매액</th>
                   <th className="py-1 text-right">절감액</th>
                   <th className="py-1 text-right">절감율</th>
                   <th className="py-1 text-right">적용률</th>
                 </tr></thead>
                 <tbody>
-                  {splitRows.slice(0, split === 'cust' ? 10 : 8).map((v) => (
+                  {splitRows.slice(0, split === 'vendor' ? 8 : 10).map((v) => (
                     <tr key={v.key} className="border-t border-slate-100">
                       <td className="py-1.5 truncate max-w-[130px]" title={v.key}>
                         {split === 'cust' ? (CUST_NAME[v.key] || v.key) : v.key}
