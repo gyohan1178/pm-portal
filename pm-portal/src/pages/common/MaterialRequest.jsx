@@ -8,6 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
+import PoCart, { addToCart, fetchCart } from './PoCart'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -355,17 +356,22 @@ export default function MaterialRequest() {
     } catch (e) { toastError('불출 실패: ' + e.message) }
   }
 
-  // 발주 — 해당 고객사 구매발주에 만든다
+  // 발주 담기 — 바로 만들지 않고 담기함에 넣는다.
+  //   납기·구매처·단가를 채운 뒤 담기함에서 한꺼번에 등록한다 (PoCart.jsx).
+  const [cartOpen, setCartOpen] = useState(false)
+  const { data: cartRows = [] } = useQuery({
+    queryKey: ['poCart'], queryFn: fetchCart, staleTime: 30 * 1000,
+  })
   async function doOrder() {
     if (!checked.length) return
-    if (!confirm(`${checked.length}건을 구매발주로 생성합니다.\n\n업체·단가는 구매발주 화면에서 채워주세요.`)) return
+    const noCode = checked.filter(r => !r.item_id).length
     try {
-      const { data, error } = await supabase.rpc('pm_request_to_po',
-        { p_ids: checked.map(r => r.id) })
-      if (error) throw error
-      report(Array.isArray(data) ? data[0] : data, '발주 생성')
-      qc.invalidateQueries({ queryKey: ['purchase'] })
-    } catch (e) { toastError('발주 생성 실패: ' + e.message) }
+      const { added, skipped } = await addToCart(checked)
+      qc.invalidateQueries({ queryKey: ['poCart'] })
+      setSel({})
+      toastSuccess(`${added}건 담았습니다${skipped ? ` · 기준코드 없는 ${skipped}건 제외` : ''} — 🛒 담기함에서 납기·구매처를 채우세요`)
+      if (!noCode) setCartOpen(true)
+    } catch (e) { toastError('발주 담기 실패: ' + e.message) }
   }
 
   // 불출 가능일 회신.
@@ -1407,6 +1413,12 @@ export default function MaterialRequest() {
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
               📊 이력 보기
             </button>
+            <button onClick={() => setCartOpen(true)}
+              title="담아 둔 발주를 납기·구매처까지 채워 한꺼번에 등록합니다"
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border whitespace-nowrap ${
+                cartRows.length ? 'border-indigo-400 text-indigo-700 bg-indigo-50 hover:bg-indigo-100' : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+              🛒 발주 담기함{cartRows.length ? ` ${cartRows.length}` : ''}
+            </button>
             <span className="text-xs text-slate-400">{n(list.length)}건</span>
 
             {checked.length > 0 && (
@@ -1438,8 +1450,8 @@ export default function MaterialRequest() {
                   title="장부에 재고가 없어도 진행합니다 — 실물은 있는데 입고 처리가 안 된 경우"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">강제 불출</button>
                 <button onClick={doOrder}
-                  title="해당 고객사 구매발주에 실제로 생성합니다"
-                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50">발주 생성</button>
+                  title="바로 발주하지 않고 담기함에 넣습니다. 납기·구매처·단가를 채운 뒤 한꺼번에 등록합니다"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50">🛒 발주 담기</button>
                 {checked.some(r => !r.item_id) && (
                   <button onClick={needCode}
                     title="기준코드가 없어 처리할 수 없는 건입니다. 코드 부여를 요청합니다"
@@ -2104,6 +2116,8 @@ export default function MaterialRequest() {
           </div>
         </div>
       )}
+
+      <PoCart open={cartOpen} onClose={() => setCartOpen(false)} />
     </div>
   )
 }

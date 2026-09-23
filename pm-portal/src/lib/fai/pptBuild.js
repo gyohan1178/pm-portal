@@ -23,7 +23,7 @@ const HF = 'Cambria', PF = 'Calibri'
 const CLS_EN = { generic: 'Generic', limited: 'Limited', sole: 'Sole', uncls: 'Unclassified', nomfr: 'No MFR listed', assy: 'Assembly' }
 const PNL = { y: 2.42, h: 4.45, lx: 0.45, rx: 6.78, w: 6.1, imgY: 3.34, imgH: 3.38 }
 
-const tick = () => new Promise((res) => setTimeout(res, 0))
+const tick = (ms) => new Promise((res) => setTimeout(res, ms || 0))
 function contain(iw, ih, bx, by, bw, bh) { const s = Math.min(bw / iw, bh / ih); const w = iw * s, h = ih * s; return { x: bx + (bw - w) / 2, y: by + (bh - h) / 2, w, h } }
 
 /* ① Part Report 원본 표 모양 발췌 */
@@ -104,11 +104,18 @@ function pptPanel(pptx, s, x, y, w, h, num, title, sub) {
   s.addText(title, { x: x + 0.64, y: y + 0.17, w: w - 0.9, h: 0.3, fontFace: PF, fontSize: 13, bold: true, color: C_SUB, charSpacing: 1, valign: 'middle', margin: 0 })
   if (sub) s.addText(sub, { x: x + 0.25, y: y + 0.55, w: w - 0.5, h: 0.32, fontFace: PF, fontSize: 11.5, color: C_INK, valign: 'middle', margin: 0 })
 }
+// 그림 한 장 = 글자로 바꾼 뒤 캔버스는 바로 버린다 (400장 만들 때 메모리가 터지지 않게)
+export function toData(im, jpg, q) {
+  const d = jpg ? im.canvas.toDataURL('image/jpeg', q || 0.75) : im.canvas.toDataURL('image/png')
+  im.canvas.width = im.canvas.height = 0   // 캔버스 메모리 즉시 반납
+  return { data: d, w: im.w, h: im.h }
+}
 function pptImage(pptx, s, im, x, y, w, h, jpg) {
   s.addShape(pptx.ShapeType.rect, { x, y, w, h, fill: { color: 'FFFFFF' }, line: { color: C_LINE, width: 0.5 } })
-  const p = contain(im.w, im.h, x + 0.06, y + 0.06, w - 0.12, h - 0.12)
+  const g = im.data ? im : toData(im, jpg)
+  const p = contain(g.w, g.h, x + 0.06, y + 0.06, w - 0.12, h - 0.12)
   // 표 그림은 위에 붙이고(PNG), 도면은 가운데(JPG — 파일이 작다)
-  s.addImage({ data: jpg ? im.canvas.toDataURL('image/jpeg', 0.82) : im.canvas.toDataURL('image/png'), x: p.x, y: jpg ? p.y : y + 0.06, w: p.w, h: p.h })
+  s.addImage({ data: g.data, x: p.x, y: jpg ? p.y : y + 0.06, w: p.w, h: p.h })
 }
 const DW_EN = { exact: 'matches Part Report', rev: 'same revision', mismatch: 'Part Report: Rev ' }
 function emptyBox(pptx, s, x, y, w, h, text) {
@@ -128,7 +135,7 @@ export function recOf(r) {
  * noOf : (r, i) => 표지 번호
  * onProgress(i, total, pn), askStop(i) → 'save' | 'cancel' | null(계속)
  * dwgIdx : 연결한 도면 폴더 (drawings.indexDwg) — 없으면 도면 칸에 「폴더 미연결」
- * 반환: { bytes, slides, done, stopped, noRec, dwg: { n, ok, miss } }
+ * 반환: { blob, size, slides, done, stopped, noRec, dwg: { n, ok, miss } }
  */
 export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx }) {
   const { default: PptxGenJS } = await import('pptxgenjs')
@@ -146,7 +153,7 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx
   for (let i = 0; i < rows.length; i++) {
     const r = rows[i], P = r.P, a = r.e.act, isAssy = r.e.v === 'ASSY'
     onProgress?.(i, rows.length, P.pn)
-    await tick()
+    await tick(i % 25 === 24 ? 60 : 0)   // 가끔 길게 쉬어 브라우저가 메모리를 정리할 틈을 준다
     const st = askStop ? await askStop(i) : null
     if (st === 'save') { done = i; stopped = true; break }
     if (st === 'cancel') { const e = new Error('cancel'); e.cancel = true; throw e }
@@ -182,7 +189,7 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx
         const info = pk.got ? `  —  Rev ${pk.got}` + (pk.status === 'mismatch' ? `  (${DW_EN.mismatch}${pk.want})` : pk.want ? `  (${DW_EN[pk.status] || ''})` : '') : ''
         s.addText(`${pk.file.name}${info}  · sheet 1`, { x: L.x + 2.2, y: y2 + 0.17, w: L.w - 2.45, h: 0.3, fontFace: PF, fontSize: 9.5, color: pk.status === 'mismatch' ? C_RED : C_MUT, align: 'right', valign: 'middle', margin: 0 })
         const im = await renderDrawing(pk.file, [P.pn])
-        if (im.canvas) { dwg.ok++; pptImage(pptx, s, im, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, true) }
+        if (im.data) { dwg.ok++; pptImage(pptx, s, im, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, true) }
         else { dwg.miss++; emptyBox(pptx, s, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, 'Drawing could not be opened') }
       } else {
         dwg.miss++
@@ -230,8 +237,8 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx
 
   onProgress?.(done, rows.length, 'PPT 파일로 묶는 중')
   await tick()
-  const bytes = await pptx.write({ outputType: 'uint8array' })
-  return { bytes, slides: done + 1, done, stopped, noRec, dwg }
+  const blob = await pptx.write({ outputType: 'blob' })
+  return { blob, size: blob.size, slides: done + 1, done, stopped, noRec, dwg }
 }
 
 export const pptName = (rep) => `FAI_Material_Verification_${rep.top.pn}_Rev${rep.top.rev}_${todayISO().replace(/-/g, '')}.pptx`
@@ -251,15 +258,15 @@ export async function pickSaveTarget(name) {
     return 'download'
   }
 }
-export async function saveBytes(target, bytes, name) {
+export async function saveBytes(target, blob, name) {
   if (target && target !== 'download') {
     const w = await target.createWritable()
-    await w.write(new Blob([bytes], { type: PPT_TYPE }))
+    await w.write(blob)
     await w.close()
     return target.name || name
   }
   const a = document.createElement('a')
-  a.href = URL.createObjectURL(new Blob([bytes], { type: PPT_TYPE }))
+  a.href = URL.createObjectURL(blob)
   a.download = name; document.body.appendChild(a); a.click()
   setTimeout(() => { URL.revokeObjectURL(a.href); a.remove() }, 4000)
   return name

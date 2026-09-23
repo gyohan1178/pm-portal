@@ -291,8 +291,8 @@ export default function FaiNavigator() {
           return i && window.confirm(`${i}건까지 만들었습니다.\n\n[확인] 지금까지 만든 ${i}건만 PPT로 저장\n[취소] 저장하지 않고 멈춤`) ? 'save' : 'cancel'
         },
       })
-      const saved = await saveBytes(target, res.bytes, name)
-      toastSuccess((res.stopped ? `중지 — ${res.done}건만 저장 · ` : '') + `PPT ${res.slides}장 저장 (${(res.bytes.length / 1048576).toFixed(1)}MB) — ${saved}`
+      const saved = await saveBytes(target, res.blob, name)
+      toastSuccess((res.stopped ? `중지 — ${res.done}건만 저장 · ` : '') + `PPT ${res.slides}장 저장 (${(res.size / 1048576).toFixed(1)}MB) — ${saved}`
         + (res.noRec ? ` · 발주 기록 없는 품목 ${res.noRec}건` : '')
         + (res.dwg.n ? ` · 도면 ${res.dwg.ok}/${res.dwg.n}장` + (dwg ? '' : ' (도면 폴더 미연결)') : ''))
     } catch (e) {
@@ -481,7 +481,7 @@ export default function FaiNavigator() {
 
           {ppt && (
             <div className="rounded-lg border border-orange-200 bg-orange-50 px-3 py-2 flex items-center gap-3 text-xs">
-              <span className="font-bold text-orange-700 whitespace-nowrap">PPT 만드는 중</span>
+              <span className="font-bold text-orange-700 whitespace-nowrap">PPT 만드는 중 <span className="font-normal text-orange-500">— 창을 닫지 마세요</span></span>
               <div className="flex-1 h-2 rounded-full bg-orange-100 overflow-hidden">
                 <div className="h-full bg-orange-400 transition-all" style={{ width: `${ppt.n ? Math.round((ppt.i / ppt.n) * 100) : 0}%` }} />
               </div>

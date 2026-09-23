@@ -121,7 +121,7 @@ export async function renderDrawing(entry, tokens) {
     try {
       const pg = await doc.getPage(1)
       const base = pg.getViewport({ scale: 1 })
-      const vp = pg.getViewport({ scale: Math.min(3, 1600 / Math.max(base.width, base.height)) })
+      const vp = pg.getViewport({ scale: Math.min(2, 1400 / Math.max(base.width, base.height)) })
       const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height)
       const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height)
       await pg.render({ canvasContext: ctx, viewport: vp }).promise
@@ -139,7 +139,9 @@ export async function renderDrawing(entry, tokens) {
           ctx.strokeRect(Math.min(x1, x2) - 4, top - 4, Math.abs(x2 - x1) + 8, hh + 8)
         }
       }
-      return { canvas: c, w: c.width, h: c.height }
+      const out = { data: c.toDataURL('image/jpeg', 0.72), w: c.width, h: c.height }
+      c.width = c.height = 0   // 캔버스 메모리 즉시 반납
+      return out
     } finally { doc.destroy() }
   } catch (e) {
     return { err: e?.message || String(e) }
