@@ -16,10 +16,21 @@ import VendorPicker from '../../components/VendorPicker'
 //   ⚠ 담은 것은 담은 사람에게만 보인다 (pm_po_cart 의 RLS).
 //   ⚠ 발주 줄은 한 번에 insert 한다 — 중간에 실패하면 아무것도 안 들어간다.
 
+// ⚠ pm_po_cart 에는 외래키를 두지 않았다. 그래서 items(...) 처럼 붙여 읽을 수 없어
+//   (PostgREST 는 외래키를 보고 조인한다) 품목·구매처는 따로 읽어서 붙인다.
 export async function fetchCart() {
-  return must(await supabase.from('pm_po_cart')
-    .select('*, items(std_code,name,unit,type,manufacturer,manufacturer_code,vendor_id), vendors(name)')
-    .order('created_at'), '발주 담기함 조회') || []
+  const rows = must(await supabase.from('pm_po_cart').select('*').order('created_at'), '발주 담기함 조회') || []
+  if (!rows.length) return rows
+  const itemIds = [...new Set(rows.map((r) => r.item_id).filter(Boolean))]
+  const vendIds = [...new Set(rows.map((r) => r.vendor_id).filter(Boolean))]
+  const items = itemIds.length
+    ? must(await supabase.from('items').select('id,std_code,name,unit,type,manufacturer,manufacturer_code').in('id', itemIds), '품목 조회') || []
+    : []
+  const vends = vendIds.length
+    ? must(await supabase.from('vendors').select('id,name').in('id', vendIds), '구매처 조회') || []
+    : []
+  const iOf = new Map(items.map((i) => [i.id, i])), vOf = new Map(vends.map((v) => [v.id, v]))
+  return rows.map((r) => ({ ...r, items: iOf.get(r.item_id) || null, vendors: vOf.get(r.vendor_id) || null }))
 }
 
 // 자재요청 줄을 담는다. rows: pm_request_list 의 줄

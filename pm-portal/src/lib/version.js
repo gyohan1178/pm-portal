@@ -1,6 +1,13 @@
-export const APP_VERSION = 'v4.14.0'
+export const APP_VERSION = 'v4.14.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.14.1',
+    date: '2026-09-23',
+    changes: [
+      '발주 담기함을 열면 400 오류가 나던 문제 수정 — 품목·구매처를 따로 읽어서 붙이도록 했습니다',
+    ],
+  },
   {
     version: 'v4.14.0',
     date: '2026-09-23',
