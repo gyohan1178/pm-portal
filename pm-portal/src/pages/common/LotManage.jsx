@@ -11,6 +11,25 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
 const MONO = "ui-monospace, Menlo, Consolas, monospace"
 
+// 제조사 색 — 이름 글자로 정하므로 제조사가 늘어도 알아서 배정된다.
+//   ⚠ 상태(빨강·주황·초록)와 겹치지 않는 색만 쓴다. 상태는 왼쪽 막대, 제조사는 이름표다.
+const MAKER_TONE = [
+  'bg-violet-100 text-violet-700',
+  'bg-sky-100 text-sky-700',
+  'bg-teal-100 text-teal-700',
+  'bg-fuchsia-100 text-fuchsia-700',
+  'bg-blue-100 text-blue-700',
+  'bg-cyan-100 text-cyan-700',
+  'bg-purple-100 text-purple-700',
+  'bg-indigo-100 text-indigo-700',
+]
+const makerTone = (name) => {
+  const k = String(name || '기타')
+  let h = 0
+  for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) % 9973
+  return MAKER_TONE[h % MAKER_TONE.length]
+}
+
 // 로트 관리.
 //
 //   시리얼과 보증기간을 관리해야 하는 품목은 여덟 종뿐이다.
@@ -342,24 +361,27 @@ export default function LotManage() {
               className={`rounded-xl border bg-white overflow-hidden ${
                 urgent ? 'border-rose-300' : soon ? 'border-amber-300' : 'border-slate-200'}`}>
 
-              <div className="flex items-center gap-3 px-3 py-2.5 flex-wrap">
+              {/* ⚠ 칸마다 폭을 고정한다 — flex-1 로 두면 글자 길이에 따라 줄마다 어긋난다 */}
+              <div className="flex items-center gap-3 px-3 min-h-[60px]">
                 {/* 상태 — 색 막대 하나로 */}
-                <span className={`w-1.5 h-9 rounded-full flex-shrink-0 ${
+                <span className={`w-1.5 h-10 rounded-full flex-shrink-0 ${
                   urgent ? 'bg-rose-500' : soon ? 'bg-amber-400' : 'bg-emerald-400'}`} />
 
-                {/* 형번 · 품명 */}
-                <div className="min-w-[190px] flex-1">
-                  <div className="flex items-baseline gap-2 flex-wrap">
-                    <span className="text-sm font-bold text-slate-800" style={{ fontFamily: MONO }}>
+                {/* 형번 · 품명 · 제조사 */}
+                <div className="w-[300px] flex-shrink-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-sm font-bold text-slate-800 truncate" style={{ fontFamily: MONO }}>
                       {s.maker_code || s.std_code}
                     </span>
-                    <span className="text-[11px] text-slate-400">{s.maker}</span>
+                    <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap flex-shrink-0 ${makerTone(s.maker)}`}>
+                      {s.maker || '기타'}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-slate-500 truncate max-w-[340px]">{s.item_name}</p>
+                  <p className="text-[11px] text-slate-500 truncate">{s.item_name}</p>
                 </div>
 
                 {/* 먼저 쓸 로트 — 이 화면의 답 */}
-                <div className="min-w-[230px] flex-1">
+                <div className="flex-1 min-w-[260px]">
                   {s.next_serial ? (
                     <div className={`rounded-lg px-2.5 py-1.5 flex items-center gap-2 flex-wrap ${
                       urgent ? 'bg-rose-600' : soon ? 'bg-amber-500' : 'bg-slate-50 border border-slate-200'}`}>
@@ -382,44 +404,48 @@ export default function LotManage() {
                   )}
                 </div>
 
-                {/* 잔량 */}
-                <div className="text-right w-24 flex-shrink-0">
+                {/* 잔량 — 소진·재고차이까지 여기 모은다 (버튼 폭이 흔들리지 않게) */}
+                <div className="text-right w-[104px] flex-shrink-0">
                   <p className="text-base font-bold text-slate-800 tabular-nums leading-tight">{n(s.total_left)}</p>
-                  <p className="text-[10px] text-slate-400">{s.lot_cnt}개 로트</p>
+                  <p className="text-[10px] text-slate-400 whitespace-nowrap">
+                    로트 {s.lot_cnt}
+                    {Number(s.done_cnt) > 0 && <span className="text-slate-300"> · 소진 {s.done_cnt}</span>}
+                  </p>
                   {Number(s.gap) !== 0 && (
-                    <p className="text-[10px] font-bold text-rose-600" title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
+                    <p className="text-[10px] font-bold text-rose-600 whitespace-nowrap" title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
                       ⚠ 재고와 {Number(s.gap) > 0 ? '+' : ''}{n(s.gap)}
                     </p>
                   )}
                 </div>
 
                 {/* 보증 */}
-                {canEdit ? (
-                  <button onClick={() => setShelfFor(s)} title="보증기간 수정"
-                    className={`px-1.5 py-0.5 rounded text-[10px] font-bold whitespace-nowrap flex-shrink-0 ${
-                      s.shelf_months ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
-                                     : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
-                    {s.shelf_months ? `보증 ${s.shelf_months}개월` : '⚠ 보증 미설정'}
-                  </button>
-                ) : (
-                  <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-bold text-slate-500 whitespace-nowrap flex-shrink-0">
-                    {s.shelf_months ? `보증 ${s.shelf_months}개월` : '보증 미설정'}
-                  </span>
-                )}
+                <div className="w-[96px] flex-shrink-0 text-center">
+                  {canEdit ? (
+                    <button onClick={() => setShelfFor(s)} title="보증기간 수정"
+                      className={`w-full px-1.5 py-1 rounded text-[10px] font-bold whitespace-nowrap ${
+                        s.shelf_months ? 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                       : 'bg-amber-100 text-amber-700 hover:bg-amber-200'}`}>
+                      {s.shelf_months ? `보증 ${s.shelf_months}개월` : '⚠ 보증 미설정'}
+                    </button>
+                  ) : (
+                    <span className="block w-full px-1.5 py-1 rounded bg-slate-100 text-[10px] font-bold text-slate-500 whitespace-nowrap">
+                      {s.shelf_months ? `보증 ${s.shelf_months}개월` : '보증 미설정'}
+                    </span>
+                  )}
+                </div>
 
-                {/* 버튼 */}
-                <div className="flex gap-1.5 flex-shrink-0">
+                {/* 버튼 — 폭을 박아 둔다 */}
+                <div className="flex gap-1.5 flex-shrink-0 w-[112px] justify-end">
                   {canEdit && (
                     <button onClick={() => setAddFor({
                         item_id: s.item_id, std_code: s.std_code,
                         item_name: s.item_name, maker: s.maker, maker_code: s.maker_code })}
                       title="이 품목에 로트 추가"
-                      className="px-2 py-1.5 text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50">＋</button>
+                      className="w-8 py-1.5 text-[11px] font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50">＋</button>
                   )}
                   <button onClick={() => setOpenItems(v => ({ ...v, [s.item_id]: !v[s.item_id] }))}
-                    className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 whitespace-nowrap">
+                    className="w-[68px] py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 whitespace-nowrap">
                     {open ? '접기 ▲' : `로트 ${s.lot_cnt} ▼`}
-                    {Number(s.done_cnt) > 0 && <span className="ml-1 text-slate-400">·소진 {s.done_cnt}</span>}
                   </button>
                 </div>
               </div>
