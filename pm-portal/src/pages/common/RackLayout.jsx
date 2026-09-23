@@ -868,10 +868,6 @@ export default function RackLayout() {
               className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
               🖨 A4 가로 인쇄
             </button>
-            <button onClick={() => nav('/rack-tags')}
-              className="px-4 py-2 text-sm font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-              🏷 위치 태그 만들기
-            </button>
           </div>
 
           {rack && canEdit && (

@@ -26,7 +26,7 @@ const RULES = [
     headers: [['입고요청일자', '품번'], ['P/N', '입고일자'], ['발주일', '입고예정']],
   },
   {
-    id: 'customer_po', name: '고객사 PO', icon: '📑', to: '/customer/AX/po-upload',
+    id: 'customer_po', name: '고객사 PO', icon: '📑', to: '/customer/AX/cpo?upload=1',
     hint: '고객사 PO 업로드',
     fileHints: ['po', 'order', '발주서', '수주'],
     headers: [['PO Number', 'Item'], ['PO NO', 'Part'], ['CCN', 'Promise Date']],
@@ -38,7 +38,7 @@ const RULES = [
     headers: [['Part Number', 'Month'], ['품번', '수량', '년월']],
   },
   {
-    id: 'sales', name: '매출 자료', icon: '💼', to: '/customer/AX/sales-upload',
+    id: 'sales', name: '매출 자료', icon: '💼', to: '/sales/upload',
     hint: '매출 업로드',
     fileHints: ['매출', 'sales', '출하'],
     headers: [['출하일', '금액'], ['매출일자', '공급가']],

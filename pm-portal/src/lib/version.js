@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v4.19.3'
+export const APP_VERSION = 'v4.19.4'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.19.4',
+    date: '2026-09-23',
+    changes: [
+      '정리 ① — 쓰지 않는 파일 8개(약 9,000줄)를 지웠습니다: 변경이력 옛 사본 4개, 다품목 출고 옛 화면(Issues.jsx), 발주 옛 화면(PurchaseOrders.jsx), 할일 패널, 옛 엑셀 도구',
+      '누르면 빈 화면이 뜨던 링크 3개를 고쳤습니다 — 창고 배치도 「위치 태그 만들기」(태그 화면은 예전에 없앴는데 버튼만 남아 있었음), 파일올리기의 「고객사 PO」·「매출 자료」',
+      '파일올리기에서 고객사 PO 를 누르면 고객사 PO 화면이 열리면서 업로드 창이 바로 뜹니다',
+    ],
+  },
   {
     version: 'v4.19.2',
     date: '2026-09-23',

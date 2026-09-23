@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -118,7 +118,9 @@ export default function CustomerPO() {
   const [form, setForm] = useState(EMPTY)
   const [editId, setEditId] = useState(null)
   const [chgModal, setChgModal] = useState(null)
-  const [showUpload, setShowUpload] = useState(false)
+  // 파일올리기 화면에서 「화면 열기」로 오면 업로드 창을 바로 연다 (?upload=1)
+  const [sp] = useSearchParams()
+  const [showUpload, setShowUpload] = useState(() => sp.get('upload') === '1')
   const [showAll, setShowAll] = useState(false)
   const [hideIssued, setHideIssued] = useState(false)
   const [search, setSearch] = useState('')
