@@ -176,7 +176,9 @@ export default function App() {
         <Route path="activity" element={<ActivityLog />} />
         <Route path="rack-layout" element={<RackLayout />} />
         <Route path="finder" element={<StockFinder />} />
-        <Route path="lot" element={<LotManage />} />
+        <Route path="quality/lot" element={<LotManage />} />
+        {/* 예전 주소 — 즐겨찾기·북마크가 깨지지 않게 이어 준다 */}
+        <Route path="lot" element={<Navigate to="/quality/lot" replace />} />
         <Route path="upload" element={<UnifiedUpload />} />
         <Route path="schedule-changes" element={<ScheduleChanges />} />
         <Route path="material-request" element={<MaterialRequest />} />

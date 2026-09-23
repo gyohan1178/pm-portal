@@ -28,13 +28,56 @@ const MAIL_NOTE = `[기밀 유지 안내]
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 
 const fetchDist = () => fetchAll(() => supabase.from('pm_drawing_dist').select('*').order('seq', { ascending: false }))
-const fetchVendors = () => fetchAll(() => supabase.from('vendors').select('id,name,contact,email').order('name'))
+const fetchVendors = () => fetchAll(() => supabase.from('vendors').select('id,name,category,contact,email').order('name'))
 const fetchContacts = () => fetchAll(() => supabase.from('pm_vendor_contact').select('*').order('id'))
 
 const EMPTY = {
   dist_date: todayISO(), dept: '구매자재팀', requester: '', reason: '견적요청',
   vendor_id: '', vendor_name: '', contact_id: '', contact_name: '', contact_email: '',
   drawing_no: '', item_name: '', issue_no: '', dist_form: 'PDF', approval_type: '사후기록', memo: '',
+}
+
+// 거래처가 많아 드롭다운으로는 못 찾는다 — 쳐서 좁히고 고른다
+function VendorPick({ vendors, value, name, onPick }) {
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const hit = useMemo(() => {
+    const k = q.trim().toUpperCase()
+    if (!k) return vendors.slice(0, 8)
+    return vendors.filter((v) => String(v.name || '').toUpperCase().includes(k)).slice(0, 8)
+  }, [vendors, q])
+  const picked = vendors.find((v) => v.id === value)
+  return (
+    <div className="relative">
+      <div className="flex gap-2">
+        <input
+          value={open ? q : (picked?.name || name || '')}
+          onChange={(e) => { setQ(e.target.value); setOpen(true) }}
+          onFocus={() => { setQ(''); setOpen(true) }}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="협력사 이름을 치세요 (예: 이삭)"
+          className={INP + (picked ? '' : ' border-amber-300')} />
+        {(picked || name) && (
+          <button type="button" onMouseDown={(e) => e.preventDefault()}
+            onClick={() => { onPick(null); setQ(''); }}
+            className="px-2.5 text-xs text-slate-400 hover:text-rose-600">✕</button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-10 mt-1 w-full bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-auto">
+          {hit.map((v) => (
+            <button key={v.id} type="button" onMouseDown={(e) => e.preventDefault()}
+              onClick={() => { onPick(v); setOpen(false) }}
+              className="block w-full text-left px-3 py-1.5 text-sm hover:bg-indigo-50">
+              {v.name}
+              {v.category && <span className="ml-1 text-[10px] text-slate-400">{v.category}</span>}
+            </button>
+          ))}
+          {!hit.length && <p className="px-3 py-2 text-xs text-slate-400">찾는 거래처가 없습니다 — 아래에서 새로 등록하세요</p>}
+        </div>
+      )}
+    </div>
+  )
 }
 
 const Chip = ({ on, tone = 'slate', children, ...p }) => (
@@ -53,7 +96,8 @@ export default function DrawingDist() {
   const [form, setForm] = useState(null)        // 등록·수정 모달
   const [sel, setSel] = useState(new Set())     // 전결 승인 체크
   const [scrapFor, setScrapFor] = useState('')  // 폐기통보 — 도면번호
-  const [newVendor, setNewVendor] = useState('')    // 즉석 거래처 등록
+  const [newVendor, setNewVendor] = useState('')       // 즉석 거래처 등록 — 이름
+  const [newVendorCat, setNewVendorCat] = useState('가공')  // 판금·가공 견적처가 대부분이다
   const [newContact, setNewContact] = useState(null) // 즉석 담당자 등록
 
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['drawDist'], queryFn: fetchDist })
@@ -83,6 +127,16 @@ export default function DrawingDist() {
   // 같은 도면을 받아 간 곳 — 설계변경 때 폐기통보 대상
   const sameDrawing = useMemo(
     () => (scrapFor ? rows.filter((r) => r.drawing_no === scrapFor) : []), [rows, scrapFor])
+
+  // 지침 3항① — 이 협력사에 도면을 보낸 적이 없으면 「신규 협력사 최초 배포」라 사전승인 대상이다.
+  //   거래이력이 아니라 「도면을 보낸 적이 있는가」로 본다 (견적만 받은 곳도 협력사로 친다).
+  const firstTimeVendor = useMemo(() => {
+    if (!form?.vendor_name) return false
+    return !rows.some((r) => r.id !== form.id
+      && (form.vendor_id ? r.vendor_id === form.vendor_id : r.vendor_name === form.vendor_name))
+  }, [rows, form])
+  const needPrior = form && form.approval_type !== '사전승인'
+    && (firstTimeVendor || form.dist_form !== 'PDF')
 
   /* ---- 저장 ---- */
   async function save() {
@@ -147,7 +201,7 @@ export default function DrawingDist() {
     const name = newVendor.trim()
     if (!name) return
     try {
-      const r = must(await supabase.from('vendors').insert({ name, category: '자재' }).select('id,name').single(), '거래처 등록')
+      const r = must(await supabase.from('vendors').insert({ name, category: newVendorCat }).select('id,name').single(), '거래처 등록')
       qc.invalidateQueries({ queryKey: ['vendorsAll'] })
       setForm((f) => ({ ...f, vendor_id: r.id, vendor_name: r.name, contact_id: '', contact_name: '', contact_email: '' }))
       setNewVendor(''); toastSuccess(`거래처 「${r.name}」 등록`)
@@ -388,23 +442,22 @@ export default function DrawingDist() {
 
             {/* 협력사 */}
             <L t="협력사">
-              <div className="flex gap-2">
-                <select value={form.vendor_id || ''}
-                  onChange={(e) => {
-                    const v = vendors.find((x) => x.id === e.target.value)
-                    setForm({ ...form, vendor_id: v?.id || '', vendor_name: v?.name || '', contact_id: '', contact_name: '', contact_email: '' })
-                  }} className={INP + ' flex-1'}>
-                  <option value="">— 고르세요 —</option>
-                  {vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
-                </select>
-                {form.vendor_name && !form.vendor_id && (
-                  <span className="text-[11px] text-rose-500 self-center whitespace-nowrap">{form.vendor_name} (미연결)</span>
-                )}
-              </div>
+              <VendorPick vendors={vendors} value={form.vendor_id} name={form.vendor_name}
+                onPick={(v) => setForm({
+                  ...form, vendor_id: v?.id || '', vendor_name: v?.name || '',
+                  contact_id: '', contact_name: '', contact_email: '',
+                })} />
+              {form.vendor_name && !form.vendor_id && (
+                <p className="text-[11px] text-rose-500 mt-1">{form.vendor_name} — 거래처에 없습니다. 아래에서 등록하면 연결됩니다.</p>
+              )}
               {canEdit && (
                 <div className="flex gap-2 mt-1.5">
                   <input value={newVendor} onChange={(e) => setNewVendor(e.target.value)} placeholder="목록에 없으면 여기에 새 거래처 이름"
                     className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
+                  <select value={newVendorCat} onChange={(e) => setNewVendorCat(e.target.value)}
+                    className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg">
+                    <option>가공</option><option>자재</option><option>기타</option>
+                  </select>
                   <button onClick={addVendor} disabled={!newVendor.trim()}
                     className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">＋ 거래처 등록</button>
                 </div>
@@ -458,10 +511,18 @@ export default function DrawingDist() {
               <L t="승인구분"><select value={form.approval_type} onChange={(e) => setForm({ ...form, approval_type: e.target.value })} className={INP}>{APPROVAL.map((x) => <option key={x}>{x}</option>)}</select></L>
             </div>
 
-            {form.dist_form !== 'PDF' && form.approval_type !== '사전승인' && (
-              <p className="text-[11px] text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
-                ⚠ 지침 3항 — CAD 원본·3D 파일 제공은 <b>사전승인 대상</b>입니다. 승인구분을 「사전승인」으로 두고 사유를 비고에 적어 주세요.
-              </p>
+            {needPrior && (
+              <div className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-2 space-y-1">
+                <p className="font-bold">⚠ 지침 3항 — 사전승인 대상으로 보입니다</p>
+                {firstTimeVendor && (
+                  <p>· <b>{form.vendor_name}</b> 에 도면을 보낸 기록이 대장에 없습니다 — ① 신규 협력사 최초 배포</p>
+                )}
+                {form.dist_form !== 'PDF' && (
+                  <p>· 배포형식이 <b>{form.dist_form}</b> 입니다 — ② CAD 원본·3D 제공 (요청 사유를 비고에 적어 주세요)</p>
+                )}
+                <button onClick={() => setForm({ ...form, approval_type: '사전승인' })}
+                  className="mt-0.5 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-600 text-white">사전승인으로 바꾸기</button>
+              </div>
             )}
 
             <L t="비고 (메일 제목 등)">

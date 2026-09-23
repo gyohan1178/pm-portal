@@ -37,7 +37,7 @@ const LINK_MAP = {
   cpo: (scope) => `/customer/${scope}/cpo`,
   inbound: () => '/inbound',        // 입고 화면은 고객사 구분이 없다
   request: () => '/material-request',
-  lot: () => '/lot',
+  lot: () => '/quality/lot',
 }
 
 export default function ControlTower({ scope = 'ax' }) {

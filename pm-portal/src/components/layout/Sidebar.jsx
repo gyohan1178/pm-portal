@@ -10,6 +10,7 @@ import { toastError } from '../../lib/toast'
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
   '/restore': ['↩','삭제 기록'],
+  '/quality/lot': ['🏷','로트 관리'],
   '/lot': ['🏷','로트 관리'],
   '/finder': ['🔍','자재 위치 찾기'],
   '/material-request': ['🙋','자재 요청'],
@@ -288,7 +289,6 @@ export default function Sidebar({ onNavigate, profile }) {
         <CollapseSection mover={mv} label="📦 자재" sKey="mat">
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
-          <MenuItem to="/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
           <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>
@@ -340,11 +340,12 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
     </>),
     quality: (mv) => (<>
-        {/* 🔬 품질 — 초도품(FAI) 등 품질 제출 자료 */}
+        {/* 🔬 품질 — 초도품(FAI) · 도면 배포이력 · 로트 관리 */}
         {canAccessSection(profile, 'quality') && (
         <CollapseSection mover={mv} label="🔬 품질" sKey="quality">
           <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
           <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
+          <MenuItem to="/quality/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
         </CollapseSection>
         )}
     </>),

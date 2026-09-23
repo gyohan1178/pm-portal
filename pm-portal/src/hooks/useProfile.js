@@ -154,7 +154,7 @@ export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
   if (pathname === '/todo') return 'todo'
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes' || pathname === '/material-request') return 'floor'
-  if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/lot' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
+  if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
   // 영업 — 매출견적(+견적이력 내부 탭)
@@ -164,8 +164,9 @@ export function sectionOfPath(pathname) {
       || pathname === '/sales' || pathname === '/cost'
       || pathname === '/what-if' || pathname === '/insights') return 'report'
   if (pathname.startsWith('/master') || pathname === '/erp' || pathname === '/activity') return 'master'
-  // 품질 — 초도품 자재 매칭 등
-  if (pathname.startsWith('/quality')) return 'quality'
+  // 품질 — 초도품 자재 매칭 · 도면 배포이력 · 로트 관리
+  //   ⚠ 로트 관리는 자재(mat)에서 품질(quality)로 옮겼다. 예전 주소 /lot 도 같이 품질로 본다.
+  if (pathname.startsWith('/quality') || pathname === '/lot') return 'quality'
   // 고객사 하위 경로: 마지막 세그먼트로 판정
   if (pathname.startsWith('/customer/')) {
     if (pathname.endsWith('/short')) return 'buy'   // 자재 상황판 — 부족 확인 후 발주로 이어지므로 구매
