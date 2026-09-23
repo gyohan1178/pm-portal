@@ -29,6 +29,7 @@ const MENU_META = {
   '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
   '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
   '/quality/fai': ['🧾','초도품 자재 매칭'],
+  '/quality/drawing-dist': ['📐','도면 배포이력'],
   '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
 }
 
@@ -343,6 +344,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'quality') && (
         <CollapseSection mover={mv} label="🔬 품질" sKey="quality">
           <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
+          <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
         </CollapseSection>
         )}
     </>),

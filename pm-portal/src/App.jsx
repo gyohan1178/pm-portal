@@ -30,6 +30,7 @@ const Vendors = lazy(() => import('./pages/master/Vendors'))
 const PriceHistory = lazy(() => import('./pages/master/PriceHistory'))
 const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
 const FaiNavigator = lazy(() => import('./pages/quality/FaiNavigator'))
+const DrawingDist = lazy(() => import('./pages/quality/DrawingDist'))
 const RequestLoad = lazy(() => import('./pages/RequestLoad'))
 const SalesQuote = lazy(() => import('./pages/master/SalesQuote'))
 const QuoteHistory = lazy(() => import('./pages/master/QuoteHistory'))
@@ -140,6 +141,7 @@ export default function App() {
         <Route path="quote"     element={<Quote />} />
         <Route path="cost"      element={<CostAnalysis />} />
         <Route path="quality/fai" element={<FaiNavigator />} />
+        <Route path="quality/drawing-dist" element={<DrawingDist />} />
         <Route path="request-load" element={<RequestLoad />} />
         <Route path="sales-quote"   element={<SalesQuote />} />
         <Route path="quote-history"  element={<QuoteHistory />} />
