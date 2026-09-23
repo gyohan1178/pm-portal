@@ -25,7 +25,7 @@ const MENU_META = {
   '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
   '/sales': ['💼','매출 대시보드'], '/cost': ['💵','원가분석'],
   '/request-load': ['🗂','자재요청 업무량'],
-  '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'],
+  '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'], '/cost-saving': ['💸','원가절감'],
   '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
   '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
   '/quality/fai': ['🧾','초도품 자재 매칭'],
@@ -352,6 +352,7 @@ export default function Sidebar({ onNavigate, profile }) {
         <CollapseSection mover={mv} label="📊 분석" sKey="report" defaultOpen={false}>
           <MenuItem to="/weekly"             icon="📄" onNavigate={onNavigate}>주간업무보고</MenuItem>
           <MenuItem to="/purchase-dashboard" icon="💰" onNavigate={onNavigate}>매입 대시보드</MenuItem>
+          <MenuItem to="/cost-saving"        icon="💸" onNavigate={onNavigate}>원가절감 실적</MenuItem>
           <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
           <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
           <MenuItem to="/request-load"       icon="🗂" onNavigate={onNavigate}>자재요청 업무량</MenuItem>

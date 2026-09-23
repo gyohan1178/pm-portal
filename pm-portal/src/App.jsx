@@ -51,6 +51,7 @@ const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
 const MaterialRequest = lazy(() => import('./pages/common/MaterialRequest'))
 const CellAudit = lazy(() => import('./pages/common/CellAudit'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
+const CostSaving = lazy(() => import('./pages/report/CostSaving'))
 const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
 const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
 const Help = lazy(() => import('./pages/Help'))
@@ -180,6 +181,7 @@ export default function App() {
         <Route path="rack/:code" element={<RackLayout />} />
         <Route path="cell/:loc" element={<CellAudit />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />
+        <Route path="cost-saving"        element={<CostSaving />} />
         <Route path="sales" element={<SalesDashboard />} />
         <Route path="sales/upload" element={<SalesUpload />} />
         <Route path="help" element={<Help />} />
