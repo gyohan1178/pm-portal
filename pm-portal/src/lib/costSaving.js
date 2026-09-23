@@ -98,17 +98,36 @@ export function byItem(rows) {
   return [...m.values()]
 }
 
-// 거래처별 묶음
-export function byVendor(rows) {
+/* ---- 묶어 보기 (고객사별 · 구매처별) ----
+   절감율은 지표 전체와 같은 계산이다 — 표준단가로 잰 줄(basis==='std')만 모아
+   (절감 − 상승) ÷ (표준단가 × 수량). 12개월 평균으로 잰 줄은 절감율에 안 넣는다. */
+function group(rows, keyOf) {
   const m = new Map()
   for (const r of rows) {
-    const k = r.vendor || '미지정'
-    const x = m.get(k) || { vendor: k, buy: 0, diff: 0, n: 0 }
-    x.buy += r.buy; x.diff += r.diff; x.n++
+    const k = keyOf(r) || '미지정'
+    const x = m.get(k) || { key: k, buy: 0, diff: 0, qty: 0, n: 0, stdN: 0, stdBuy: 0, stdBase: 0, save: 0, loss: 0 }
+    x.buy += r.buy; x.diff += r.diff; x.qty += r.qty; x.n++
+    if (r.basis === 'std') {
+      x.stdN++; x.stdBuy += r.buy; x.stdBase += r.baseBuy
+      if (r.diff > 0) x.save += r.diff; else x.loss += -r.diff
+    }
     m.set(k, x)
   }
-  return [...m.values()].sort((a, b) => b.buy - a.buy)
+  return [...m.values()]
+    .map((x) => ({
+      ...x, net: x.save - x.loss,
+      pct: x.stdBase ? ((x.save - x.loss) / x.stdBase) * 100 : null,   // 표준단가가 하나도 없으면 null (— 로 보여 준다)
+      cover: x.buy ? (x.stdBuy / x.buy) * 100 : 0,                     // 표준단가로 잰 구매액 비중
+    }))
+    .sort((a, b) => b.buy - a.buy)
 }
+
+// 고객사 — 기준코드 앞자리로 가른다 (AX-5001239 → AX)
+export const custOf = (code) => (/^([A-Z]+)-/.exec(String(code || '')) || [, '기타'])[1]
+export const CUST_NAME = { AX: 'AXCELIS', ED: '에드워드', VM: 'VM', CS: 'CSK', 기타: '기타' }
+
+export const byCustomer = (rows) => group(rows, (r) => custOf(r.std_code))
+export const byVendor = (rows) => group(rows, (r) => r.vendor)
 
 // 표준단가와 너무 벌어져 지표에서 뺀 줄 (단위·환율·품번 확인용)
 export function suspects(rows) {

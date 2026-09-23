@@ -8,7 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
-import { computeSaving, candKey, byItem, byVendor, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
+import { computeSaving, candKey, byItem, byVendor, byCustomer, custOf, CUST_NAME, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
 //
@@ -71,6 +71,7 @@ export default function CostSaving() {
   const [form, setForm] = useState(null)    // 등록 모달
   const [targetOpen, setTargetOpen] = useState(false)
   const [stdQ, setStdQ] = useState('')
+  const [split, setSplit] = useState('cust')   // 고객사별 / 구매처별
   const stdFileRef = useRef(null)
 
   const { data: inbound = [], isLoading, error } = useQuery({ queryKey: ['csInbound'], queryFn: fetchInbound, staleTime: 5 * 60 * 1000 })
@@ -135,6 +136,8 @@ export default function CostSaving() {
 
   const topItems = useMemo(() => byItem(yRows).sort((a, b) => b.diff - a.diff), [yRows])
   const vendors = useMemo(() => byVendor(yRows), [yRows])
+  const custs = useMemo(() => byCustomer(yRows), [yRows])
+  const splitRows = split === 'cust' ? custs : vendors
 
   /* ---- 표준단가 ---- */
   const lastPrice = useMemo(() => {
@@ -282,8 +285,8 @@ export default function CostSaving() {
         절감액: Number(l.amount) || 0, 사유: l.note, 상태: l.status,
       }))
       : yRows.map((r, i) => ({
-        No: i + 1, 입고일: r.movement_date, 기준코드: r.std_code, 품명: r.name,
-        구매처: r.vendor, 발주번호: r.po_number,
+        No: i + 1, 입고일: r.movement_date, 고객사: CUST_NAME[custOf(r.std_code)] || custOf(r.std_code),
+        기준코드: r.std_code, 품명: r.name, 구매처: r.vendor, 발주번호: r.po_number,
         기준: r.basis === 'std' ? '표준단가' : r.basis === 'susp' ? '표준단가 점검필요' : r.basis === 'avg' ? '12개월평균' : '기준없음',
         표준단가: r.std ? Math.round(r.std) : '',
         기준단가: r.base ? Math.round(r.base) : '', 입고단가: Math.round(r.price), 수량: r.qty,
@@ -427,22 +430,47 @@ export default function CostSaving() {
                 </div>
               )) : <p className="text-xs text-slate-400 py-6 text-center">아직 등록된 실적이 없습니다.</p>}
             </div>
-            {/* 거래처 */}
+            {/* 고객사별 · 구매처별 — 대표 보고는 이 표로 갈라서 한다 */}
             <div className="rounded-xl border border-slate-200 bg-white p-4">
-              <p className="text-sm font-bold text-slate-700 mb-2">거래처별 구매액·단가효과</p>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-sm font-bold text-slate-700">{split === 'cust' ? '고객사별' : '구매처별'} 절감율</p>
+                <div className="flex gap-1">
+                  {[['cust', '고객사'], ['vendor', '구매처']].map(([k, l]) => (
+                    <button key={k} onClick={() => setSplit(k)}
+                      className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${split === k
+                        ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
               <table className="w-full text-xs">
-                <thead><tr className="text-slate-400 text-left"><th className="py-1">구매처</th><th className="py-1 text-right">구매액</th><th className="py-1 text-right">단가효과</th></tr></thead>
+                <thead><tr className="text-slate-400 text-left">
+                  <th className="py-1">{split === 'cust' ? '고객사' : '구매처'}</th>
+                  <th className="py-1 text-right">구매액</th>
+                  <th className="py-1 text-right">절감액</th>
+                  <th className="py-1 text-right">절감율</th>
+                  <th className="py-1 text-right">적용률</th>
+                </tr></thead>
                 <tbody>
-                  {vendors.slice(0, 8).map((v) => (
-                    <tr key={v.vendor} className="border-t border-slate-100">
-                      <td className="py-1.5 truncate max-w-[140px]">{v.vendor}</td>
+                  {splitRows.slice(0, split === 'cust' ? 10 : 8).map((v) => (
+                    <tr key={v.key} className="border-t border-slate-100">
+                      <td className="py-1.5 truncate max-w-[130px]" title={v.key}>
+                        {split === 'cust' ? (CUST_NAME[v.key] || v.key) : v.key}
+                        <span className="text-[10px] text-slate-300"> {n(v.n)}건</span>
+                      </td>
                       <td className="py-1.5 text-right tabular-nums text-slate-600">{man(v.buy)}</td>
-                      <td className={`py-1.5 text-right tabular-nums font-bold ${v.diff >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{man(v.diff)}</td>
+                      <td className={`py-1.5 text-right tabular-nums font-bold ${v.net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>{man(v.net)}</td>
+                      <td className={`py-1.5 text-right tabular-nums font-bold ${v.pct == null ? 'text-slate-300' : v.pct >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {v.pct == null ? '—' : v.pct.toFixed(1) + '%'}
+                      </td>
+                      <td className="py-1.5 text-right tabular-nums text-slate-400">{v.cover.toFixed(0)}%</td>
                     </tr>
                   ))}
-                  {!vendors.length && <tr><td colSpan={3} className="py-6 text-center text-slate-400">입고 기록이 없습니다.</td></tr>}
+                  {!splitRows.length && <tr><td colSpan={5} className="py-6 text-center text-slate-400">입고 기록이 없습니다.</td></tr>}
                 </tbody>
               </table>
+              <p className="text-[10.5px] text-slate-400 mt-2 leading-snug">
+                절감율은 표준단가로 잰 것만 세고, 「적용률」은 그 구매액 비중입니다. 적용률이 낮으면 절감율도 덜 믿을 만합니다.
+              </p>
             </div>
           </div>
 
