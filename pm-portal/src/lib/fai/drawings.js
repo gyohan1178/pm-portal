@@ -73,7 +73,7 @@ export async function walkDir(dh, onProgress) {
     for await (const [name, h] of d.entries()) {
       if (h.kind === 'file') { seen++; if (/\.pdf$/i.test(name)) out.push({ name, path: path + '/' + name, h }) }
       else subs.push(walk(h, path + '/' + name))
-      if (seen - last >= 500) { last = seen; onProgress?.(seen, out.length) }
+      if (seen - last >= 200) { last = seen; onProgress?.(seen, out.length) }
     }
     await Promise.all(subs)
   }
@@ -99,6 +99,35 @@ export async function loadHandle(key) {
   return new Promise((res) => { const q = db.transaction(ST).objectStore(ST).get(key); q.onsuccess = () => res(q.result || null); q.onerror = () => res(null) })
 }
 
+/* ---- 훑은 목록 기억 — 두 번째부터는 폴더를 다시 안 훑는다 ----
+   파일 손잡이(handle)는 브라우저가 그대로 저장할 수 있다. 파일 내용은 저장하지 않는다.
+   폴더에 도면이 새로 들어오면 「↻ 다시 읽기」로 갱신한다. */
+//   ⚠ 파일 손잡이(handle)는 그대로 담지 않는다 — 브라우저가 담지 못하는 경우가 있다.
+//     이름과 폴더 안 경로만 담아 두고, 실제로 열 때 경로로 다시 찾는다 (resolveFile).
+export const saveList = (key, v) => saveHandle('list:' + key, {
+  ...v, files: (v.files || []).map((f) => ({ name: f.name, path: f.path })),
+})
+export const loadList = (key) => loadHandle('list:' + key)
+
+// 폴더 읽기 권한 상태 — 'granted' | 'prompt' | 'denied' | 'none'(폴더 없음)
+export async function dirPermission(dh) {
+  if (!dh?.queryPermission) return 'none'
+  try { return await dh.queryPermission({ mode: 'read' }) } catch { return 'prompt' }
+}
+export async function askDirPermission(dh) {
+  if (!dh?.requestPermission) return 'none'
+  try { return await dh.requestPermission({ mode: 'read' }) } catch { return 'denied' }
+}
+
+// 폴더 안 경로로 파일을 다시 찾는다 ('DWG/sub/1701.pdf' → 파일 손잡이)
+export async function resolveFile(root, path) {
+  if (!root || !path) return null
+  const parts = String(path).split('/').filter(Boolean).slice(1)   // 맨 앞은 폴더 이름
+  let d = root
+  for (let i = 0; i < parts.length - 1; i++) d = await d.getDirectoryHandle(parts[i])
+  return d.getFileHandle(parts[parts.length - 1])
+}
+
 /* ---- 도면 1쪽 그리기 (품번이 나오는 곳 형광) ---- */
 let pdfjsP = null
 async function pdfjs() {
@@ -113,10 +142,12 @@ async function pdfjs() {
   return pdfjsP
 }
 // entry: indexDwg 의 f ({ name, h } 또는 { name, file }). 반환 { canvas, w, h } 또는 { err }
-export async function renderDrawing(entry, tokens) {
+export async function renderDrawing(entry, tokens, root) {
   try {
     const lib = await pdfjs()
-    const file = entry.file || await entry.h.getFile()
+    // 지난번 목록으로 띄운 경우에는 손잡이가 없다 — 경로로 다시 찾는다
+    const h = entry.h || (await resolveFile(root, entry.path))
+    const file = entry.file || await h.getFile()
     const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false }).promise
     try {
       const pg = await doc.getPage(1)

@@ -777,9 +777,20 @@ export default function BOM() {
             <span>최대 레벨 <b>{htmInfo.stats.maxLevel}</b></span>
             <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
+            {htmInfo.stats.vmSkipped > 0 && <span className="text-rose-600">VM 품번 제외 <b>{htmInfo.stats.vmSkipped}</b></span>}
             {htmInfo.stats.converted > 0 && <span className="text-emerald-700">Foot→M 환산 <b>{htmInfo.stats.converted}</b></span>}
             {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
           </div>
+          {htmInfo.stats.vmSkipped > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-rose-700">VM 품번 {htmInfo.stats.vmSkipped}개는 등록하지 않습니다 — 목록 보기</summary>
+              <div className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-500">
+                {htmInfo.parts.filter(p => p.isVM).map((p, i) => (
+                  <div key={i}><span className="font-mono">{p.rawPn}</span> · {p.name}</div>
+                ))}
+              </div>
+            </details>
+          )}
           {htmInfo.stats.converted > 0 && (
             <div className="mt-2 rounded-lg bg-white/70 border border-sky-200 px-2.5 py-2">
               <p className="text-[11px] font-bold text-emerald-700 mb-1">

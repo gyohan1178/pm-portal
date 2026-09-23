@@ -10,6 +10,11 @@
 //   Level 표기: '0', '.1', '..2', '...3'  → 점 개수가 깊이
 //   Version    : 'B.3' → REV=B, 개정=3   ('##.41' 처럼 REV가 미부여인 경우도 있음)
 
+// ── 등록 제외 품번 ──
+//   품번 뒤에 VM 이 붙은 것(예: 5102060VM, 5102060-VM)은 BOM 에 올리지 않는다.
+//   ⚠ 2026-09-23 결정 — 하위가 딸려 있어도 그 가지 전체를 뺀다.
+export const isVmPn = (pn) => /[-_ ]?VM$/i.test(String(pn ?? '').trim())
+
 // ── 품번 정규화 (AX- 접두) ──
 export const AX = (s) => {
   const t = String(s ?? '').trim().replace(/^AX-/i, '')
@@ -130,6 +135,7 @@ export function parseAxcelisReport(text) {
 
     parts.push({
       level,
+      isVM: isVmPn(c[2]),
       rawPn: String(c[2] || '').trim(),
       code: AX(c[2]),
       name: String(c[3] || '').trim(),
@@ -159,10 +165,15 @@ export function parseAxcelisReport(text) {
   const groups = []
   for (let i = 0; i < parts.length; i++) {
     const p = parts[i]
+    if (p.isVM) continue                       // VM 품번은 어셈블리로도 잡지 않는다
     const children = []
     const descendants = []
+    let skipLevel = null                       // VM 품번 아래 가지는 통째로 건너뛴다
     for (let j = i + 1; j < parts.length; j++) {
       if (parts[j].level <= p.level) break
+      if (skipLevel != null && parts[j].level > skipLevel) continue
+      skipLevel = null
+      if (parts[j].isVM) { skipLevel = parts[j].level; continue }
       const rel = parts[j].level - p.level
       descendants.push({ ...parts[j], relLevel: rel })
       if (rel === 1) children.push(parts[j])
@@ -185,6 +196,7 @@ export function parseAxcelisReport(text) {
       uniqueCodes: codes.length,
       withMfr: parts.filter((p) => p.mfr).length,
       zeroQty: parts.filter((p) => p.level > 0 && p.qty === 0).length,
+      vmSkipped: parts.filter((p) => p.isVM).length,
       converted: parts.filter((p) => p.converted).length,
       maxLevel: parts.reduce((a, p) => Math.max(a, p.level), 0),
       assemblies: groups.length,

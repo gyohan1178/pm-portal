@@ -9,7 +9,7 @@ import { downloadSheet } from '../../lib/exportSheet'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { buildFaiPpt, pickSaveTarget, saveBytes, pptName } from '../../lib/fai/pptBuild'
-import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle } from '../../lib/fai/drawings'
+import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle, saveList, loadList, dirPermission, askDirPermission } from '../../lib/fai/drawings'
 import {
   parseReport, buildRows, buildBuyIndex, normAx, V, CLS_LABEL, CLS_BADGE, qtyText, parentList,
 } from '../../lib/fai/partReport'
@@ -124,7 +124,9 @@ export default function FaiNavigator() {
   const [ppt, setPpt] = useState(null) // { i, n, txt } 만드는 중
   const [dwg, setDwg] = useState(null) // 연결한 도면 폴더 색인
   const [dwgBusy, setDwgBusy] = useState('')
-  const [dwgLast, setDwgLast] = useState('') // 지난번 폴더 이름 (다시 연결 버튼)
+  const [dwgLast, setDwgLast] = useState('') // 지난번 폴더 이름
+  const [dwgHandle, setDwgHandle] = useState(null)
+  const [dwgPerm, setDwgPerm] = useState('none') // granted | prompt | denied | none
   const canDir = typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
   const stopRef = useRef(false)
 
@@ -233,24 +235,37 @@ export default function FaiNavigator() {
   useEffect(() => {
     let off = false
     ;(async () => {
-      try {
-        const h = await loadHandle('dwg')
-        if (!h || off) return
-        setDwgLast(h.name)
-        if ((await h.queryPermission({ mode: 'read' })) === 'granted') await readDwg(h, true)
-      } catch { /* 기억된 폴더 없음 */ }
+      // 목록과 폴더 위치는 따로 담는다 — 하나가 안 담겨도 다른 하나는 쓸 수 있게
+      let cached = null
+      try { cached = await loadList('dwg') } catch { /* 목록 없음 */ }
+      let h = null
+      try { h = await loadHandle('dwg') } catch { /* 폴더 기억 없음 */ }
+      if (off) return
+      if (h) { setDwgLast(h.name); setDwgHandle(h) }
+      if (cached?.files?.length) {
+        // 지난번에 훑어 둔 목록이 있으면 폴더를 다시 안 훑는다 (수만 개면 몇 분 걸린다)
+        const idx = indexDwg(cached.files, cached.name || h?.name || '')
+        idx.at = cached.at; idx.root = h
+        setDwg(idx)
+      }
+      if (h) setDwgPerm(await dirPermission(h))
     })()
     return () => { off = true }
   }, [])
   async function readDwg(dh, quiet) {
+    const t0 = Date.now()
     setDwgBusy(`${dh.name} 폴더 훑는 중…`)
     try {
-      const files = await walkDir(dh, (seen, n) => setDwgBusy(`${dh.name} 폴더 훑는 중… ${seen.toLocaleString('ko-KR')}개 (PDF ${n.toLocaleString('ko-KR')})`))
+      const files = await walkDir(dh, (seen, n) => setDwgBusy(
+        `${dh.name} 폴더 훑는 중… 파일 ${seen.toLocaleString('ko-KR')}개 · PDF ${n.toLocaleString('ko-KR')}개 (${Math.round((Date.now() - t0) / 1000)}초)`))
       const idx = indexDwg(files, dh.name)
       if (!idx.count) { toastError('PDF 도면이 없는 폴더입니다'); return }
-      setDwg(idx); setDwgLast(dh.name)
-      try { await saveHandle('dwg', dh) } catch { /* 기억 못 해도 이번엔 쓸 수 있다 */ }
-      if (!quiet) toastSuccess(`도면 폴더 ${dh.name} — PDF ${idx.count.toLocaleString('ko-KR')}개`)
+      idx.at = todayISO(); idx.root = dh
+      setDwg(idx); setDwgLast(dh.name); setDwgHandle(dh); setDwgPerm('granted')
+      // 폴더 위치와 파일 목록을 기억해 둔다 (파일 내용은 저장하지 않는다)
+      try { await saveHandle('dwg', dh) } catch { /* 폴더 위치를 못 담아도 이번엔 쓸 수 있다 */ }
+      try { await saveList('dwg', { name: dh.name, at: idx.at, files }) } catch { /* 목록을 못 담아도 이번엔 쓸 수 있다 */ }
+      if (!quiet) toastSuccess(`도면 폴더 ${dh.name} — PDF ${idx.count.toLocaleString('ko-KR')}개 (${Math.round((Date.now() - t0) / 1000)}초)`)
     } catch (e) { toastError('도면 폴더를 읽지 못했습니다: ' + (e?.message || e)) }
     finally { setDwgBusy('') }
   }
@@ -258,15 +273,24 @@ export default function FaiNavigator() {
     try { await readDwg(await window.showDirectoryPicker({ id: 'pm-fai-dwg', mode: 'read' })) }
     catch (e) { if (e?.name !== 'AbortError') toastError('폴더를 열지 못했습니다: ' + (e?.message || e)) }
   }
-  async function relinkDwg() {
-    try {
-      const h = await loadHandle('dwg')
-      if (!h) return chooseDwg()
-      let p = await h.queryPermission({ mode: 'read' })
-      if (p !== 'granted') p = await h.requestPermission({ mode: 'read' })
-      if (p !== 'granted') { toastError('폴더 읽기 권한이 없습니다'); return }
-      await readDwg(h)
-    } catch { toastError('지난 폴더를 열지 못했습니다 — 다시 골라주세요') }
+  // 권한만 다시 받기 — 목록은 그대로 쓰므로 폴더를 다시 훑지 않는다 (몇 초면 끝)
+  async function allowDwg() {
+    const h = dwgHandle || await loadHandle('dwg')
+    if (!h) return chooseDwg()
+    const p = await askDirPermission(h)
+    setDwgPerm(p); setDwgHandle(h)
+    if (p !== 'granted') { toastError('폴더 읽기 권한이 없습니다'); return }
+    if (!dwg) { const cached = await loadList('dwg'); if (cached?.files?.length) { const idx = indexDwg(cached.files, cached.name || h.name); idx.at = cached.at; idx.root = h; setDwg(idx); return } }
+    if (dwg && !dwg.root) setDwg({ ...dwg, root: h })
+    toastSuccess('도면 폴더를 쓸 수 있습니다')
+  }
+  // 폴더를 다시 훑는다 (도면이 새로 들어왔을 때)
+  async function rescanDwg() {
+    const h = dwgHandle || await loadHandle('dwg')
+    if (!h) return chooseDwg()
+    if ((await dirPermission(h)) !== 'granted' && (await askDirPermission(h)) !== 'granted') { toastError('폴더 읽기 권한이 없습니다'); return }
+    setDwgPerm('granted')
+    await readDwg(h)
   }
 
   // 품목별 PPT — 저장 위치를 먼저 고르고(버튼 누른 순간에만 창을 띄울 수 있다) 만든 뒤 그 자리에 쓴다
@@ -367,6 +391,8 @@ export default function FaiNavigator() {
                   ✔ {dwg.name} — PDF {dwg.count.toLocaleString('ko-KR')}개 · 16·17번대 {dwgStat.n}개 중 <b>{dwgStat.ok}개 연결</b>
                   {dwgStat.bad > 0 && <span className="text-rose-600"> · ⚠ 리비전 불일치 {dwgStat.bad}</span>}
                   {dwgStat.miss > 0 && <span className="text-amber-600"> · 폴더에 없음 {dwgStat.miss}</span>}
+                  {dwg.at && <span className="text-slate-400"> · {dwg.at} 읽은 목록</span>}
+                  {dwgPerm !== 'granted' && <span className="text-amber-600 font-bold"> · 읽기 권한 필요</span>}
                 </p>
               ) : (
                 <p className="text-xs text-slate-400 mt-0.5">
@@ -375,13 +401,23 @@ export default function FaiNavigator() {
                 </p>
               )}
           </div>
-          {canDir && dwgLast && !dwg && (
-            <button onClick={relinkDwg} disabled={!!dwgBusy}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">↻ 지난 폴더 다시 연결: {dwgLast}</button>
+          {canDir && dwgPerm !== 'granted' && (dwg || dwgLast) && (
+            <button onClick={allowDwg} disabled={!!dwgBusy}
+              title="폴더를 다시 훑지 않고 읽기 권한만 받습니다 — 몇 초면 끝납니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
+              🔓 폴더 쓰기 허용{dwgLast ? `: ${dwgLast}` : ''}
+            </button>
+          )}
+          {canDir && (dwg || dwgLast) && (
+            <button onClick={rescanDwg} disabled={!!dwgBusy}
+              title="도면이 새로 들어왔을 때만 누르세요. 파일이 많으면 몇 분 걸립니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">↻ 다시 읽기</button>
           )}
           {canDir && (
             <button onClick={chooseDwg} disabled={!!dwgBusy}
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{dwg ? '다른 폴더' : '폴더 선택'}</button>
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
+              {dwg || dwgLast ? '다른 폴더' : '폴더 선택'}
+            </button>
           )}
         </div>
       )}

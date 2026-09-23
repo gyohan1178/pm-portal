@@ -188,7 +188,7 @@ export async function buildFaiPpt({ rep, rows, noOf, onProgress, askStop, dwgIdx
       if (pk && pk.file) {
         const info = pk.got ? `  —  Rev ${pk.got}` + (pk.status === 'mismatch' ? `  (${DW_EN.mismatch}${pk.want})` : pk.want ? `  (${DW_EN[pk.status] || ''})` : '') : ''
         s.addText(`${pk.file.name}${info}  · sheet 1`, { x: L.x + 2.2, y: y2 + 0.17, w: L.w - 2.45, h: 0.3, fontFace: PF, fontSize: 9.5, color: pk.status === 'mismatch' ? C_RED : C_MUT, align: 'right', valign: 'middle', margin: 0 })
-        const im = await renderDrawing(pk.file, [P.pn])
+        const im = await renderDrawing(pk.file, [P.pn], dwgIdx?.root)
         if (im.data) { dwg.ok++; pptImage(pptx, s, im, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, true) }
         else { dwg.miss++; emptyBox(pptx, s, L.x + 0.25, y2 + 0.55, L.w - 0.5, h2 - 0.67, 'Drawing could not be opened') }
       } else {
