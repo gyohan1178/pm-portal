@@ -2,6 +2,7 @@ import { useState, createContext, useContext, Fragment } from 'react'
 import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
+import { loadChangelogOld } from '../../lib/loadChangelogOld'
 import { primaryCsCode } from '../../lib/customers'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -176,6 +177,17 @@ function CustomerSection({ customer, onNavigate }) {
 }
 
 function ChangelogModal({ onClose }) {
+  // 오래된 이력은 누를 때만 받는다 — 첫 화면에 190KB 를 싣지 않으려고 떼어 냈다
+  const [old, setOld] = useState(null)        // null = 아직 안 받음
+  const [loadingOld, setLoadingOld] = useState(false)
+  function loadOld() {
+    setLoadingOld(true)
+    loadChangelogOld()
+      .then(list => setOld(list || []))
+      .catch(() => setOld([]))
+      .finally(() => setLoadingOld(false))
+  }
+  const logs = old ? [...CHANGELOG, ...old] : CHANGELOG
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -187,7 +199,7 @@ function ChangelogModal({ onClose }) {
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg w-8 h-8 flex items-center justify-center">✕</button>
         </div>
         <div className="overflow-y-auto p-5 space-y-5">
-          {CHANGELOG.map(log => (
+          {logs.map(log => (
             <div key={log.version}>
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-xs font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-full">{log.version}</span>
@@ -202,6 +214,13 @@ function ChangelogModal({ onClose }) {
               </ul>
             </div>
           ))}
+          {old === null && (
+            <button onClick={loadOld} disabled={loadingOld}
+              className="w-full py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-50">
+              {loadingOld ? '불러오는 중…' : '이전 기록 더 보기'}
+            </button>
+          )}
+          {old && !old.length && <p className="text-center text-xs text-slate-400">이전 기록을 못 불러왔습니다.</p>}
         </div>
       </div>
     </div>
