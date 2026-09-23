@@ -42,7 +42,7 @@ async function fetchInbound() {
 }
 // ⚠ 표준단가는 1,000개가 넘는다. 기본 조회는 1,000행에서 잘리므로 끝까지 받는다.
 const fetchStd = () => fetchAll(() => supabase.from('pm_std_price')
-  .select('id,item_id,std_code,price,base_date,source').order('id'))
+  .select('id,item_id,std_code,price,price_avg,avg_base,base_date,source').order('id'))
 const fetchLedger = async () => must(await supabase.from('pm_cost_saving').select('*').order('ym', { ascending: false }), '실적 대장 조회') || []
 const fetchSkip = async () => must(await supabase.from('pm_cost_saving_skip').select('key'), '숨긴 후보 조회') || []
 const fetchTarget = async () => {
@@ -72,6 +72,7 @@ export default function CostSaving() {
   const [targetOpen, setTargetOpen] = useState(false)
   const [stdQ, setStdQ] = useState('')
   const [split, setSplit] = useState('cust')   // 고객사별 / 구매처별
+  const [basis, setBasis] = useState('db')     // 기준단가: db(DB단가) / avg(최근 실구매 가중평균)
   const stdFileRef = useRef(null)
 
   const { data: inbound = [], isLoading, error } = useQuery({ queryKey: ['csInbound'], queryFn: fetchInbound, staleTime: 5 * 60 * 1000 })
@@ -80,14 +81,19 @@ export default function CostSaving() {
   const { data: target } = useQuery({ queryKey: ['csTarget'], queryFn: fetchTarget })
   const { data: stdRows = [] } = useQuery({ queryKey: ['csStd'], queryFn: fetchStd, staleTime: 5 * 60 * 1000 })
 
+  // 기준 두 가지 — ① DB단가(작년에 정한 목표가)  ② 최근 실구매 가중평균(실제로 산 값)
+  //   ①은 환율·원자재가 오르면 구조적으로 마이너스가 난다. ②는 「직전 기간 대비」를 본다.
   const stdOf = useMemo(() => {
     const m = new Map()
     for (const r of stdRows) {
-      if (r.item_id) m.set(r.item_id, Number(r.price))
-      if (r.std_code) m.set(r.std_code, Number(r.price))
+      const p = Number(basis === 'avg' ? r.price_avg : r.price)
+      if (!(p > 0)) continue
+      if (r.item_id) m.set(r.item_id, p)
+      if (r.std_code) m.set(r.std_code, p)
     }
     return m
-  }, [stdRows])
+  }, [stdRows, basis])
+  const hasAvg = useMemo(() => stdRows.some((r) => Number(r.price_avg) > 0), [stdRows])
   // 집계 시작일 — 포털로 입고를 받기 시작한 날. 그 전 자료는 단가가 덜 채워져 있어 지표를 망친다.
   const start = target?.start || DEFAULT_START
   const seen = useMemo(() => inbound.filter((r) => !start || String(r.movement_date) >= start), [inbound, start])
@@ -304,6 +310,7 @@ export default function CostSaving() {
           ['구매액(입고 기준)', won(buy)], ['표준단가 적용률', cover.toFixed(0) + '%'],
           ['확정 절감액(대장)', won(fixed)], ['연간 목표', won(goal)],
           ['집계 시작일', start || '전체 (제한 없음)'],
+          ['기준단가', basis === 'avg' ? '최근 실구매 가중평균' : '표준단가(DB단가)'],
           ['기준', '표준단가(DB단가) → 없으면 직전 12개월 가중평균 · 수량 = 실제 입고수량'],
           ['작성', `${todayISO()} · 진선테크 구매자재팀`],
         ],
@@ -327,6 +334,24 @@ export default function CostSaving() {
             <span className="text-slate-300"> — 그 전 입고는 지표에서 뺍니다 </span>
             <button onClick={() => setTargetOpen(true)} className="text-indigo-500 font-bold underline decoration-dotted">바꾸기</button>
           </p>
+          {/* 기준단가 — 무엇과 견줄 것인가 */}
+          <div className="flex items-center gap-1.5 mt-2">
+            <span className="text-[11px] font-bold text-slate-400">기준단가</span>
+            {[['db', 'DB단가', '작년에 정한 목표가'], ['avg', '최근 실구매', '직전 기간에 실제로 산 값']].map(([k, l, tip]) => (
+              <button key={k} onClick={() => setBasis(k)} title={tip}
+                disabled={k === 'avg' && !hasAvg}
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${basis === k
+                  ? 'border-violet-300 bg-violet-50 text-violet-700'
+                  : k === 'avg' && !hasAvg ? 'border-slate-100 text-slate-300 cursor-not-allowed'
+                    : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{l}</button>
+            ))}
+            <span className="text-[10.5px] text-slate-400">
+              {basis === 'db'
+                ? '작년 목표가와 견줍니다 — 환율·자재값이 오르면 구조적으로 마이너스가 납니다'
+                : '직전 기간 실구매 가중평균과 견줍니다 — 「전보다 싸게 샀나」를 봅니다'}
+              {!hasAvg && <b className="text-rose-500"> · 실구매 기준은 pm_std_price_avg SQL 을 돌려야 켜집니다</b>}
+            </span>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           <select value={year} onChange={(e) => setYear(e.target.value)}
@@ -343,10 +368,10 @@ export default function CostSaving() {
 
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
-        <KPI t="표준단가 대비 절감" v={man(st.net) + '원'} tone="ok"
+        <KPI t={(basis === 'avg' ? '실구매 평균' : '표준단가') + ' 대비 절감'} v={man(st.net) + '원'} tone="ok"
           n={`절감 ${man(st.save)} · 상승 ${man(st.loss)} · ${n(st.n)}건`} />
         <KPI t="절감율" v={st.baseBuy ? st.pct.toFixed(1) + '%' : '—'} tone="ok"
-          n={`표준단가 기준 ${man(st.baseBuy)}원 → 실구매 ${man(st.buy)}원`} />
+          n={`${basis === 'avg' ? '실구매 평균' : '표준단가'} 기준 ${man(st.baseBuy)}원 → 실구매 ${man(st.buy)}원`} />
         <KPI t="구매액 (입고 기준)" v={man(buy) + '원'} n={`${n(yRows.length)}건 입고 · 표준단가 적용 ${cover.toFixed(0)}%`} />
         <KPI t="확정 절감액 (대장)" v={man(fixed) + '원'} tone="info"
           n={goal ? `목표 ${man(goal)}원 대비 ${Math.round((fixed / goal) * 100)}%` : '연간 목표 미설정'} />
