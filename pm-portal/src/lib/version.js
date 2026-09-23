@@ -1,6 +1,15 @@
-export const APP_VERSION = 'v4.13.0'
+export const APP_VERSION = 'v4.13.1'
 
 export const CHANGELOG = [
+  {
+    version: 'v4.13.1',
+    date: '2026-09-23',
+    changes: [
+      '입고현황 표에 제조사·제조사품번 칸이 생겼습니다 (엑셀 내보내기에도 들어갑니다)',
+      '발주 줄에 적힌 제조사를 먼저 쓰고, 비어 있으면 기준코드 DB 의 제조사를 씁니다',
+      '품목 검색칸으로 제조사·제조사품번도 찾을 수 있습니다',
+    ],
+  },
   {
     version: 'v4.13.0',
     date: '2026-09-22',

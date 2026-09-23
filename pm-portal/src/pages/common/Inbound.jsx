@@ -45,7 +45,7 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   let data = []
   for (let off = 0; off < CAP; off += PAGE) {
     const { data: batch, error } = await supabase.from('stock_movements')
-      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, vendors(name), projects(code))')
+      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, mfr, mfr_code, vendors(name), projects(code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
@@ -344,12 +344,15 @@ export default function Inbound() {
       if (vq && !vname.includes(vq)) return false
       if (iq) {
         // 기준코드·품명뿐 아니라 제조사·제조사품번으로도 찾는다
-        const hay = `${r.items?.std_code || ''} ${r.items?.name || ''} ${r.items?.manufacturer || ''} ${r.items?.manufacturer_code || ''}`.toLowerCase()
+        const hay = `${r.items?.std_code || ''} ${r.items?.name || ''} ${r.items?.manufacturer || ''} ${r.items?.manufacturer_code || ''} ${r.purchase_orders?.mfr || ''} ${r.purchase_orders?.mfr_code || ''}`.toLowerCase()
         if (!hay.includes(iq)) return false
       }
       return true
     })
   }, [history, dHVendor, dHItem])
+  // 제조사·제조사품번 — 발주 줄에 적힌 값이 먼저다(실제 산 것). 비어 있으면 기준코드 DB 값
+  const mfrOf = r => r.purchase_orders?.mfr || r.items?.manufacturer || ''
+  const mpnOf = r => r.purchase_orders?.mfr_code || r.items?.manufacturer_code || ''
   const histTotal = histShown.reduce((a,r)=>a+r.qty,0)
   // 화면에는 200건씩 그린다. 수천 건을 한 번에 그리면 검색이 밀린다.
   const hVis = useVisibleRows(histShown, 200, [dHVendor, dHItem, hQuery])
@@ -357,6 +360,7 @@ export default function Inbound() {
   function exportHistory() {
     const data = histShown.map(r=>({
       '입고일':r.movement_date, '기준코드':r.items?.std_code, '품명':r.items?.name,
+      '제조사':mfrOf(r), '제조사품번':mpnOf(r),
       '단위':r.items?.unit, '수량':r.qty,
       '단가':Number(r.unit_price)||0,
       '금액':(Number(r.qty)||0) * (Number(r.unit_price)||0),
@@ -740,13 +744,13 @@ export default function Inbound() {
                         checked={histShown.length>0 && selHist.size===histShown.length}
                         onChange={e=>setSelHist(e.target.checked ? new Set(histShown.map(r=>r.id)) : new Set())}/>
                     </th>
-                    {['입고일','기준코드','품명','수량','단위','단가','금액','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
+                    {['입고일','기준코드','품명','제조사','제조사품번','수량','단위','단가','금액','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
                       <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
                     {histShown.length===0
-                      ? <tr><td colSpan={13} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
+                      ? <tr><td colSpan={15} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
                       : hVis.shown.map(r=>(
                         <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${selHist.has(r.id)?'bg-red-50/40':''}`}>
                           <td className="px-3 py-2 text-center">
@@ -756,6 +760,8 @@ export default function Inbound() {
                           <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
+                          <td className="px-3 py-2 text-slate-600 max-w-[140px] truncate" title={mfrOf(r)}>{mfrOf(r)||'-'}</td>
+                          <td className="px-3 py-2 font-mono text-[11px] text-slate-500 max-w-[150px] truncate" title={mpnOf(r)}>{mpnOf(r)||'-'}</td>
                           <td className="px-3 py-2 text-right font-bold text-emerald-700">{r.qty}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
                           <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">
