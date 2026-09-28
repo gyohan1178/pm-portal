@@ -162,7 +162,10 @@ export function sectionOfPath(pathname) {
   // 분석 — 원가분석이 여기로 이동
   if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard'
       || pathname === '/sales' || pathname === '/cost'
-      || pathname === '/what-if' || pathname === '/insights') return 'report'
+      || pathname === '/what-if' || pathname === '/insights'
+      // ⚠ 원가절감 실적·자재요청 업무량은 분석 메뉴에 있는데 빠져 있어 「관제탑」으로 분류됐다.
+      //   분석 권한만 있는 계정은 메뉴에 보이는데 누르면 첫 화면으로 튕겼다.
+      || pathname === '/cost-saving' || pathname === '/request-load') return 'report'
   if (pathname.startsWith('/master') || pathname === '/erp' || pathname === '/activity') return 'master'
   // 품질 — 초도품 자재 매칭 · 도면 배포이력 · 로트 관리
   //   ⚠ 로트 관리는 자재(mat)에서 품질(quality)로 옮겼다. 예전 주소 /lot 도 같이 품질로 본다.
