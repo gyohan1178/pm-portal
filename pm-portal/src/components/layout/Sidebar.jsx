@@ -356,7 +356,6 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
-          <MenuItem to="/schedule-changes" icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
         </CollapseSection>
         )}
     </>),
@@ -381,6 +380,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/sales"              icon="💼" onNavigate={onNavigate}>매출 대시보드</MenuItem>
           <MenuItem to="/cost"               icon="💵" onNavigate={onNavigate}>원가분석</MenuItem>
           <MenuItem to="/request-load"       icon="🗂" onNavigate={onNavigate}>자재요청 업무량</MenuItem>
+          <MenuItem to="/schedule-changes"   icon="📅" onNavigate={onNavigate}>납품 일정 변경</MenuItem>
           <MenuItem to="/what-if"            icon="🔬" onNavigate={onNavigate}>What-if 시뮬레이터</MenuItem>
           <MenuItem to="/insights"           icon="📊" onNavigate={onNavigate}>인사이트 (관리자)</MenuItem>
         </CollapseSection>

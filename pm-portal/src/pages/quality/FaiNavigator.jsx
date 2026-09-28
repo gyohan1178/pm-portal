@@ -1,5 +1,6 @@
 import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
@@ -7,6 +8,8 @@ import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { ResizableTable } from '../../components/ResizableTable'
+import { useCanEdit, useMe } from '../../hooks/useProfile'
+import { matMatchText, revCheck, faTypeLabel } from '../../lib/faTemplate'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { buildFaiPpt, pickSaveTarget, saveBytes, pptName } from '../../lib/fai/pptBuild'
 import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle, saveList, loadList, dirPermission, askDirPermission } from '../../lib/fai/drawings'
@@ -25,6 +28,10 @@ import {
 //   2단계 — 품목별 PPT (저장 위치 선택). 증빙은 포털 발주·입고 기록으로 그린 이카운트 구매전표 모양(금액 칸 없음).
 //     16·17번대는 PC 도면 폴더를 연결하면 도면 1쪽이 붙는다 (lib/fai/drawings.js).
 //     PPT 라이브러리는 버튼을 누를 때만 불러온다 (lib/fai/pptBuild.js).
+//   초도품 진행관리 연결 (v4.23.0) — 자재 매칭은 성적서의 일부다.
+//     진행관리 건의 「자재 매칭」 항목에서 넘어오면(?fa=id) 그 건을, 아니면 올린 리포트 품번과 같은 초도품 건을 찾아
+//     「결과 반영」으로 판정 숫자 · Part Report Rev 를 그 건 성적서 단계 세부 항목(mat_match)에 넣는다.
+//     완료 표시는 품질이 직접 한다 (툴 결과만으로 끝내지 않게) — 반영은 「진행」까지.
 
 const APP_VER = 'v3.2 (포털 2단계)'
 const LS_OPT = 'pm_fai_opt'
@@ -129,6 +136,14 @@ export default function FaiNavigator() {
   const [dwgPerm, setDwgPerm] = useState('none') // granted | prompt | denied | none
   const canDir = typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function'
   const stopRef = useRef(false)
+  const [sp] = useSearchParams()
+  const nav = useNavigate()
+  const qc = useQueryClient()
+  const canEdit = useCanEdit()
+  const me = useMe()
+  const faParam = Number(sp.get('fa')) || null
+  const [faSel, setFaSel] = useState(null)
+  const [faBusy, setFaBusy] = useState(false)
 
   function loadFile(f) {
     if (!f) return
@@ -172,6 +187,48 @@ export default function FaiNavigator() {
     return st
   }, [rows, dwg])
   const itemFallback = (buy?.recs || []).filter((x) => x.mfrSrc === 'item').length
+
+  // ── 초도품 진행관리 연결 ──
+  const topPn = rep ? normAx(rep.top.pn) : ''
+  const { data: faLinks = [] } = useQuery({
+    queryKey: ['faiFaLink', topPn, faParam],
+    enabled: !!(topPn || faParam),
+    queryFn: async () => {
+      const cols = 'id,item_code,po_number,srev,brev,fa_type,item_desc,steps'
+      const out = []
+      if (faParam) out.push(...(must(await supabase.from('pm_fa').select(cols).eq('id', faParam), '초도품 건 조회') || []))
+      if (topPn) out.push(...(must(await supabase.from('pm_fa').select(cols).eq('item_code', topPn), '초도품 건 조회') || []))
+      return [...new Map(out.map((f) => [f.id, f])).values()]
+    },
+  })
+  const faFrom = faParam ? faLinks.find((f) => f.id === faParam) || null : null
+  const faMatch = faLinks.filter((f) => topPn && normAx(f.item_code) === topPn)
+  const faTarget = faMatch.find((f) => f.id === (faSel ?? faParam)) || faMatch[0] || null
+  const mm = { rev: rep?.top.rev || '', n: base.length, ok: cnt('ok'), gen: cnt('gen'), chk: cnt('chk'), none: cnt('none'), file: rep?.fileName || '' }
+  const rc = faTarget ? revCheck(mm.rev, faTarget) : null
+
+  async function pushFa() {
+    if (!faTarget || faBusy) return
+    if (buyLoading || !buy) { toastError('발주 이력을 아직 불러오는 중입니다 — 잠시 뒤 다시 누르세요'); return }
+    setFaBusy(true)
+    try {
+      const old = faTarget.steps?.mat_match || {}
+      const val = {
+        s: old.s === 'done' ? 'done' : 'doing', d: todayISO(), m: matMatchText(mm),
+        rev: mm.rev, n: mm.n, ok: mm.ok, gen: mm.gen, chk: mm.chk, none: mm.none, file: mm.file,
+      }
+      must(await supabase.rpc('pm_fa_step_set', { p_id: faTarget.id, p_key: 'mat_match', p_val: val, p_by: me?.name || null }), '초도품 진행관리 반영')
+      must(await supabase.from('pm_fa_log').insert({
+        fa_id: faTarget.id, kind: '자재매칭', created_name: me?.name || null,
+        body: `${matMatchText(mm)} — Part Report ${revCheck(mm.rev, faTarget).t}${mm.file ? ` (${mm.file})` : ''}`,
+      }), '진행 기록 남기기')
+      qc.invalidateQueries({ queryKey: ['faList'] })
+      qc.invalidateQueries({ queryKey: ['faLog'] })
+      qc.invalidateQueries({ queryKey: ['faiFaLink'], exact: false })
+      toastSuccess(`${faTarget.item_code} (${faTarget.po_number}) 성적서 단계 「자재 매칭」에 반영했습니다`)
+    } catch (e) { toastError(e.message) }
+    finally { setFaBusy(false) }
+  }
 
   const view = useMemo(() => {
     const q = filt.q.trim().toUpperCase()
@@ -379,6 +436,48 @@ export default function FaiNavigator() {
         <input ref={fileRef} type="file" accept=".htm,.html" className="hidden"
           onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = '' }} />
       </div>
+
+      {(faFrom || faMatch.length > 0) && (
+        <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-3 flex items-center gap-3 flex-wrap" data-fa-link>
+          <div className="text-xl">🚦</div>
+          <div className="flex-1 min-w-[260px] text-xs space-y-0.5">
+            <p className="text-sm font-bold text-slate-700">초도품 진행관리 연결 <span className="text-[11px] font-semibold text-slate-400">— 자재 매칭은 성적서 작성 단계의 세부 항목</span></p>
+            {!rep && faFrom && <p className="text-slate-600">「<b className="font-mono">{faFrom.item_code}</b>」 FA PO {faFrom.po_number} 에서 왔습니다 — 이 품번의 Part Report 를 올리세요.</p>}
+            {rep && faFrom && normAx(faFrom.item_code) !== topPn && (
+              <p className="text-rose-600 font-bold">⚠ 올린 리포트({rep.top.pn})가 이 건 품번({faFrom.item_code})과 다릅니다 — 맞는 Part Report 를 올리세요</p>
+            )}
+            {rep && faTarget && (
+              <>
+                <p className="text-slate-600">
+                  <b className="font-mono">{faTarget.item_code}</b> {faTypeLabel(faTarget.fa_type)} · FA PO {faTarget.po_number} · SREV <b>{faTarget.srev || '-'}</b> / BREV <b>{faTarget.brev || '-'}</b>
+                  {' — '}Part Report <b className={rc?.ok === false ? 'text-rose-600' : 'text-emerald-700'}>{rc?.t}</b>
+                </p>
+                <p className="text-slate-500">
+                  반영할 값: {matMatchText(mm)}
+                  {faTarget.steps?.mat_match?.d ? <span className="text-slate-400"> · 지난 반영 {faTarget.steps.mat_match.d}</span> : null}
+                </p>
+              </>
+            )}
+          </div>
+          {rep && faMatch.length > 1 && (
+            <select value={faTarget?.id || ''} onChange={(e) => setFaSel(Number(e.target.value))} aria-label="반영할 초도품 건"
+              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white">
+              {faMatch.map((f) => <option key={f.id} value={f.id}>{f.po_number} (S {f.srev || '-'} / B {f.brev || '-'})</option>)}
+            </select>
+          )}
+          {rep && faTarget && canEdit && (
+            <button onClick={pushFa} disabled={faBusy || buyLoading}
+              title="판정 숫자와 Part Report Rev 를 그 건 「자재 매칭」 항목에 넣습니다. 완료 표시는 품질이 검토 뒤 직접 합니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
+              {faBusy ? '반영 중…' : '결과 반영'}
+            </button>
+          )}
+          {(faTarget || faFrom) && (
+            <button onClick={() => nav(`/quality/fa-progress?fa=${(faTarget || faFrom).id}`)}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-white hover:bg-violet-50">진행관리에서 보기 →</button>
+          )}
+        </div>
+      )}
 
       {rep && (
         <div className="rounded-xl border border-slate-200 bg-white p-3 flex items-center gap-3 flex-wrap">

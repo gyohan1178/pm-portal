@@ -682,22 +682,22 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {
                       // SREV / BREV.
-                      //   둘이 같으면 회색, 다르면 붉게. PD 는 두 리비전이 맞아야 하는데
-                      //   어긋난 것을 찾기 어려웠다. 리비전 변경 이력(←N)은 뺐다.
+                      //   BREV = PO 발행 시점 Rev (제작은 최소 BREV 까지) · SREV = 지금 고객사 Rev (바뀔 수 있다)
+                      //   둘이 다르면 오류가 아니라 「도면 Rev 확인」이다 → 빨강 ⚠ 대신 파랑 (생산 전광판과 같은 기준)
                       const sv = (r.rev || '').trim()
                       const bv = (r.brev || '').trim()
-                      const same = sv && bv && sv === bv
+                      const same = sv && bv && sv.toUpperCase() === bv.toUpperCase()
                       const cls = !sv || !bv ? 'text-slate-400'
                                 : same       ? 'text-slate-500'
-                                             : 'text-rose-600'
+                                             : 'text-sky-600'
                       return (
                         <span className={`inline-flex items-baseline gap-0.5 font-bold font-mono ${cls}`}
                           title={!sv || !bv ? 'SREV 또는 BREV 가 아직 없습니다'
-                                 : same ? 'SREV·BREV 같음' : 'SREV·BREV 다름'}>
+                                 : same ? 'SREV·BREV 같음'
+                                 : `PO 발행 Rev(BREV) ${bv} → 지금 SREV ${sv} — 제작은 최소 BREV, 도면 Rev 확인`}>
                           <span>{sv || '-'}</span>
                           <span className="opacity-40">/</span>
                           <span>{bv || '-'}</span>
-                          {!same && sv && bv && <span className="ml-0.5 text-[9px]">⚠</span>}
                         </span>
                       )
                     })()}

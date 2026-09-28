@@ -153,7 +153,7 @@ export function canAccessSection(profile, key) {
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
   if (pathname === '/todo') return 'todo'
-  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/schedule-changes' || pathname === '/material-request') return 'floor'
+  if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/material-request') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/outbound-history' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
@@ -165,7 +165,9 @@ export function sectionOfPath(pathname) {
       || pathname === '/what-if' || pathname === '/insights'
       // ⚠ 원가절감 실적·자재요청 업무량은 분석 메뉴에 있는데 빠져 있어 「관제탑」으로 분류됐다.
       //   분석 권한만 있는 계정은 메뉴에 보이는데 누르면 첫 화면으로 튕겼다.
-      || pathname === '/cost-saving' || pathname === '/request-load') return 'report'
+      || pathname === '/cost-saving' || pathname === '/request-load'
+      // 납품 일정 변경 — 현장 메뉴에서 분석으로 옮김 (메뉴와 권한을 같이 옮겨야 튕기지 않는다)
+      || pathname === '/schedule-changes') return 'report'
   if (pathname.startsWith('/master') || pathname === '/erp' || pathname === '/activity') return 'master'
   // 품질 — 초도품 자재 매칭 · 도면 배포이력 · 로트 관리
   //   ⚠ 로트 관리는 자재(mat)에서 품질(quality)로 옮겼다. 예전 주소 /lot 도 같이 품질로 본다.
