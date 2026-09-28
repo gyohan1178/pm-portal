@@ -36,6 +36,28 @@ const EMPTY = {
   vendor_id: '', vendor_name: '', contact_id: '', contact_name: '', contact_email: '',
   drawing_no: '', item_name: '', issue_no: '', dist_form: 'PDF', approval_type: '사후기록', memo: '',
 }
+// 새로 등록할 때는 도면을 여러 장 — 한 협력사에 여러 도면을 한 번에 보내는 일이 많다
+const EMPTY_DWG = () => ({ drawing_no: '', item_name: '', issue_no: '' })
+
+// 엑셀에서 복사한 줄 → 도면 줄 (도면번호 · 품명 · Rev 순서, 탭으로 나뉨)
+//   머리줄(도면번호…)은 건너뛴다. 한 칸만 있으면 도면번호만.
+export function parseDrawingPaste(text) {
+  return String(text || '').split(/\r?\n/).map(l => l.split('\t').map(x => x.trim()))
+    .filter(c => c[0] && !/도면\s*번호|drawing/i.test(c[0]))
+    .map(c => ({ drawing_no: c[0], item_name: c[1] || '', issue_no: c[2] || '' }))
+}
+// 같은 도면·같은 Rev 가 두 번 들어가면 하나로
+export function uniqDrawings(list) {
+  const seen = new Set(), out = []
+  for (const d of list) {
+    const no = String(d.drawing_no || '').trim().toUpperCase()
+    if (!no) continue
+    const k = `${no}|${String(d.issue_no || '').trim().toUpperCase()}`
+    if (seen.has(k)) continue
+    seen.add(k); out.push({ ...d, drawing_no: no })
+  }
+  return out
+}
 
 // 거래처가 많아 드롭다운으로는 못 찾는다 — 쳐서 좁히고 고른다
 function VendorPick({ vendors, value, name, onPick }) {
@@ -142,7 +164,9 @@ export default function DrawingDist() {
   async function save() {
     const f = form
     if (!f.vendor_name?.trim()) { toastError('협력사를 고르세요'); return }
-    if (!f.drawing_no?.trim()) { toastError('도면번호를 적으세요'); return }
+    const many = !f.id && Array.isArray(f.drawings)
+    const dwgs = many ? uniqDrawings(f.drawings) : []
+    if (many ? !dwgs.length : !f.drawing_no?.trim()) { toastError('도면번호를 적으세요'); return }
     const payload = {
       dist_date: f.dist_date, dept: f.dept, requester: f.requester || me?.name || null,
       reason: f.reason,
@@ -155,10 +179,17 @@ export default function DrawingDist() {
     try {
       if (f.id) {
         must(await supabase.from('pm_drawing_dist').update(payload).eq('id', f.id), '배포이력 수정')
+      } else if (many) {
+        // 도면마다 한 줄 — 날짜·협력사·수신자·사유·형식·승인·비고는 같이 쓴다
+        must(await supabase.from('pm_drawing_dist').insert(dwgs.map((d) => ({
+          ...payload, drawing_no: d.drawing_no, item_name: d.item_name?.trim() || null,
+          issue_no: d.issue_no?.trim() || null, created_name: me?.name || null,
+        }))), '배포이력 등록')
       } else {
         must(await supabase.from('pm_drawing_dist').insert({ ...payload, created_name: me?.name || null }), '배포이력 등록')
       }
-      reload(); setForm(null); toastSuccess(f.id ? '고쳤습니다' : '대장에 남겼습니다')
+      reload(); setForm(null)
+      toastSuccess(f.id ? '고쳤습니다' : many ? `도면 ${dwgs.length}장을 대장에 남겼습니다` : '대장에 남겼습니다')
     } catch (e) { toastError(e.message) }
   }
 
@@ -264,7 +295,7 @@ export default function DrawingDist() {
           <button onClick={exportXlsx}
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📑 엑셀</button>
           {canEdit && (
-            <button onClick={() => { setForm({ ...EMPTY, requester: me?.name || '' }); setNewContact(null) }}
+            <button onClick={() => { setForm({ ...EMPTY, drawings: [EMPTY_DWG()], requester: me?.name || '' }); setNewContact(null) }}
               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">＋ 배포 기록</button>
           )}
         </div>
@@ -499,11 +530,15 @@ export default function DrawingDist() {
               )}
             </L>
 
+            {!form.id && Array.isArray(form.drawings) ? (
+              <DrawingRows list={form.drawings} onChange={(drawings) => setForm({ ...form, drawings })} />
+            ) : (
             <div className="grid grid-cols-3 gap-3">
               <L t="도면번호"><input value={form.drawing_no || ''} onChange={(e) => setForm({ ...form, drawing_no: e.target.value })} placeholder="NRYBVU400" className={INP + ' font-mono'} /></L>
               <L t="품명"><input value={form.item_name || ''} onChange={(e) => setForm({ ...form, item_name: e.target.value })} className={INP} /></L>
               <L t="ISSUE NO (Rev)"><input value={form.issue_no || ''} onChange={(e) => setForm({ ...form, issue_no: e.target.value })} placeholder="A" className={INP} /></L>
             </div>
+            )}
 
             <div className="grid grid-cols-3 gap-3">
               <L t="배포사유"><select value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} className={INP}>{REASON.map((x) => <option key={x}>{x}</option>)}</select></L>
@@ -537,7 +572,10 @@ export default function DrawingDist() {
 
             <div className="flex justify-end gap-2">
               <button onClick={() => setForm(null)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">취소</button>
-              <button onClick={save} className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">저장</button>
+              <button onClick={save} className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
+                {!form.id && Array.isArray(form.drawings) && uniqDrawings(form.drawings).length > 1
+                  ? `도면 ${uniqDrawings(form.drawings).length}장 저장` : '저장'}
+              </button>
             </div>
           </div>
         </div>
@@ -558,3 +596,51 @@ const L = ({ t, children }) => (
     {children}
   </div>
 )
+
+// 도면 여러 장 입력 — 줄 추가·삭제, 엑셀에서 여러 줄 붙여넣기
+function DrawingRows({ list, onChange }) {
+  const set = (i, k, v) => onChange(list.map((d, j) => (j === i ? { ...d, [k]: v } : d)))
+  // 도면번호 칸에 여러 줄(또는 탭)을 붙이면 줄로 나눠 채운다
+  function onPaste(i, e) {
+    const t = e.clipboardData?.getData('text') || ''
+    if (!/[\t\n]/.test(t.trim())) return
+    e.preventDefault()
+    const rows = parseDrawingPaste(t)
+    if (!rows.length) return
+    const next = [...list]
+    next.splice(i, 1, ...rows)                       // 붙인 칸을 붙인 줄들로 바꾼다
+    onChange(next)
+  }
+  const dup = (() => {
+    const c = {}
+    list.forEach((d) => { const k = `${String(d.drawing_no || '').trim().toUpperCase()}|${String(d.issue_no || '').trim().toUpperCase()}`; if (d.drawing_no?.trim()) c[k] = (c[k] || 0) + 1 })
+    return c
+  })()
+  return (
+    <div>
+      <div className="flex items-baseline justify-between mb-1">
+        <label className="block text-[11px] font-bold text-slate-400">도면 <span className="font-normal">— 엑셀에서 도면번호·품명·Rev 여러 줄을 복사해 도면번호 칸에 붙여도 됩니다</span></label>
+        <span className="text-[11px] text-slate-400">{list.filter((d) => d.drawing_no?.trim()).length}장</span>
+      </div>
+      <div className="space-y-1.5">
+        {list.map((d, i) => {
+          const k = `${String(d.drawing_no || '').trim().toUpperCase()}|${String(d.issue_no || '').trim().toUpperCase()}`
+          return (
+            <div key={i} className="grid grid-cols-[1.2fr_1.5fr_0.6fr_auto] gap-1.5 items-center">
+              <input value={d.drawing_no} onChange={(e) => set(i, 'drawing_no', e.target.value)} onPaste={(e) => onPaste(i, e)}
+                placeholder="NRYBVU400" className={`${INP} font-mono ${dup[k] > 1 ? 'border-amber-400 bg-amber-50' : ''}`} />
+              <input value={d.item_name} onChange={(e) => set(i, 'item_name', e.target.value)} placeholder="품명" className={INP} />
+              <input value={d.issue_no} onChange={(e) => set(i, 'issue_no', e.target.value)} placeholder="Rev" className={INP} />
+              <button onClick={() => onChange(list.length > 1 ? list.filter((_, j) => j !== i) : [EMPTY_DWG()])}
+                className="px-1.5 text-slate-300 hover:text-rose-500" title="이 줄 빼기">✕</button>
+            </div>
+          )
+        })}
+      </div>
+      <div className="flex items-center gap-3 mt-1.5">
+        <button onClick={() => onChange([...list, EMPTY_DWG()])} className="text-xs font-bold text-indigo-600 hover:underline">＋ 도면 추가</button>
+        {Object.values(dup).some((c) => c > 1) && <span className="text-[11px] text-amber-600">같은 도면·Rev 가 두 번 있습니다 — 저장할 때 하나로 합칩니다</span>}
+      </div>
+    </div>
+  )
+}
