@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile } from '../../hooks/useProfile'
 import { orderedCustomers, primaryCsCode } from '../../lib/customers'
@@ -23,15 +24,15 @@ async function fetchAssemblies(csId) {
   return (data || []).map(p => ({ id: p.id, code: p.code, name: p.name || '', itemCount: Number(p.item_count) || 0 }))
 }
 
-async function fetchCostBOM(csId, projectId) {
+// ⚠ BOM 은 1,000행 기본 제한에 걸리면 말없이 잘린다 → 끝까지 받는다 (fetchAll).
+//   정렬 끝에 id 를 붙여야 페이지 경계에서 같은 줄이 두 번 오거나 빠지지 않는다.
+export async function fetchCostBOM(csId, projectId) {
   if (!csId || !projectId) return []
-  const { data, error } = await supabase
+  return fetchAll(() => supabase
     .from('bom')
     .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
     .eq('customer_id', csId).eq('project_id', projectId)
-    .order('seq').order('created_at')
-  if (error) throw error
-  return data || []
+    .order('seq').order('created_at').order('id'))
 }
 
 export default function CostAnalysis() {

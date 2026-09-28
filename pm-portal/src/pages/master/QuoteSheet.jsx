@@ -2,9 +2,21 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 import { todayISO } from '../../lib/utils'
+
+// 견적 라인의 하위품목 — 1,000행 기본 제한에 잘리지 않게 끝까지 받는다 (fetchAll)
+//   원가분석에서 제외 지정한 부품(quote_excluded)은 견적에서도 빠진다.
+export async function fetchQuoteBOM(customerId, projectId) {
+  return fetchAll(() => supabase
+    .from('bom')
+    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
+    .eq('customer_id', customerId).eq('project_id', projectId)
+    .eq('quote_excluded', false)
+    .order('seq').order('created_at').order('id'))
+}
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const money = (v, cur) =>
@@ -226,13 +238,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
 
       if (proj) {
-        const { data: rows, error: bErr } = await supabase
-          .from('bom')
-          .select('level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
-          .eq('customer_id', customerId).eq('project_id', proj.id)
-          .eq('quote_excluded', false)   // 원가분석에서 제외 지정한 부품은 견적에서도 빠진다
-          .order('seq').order('created_at')
-        if (bErr) throw new Error('하위품목 조회 — ' + bErr.message)
+        let rows
+        try { rows = await fetchQuoteBOM(customerId, proj.id) }
+        catch (bErr) { throw new Error('하위품목 조회 — ' + (bErr?.message || bErr)) }
 
         const mapped = (rows || []).map((b, i) => ({
           uid: i, level: b.level, qty_per_unit: b.qty_per_unit,

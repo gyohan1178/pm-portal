@@ -6,6 +6,8 @@ import { useCanEdit } from '../../hooks/useProfile'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf, todayISO, ymdKST } from '../../lib/utils'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
@@ -35,18 +37,51 @@ async function fetchBOMItems(customerId, projectId) {
     .eq('customer_id', customerId).eq('project_id', projectId)
   return data || []
 }
-async function fetchOutboundHistory({ from, to, customerId }) {
-  let q = supabase.from('stock_movements')
-    .select('*, items(std_code,name,unit), purchase_orders(po_number,customer_id,customers(name,code),projects(code,name))')
+// 출고 현황 — 기간 안의 출고를 끝까지 받는다.
+//   ⚠ 예전엔 200건에서 잘랐고, 고객사는 「고객사 PO」로만 알 수 있어서
+//     PO 없이 출고한 건은 고객사·프로젝트가 비고 고객사로 거를 수도 없었다.
+//   이제 출고할 때 고른 고객사·프로젝트를 줄마다 저장한다 (customer_id · project_id).
+//   그 칸이 비어 있는 예전 기록은 고객사 PO 에서 가져온다.
+//   비고는 DB 에 memo 칸으로 저장된다 (note 칸이 아니다).
+export async function fetchOutboundHistory({ from, to, customerId }) {
+  const rows = await fetchAll(() => supabase.from('stock_movements')
+    .select('*, items(std_code,name,unit), purchase_orders(po_number,customer_id,project_id,customers(name,code),projects(code,name))')
     .eq('movement_type','출고')
     .gte('movement_date', from)
     .lte('movement_date', to)
-    .order('movement_date', { ascending: false })
-  const { data, error } = await q.limit(200)
+    .order('movement_date', { ascending: false }).order('id'))
+
+  // 고객사 PO 없이 저장된 프로젝트는 이름을 따로 찾아 온다
+  const projIds = [...new Set(rows.map(r => r.project_id).filter(Boolean))]
+  const projOf = {}
+  for (let i = 0; i < projIds.length; i += 100) {
+    const { data, error } = await supabase.from('projects').select('id,code,name').in('id', projIds.slice(i, i + 100))
+    if (error) throw error
+    ;(data || []).forEach(p => { projOf[p.id] = p })
+  }
+  const out = rows.map(r => {
+    const po = r.purchase_orders
+    const pj = projOf[r.project_id] || po?.projects || null
+    return {
+      ...r,
+      _custId: r.customer_id || po?.customer_id || null,
+      _projCode: pj?.code || '',
+      _projName: pj?.name || '',
+      _memo: r.memo ?? r.note ?? '',
+    }
+  })
+  return customerId ? out.filter(r => r._custId === customerId) : out
+}
+
+// 출고 처리 — 고른 고객사·프로젝트도 같이 저장한다 (출고 현황에서 추적)
+//   DB 함수가 아직 옛 모양이면(SQL 적용 전) 예전 방식으로 한 번 더 — 출고 자체는 막지 않는다
+export async function callOutboundRpc(base, extra) {
+  let { data, error } = await supabase.rpc('pm_process_outbound', { ...base, ...extra })
+  if (error && error.code === 'PGRST202') {
+    ;({ data, error } = await supabase.rpc('pm_process_outbound', base))
+  }
   if (error) throw error
-  let rows = data || []
-  if (customerId) rows = rows.filter(r=>r.purchase_orders?.customer_id===customerId)
-  return rows
+  return data
 }
 
 export default function Outbound() {
@@ -281,11 +316,9 @@ export default function Outbound() {
       const lines = bomItems
         .map(b=>({ item_id:b.item_id, name:b.items?.name||'', qty:Number(outQtys[b.item_id]||0) }))
         .filter(l=>l.qty>0 && mtOf(l.item_id)==='normal')   // 정상만 재고 차감 (하네스·제외 제외)
-      const { data, error } = await supabase.rpc('pm_process_outbound', {
-        p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode,
-      })
-      if (error) throw error
-      return data
+      return callOutboundRpc(
+        { p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode },
+        { p_customer_id: selCustomer||null, p_project_id: selProject||null })
     },
     onSuccess: (res) => {
       if (res?.aborted) { setStockWarning({ errors: res.warnings||[] }); return }
@@ -480,15 +513,17 @@ export default function Outbound() {
     openPrint(buildSheet('하네스 불출표', rows, r => (r.bom_qty || 0) * (harnessUnits || 1), `${harnessUnits}대분 (하네스)`))
   }
 
-  const histTotal = history.reduce((a,r)=>a+r.qty,0)
+  const histTotal = history.reduce((a,r)=>a+(Number(r.qty)||0),0)
+  const custName = (id) => customers.find(c => c.id === id)?.name || ''
+  const histView = useVisibleRows(history, 300, [hQuery])
 
   function exportHistory() {
     const data = history.map(r=>({
       '출고일':r.movement_date, '기준코드':r.items?.std_code, '품명':r.items?.name,
       '단위':r.items?.unit, '수량':r.qty,
       '고객사PO':r.purchase_orders?.po_number||'',
-      '고객사':r.purchase_orders?.customers?.name||'',
-      '프로젝트':r.purchase_orders?.projects?.code||'', '비고':r.note||'',
+      '고객사':custName(r._custId) || r.purchase_orders?.customers?.name||'',
+      '프로젝트':r._projCode||'', '비고':r._memo||'',
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'출고현황')
@@ -810,7 +845,7 @@ export default function Outbound() {
                   <tbody>
                     {history.length===0
                       ? <tr><td colSpan={9} className="text-center py-10 text-slate-400">출고 이력이 없습니다</td></tr>
-                      : history.map(r=>(
+                      : histView.shown.map(r=>(
                         <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
                           <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
@@ -818,14 +853,15 @@ export default function Outbound() {
                           <td className="px-3 py-2 text-right font-bold text-rose-700">{r.qty}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
                           <td className="px-3 py-2 font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.customers?.name||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.projects?.code||'-'}</td>
-                          <td className="px-3 py-2 text-slate-400">{r.note||'-'}</td>
+                          <td className="px-3 py-2 text-slate-500">{custName(r._custId) || r.purchase_orders?.customers?.name || '-'}</td>
+                          <td className="px-3 py-2 text-slate-500" title={r._projName||''}>{r._projCode||'-'}</td>
+                          <td className="px-3 py-2 text-slate-400">{r._memo||'-'}</td>
                         </tr>
                       ))
                     }
                   </tbody>
                 </table>
+                <MoreRows {...histView} />
               </div>
             </div>
           )}
