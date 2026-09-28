@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -118,6 +118,22 @@ export async function callOutboundRpc(base, extra) {
   }
   if (error) throw error
   return data
+}
+
+// 다품목 출고는 한 번 처리한 것을 한 줄로 묶는다.
+//   한 번의 처리(DB 트랜잭션)로 들어간 줄은 처리 시각(processed_at)이 똑같다 → 그걸로 묶는다.
+//   ASSY 출고·자재요청은 그대로 한 줄씩.
+//   반환: [{ key, rows: [...] }] — rows 가 1개면 보통 줄, 여러 개면 「대표품목 외 N건」
+export function groupHistory(rows) {
+  const out = [], at = new Map()
+  for (const r of rows) {
+    if (r._kind !== '다품목 출고') { out.push({ key: r.id, rows: [r] }); continue }
+    const k = `${r.processed_at || r.movement_date}|${r._custId || ''}`
+    const g = at.get(k)
+    if (g) g.rows.push(r)
+    else { const n = { key: 'g:' + k, rows: [r] }; at.set(k, n); out.push(n) }
+  }
+  return out
 }
 
 const KIND_TONE = {
@@ -560,7 +576,9 @@ export default function Outbound() {
   const histRows = hKind ? history.filter(r => r._kind === hKind) : history
   const histTotal = histRows.reduce((a,r)=>a+(Number(r.qty)||0),0)
   const custName = (id) => customers.find(c => c.id === id)?.name || ''
-  const histView = useVisibleRows(histRows, 300, [hQuery, hKind])
+  const histGroups = useMemo(() => groupHistory(histRows), [histRows])
+  const histView = useVisibleRows(histGroups, 300, [hQuery, hKind])
+  const [openGroup, setOpenGroup] = useState({})   // 펼친 다품목 묶음
   const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
 
   function exportHistory() {
@@ -900,24 +918,44 @@ export default function Outbound() {
                   <tbody>
                     {histRows.length===0
                       ? <tr><td colSpan={11} className="text-center py-10 text-slate-400">출고 이력이 없습니다</td></tr>
-                      : histView.shown.map(r=>(
-                        <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.movement_date}<span className="ml-1 font-normal text-slate-400">{timeOf(r.processed_at)}</span></td>
-                          <td className="px-3 py-2 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${KIND_TONE[r._kind] || ''}`}>{r._kind}</span></td>
-                          <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
-                          <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
-                          <td className="px-3 py-2 text-right font-bold text-rose-700">{r.qty}</td>
-                          <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
-                          <td className="px-3 py-2 font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
-                            {custName(r._custId) || r.purchase_orders?.customers?.name || '-'}
-                            {r._custGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 고객사가 저장돼 있지 않아 기준코드 앞자리로 추정했습니다">추정</span>}
-                          </td>
-                          <td className="px-3 py-2 text-slate-500" title={r._projName||''}>{r._projCode||'-'}</td>
-                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{r._who||'-'}</td>
-                          <td className="px-3 py-2 text-slate-400">{r._memo||'-'}</td>
-                        </tr>
-                      ))
+                      : histView.shown.map(g => {
+                        const r = g.rows[0], n = g.rows.length, open = !!openGroup[g.key]
+                        const line = (r, sub, head) => (
+                          <tr key={r.id} className={`border-b border-slate-100 ${sub ? 'bg-sky-50/40' : 'hover:bg-slate-50'}`}>
+                            <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{sub ? <span className="text-slate-300 pl-3">└</span> : <>{r.movement_date}<span className="ml-1 font-normal text-slate-400">{timeOf(r.processed_at)}</span></>}</td>
+                            <td className="px-3 py-2 whitespace-nowrap">{!sub && <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${KIND_TONE[r._kind] || ''}`}>{r._kind}</span>}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-800">
+                              {r.items?.name}
+                              {head && (
+                                <button onClick={() => setOpenGroup(o => ({ ...o, [g.key]: !o[g.key] }))}
+                                  className="ml-2 px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 text-[11px] font-bold hover:bg-sky-200 whitespace-nowrap">
+                                  {open ? '접기 ▴' : `외 ${n - 1}건 …`}
+                                </button>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-bold text-rose-700">{r.qty}</td>
+                            <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
+                            <td className="px-3 py-2 font-mono text-slate-500">{sub ? '' : (r.purchase_orders?.po_number||'-')}</td>
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                              {sub ? '' : <>
+                                {custName(r._custId) || r.purchase_orders?.customers?.name || '-'}
+                                {r._custGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 고객사가 저장돼 있지 않아 기준코드 앞자리로 추정했습니다">추정</span>}
+                              </>}
+                            </td>
+                            <td className="px-3 py-2 text-slate-500" title={r._projName||''}>{sub ? '' : (r._projCode||'-')}</td>
+                            <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{sub ? '' : (r._who||'-')}</td>
+                            <td className="px-3 py-2 text-slate-400">{r._memo||'-'}</td>
+                          </tr>
+                        )
+                        if (n === 1) return line(r, false, false)
+                        return (
+                          <Fragment key={g.key}>
+                            {line(r, false, true)}
+                            {open && g.rows.slice(1).map(x => line(x, true, false))}
+                          </Fragment>
+                        )
+                      })
                     }
                   </tbody>
                 </table>
