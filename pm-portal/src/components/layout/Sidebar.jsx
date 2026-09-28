@@ -31,6 +31,7 @@ const MENU_META = {
   '/what-if': ['🔬','What-if'], '/insights': ['📊','인사이트'], '/cost-saving': ['💸','원가절감'],
   '/master/items': ['🗂️','기준코드 DB'], '/master/vendors': ['🏢','협력사'],
   '/master/codemap': ['🔢','기준코드 매핑'], '/master/price': ['💲','단가변동이력'],
+  '/quality/fa-progress': ['🚦','초도품 진행관리'],
   '/quality/fai': ['🧾','초도품 자재 매칭'],
   '/quality/drawing-dist': ['📐','도면 배포이력'],
   '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
@@ -360,9 +361,10 @@ export default function Sidebar({ onNavigate, profile }) {
         )}
     </>),
     quality: (mv) => (<>
-        {/* 🔬 품질 — 초도품(FAI) · 도면 배포이력 · 로트 관리 */}
+        {/* 🔬 품질 — 초도품 진행관리 · 초도품(FAI) · 도면 배포이력 · 로트 관리 */}
         {canAccessSection(profile, 'quality') && (
         <CollapseSection mover={mv} label="🔬 품질" sKey="quality">
+          <MenuItem to="/quality/fa-progress" icon="🚦" onNavigate={onNavigate}>초도품 진행관리</MenuItem>
           <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
           <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
           <MenuItem to="/quality/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
