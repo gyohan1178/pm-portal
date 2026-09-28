@@ -13,6 +13,8 @@ import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import { todayISO, ymdKST } from '../../lib/utils'
+import { useSearchParams } from 'react-router-dom'
+import LotInboundModal from '../../components/LotInboundModal'
 
 function todayStr() { return todayISO() }
 function monthAgoStr() {
@@ -26,7 +28,7 @@ async function fetchVendors() {
 async function fetchPendingPOs(customerId, vendorId) {
   const make = () => {
     let q = supabase.from('purchase_orders')
-      .select('*, items!purchase_orders_item_id_fkey(std_code,name,unit,manufacturer,manufacturer_code), vendors(name), customers(name,code)')
+      .select('*, items!purchase_orders_item_id_fkey(std_code,name,unit,manufacturer,manufacturer_code,lot_managed), vendors(name), customers(name,code)')
       .eq('order_type','purchase').not('status','in','(완료,취소)')
     if (customerId) q = q.eq('customer_id', customerId)
     if (vendorId) q = q.eq('vendor_id', vendorId)
@@ -134,6 +136,7 @@ export default function Inbound() {
   const [hCustomer, setHCustomer] = useState('')
   const [hVendor, setHVendor] = useState('')
   const [cartOpen, setCartOpen] = useState(true)   // 담은 품목 패널
+  const [lotAsk, setLotAsk] = useState(null)       // 입고 직후 로트 입력 { rows, date }
   const [hVendorText, setHVendorText] = useState('')
   const [hItem, setHItem] = useState('')
   // 입력이 멈춘 뒤 거른다 — 한 글자마다 전체를 훑으면 느려진다
@@ -145,7 +148,7 @@ export default function Inbound() {
   const { data: customers=[] } = useCustomers()
   // 발주외 품목 자동완성 (공용 AutoInput 사용)
   const fetchDirectSuggest = async (q) => {
-    const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer_code')
+    const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer,manufacturer_code,lot_managed')
       .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`).limit(20)
     return data || []
   }
@@ -154,6 +157,9 @@ export default function Inbound() {
   const directMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processDirectInbound({ item_id:dItem.id, qty:dQty, unit_price:dPrice, customer_id:dCustomer, memo:dMemo, date:dDate }) },
     onSuccess: () => {
+      if (dItem?.lot_managed && Number(dQty) > 0) setLotAsk({ date: dDate, rows: [{
+        key: 'direct', item_id: dItem.id, std_code: dItem.std_code, name: dItem.name,
+        maker: dItem.manufacturer, maker_code: dItem.manufacturer_code, vendor: dMemo || '', qty: Number(dQty) }] })
       setResult(`발주외 입고 완료 — ${dItem.std_code} ${dQty}${dItem.unit||''}`)
       setDItem(null); setDSearch(''); setDQty(''); setDPrice(''); setDMemo('')
       refreshProcurement(qc)
@@ -168,6 +174,28 @@ export default function Inbound() {
     queryFn:()=>fetchPendingPOs(selCustomer||null, null),
     placeholderData: (prev) => prev,
   })
+
+  // 구매발주 화면의 「입고 처리」로 오면 ?po=id,id… — 그 발주를 체크하고 잔량을 채워 둔다
+  const [sp, setSp] = useSearchParams()
+  const [poFromUrl] = useState(() => (sp.get('po') || '').split(',').filter(Boolean))
+  const [poApplied, setPoApplied] = useState(false)
+  useEffect(() => {
+    if (poApplied || !poFromUrl.length || isLoading) return
+    setPoApplied(true)
+    setSp({}, { replace: true })   // 새로고침해도 다시 걸리지 않게
+    const found = pendingPOs.filter(p => poFromUrl.includes(p.id))
+    if (!found.length) { toastError('고른 발주가 입고 대기 목록에 없습니다 — 이미 입고가 끝났을 수 있습니다'); return }
+    setTab('process')
+    setChecked(prev => ({ ...prev, ...Object.fromEntries(found.map(p => [p.id, true])) }))
+    setInboundData(prev => {
+      const d = { ...prev }
+      found.forEach(p => { if (!d[p.id]) d[p.id] = { qty: p.qty_remaining || 0, unit_price: p.unit_price || '' } })
+      return d
+    })
+    setCartOpen(true)
+    const miss = poFromUrl.length - found.length
+    toastSuccess(`발주 ${found.length}건을 담았습니다${miss ? ` (${miss}건은 이미 입고 완료)` : ''} — 수량·단가 확인 후 입고 처리`)
+  }, [poFromUrl, poApplied, isLoading, pendingPOs])   // eslint-disable-line react-hooks/exhaustive-deps
   const { data: history=[], isLoading: histLoading } = useQuery({
     queryKey:['inboundHistory', hQuery],
     queryFn:()=>fetchInboundHistory({ from:hQuery.from, to:hQuery.to, customerId:hQuery.customerId, vendorId:hQuery.vendorId }),
@@ -178,6 +206,13 @@ export default function Inbound() {
   const inboundMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
     onSuccess: () => {
+      // 입고 → 로트: 로트 관리 대상이 섞여 있으면 바로 시리얼을 받는다
+      const lotRows = checkedRows
+        .filter(r => r.items?.lot_managed && Number(inboundData[r.id]?.qty) > 0)
+        .map(r => ({ key: r.id, po_id: r.id, item_id: r.item_id, std_code: r.items?.std_code, name: r.items?.name,
+                     maker: r.items?.manufacturer, maker_code: r.items?.manufacturer_code,
+                     vendor: r.vendors?.name || '', qty: Number(inboundData[r.id].qty) }))
+      if (lotRows.length) setLotAsk({ rows: lotRows, date: inboundDate })
       setResult(`입고 처리 완료 (${inboundDate}) — ${checkedRows.length}건`)
       // 검색어도 함께 지운다. 다음 명세표로 넘어갈 때 매번 지우는 수고를 던다.
       setInboundData({}); setChecked({}); setNote(''); setRowSearch('')
@@ -375,6 +410,8 @@ export default function Inbound() {
 
   return (
     <div className="space-y-4">
+      {lotAsk && <LotInboundModal rows={lotAsk.rows} date={lotAsk.date} onClose={() => setLotAsk(null)}
+        onDone={() => { qc.invalidateQueries({ queryKey: ['lotSummary'] }); qc.invalidateQueries({ queryKey: ['lotList'], exact: false }) }} />}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
         {[['process','📥 입고 처리'],['direct','✍️ 발주외 입고'],['history','📋 입고 현황']].map(([k,l])=>(
           <button key={k} onClick={()=>setTab(k)}

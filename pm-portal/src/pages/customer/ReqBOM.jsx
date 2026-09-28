@@ -12,7 +12,8 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import ShortageTabs from '../../components/ShortageTabs'
 import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS, todayISO } from '../../lib/utils'
-import { genPoNumber } from '../../lib/poNumber'
+import { createPurchaseOrders } from '../../lib/createPO'
+import PoMadeBanner from '../../components/PoMadeBanner'
 
 // 입력 디바운스
 function useDebounced(val, ms=250) {
@@ -86,19 +87,17 @@ async function fetchVendors() {
 }
 
 
-async function createPurchaseOrders({ items, csId, vendorId, promiseDate, poNumber }) {
-  const finalPoNumber = poNumber || await genPoNumber()
-  const inserts = items.map(item=>({
-    customer_id:csId,
-    item_id:item.item_id,
+// 발주 만들기는 공용(lib/createPO)으로 — 규칙이 한 곳에 모인다
+function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
+  return createPurchaseOrders(items.map(item => ({
+    customer_id: csId,
+    item_id: item.item_id,
     vendor_id: vendorId || item.vendor?.id || null,
-    order_type:'purchase', type:item.type,
-    qty_ordered:item.order_qty, qty_received:0,
+    type: item.type,
+    qty_ordered: item.order_qty,
     unit_price: item.purchase_price ?? null,
-    po_number:finalPoNumber, promise_date:promiseDate||null, status:'진행중',
-  }))
-  const { error } = await supabase.from('purchase_orders').insert(inserts)
-  if (error) throw error
+    promise_date: promiseDate || null,
+  })), { poNumber: poNumber || 'auto', log: '소요량 역산에서 발주 생성', customerName: csName })
 }
 
 async function fetchReqBOM(customerId, projectIds, manualItems) {
@@ -306,6 +305,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   const [selVendor, setSelVendor] = useState('')
   const [promiseDate, setPromiseDate] = useState('')
   const [poNumber, setPoNumber] = useState('')
+  const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
   const [orderQtys, setOrderQtys] = useState({})  // 발주수량(품목별)
 
   const { data: cs } = useCustomer(csCode)
@@ -322,9 +322,10 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
 
   const orderMut = useMutation({
-    mutationFn:(items)=>createPurchaseOrders({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber}),
-    onSuccess:()=>{
+    mutationFn:(items)=>createPOs({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber,csName:cs?.name}),
+    onSuccess:(res)=>{
       refreshProcurement(qc)
+      setMade(res)
       setChecked({}); setShowOrderForm(false); setPoNumber(''); setSelVendor(''); setPromiseDate('')
       toastSuccess('구매발주 생성 완료')
     },
@@ -414,6 +415,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
     <div className="space-y-4">
       {/* 통합검색 안에서는 고객사 탭이 어울리지 않아 숨긴다 */}
       {!embedded && <><CustomerTabs /><ShortageTabs cs={csCode} /></>}
+      {made && <PoMadeBanner made={made.made} skipped={made.skipped} csCode={csCode || cs?.code} onClose={()=>setMade(null)} />}
       {/* 탭 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['req','📊 소요량 조회'],['explode','🔍 역전개 (상위 찾기)']].map(([k,l])=>(

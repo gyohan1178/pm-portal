@@ -6,6 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
 import { logActivity } from '../../lib/activityLog'
+import { createPurchaseOrders } from '../../lib/createPO'
 import * as XLSX from 'xlsx'
 
 // 확정 고객사 PO 기준 월별 소요/부족 (RPC: get_shortage_monthly) — range 페이징
@@ -41,7 +42,7 @@ const TIER_META = {
   '여유': { color: '#059669', bg: '#F0FDF4', border: '#BBF7D0', icon: '🟢', desc: '여유 있음' },
 }
 
-export default function ShortageMonthly({ csId }) {
+export default function ShortageMonthly({ csId, csName = null, onMade = null }) {
   const [tierFilter, setTierFilter] = useState(null)
   const [search, setSearch] = useState('')
   // 수백 건을 한 글자마다 다시 거르고 그리면 입력이 멈춘다.
@@ -100,13 +101,14 @@ export default function ShortageMonthly({ csId }) {
 
   const orderMut = useMutation({
     mutationFn: async (selItems) => {
-      const payload = selItems.map(it => ({
+      // 발주번호·납기·단가는 구매발주 화면에서 채운다 (예전과 같음)
+      return createPurchaseOrders(selItems.map(it => ({
         customer_id: csId, item_id: it.item_id, vendor_id: it.vendor_id || null,
-        qty_ordered: it.orderNeed, qty_received: 0, order_type: 'purchase', status: '진행중',
-      }))
-      const { error } = await supabase.from('purchase_orders').insert(payload); if (error) throw error
+        qty_ordered: it.orderNeed,
+      })), { log: '월별 부족에서 발주 생성', customerName: csName })
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
+      onMade?.(res)
       qc.invalidateQueries(['purchase']); qc.invalidateQueries(['shortageMonthly']); qc.invalidateQueries(['shortage'])
       setChecked({}); toastSuccess('구매발주 생성 완료 — 구매발주 화면에서 발주번호·납기·단가를 채워주세요')
     },

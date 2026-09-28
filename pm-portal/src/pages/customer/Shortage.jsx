@@ -13,7 +13,8 @@ import VendorPicker from '../../components/VendorPicker'
 import ShortageTabs from '../../components/ShortageTabs'
 import ShortageMonthly, { fetchMonthly } from './ShortageMonthly'
 import { getCategoryCode, ITEM_CATEGORIES, todayISO } from '../../lib/utils'
-import { genPoNumber } from '../../lib/poNumber'
+import { createPurchaseOrders } from '../../lib/createPO'
+import PoMadeBanner from '../../components/PoMadeBanner'
 
 function fmtNum(v) {
   const r = Math.round((v||0)*100)/100
@@ -59,18 +60,16 @@ async function fetchShortage(csId) {
 }
 
 
-async function createPurchaseOrders({ items, csId, vendorId, promiseDate, poNumber }) {
-  const finalPoNumber = poNumber || await genPoNumber()
-  const inserts = items.map(item=>({
-    customer_id:csId,
-    item_id:item.item_id,
+// 발주 만들기는 공용(lib/createPO)으로 — 규칙이 한 곳에 모인다
+function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
+  return createPurchaseOrders(items.map(item => ({
+    customer_id: csId,
+    item_id: item.item_id,
     vendor_id: vendorId || item.item_vendor_id || null,
-    order_type:'purchase', type:item.type,
-    qty_ordered:item.order_qty, qty_received:0,
-    po_number:finalPoNumber, promise_date:promiseDate||null, status:'진행중',
-  }))
-  const { error } = await supabase.from('purchase_orders').insert(inserts)
-  if (error) throw error
+    type: item.type,
+    qty_ordered: item.order_qty,
+    promise_date: promiseDate || null,
+  })), { poNumber: poNumber || 'auto', log: '부족자재에서 발주 생성', customerName: csName })
 }
 
 const COL_DEFAULTS = {
@@ -161,6 +160,7 @@ export default function Shortage() {
   const [poNumber, setPoNumber] = useState('')
   const [excluded, setExcluded] = useState(() => new Set())  // 방금 제외한 항목(새로고침 전까지 표시)
   const [view, setView] = useState('monthly')  // monthly(통합) | list(발주 상세)
+  const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
 
   const { widths, startResize, resetWidths } = useResizableColumns('shortage_cols', COL_DEFAULTS)
   const { data: cs } = useCustomer(csCode)
@@ -188,9 +188,10 @@ export default function Shortage() {
   },[monthlyRows])
 
   const orderMut = useMutation({
-    mutationFn:(items)=>createPurchaseOrders({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber}),
-    onSuccess:()=>{
+    mutationFn:(items)=>createPOs({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber,csName:cs?.name}),
+    onSuccess:(res)=>{
       refreshProcurement(qc)
+      setMade(res)
       setChecked({}); setShowOrderForm(false); toastSuccess('구매발주 생성 완료')
     },
     onError:(e)=>toastError('오류: '+e.message),
@@ -271,6 +272,7 @@ export default function Shortage() {
     <div className="space-y-4">
       <CustomerTabs />
       <ShortageTabs cs={csCode} />
+      {made && <PoMadeBanner made={made.made} skipped={made.skipped} csCode={csCode} onClose={()=>setMade(null)} />}
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['monthly','🎯 쇼티지 (통합)'],['list','📋 발주 상세']].map(([k,l])=>(
@@ -279,7 +281,7 @@ export default function Shortage() {
         ))}
       </div>
 
-      {view==='monthly' && <ShortageMonthly csId={cs?.id} />}
+      {view==='monthly' && <ShortageMonthly csId={cs?.id} csName={cs?.name} onMade={setMade} />}
 
       {view==='list' && (<>
       <div className="flex items-center gap-2 flex-wrap">

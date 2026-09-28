@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, fetchAllRows } from '../../lib/supabase'
 import { logActivity } from '../../lib/activityLog'
+import { createPurchaseOrders } from '../../lib/createPO'
+import PoMadeBanner from '../../components/PoMadeBanner'
 import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
 
 const CUSTOMERS = [
@@ -138,6 +140,7 @@ export default function ShortageForecast() {
   const [ltThreshold, setLtThreshold] = useState(8)      // 장납기 기준 LT(주)
   const [selMat, setSelMat] = useState(() => new Set())  // 선발주: 선택한 자재(item_id)
   const [excluded, setExcluded] = useState(new Set())  // 방금 제외한 항목(재계산 전까지 표시)
+  const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
 
   const qc = useQueryClient()
   const { data: cs } = useCustomer(csCode)
@@ -155,16 +158,14 @@ export default function ShortageForecast() {
   // 부족 품목을 구매발주로 일괄 생성 — 부족자재(PO 확정) 탭과 동일한 방식
   const orderMut = useMutation({
     mutationFn: async (selItems) => {
-      const payload = selItems.map(it => ({
+      // 발주번호·납기·단가는 구매발주 화면에서 채운다 (예전과 같음)
+      return createPurchaseOrders(selItems.map(it => ({
         customer_id: cs?.id, item_id: it.item_id, vendor_id: it.vendor_id || null,
-        qty_ordered: it.shortageQty, qty_received: 0, order_type: 'purchase', status: '진행중',
-      }))
-      const { error } = await supabase.from('purchase_orders').insert(payload)
-      if (error) throw error
-      logActivity('create', 'purchase_orders', null,
-        `소요예측에서 발주 생성 ${payload.length}건`, null, cs?.name)
+        qty_ordered: it.shortageQty,
+      })), { log: '소요예측에서 발주 생성', customerName: cs?.name })
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
+      setMade(res)
       qc.invalidateQueries(['purchase'])
       toastSuccess('구매발주 생성 완료 — 구매발주 화면에서 발주번호·납기·단가를 채워주세요')
     },
@@ -462,6 +463,7 @@ export default function ShortageForecast() {
   return (
     <div className="space-y-4">
       <ShortageTabs cs={csCode} />
+      {made && <PoMadeBanner made={made.made} skipped={made.skipped} csCode={csCode} onClose={()=>setMade(null)} />}
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🔮 소요 예측</h1>

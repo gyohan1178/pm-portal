@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { createPurchaseOrders } from '../../lib/createPO'
 import { must } from '../../lib/db'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
@@ -138,7 +139,8 @@ export default function PoCart({ open, onClose }) {
           })
         }
       }
-      const made = must(await supabase.from('purchase_orders').insert(rows).select('id,item_id'), '발주 등록') || []
+      // 발주 만들기는 공용(lib/createPO)으로 — 발주번호는 위에서 구매처별로 이미 붙였다
+      const { made } = await createPurchaseOrders(rows, { log: '발주 담기함에서 등록' })
       // 자재요청 줄을 처리중으로 (담을 때 연결해 둔 요청만)
       const poOf = new Map()
       made.forEach((p) => { if (!poOf.has(p.item_id)) poOf.set(p.item_id, p.id) })

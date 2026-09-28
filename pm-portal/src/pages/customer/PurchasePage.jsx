@@ -2,7 +2,7 @@ import { useState, useMemo, useRef, useEffect } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { useCustomer } from '../../hooks/useCustomers'
 import { PROC_CATS, catOf, todayISO, ymdKST } from '../../lib/utils'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { attachStock } from '../../lib/stockLookup'
@@ -17,6 +17,7 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import { printForeignPO } from '../../lib/foreignPO'
 import { genPoNumber } from '../../lib/poNumber'
+import { createPurchaseOrders } from '../../lib/createPO'
 import { must } from '../../lib/db'
 
 
@@ -137,7 +138,7 @@ const PO_COLS = [
   {key:'vendor',        label:'구매처',   defaultWidth:80},
   {key:'memo',          label:'메모',     defaultWidth:110},
   {key:'status',        label:'상태',     defaultWidth:65},
-  {key:'actions',       label:'',         defaultWidth:80, sortable:false},
+  {key:'actions',       label:'',         defaultWidth:120, sortable:false},
 ]
 
 const HIST_COLS = [
@@ -171,6 +172,11 @@ async function updateItemPrices(rows) {
 export default function PurchasePage() {
   const { customerId: csCode } = useParams()
   const qc = useQueryClient()
+  const navigate = useNavigate()
+  // 부족자재·소요예측에서 발주를 만들고 넘어오면 ?made=id,id… — 방금 만든 것만 골라 보여 준다
+  const [sp, setSp] = useSearchParams()
+  const [madeIds] = useState(() => new Set((sp.get('made') || '').split(',').filter(Boolean)))
+  const [onlyMade, setOnlyMade] = useState(() => madeIds.size > 0)
   const [tab, setTab] = useState('po') // po | history
   const [typeTab, setTypeTab] = useState('전체')
   const [search, setSearch] = useState('')  // 거래처·제조사·품번 검색
@@ -242,6 +248,11 @@ export default function PurchasePage() {
     enabled:!!cs?.id && tab==='history',
   })
   const { rowProps } = useRowSelect(setChecked)
+  useEffect(() => {
+    if (!madeIds.size) return
+    setChecked(Object.fromEntries([...madeIds].map(id => [id, true])))
+    setSp({}, { replace: true })   // 새로고침해도 다시 걸리지 않게 주소에서 뺀다
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const propItemIds = useMemo(()=>[...new Set(purchases.filter(p=>checked[p.id]).map(p=>p.item_id).filter(Boolean))], [purchases, checked])
   const { data: projHist={} } = useQuery({
@@ -297,7 +308,7 @@ export default function PurchasePage() {
         fx_rate: isForeign && fxRate ? Number(fxRate) : null,
         fx_currency: isForeign ? (curVendor?.currency || 'USD') : null }
       if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
-      else { const{error}=await supabase.from('purchase_orders').insert({...payload,customer_id:cs?.id,item_id:selItem?.id,order_type:'purchase',qty_received:0,status:'진행중'}); if(error) throw error }
+      else await createPurchaseOrders([{ ...payload, customer_id: cs?.id, item_id: selItem?.id }], { log: '구매발주 등록', customerName: cs?.name })
     },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setForm(freshForm()); setSelItem(null); setSelVendor(''); setVendorSearch(''); setShowForm(false); setEditId(null) },
     onError:(e)=>alert('오류: '+e.message),
@@ -310,11 +321,10 @@ export default function PurchasePage() {
     unit_price_fx: ln.unit_price_fx ?? null,
     fx_rate: ln.fx_rate ?? null,
     fx_currency: ln.fx_currency ?? null,
-    order_type:'purchase', qty_received:0, status:'진행중',
-  })
+  })   // order_type·status·qty_received 는 createPurchaseOrders 가 채운다
   const saveMultiMut = useMutation({
-    mutationFn: async (rows) => { const { error } = await supabase.from('purchase_orders').insert(rows.map(buildInsert)); if (error) throw error },
-    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
+    mutationFn: (rows) => createPurchaseOrders(rows.map(buildInsert), { log: '구매발주 다품목 등록', customerName: cs?.name }),
+    onSuccess:(res)=>{ if (res?.skipped) toastError(`수량이 0 인 ${res.skipped}줄은 빼고 등록했습니다`); qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
     onError:(e)=>alert('오류: '+e.message),
   })
   // 선택한 건 일괄 삭제.
@@ -575,6 +585,7 @@ export default function PurchasePage() {
 
   const q = dq.trim().toLowerCase()
   const filtered = useMemo(() => purchases.filter(p => {
+    if (onlyMade) return madeIds.has(p.id)   // 방금 만든 것만 — 다른 조건은 보지 않는다
     if (typeTab !== '전체' && p.type !== typeTab) return false
     if (filterOrderDate && (p.order_date||'').slice(0,10) !== filterOrderDate) return false
 
@@ -606,7 +617,7 @@ export default function PurchasePage() {
     const it = p.items || {}
     return [p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code]
       .some(x => (x || '').toLowerCase().includes(q))
-  }), [purchases, typeTab, filterOrderDate, q, dueFilter, dueFrom, dueTo])
+  }), [purchases, typeTab, filterOrderDate, q, dueFilter, dueFrom, dueTo, onlyMade, madeIds])
   const today = todayISO()
   const sortVal = (p,k)=>({
     po_number:p.po_number||'', order_date:p.order_date||'', std_code:p.items?.std_code||'',
@@ -626,6 +637,12 @@ export default function PurchasePage() {
     : filtered, [filtered, sort.key, sort.dir])
   const onSort = k => setSort(prev => prev.key===k ? {key:k,dir:prev.dir==='asc'?'desc':'asc'} : {key:k,dir:'asc'})
   const checkedPOs = filtered.filter(p=>checked[p.id])
+  // 발주 → 입고: 입고 화면을 고른 발주가 체크된 채로 연다 (잔량 있는 것만)
+  function goInbound(list) {
+    const ids = list.filter(p => Number(p.qty_remaining) > 0).map(p => p.id).slice(0, 200)
+    if (!ids.length) { toastError('입고할 잔량이 있는 발주가 없습니다'); return }
+    navigate(`/inbound?po=${ids.join(',')}`)
+  }
   const histTotalSupply = history.reduce((a,r)=>a+(r.supply||0),0)
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
 
@@ -821,6 +838,16 @@ export default function PurchasePage() {
         </>}
       </div>
 
+      {/* 부족자재·소요예측에서 막 만든 발주만 보는 중 */}
+      {tab==='po' && onlyMade && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2">
+          <span className="text-xs font-bold text-emerald-700">🆕 방금 만든 발주 {filtered.length}건만 보는 중</span>
+          <span className="text-[11px] text-emerald-600">골라져 있으니 아래 일괄 작업으로 발주번호·납기를 채우세요</span>
+          <button onClick={()=>setOnlyMade(false)}
+            className="ml-auto px-3 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">전체 보기</button>
+        </div>
+      )}
+
       {/* ── 2줄: 선택한 건에 대한 일괄 작업 (선택했을 때만 나타남) ── */}
       {tab==='po' && checkedPOs.length>0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 px-3 py-2">
@@ -829,6 +856,14 @@ export default function PurchasePage() {
           </span>
           <button onClick={()=>setChecked({})}
             className="text-[11px] text-slate-500 hover:text-slate-700 underline">선택 해제</button>
+
+          {/* 물건이 왔으면 여기서 바로 입고 화면으로 — 고른 발주가 체크된 채 열린다 */}
+          {checkedPOs.some(p=>Number(p.qty_remaining)>0) && (
+            <button onClick={()=>goInbound(checkedPOs)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+              📥 입고 처리 ({checkedPOs.filter(p=>Number(p.qty_remaining)>0).length})
+            </button>
+          )}
 
           <div className="w-px h-5 bg-indigo-200 mx-1"/>
 
@@ -1315,6 +1350,10 @@ export default function PurchasePage() {
                           <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':'bg-emerald-50 text-emerald-700'}`}>{p.isDelayed?'지연':'진행중'}</span></td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1">
+                              {Number(p.qty_remaining)>0 && (
+                                <button onClick={()=>goInbound([p])} title="입고 화면에서 이 발주가 체크된 채 열립니다"
+                                  className="px-2 py-1 text-xs font-semibold rounded border border-emerald-200 text-emerald-600 hover:bg-emerald-50">입고</button>
+                              )}
                               <button onClick={()=>handleEdit(p)} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
                               <button onClick={()=>{if(window.confirm('삭제할까요?'))deleteMut.mutate(p.id)}} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
                             </div>
