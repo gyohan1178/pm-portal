@@ -14,6 +14,7 @@ const CommonSearch = lazy(() => import('./pages/common/CommonSearch'))
 const FieldSearch = lazy(() => import('./pages/common/FieldSearch'))
 const ShortageForecast = lazy(() => import('./pages/common/ShortageForecast'))
 const Outbound = lazy(() => import('./pages/common/Outbound'))
+const OutboundHistory = lazy(() => import('./pages/common/OutboundHistory'))
 const Issue = lazy(() => import('./pages/common/Issue'))
 const MissingParts = lazy(() => import('./pages/common/MissingParts'))
 const Inventory = lazy(() => import('./pages/common/Inventory'))
@@ -45,7 +46,6 @@ const EcountUpload = lazy(() => import('./pages/EcountUpload'))
 const PaymentPlan = lazy(() => import('./pages/PaymentPlan'))
 const ActivityLog = lazy(() => import('./pages/admin/ActivityLog'))
 const RackLayout = lazy(() => import('./pages/common/RackLayout'))
-const StockFinder = lazy(() => import('./pages/common/StockFinder'))
 const LotManage = lazy(() => import('./pages/common/LotManage'))
 const UnifiedUpload = lazy(() => import('./pages/UnifiedUpload'))
 const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
@@ -135,6 +135,7 @@ export default function App() {
         <Route path="forecast-shortage" element={<ShortageForecast />} />
         <Route path="inbound"   element={<Inbound />} />
         <Route path="outbound"  element={<Outbound />} />
+        <Route path="outbound-history" element={<OutboundHistory />} />
         <Route path="issue"     element={<Issue />} />
         <Route path="missing"   element={<MissingParts />} />
         <Route path="inventory" element={<Inventory />} />
@@ -175,7 +176,8 @@ export default function App() {
         <Route path="payment-plan" element={<PaymentPlan />} />
         <Route path="activity" element={<ActivityLog />} />
         <Route path="rack-layout" element={<RackLayout />} />
-        <Route path="finder" element={<StockFinder />} />
+        {/* 자재 위치 찾기는 통합 검색으로 합쳤다 — 예전 주소·태블릿 즐겨찾기는 그대로 이어 준다 */}
+        <Route path="finder" element={<Navigate to="/search" replace />} />
         <Route path="quality/lot" element={<LotManage />} />
         {/* 예전 주소 — 즐겨찾기·북마크가 깨지지 않게 이어 준다 */}
         <Route path="lot" element={<Navigate to="/quality/lot" replace />} />

@@ -12,6 +12,7 @@ function buildCommands() {
   push('일일 업무', '입고', '/inbound', 'inbound ipgo')
   push('일일 업무', '출고', '/outbound', 'outbound chulgo')
   push('일일 업무', '출고 작업(불출)', '/issue', 'issue bulchul')
+  push('일일 업무', '출고 현황', '/outbound-history', 'outbound history chulgo hyeonhwang 이력')
   push('일일 업무', '재고현황', '/inventory', 'inventory jaego stock')
   push('일일 업무', '통합 검색', '/search', 'search tonghap')
   // 소요·부족

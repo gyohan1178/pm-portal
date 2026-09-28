@@ -36,6 +36,20 @@ async function searchItems(q) {
   }))
 }
 
+// 위치 A1-05-1 → 랙 이름 A1 (앞뒤 공백이 섞여 있어도 읽는다)
+export function rackOf(loc) {
+  const m = String(loc || '').trim().match(/^([A-Z]+\d*)\s*-\s*\d+\s*-\s*\d+$/i)
+  return m ? m[1].toUpperCase() : null
+}
+// 구글 검색 — 제조사품번이 있으면 「제조사 품번」, 없으면 품명
+export function webSearch(it, kind) {
+  const key = (it.manufacturer_code || '').trim()
+    ? `${it.manufacturer || ''} ${it.manufacturer_code}`.trim()
+    : (it.name || it.std_code)
+  const q = encodeURIComponent(key)
+  return kind === 'img' ? `https://www.google.com/search?tbm=isch&q=${q}` : `https://www.google.com/search?q=${q}`
+}
+
 // ── 역전개 (전 고객사 통합 RPC) ──
 async function whereUsedAll(q) {
   if (!q.trim()) return []
@@ -114,7 +128,7 @@ export default function CommonSearch() {
                       <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
                         {/* 재고·구매처는 넣지 않는다 — 현장에서 물건을 찾는 화면이고,
                             수량과 협력사는 팀 내부 정보다. 필요하면 통합검색을 쓴다. */}
-                        {['기준코드·품명', '고객사코드', '구분', '제조사·품번', '위치'].map(h =>
+                        {['기준코드·품명', '고객사코드', '구분', '제조사·품번', '위치', '찾기'].map(h =>
                           <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
                       </tr></thead>
                       <tbody>
@@ -139,7 +153,28 @@ export default function CommonSearch() {
                               <div className="text-slate-700">{it.manufacturer || '-'}</div>
                               <div className="font-mono text-[11px] text-slate-400">{it.manufacturer_code || ''}</div>
                             </td>
-                            <td className="px-3 py-2 text-slate-500">{it.location || '-'}</td>
+                            <td className="px-3 py-2 text-slate-500">
+                              {/* 위치를 누르면 창고 배치도의 그 랙 시트로 (자재 위치 찾기에서 옮김 — 예전 링크는 ?code= 라 랙이 안 열렸다) */}
+                              {it.location
+                                ? <div className="flex flex-wrap gap-1">
+                                    {it.location.split(',').map(x => x.trim()).filter(Boolean).map(loc => {
+                                      const rack = rackOf(loc)
+                                      return rack
+                                        ? <button key={loc} onClick={() => navigate(`/rack/${rack}`)} title="창고 배치도에서 보기"
+                                            className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100">{loc} ↗</button>
+                                        : <span key={loc} className="font-mono text-[11px]">{loc}</span>
+                                    })}
+                                  </div>
+                                : '-'}
+                            </td>
+                            <td className="px-3 py-2">
+                              <div className="flex gap-1">
+                                {[['img', '사진'], ['web', '사양']].map(([k, l]) => (
+                                  <a key={k} href={webSearch(it, k)} target="_blank" rel="noopener noreferrer"
+                                    className="px-1.5 py-0.5 rounded border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">{l} ↗</a>
+                                ))}
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>

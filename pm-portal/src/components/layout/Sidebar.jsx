@@ -13,7 +13,8 @@ const MENU_META = {
   '/restore': ['↩','삭제 기록'],
   '/quality/lot': ['🏷','로트 관리'],
   '/lot': ['🏷','로트 관리'],
-  '/finder': ['🔍','자재 위치 찾기'],
+  '/finder': ['🔎','통합 검색'],          // 예전 즐겨찾기 — 통합 검색으로 이어진다
+  '/outbound-history': ['📋','출고 현황'],
   '/material-request': ['🙋','자재 요청'],
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
@@ -310,7 +311,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
-          <MenuItem to="/finder" icon="🔍" onNavigate={onNavigate}>자재 위치 찾기</MenuItem>
+          <MenuItem to="/outbound-history" icon="📋" onNavigate={onNavigate}>출고 현황</MenuItem>
           <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
         </CollapseSection>
         )}
