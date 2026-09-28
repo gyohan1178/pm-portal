@@ -37,12 +37,27 @@ async function fetchBOMItems(customerId, projectId) {
     .eq('customer_id', customerId).eq('project_id', projectId)
   return data || []
 }
+// 출고가 어느 경로로 나갔는지 — DB 함수마다 비고 앞머리가 정해져 있다
+//   자재요청 불출: 「자재요청 MR-…」 · 다품목 출고: 「출고작업…」 · 실사: 「실사 조정…」 · 나머지 = ASSY 출고
+export const OUT_KINDS = ['ASSY 출고', '다품목 출고', '자재요청', '실사 조정']
+export function outKindOf(memo) {
+  const m = String(memo || '')
+  if (m.startsWith('자재요청')) return '자재요청'
+  if (m.startsWith('출고작업')) return '다품목 출고'
+  if (m.startsWith('실사 조정')) return '실사 조정'
+  return 'ASSY 출고'
+}
+// 기준코드 앞자리 → 고객사 코드 (AX-… → ax, CS-… → csk)
+const custCodeOf = (std) => {
+  const p = (/^([A-Za-z]+)-/.exec(String(std || '')) || [])[1]
+  if (!p) return null
+  return p.toUpperCase() === 'CS' ? 'csk' : p.toLowerCase()
+}
+
 // 출고 현황 — 기간 안의 출고를 끝까지 받는다.
-//   ⚠ 예전엔 200건에서 잘랐고, 고객사는 「고객사 PO」로만 알 수 있어서
-//     PO 없이 출고한 건은 고객사·프로젝트가 비고 고객사로 거를 수도 없었다.
-//   이제 출고할 때 고른 고객사·프로젝트를 줄마다 저장한다 (customer_id · project_id).
-//   그 칸이 비어 있는 예전 기록은 고객사 PO 에서 가져온다.
-//   비고는 DB 에 memo 칸으로 저장된다 (note 칸이 아니다).
+//   · 고객사·프로젝트·처리자는 출고할 때 줄마다 저장된다 (customer_id · project_id · processed_by)
+//   · 칸이 빈 예전 기록: 고객사 PO 가 있으면 PO 에서, 그래도 없으면 기준코드 앞자리로 「추정」
+//   · 비고는 DB 에 memo 칸으로 저장된다 (note 칸이 아니다)
 export async function fetchOutboundHistory({ from, to, customerId }) {
   const rows = await fetchAll(() => supabase.from('stock_movements')
     .select('*, items(std_code,name,unit), purchase_orders(po_number,customer_id,project_id,customers(name,code),projects(code,name))')
@@ -59,15 +74,36 @@ export async function fetchOutboundHistory({ from, to, customerId }) {
     if (error) throw error
     ;(data || []).forEach(p => { projOf[p.id] = p })
   }
+
+  // 처리자 이름 — SQL 적용 전이면 함수가 없으니 이름 없이 보여 준다
+  const userIds = [...new Set(rows.map(r => r.processed_by).filter(Boolean))]
+  const nameOf = {}
+  if (userIds.length) {
+    const { data, error } = await supabase.rpc('pm_user_names', { p_ids: userIds })
+    if (error && error.code !== 'PGRST202') throw error
+    ;(data || []).forEach(u => { nameOf[u.id] = u.name })
+  }
+
+  // 기준코드로 고객사 추정할 때 쓰는 목록
+  const { data: custs, error: cErr } = await supabase.from('customers').select('id,code,name')
+  if (cErr) throw cErr
+  const custByCode = Object.fromEntries((custs || []).map(c => [String(c.code || '').toLowerCase(), c.id]))
+
   const out = rows.map(r => {
     const po = r.purchase_orders
     const pj = projOf[r.project_id] || po?.projects || null
+    const known = r.customer_id || po?.customer_id || null
+    const guess = known ? null : (custByCode[custCodeOf(r.items?.std_code)] || null)
+    const memo = r.memo ?? r.note ?? ''
     return {
       ...r,
-      _custId: r.customer_id || po?.customer_id || null,
+      _custId: known || guess,
+      _custGuess: !!guess,                 // 기준코드로 추정한 고객사
       _projCode: pj?.code || '',
       _projName: pj?.name || '',
-      _memo: r.memo ?? r.note ?? '',
+      _memo: memo,
+      _kind: outKindOf(memo),
+      _who: r.processed_by ? (nameOf[r.processed_by] || '(이름 없음)') : '',
     }
   })
   return customerId ? out.filter(r => r._custId === customerId) : out
@@ -82,6 +118,13 @@ export async function callOutboundRpc(base, extra) {
   }
   if (error) throw error
   return data
+}
+
+const KIND_TONE = {
+  'ASSY 출고': 'bg-indigo-50 text-indigo-600',
+  '다품목 출고': 'bg-sky-50 text-sky-600',
+  '자재요청': 'bg-emerald-50 text-emerald-600',
+  '실사 조정': 'bg-slate-100 text-slate-500',
 }
 
 export default function Outbound() {
@@ -152,6 +195,7 @@ export default function Outbound() {
   const [hFrom, setHFrom] = useState(monthAgoStr())
   const [hTo, setHTo] = useState(todayISO())
   const [hCustomer, setHCustomer] = useState('')
+  const [hKind, setHKind] = useState('')            // 경로 — 화면에서만 거른다
   const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayISO(), customerId:'' })
 
   const { data: customers=[] } = useCustomers()
@@ -513,17 +557,20 @@ export default function Outbound() {
     openPrint(buildSheet('하네스 불출표', rows, r => (r.bom_qty || 0) * (harnessUnits || 1), `${harnessUnits}대분 (하네스)`))
   }
 
-  const histTotal = history.reduce((a,r)=>a+(Number(r.qty)||0),0)
+  const histRows = hKind ? history.filter(r => r._kind === hKind) : history
+  const histTotal = histRows.reduce((a,r)=>a+(Number(r.qty)||0),0)
   const custName = (id) => customers.find(c => c.id === id)?.name || ''
-  const histView = useVisibleRows(history, 300, [hQuery])
+  const histView = useVisibleRows(histRows, 300, [hQuery, hKind])
+  const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
 
   function exportHistory() {
-    const data = history.map(r=>({
-      '출고일':r.movement_date, '기준코드':r.items?.std_code, '품명':r.items?.name,
+    const data = histRows.map(r=>({
+      '출고일':r.movement_date, '시각':timeOf(r.processed_at), '구분':r._kind,
+      '기준코드':r.items?.std_code, '품명':r.items?.name,
       '단위':r.items?.unit, '수량':r.qty,
       '고객사PO':r.purchase_orders?.po_number||'',
-      '고객사':custName(r._custId) || r.purchase_orders?.customers?.name||'',
-      '프로젝트':r._projCode||'', '비고':r._memo||'',
+      '고객사':(custName(r._custId) || r.purchase_orders?.customers?.name||'') + (r._custGuess ? ' (추정)' : ''),
+      '프로젝트':r._projCode||'', '처리자':r._who||'', '비고':r._memo||'',
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'출고현황')
@@ -818,19 +865,27 @@ export default function Outbound() {
                 {customers.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">구분</label>
+              <select value={hKind} onChange={e=>setHKind(e.target.value)}
+                className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
+                <option value="">전체</option>
+                {OUT_KINDS.map(k=><option key={k} value={k}>{k}</option>)}
+              </select>
+            </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer})}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
-            {history.length>0&&(
+            {histRows.length>0&&(
               <button onClick={exportHistory}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
             )}
-            <div className="ml-auto text-xs text-slate-400 self-center">총 {history.length}건</div>
+            <div className="ml-auto text-xs text-slate-400 self-center">총 {histRows.length}건</div>
           </div>
 
           <div className="grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{history.length}</p></div>
+            <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{histRows.length}</p></div>
             <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-bold text-rose-400 uppercase tracking-wide mb-1">총 출고 수량</p><p className="text-xl font-bold text-rose-700">{histTotal.toLocaleString()}</p></div>
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(history.map(r=>r.item_id)).size}</p></div>
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size}</p></div>
           </div>
 
           {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
@@ -838,23 +893,28 @@ export default function Outbound() {
               <div className="overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
-                    {['출고일','기준코드','품명','수량','단위','고객사 PO','고객사','프로젝트','비고'].map(h=>(
+                    {['출고일','구분','기준코드','품명','수량','단위','고객사 PO','고객사','프로젝트','처리자','비고'].map(h=>(
                       <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr></thead>
                   <tbody>
-                    {history.length===0
-                      ? <tr><td colSpan={9} className="text-center py-10 text-slate-400">출고 이력이 없습니다</td></tr>
+                    {histRows.length===0
+                      ? <tr><td colSpan={11} className="text-center py-10 text-slate-400">출고 이력이 없습니다</td></tr>
                       : histView.shown.map(r=>(
                         <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
-                          <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
+                          <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.movement_date}<span className="ml-1 font-normal text-slate-400">{timeOf(r.processed_at)}</span></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${KIND_TONE[r._kind] || ''}`}>{r._kind}</span></td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                           <td className="px-3 py-2 text-right font-bold text-rose-700">{r.qty}</td>
                           <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
                           <td className="px-3 py-2 font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{custName(r._custId) || r.purchase_orders?.customers?.name || '-'}</td>
+                          <td className="px-3 py-2 text-slate-500 whitespace-nowrap">
+                            {custName(r._custId) || r.purchase_orders?.customers?.name || '-'}
+                            {r._custGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 고객사가 저장돼 있지 않아 기준코드 앞자리로 추정했습니다">추정</span>}
+                          </td>
                           <td className="px-3 py-2 text-slate-500" title={r._projName||''}>{r._projCode||'-'}</td>
+                          <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{r._who||'-'}</td>
                           <td className="px-3 py-2 text-slate-400">{r._memo||'-'}</td>
                         </tr>
                       ))
