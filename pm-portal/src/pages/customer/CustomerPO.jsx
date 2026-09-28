@@ -35,7 +35,10 @@ async function fetchCustomerPOs(csId, showAll) {
     return qb.order('promise_date', { ascending: true }).order('id', { ascending: true })
   }
   const data = await fetchAll(make)
-  return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date&&p.promise_date<today }))
+  // 지연 = 아직 안 끝난 PO 인데 납기가 지난 것.
+  //   예전엔 날짜만 봐서 「완료 포함」으로 보면 이미 납품된 줄이 「지연」으로 떴다.
+  const open = (st) => st !== '완료' && st !== '취소'
+  return (data||[]).map(p=>({ ...p, isDelayed: open(p.status) && !!p.promise_date && p.promise_date<today }))
 }
 
 // ── 도면 REV 대조 ──────────────────────────────────
@@ -475,9 +478,10 @@ export default function CustomerPO() {
           <button onClick={()=>pickMut.mutate(filtered.filter(p=>picked[p.id]))} disabled={pickMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 whitespace-nowrap disabled:opacity-40">🧺 장바구니 담기 ({Object.values(picked).filter(Boolean).length})</button>
         )}
-        <button onClick={()=>setShowUpload(true)} disabled={!cs?.id}
+        {/* PO 업로드는 AXCELIS 양식 전용 — 품번에 AX- 를 붙이고 AX 생산관리와 연동한다. 다른 고객사에서 올리면 품번이 틀어진다 */}
+        {String(csCode||'').toLowerCase()==='ax' && <button onClick={()=>setShowUpload(true)} disabled={!cs?.id}
           title={cs?.id ? '' : '고객사 정보를 불러오는 중입니다'}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 whitespace-nowrap disabled:opacity-40">📤 PO 업로드</button>
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 whitespace-nowrap disabled:opacity-40">📤 PO 업로드</button>}
         <button onClick={()=>{setForm(EMPTY);setEditId(null);setShowForm(!showForm)}}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 whitespace-nowrap">➕ PO 추가</button>
       </div>
@@ -602,7 +606,7 @@ export default function CustomerPO() {
                           className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold hover:bg-amber-100">{p.changes.length}건</button>
                       : <span className="text-slate-200">-</span>}
                   </td>
-                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
+                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.status==='완료'?'bg-emerald-50 text-emerald-700':p.status==='취소'?'bg-slate-100 text-slate-500':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
                   <td className="px-3 py-2">
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={()=>handleEdit(p)} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
@@ -623,7 +627,7 @@ export default function CustomerPO() {
       )}
 
       {/* 변경 이력 모달 */}
-      {showUpload && <CustomerPOUpload csId={cs?.id} csCode={csCode} onClose={()=>setShowUpload(false)} />}
+      {showUpload && String(csCode||'').toLowerCase()==='ax' && <CustomerPOUpload csId={cs?.id} csCode={csCode} onClose={()=>setShowUpload(false)} />}
 
       {chgModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={()=>setChgModal(null)}>

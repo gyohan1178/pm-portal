@@ -142,6 +142,7 @@ const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수'
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // Edwards 는 한 호기 안에 EUV·H2D 가 섞여 부분마다 따로 관리한다
   const isED = String(csCode || '').toUpperCase() === 'ED'
+  const isAx = String(csCode || '').toUpperCase() === 'AX'
   const [memoDraft, setMemoDraft] = useState({})
   const edFileRef = useRef(null)
 
@@ -288,6 +289,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
       // 한 줄씩 왕복하면 164건에 164번 오간다. 모아서 한 번에 보낸다.
       const toUpdate = [], toInsert = []
+      const guarded = { done: 0, po: 0 }   // 가져오기가 덮지 않고 둔 것
       for (const rec of records) {
         if (!rec.pn) continue
         const exist = existMap[keyOf(rec.pn, rec.hogi, rec.part)]
@@ -297,6 +299,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           // 월간 실적으로 다시 올릴 때 담당자가 손으로 넣은 것을 지우지 않는다.
           //   상태·비고·담당자는 현장에서 관리하는 값이다.
           const keep = edMode ? ['status', 'note', 'memo', 'manager'] : []
+          // AXCELIS: 예전에 내려받은 파일을 다시 올려도 어긋나지 않게
+          //   · 이미 완료된 호기는 완료로 둔다 (되돌리면 납품된 호기가 다시 PO 에 붙는다)
+          //   · 고객 PO 에 붙은 호기의 납기·CCN·REV 는 PO 가 정한다 (PO 연동이 채운다)
+          if (!edMode && isAx) {
+            if (exist.status === '완료' && rec.status && rec.status !== '완료') { keep.push('status'); guarded.done++ }
+            if (exist.po_id) { keep.push('req_date', 'ccn', 'rev'); guarded.po++ }
+          }
           // 구분2·3 은 SCHED_FIELDS 에 없어 따로 넣는다
           if (edMode) {
             if (rec.part2 !== undefined) patch.part2 = rec.part2 || null
@@ -339,9 +348,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       }
 
       const created = toInsert.length, updated = toUpdate.length
-      return { created, updated }
+      return { created, updated, guarded }
     },
-    onSuccess: (r) => { toastSuccess(`가져오기 완료 — 신규 ${r.created}건 · 일정수정 ${r.updated}건`); qc.invalidateQueries(['production', csCode]) },
+    onSuccess: (r) => {
+      const g = r.guarded || {}
+      const kept = [g.done ? `완료 호기 ${g.done}건은 완료 유지` : '', g.po ? `PO 연결 호기 ${g.po}건은 납기·REV 를 PO 기준으로 유지` : ''].filter(Boolean).join(' · ')
+      toastSuccess(`가져오기 완료 — 신규 ${r.created}건 · 일정수정 ${r.updated}건${kept ? ` (${kept})` : ''}`)
+      qc.invalidateQueries(['production', csCode])
+    },
     onError: (e) => toastError('가져오기 오류: ' + e.message),
   })
 
@@ -689,10 +703,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     })()}
                   </td>
                   <td data-no-select className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                  <td className={`px-2 py-2 font-semibold ${ddayCls(dday(r.req_date))}`}>
+                  <td className={`px-2 py-2 font-semibold ${r.status === '완료' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
                       {md(r.req_date) || '미정'}
-                      {(() => { const t = delayTag(r.changes, r.req_date); if (!t) return null
+                      {(() => { const t = r.status === '완료' ? null : delayTag(r.changes, r.req_date); if (!t) return null
                         return <span
                           title={`지난주 대비 ${t.diff>0?'밀림':'당겨짐'} · ${t.base} → ${String(r.req_date).slice(0,10)}${t.cnt>1?` (${t.cnt}회 변경)`:''}`}
                           className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
@@ -923,7 +937,7 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
                   </div>
                   <div className="text-[10px] text-slate-400 truncate">{r.name}</div>
                   <div className="mt-1 flex items-center gap-1 flex-wrap">
-                    <span className={`text-[10px] font-bold ${ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
+                    <span className={`text-[10px] font-bold ${r.status === '완료' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
                     {t && <span title={`지난주 대비 · ${t.base} → ${String(r.req_date).slice(0,10)}`}
                       className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
                       {t.diff>0?`+${t.diff}`:t.diff}일</span>}

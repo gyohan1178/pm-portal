@@ -51,6 +51,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
   const [receivedSet, setReceivedSet] = useState(new Set())
   const [disCheck, setDisCheck] = useState({})   // 사라진 PO 체크 (기본 적용)
   const [result, setResult] = useState(null)
+  const [warns, setWarns] = useState([])   // 적용 뒤 생산관리 쪽 실패 (PO 적용은 된 상태)
   const [sheetUsed, setSheetUsed] = useState('')
 
   function parseFile(file) {
@@ -317,32 +318,43 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       //     (2026-09 110158840 #31~#35 — 9/1·9/15 납품분이 9/22·10/22 PO 로 밀림)
       //   부분납품이면 납품 수량만큼만 완료, 남는 호기는 연결만 풀어 ②에서 다시 매칭된다.
       //   되돌릴 수 있게 기록을 남긴다.
+      //   ⚠ Supabase 는 실패를 던지지 않고 error 로 돌려준다. try/catch 만으로는 못 잡는다.
+      //     예전엔 여기서 실패해도 아무 표시가 없었다 → 실패를 모아 결과 창에 보여 준다.
+      const warns = []
       let hogiDone = null
       try {
-        const { data: hd } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
+        const { data: hd, error: he } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
+        if (he) throw he
         hogiDone = Array.isArray(hd) ? hd[0] : hd
-      } catch { /* 실패해도 PO 적용은 유효하다 */ }
+      } catch (e) { warns.push('납품 완료 호기 처리 실패: ' + (e?.message || e)) }
 
       // ② PO 를 고쳤으면 생산관리 호기도 맞춰야 한다.
       //   따로 눌러야 하는 구조라 빠뜨리기 쉬워, 적용 직후 바로 돌린다.
-      //   실패해도 PO 적용은 유효하므로 오류를 삼키고 안내만 남긴다.
-      //   납기가 바뀌면 기록을 남긴다. 조용히 넘기면 무엇이 바뀌었는지 알 수 없다.
+      //   실패해도 PO 적용은 유효하므로 안내만 남긴다.
+      //   ⚠ ① 이 실패했으면 ② 는 돌리지 않는다 — 돌리면 납품된 호기가 다음 PO 로 밀려 붙는다.
       let sync = null
-      try {
-        const { data: sd } = await supabase.rpc('sync_production_from_po',
-          { cs_code: 'AX', p_silent: false })
-        sync = sd?.[0] || null
-      } catch { /* 연동 실패는 별도 안내 */ }
+      if (!warns.length) {
+        try {
+          const { data: sd, error: se } = await supabase.rpc('sync_production_from_po',
+            { cs_code: 'AX', p_silent: false })
+          if (se) throw se
+          sync = sd?.[0] || null
+        } catch (e) { warns.push('생산관리 연동 실패: ' + (e?.message || e)) }
+      } else {
+        warns.push('납품 완료 처리가 안 돼 생산관리 연동은 돌리지 않았습니다 — 생산관리 화면의 「PO 연동」을 눌러 주세요')
+      }
 
       return { changed: diff.changes.length, inserted, created, done, canceled,
-               priceFilled, sync, hogiDone }
+               priceFilled, sync, hogiDone, warns }
     },
     onSuccess: (r) => {
       const sy = r.sync
       const hd = r.hogiDone
       const syncMsg = sy
         ? ` · 생산관리 연동(매칭 ${sy.matched||0}, 신규 ${sy.created||0}, 갱신 ${sy.updated||0})`
-        : ' · 생산관리 연동은 실패했습니다 — 생산관리에서 직접 눌러주세요'
+        : ''
+      setWarns(r.warns || [])
+      if (r.warns?.length) toastError(r.warns[0])
       const doneMsg = hd?.done_cnt > 0
         ? ` · 납품 완료 호기 ${hd.done_cnt}건 반영${hd.snap_id ? ` (되돌리기 #${hd.snap_id})` : ''}`
         : ''
@@ -364,6 +376,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         </div>
 
         <div className="p-5 overflow-y-auto space-y-4">
+          {result && warns.length > 0 && (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 font-semibold space-y-1">
+              {warns.map((w, i) => <div key={i}>⚠ {w}</div>)}
+            </div>
+          )}
           {result && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold">✅ {result}</div>
           )}
