@@ -310,7 +310,20 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (error) throw error
         priceFilled++
       }
-      // PO 를 고쳤으면 생산관리 호기도 맞춰야 한다.
+      // ① 납품이 끝난 PO 에 붙어 있던 호기를 먼저 완료로 바꾼다 (상태 무관).
+      //   ⚠ 순서가 중요하다. 예전엔 연동(②)을 먼저 돌렸는데, 연동은 열린 PO 만 보고
+      //     「완료 안 된 호기」를 납기순으로 다시 줄 세운다. 그래서 방금 납품된 호기가
+      //     다음 PO 로 밀려 붙고(납기 +N일로 보임), 그 뒤 완료 처리는 찾을 게 없었다.
+      //     (2026-09 110158840 #31~#35 — 9/1·9/15 납품분이 9/22·10/22 PO 로 밀림)
+      //   부분납품이면 납품 수량만큼만 완료, 남는 호기는 연결만 풀어 ②에서 다시 매칭된다.
+      //   되돌릴 수 있게 기록을 남긴다.
+      let hogiDone = null
+      try {
+        const { data: hd } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
+        hogiDone = Array.isArray(hd) ? hd[0] : hd
+      } catch { /* 실패해도 PO 적용은 유효하다 */ }
+
+      // ② PO 를 고쳤으면 생산관리 호기도 맞춰야 한다.
       //   따로 눌러야 하는 구조라 빠뜨리기 쉬워, 적용 직후 바로 돌린다.
       //   실패해도 PO 적용은 유효하므로 오류를 삼키고 안내만 남긴다.
       //   납기가 바뀌면 기록을 남긴다. 조용히 넘기면 무엇이 바뀌었는지 알 수 없다.
@@ -320,15 +333,6 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           { cs_code: 'AX', p_silent: false })
         sync = sd?.[0] || null
       } catch { /* 연동 실패는 별도 안내 */ }
-
-      // 납품이 끝난 PO 는 호기도 완료로 바꾼다.
-      //   연동은 완료 PO 를 보지 않아 호기가 납품대기로 남기 때문이다.
-      //   납품대기인 것만 바꾸며, 되돌릴 수 있게 기록을 남긴다.
-      let hogiDone = null
-      try {
-        const { data: hd } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
-        hogiDone = Array.isArray(hd) ? hd[0] : hd
-      } catch { /* 실패해도 PO 적용은 유효하다 */ }
 
       return { changed: diff.changes.length, inserted, created, done, canceled,
                priceFilled, sync, hogiDone }

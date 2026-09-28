@@ -77,8 +77,17 @@ export default function ProductionCustomer() {
   const qc = useQueryClient()
 
   const syncMut = useMutation({
-    mutationFn: async () => { const { data, error } = await supabase.rpc('sync_production_from_po', { cs_code: cs, p_silent: false }); if (error) throw error; return data?.[0] },
-    onSuccess: (r) => { qc.invalidateQueries(['production', cs]); toastSuccess(`PO 연동 완료 — 매칭 ${r?.matched||0}, 신규 호기 ${r?.created||0}, 갱신 ${r?.updated||0}`) },
+    mutationFn: async () => {
+      // 납품 끝난 PO 의 호기를 먼저 완료로 — 연동이 그 호기를 다음 PO 로 밀어 붙이지 않게 (고객사 PO 업로드와 같은 순서)
+      let done = 0
+      const { data: hd, error: e1 } = await supabase.rpc('pm_sync_done_hogi', { p_po_ids: null })
+      if (e1 && e1.code !== 'PGRST202') throw e1
+      done = (Array.isArray(hd) ? hd[0] : hd)?.done_cnt || 0
+      const { data, error } = await supabase.rpc('sync_production_from_po', { cs_code: cs, p_silent: false })
+      if (error) throw error
+      return { ...(data?.[0] || {}), done }
+    },
+    onSuccess: (r) => { qc.invalidateQueries(['production', cs]); toastSuccess(`PO 연동 완료 — 매칭 ${r?.matched||0}, 신규 호기 ${r?.created||0}, 갱신 ${r?.updated||0}${r?.done ? `, 납품 완료 ${r.done}` : ''}`) },
     onError: (e) => toastError('연동 오류: ' + e.message),
   })
 
