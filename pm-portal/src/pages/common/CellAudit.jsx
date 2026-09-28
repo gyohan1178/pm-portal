@@ -6,6 +6,7 @@ import QrScanner from '../../components/QrScanner'
 import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
+import { useCanEdit } from '../../hooks/useProfile'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -51,7 +52,7 @@ export default function CellAudit() {
     enabled: !!location,
     queryFn: async () => {
       const { data } = await supabase.from('pm_stock_audit')
-        .select('item_id,counted_qty,diff,applied,memo')
+        .select('id,item_id,book_qty,counted_qty,diff,applied,memo')
         .eq('location', location)
         .eq('audit_date', todayISO())
       return data || []
@@ -128,6 +129,28 @@ export default function CellAudit() {
     }
   }
 
+  // 오늘 이 칸에서 기록만 하고 아직 재고에 반영 안 한 것 → 여기서 바로 반영 (차이만큼)
+  const canEdit = useCanEdit()
+  const pendingIds = prev.filter(p => !p.applied && Number(p.counted_qty) !== Number(p.book_qty)).map(p => p.id)
+  const [applying, setApplying] = useState(false)
+  async function applyNow() {
+    if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return }
+    const ids = prev.filter(p => !p.applied).map(p => p.id)
+    if (!ids.length) return
+    setApplying(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_audit_apply', { p_ids: ids })
+      if (error) throw error
+      const r = Array.isArray(data) ? data[0] : data
+      toastSuccess(`재고 반영 ${n(r?.done_cnt)}건 — 줄임 ${n(r?.out_cnt)} · 늘림 ${n(r?.in_cnt)}`)
+      qc.invalidateQueries({ queryKey: ['cellItems'] })
+      qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
+      qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['pendingAuditCount'] })
+    } catch (e) { toastError('반영 실패: ' + e.message) }
+    finally { setApplying(false) }
+  }
+
   async function save() {
     const rows = items
       .filter(it => counts[it.item_id] !== undefined && counts[it.item_id] !== '')
@@ -144,7 +167,7 @@ export default function CellAudit() {
       if (error) throw error
       setSaved(true)
       qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
-      toastSuccess(`${n(data)}건 실사 기록 — 재고 반영은 재고현황에서 확인 후 진행하세요`)
+      toastSuccess(`${n(data)}건 실사 기록 — 아래 「재고 반영」을 누르면 재고가 바뀝니다 (재고현황 › 칸 실사 반영에서도 가능)`)
     } catch (e) {
       toastError('저장 실패: ' + e.message)
     } finally { setBusy(false) }
@@ -367,6 +390,13 @@ export default function CellAudit() {
                 className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
                 {busy ? '저장 중…' : `실사 기록 (${filled}/${items.length})`}
               </button>
+              {/* 기록한 것 중 차이가 있고 아직 반영 안 한 것이 있으면 — 바로 재고에 반영 */}
+              {saved && pendingIds.length > 0 && canEdit && (
+                <button onClick={applyNow} disabled={applying}
+                  className="px-4 py-3 text-sm font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 whitespace-nowrap">
+                  {applying ? '반영 중…' : `재고 반영 (${pendingIds.length})`}
+                </button>
+              )}
             </div>
           </div>
         </>

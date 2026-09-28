@@ -5,6 +5,7 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import StockPaste from '../../components/StockPaste'
+import AuditApplyModal from '../../components/AuditApplyModal'
 import { useNavigate } from 'react-router-dom'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -58,6 +59,18 @@ export default function Inventory() {
   const [appliedSearch, setAppliedSearch] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
+  const [auditOpen, setAuditOpen] = useState(false)   // QR 칸 실사 → 재고 반영
+  // 반영 안 된 칸 실사 건수 (숫자만 받는다)
+  const { data: pendingAudit = 0 } = useQuery({
+    queryKey: ['pendingAuditCount'],
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const { count, error } = await supabase.from('pm_stock_audit')
+        .select('id', { count: 'exact', head: true }).eq('applied', false)
+      if (error) throw error
+      return count || 0
+    },
+  })
   const navTo = useNavigate()
   const [showNeg, setShowNeg] = useState(false)
   const [hideExcluded, setHideExcluded] = useState(true)   // 재고관리 제외 품목 숨김(기본)
@@ -213,6 +226,7 @@ export default function Inventory() {
   return (
     <div className="space-y-4">
       {pasteOpen && <StockPaste onClose={()=>setPasteOpen(false)} />}
+      {auditOpen && <AuditApplyModal onClose={()=>setAuditOpen(false)} />}
 
       {scanOpen && (
         <QrScanner onClose={()=>setScanOpen(false)}
@@ -228,6 +242,10 @@ export default function Inventory() {
         <button onClick={()=>setPasteOpen(true)} title="엑셀에서 품번·수량을 복사해 붙여넣어 실사 결과를 반영합니다"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
           📋 실사 붙여넣기
+        </button>
+        <button onClick={()=>setAuditOpen(true)} title="QR 로 칸을 찍어 기록한 실사를 재고에 반영합니다 (차이만큼)"
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border whitespace-nowrap ${pendingAudit>0 ? 'border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100' : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+          📋 칸 실사 반영{pendingAudit>0 ? ` (${pendingAudit})` : ''}
         </button>
         <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
