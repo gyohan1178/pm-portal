@@ -84,6 +84,17 @@ export async function fetchOutboundHistory({ from, to, customerId }) {
     ;(data || []).forEach(u => { nameOf[u.id] = u.name })
   }
 
+  // 예전 출고에 나중에 채운 프로젝트 — BOM 대조로 채운 것은 「추정」 표시
+  //   (표가 아직 없으면 = 채우기 SQL 전이면 그냥 넘어간다)
+  const filled = {}
+  try {
+    const fl = await fetchAll(() => supabase.from('pm_outbound_project_fill')
+      .select('sm_id,method').gte('movement_date', from).lte('movement_date', to).order('sm_id'))
+    fl.forEach(f => { filled[f.sm_id] = f.method })
+  } catch (e) {
+    if (!['42P01', 'PGRST205', 'PGRST200'].includes(e?.code)) throw e
+  }
+
   // 기준코드로 고객사 추정할 때 쓰는 목록
   const { data: custs, error: cErr } = await supabase.from('customers').select('id,code,name')
   if (cErr) throw cErr
@@ -101,6 +112,7 @@ export async function fetchOutboundHistory({ from, to, customerId }) {
       _custGuess: !!guess,                 // 기준코드로 추정한 고객사
       _projCode: pj?.code || '',
       _projName: pj?.name || '',
+      _projGuess: filled[r.id] === 'BOM 대조',   // 부품 구성으로 찾은 프로젝트
       _memo: memo,
       _kind: outKindOf(memo),
       _who: r.processed_by ? (nameOf[r.processed_by] || '(이름 없음)') : '',
@@ -588,7 +600,7 @@ export default function Outbound() {
       '단위':r.items?.unit, '수량':r.qty,
       '고객사PO':r.purchase_orders?.po_number||'',
       '고객사':(custName(r._custId) || r.purchase_orders?.customers?.name||'') + (r._custGuess ? ' (추정)' : ''),
-      '프로젝트':r._projCode||'', '처리자':r._who||'', '비고':r._memo||'',
+      '프로젝트':(r._projCode||'') + (r._projGuess ? ' (추정)' : ''), '처리자':r._who||'', '비고':r._memo||'',
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'출고현황')
@@ -943,7 +955,12 @@ export default function Outbound() {
                                 {r._custGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 고객사가 저장돼 있지 않아 기준코드 앞자리로 추정했습니다">추정</span>}
                               </>}
                             </td>
-                            <td className="px-3 py-2 text-slate-500" title={r._projName||''}>{sub ? '' : (r._projCode||'-')}</td>
+                            <td className="px-3 py-2 text-slate-500 whitespace-nowrap" title={r._projName||''}>
+                              {sub ? '' : <>
+                                {r._projCode||'-'}
+                                {r._projGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 프로젝트가 저장돼 있지 않아, 출고된 부품을 전부 가진 BOM으로 찾았습니다">추정</span>}
+                              </>}
+                            </td>
                             <td className="px-3 py-2 text-slate-600 whitespace-nowrap">{sub ? '' : (r._who||'-')}</td>
                             <td className="px-3 py-2 text-slate-400">{r._memo||'-'}</td>
                           </tr>
