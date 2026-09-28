@@ -777,7 +777,7 @@ function LotAdd({ preset, onClose, onDone }) {
 
 
 // ───────────────────────── 로트 수정 ─────────────────────────
-//   출고 연동 전까지는 잔량을 손으로 맞춰야 한다.
+//   출고하면 DB 가 오래된 로트부터 자동으로 뺀다 (pm_lot_consume). 실사와 다를 때만 손으로 맞춘다.
 function LotEdit({ lot, onClose, onDone }) {
   const [qty, setQty] = useState(String(lot.qty_left ?? ''))
   const [serial, setSerial] = useState(lot.serial_no || '')
@@ -836,8 +836,8 @@ function LotEdit({ lot, onClose, onDone }) {
         <div className="p-4 space-y-3">
           <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2">
             <p className="text-[11px] text-amber-800 leading-relaxed">
-              출고와 아직 연결되지 않아 잔량이 자동으로 줄지 않습니다.
-              실제로 나간 만큼 여기서 맞춰 주세요.
+              출고하면 입고일이 이른 로트부터 잔량이 자동으로 줄어듭니다.
+              실사한 수량과 다를 때만 여기서 맞춰 주세요.
             </p>
           </div>
 

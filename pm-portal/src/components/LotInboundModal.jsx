@@ -8,6 +8,7 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 // 입고 → 로트 — 로트 관리 대상 품목을 입고하면 바로 시리얼·제조년월을 받는다.
 //   예전엔 입고한 뒤 로트관리 화면에 가서 손으로 다시 넣어야 했다.
 //   등록은 로트관리 화면과 같은 함수(pm_lot_add)를 쓴다 — 규칙이 둘로 갈리지 않게.
+//   출고하면 DB 트리거(pm_lot_consume)가 입고일이 이른 로트부터 자동으로 뺀다.
 //
 //   rows: [{ item_id, std_code, name, maker, maker_code, vendor, qty, po_id }]  (입고한 로트 대상 품목)
 //   date: 입고일
@@ -52,6 +53,7 @@ export default function LotInboundModal({ rows, date, onClose, onDone }) {
           qty_in: Number(x.qty),
           in_date: date || null,
           vendor_name: r.vendor || null,
+          po_id: r.po_id || null,     // 어느 발주로 들어온 로트인지
         })),
       })
       if (error) throw error
