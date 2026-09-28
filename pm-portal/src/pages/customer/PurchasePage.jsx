@@ -17,7 +17,8 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import { printForeignPO } from '../../lib/foreignPO'
 import { genPoNumber } from '../../lib/poNumber'
-import { createPurchaseOrders } from '../../lib/createPO'
+import { createPurchaseOrders, assignPoNumbers, poGroupKey } from '../../lib/createPO'
+import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
 
 
@@ -323,7 +324,7 @@ export default function PurchasePage() {
     fx_currency: ln.fx_currency ?? null,
   })   // order_type·status·qty_received 는 createPurchaseOrders 가 채운다
   const saveMultiMut = useMutation({
-    mutationFn: (rows) => createPurchaseOrders(rows.map(buildInsert), { log: '구매발주 다품목 등록', customerName: cs?.name }),
+    mutationFn: async (rows) => createPurchaseOrders((await assignPoNumbers(rows)).map(buildInsert), { log: '구매발주 다품목 등록', customerName: cs?.name }),
     onSuccess:(res)=>{ if (res?.skipped) toastError(`수량이 0 인 ${res.skipped}줄은 빼고 등록했습니다`); qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
     onError:(e)=>alert('오류: '+e.message),
   })
@@ -418,41 +419,110 @@ export default function PurchasePage() {
     setFxPrice('')
     setForm(prev => ({ ...prev, qty_ordered:'', unit_price:'', memo:'' }))
   }
+  // 붙여넣은 품목코드 → 품목. 기준코드 → 「고객사접두-코드」 → 고객사 품번 순으로 찾는다.
+  async function findItemsByCode(codes) {
+    const SEL = 'id,std_code,name,type,purchase_price,vendor_id,manufacturer,manufacturer_code,vendors(name)'
+    const byCode = {}
+    const chunks = (arr) => { const o = []; for (let i = 0; i < arr.length; i += 200) o.push(arr.slice(i, i + 200)); return o }
+    for (const part of chunks(codes)) {
+      const a = must(await supabase.from('items').select(SEL).in('std_code', part), '품목 찾기') || []
+      a.forEach(it => { byCode[it.std_code] = it })
+    }
+    const csc = String(cs?.code || '').toUpperCase()
+    const pre = csc === 'CSK' ? 'CS' : csc
+    let left = codes.filter(c => !byCode[c])
+    if (pre && left.length) {
+      for (const part of chunks(left)) {
+        const b = must(await supabase.from('items').select(SEL).in('std_code', part.map(c => `${pre}-${c}`)), '품목 찾기') || []
+        b.forEach(it => { byCode[it.std_code.slice(pre.length + 1)] = it })
+      }
+    }
+    left = codes.filter(c => !byCode[c])
+    if (left.length && cs?.id) {
+      const map = {}
+      for (const part of chunks(left)) {
+        const c3 = must(await supabase.from('customer_item_codes').select('customer_code,item_id')
+          .eq('customer_id', cs.id).in('customer_code', part), '고객사 품번 찾기') || []
+        c3.forEach(r => { (map[r.customer_code] = map[r.customer_code] || new Set()).add(r.item_id) })
+      }
+      const one = Object.entries(map).filter(([, ids]) => ids.size === 1)   // 여러 품목에 걸리는 코드는 쓰지 않는다
+      const ids = one.map(([, s]) => [...s][0])
+      for (const part of chunks(ids)) {
+        const its = must(await supabase.from('items').select(SEL).in('id', part), '품목 찾기') || []
+        one.forEach(([code, set]) => { const it = its.find(x => set.has(x.id)); if (it) byCode[code] = it })
+      }
+    }
+    return byCode
+  }
   async function addBulkPaste() {
-    const parsed = bulkText.split(/\r?\n/).map(l=>l.trim()).filter(Boolean)
-      .map(l=>l.split(/[\t,]/).map(x=>x.trim()))
-      .map(c=>({ code:c[0], qty:Number(c[1])||0, price:(c[2]!=null&&c[2]!=='')?Number(c[2]):null }))
-      .filter(r=>r.code)
-    if (!parsed.length) { alert('붙여넣은 내용이 없어요'); return }
-    const codes = [...new Set(parsed.map(r=>r.code))]
-    const { data: items } = await supabase.from('items')
-      .select('id,std_code,name,type,purchase_price,vendor_id,manufacturer,manufacturer_code,vendors(name)').in('std_code', codes)
-    const byCode = {}; (items||[]).forEach(it=>{ byCode[it.std_code]=it })
-    const notFound = []
-    setLines(prev => {
-      const next = [...prev]
+    const { mode, rows: parsed, bad } = parsePoPaste(bulkText)
+    if (!parsed.length) { alert(bad.length ? bad.join('\n') : '붙여넣은 내용이 없어요'); return }
+    let byCode
+    try { byCode = await findItemsByCode([...new Set(parsed.map(r => r.code))]) }
+    catch (e) { toastError(e.message); return }
+    const notFound = [], noVendor = [], failed = []
+
+    if (mode === 'simple') {
+      // 간단형 — 예전 그대로: 같은 품목은 수량을 합친다
+      setLines(prev => {
+        const next = [...prev]
+        for (const r of parsed) {
+          const it = byCode[r.code]
+          if (!it) { notFound.push(r.code); continue }
+          const qty = r.qty>0 ? r.qty : 1
+          const price = r.price!=null ? r.price : (it.purchase_price ?? '')
+          const idx = next.findIndex(l=>l.item_id===it.id)
+          if (idx>=0) {
+            next[idx] = { ...next[idx], qty_ordered: Number(next[idx].qty_ordered||0)+qty,
+              unit_price: r.price!=null ? r.price : next[idx].unit_price }
+          } else {
+            next.push({ item_id:it.id, name:it.name, std_code:it.std_code,
+              maker: it.manufacturer || '', makerPn: it.manufacturer_code || '',
+              vendor_id: selVendor||it.vendor_id||null,
+              vendorName: selVendor ? (vendors.find(v=>v.id===selVendor)?.name||'') : (it.vendors?.name||''),
+              type: it.type||'자재', qty_ordered:qty, unit_price:price,
+              order_date:form.order_date, promise_date:form.promise_date, po_number:form.po_number, memo:form.memo })
+          }
+        }
+        return next
+      })
+    } else {
+      // 발주서형 — 줄마다 따로 담는다 (입고요청일·메모가 다르면 다른 발주)
+      const add = []
       for (const r of parsed) {
         const it = byCode[r.code]
-        if (!it) { notFound.push(r.code); continue }
-        const qty = r.qty>0 ? r.qty : 1
-        const price = r.price!=null ? r.price : (it.purchase_price ?? '')
-        const idx = next.findIndex(l=>l.item_id===it.id)
-        if (idx>=0) {
-          next[idx] = { ...next[idx], qty_ordered: Number(next[idx].qty_ordered||0)+qty,
-            unit_price: r.price!=null ? r.price : next[idx].unit_price }
-        } else {
-          next.push({ item_id:it.id, name:it.name, std_code:it.std_code,
-            maker: it.manufacturer || '', makerPn: it.manufacturer_code || '',
-            vendor_id: selVendor||it.vendor_id||null,
-            vendorName: selVendor ? (vendors.find(v=>v.id===selVendor)?.name||'') : (it.vendors?.name||''),
-            type: it.type||'자재', qty_ordered:qty, unit_price:price,
-            order_date:form.order_date, promise_date:form.promise_date, po_number:form.po_number, memo:form.memo })
+        if (!it) { notFound.push(r.code); failed.push(r); continue }
+        let v = null
+        if (r.vendorName) {
+          v = matchVendor(r.vendorName, vendors)
+          if (!v) noVendor.push(r.vendorName)
         }
+        const vendor_id = v?.id || (!r.vendorName ? (selVendor || it.vendor_id || null) : null)
+        add.push({ item_id: it.id, name: it.name, std_code: it.std_code,
+          maker: it.manufacturer || '', makerPn: it.manufacturer_code || '',
+          vendor_id, vendorName: v?.name || (vendor_id ? (vendors.find(x=>x.id===vendor_id)?.name||'') : ''),
+          type: it.type || '자재', qty_ordered: r.qty,
+          unit_price: r.price != null ? r.price : (it.purchase_price ?? ''),
+          order_date: r.orderDate || form.order_date, promise_date: r.promiseDate || form.promise_date || '',
+          po_number: form.po_number, memo: r.memo || form.memo,
+          vendorRaw: r.vendorName || '',   // 시트에 적힌 업체 이름 — 한 줄을 고치면 같은 이름 줄도 따라간다
+          _autoPo: true })                 // 저장할 때 업체·발주일·입고요청일로 발주번호를 묶어 매긴다
       }
-      return next
-    })
-    setBulkText(''); setShowBulk(false)
-    if (notFound.length) alert('못 찾은 코드 '+notFound.length+'건: '+notFound.join(', '))
+      setLines(prev => [...prev, ...add])
+    }
+
+    // 못 찾은 줄만 붙여넣기 칸에 남긴다 — 고쳐서 다시 담으면 된다
+    if (mode === 'ecount' && failed.length) {
+      const src = bulkText.split(/\r?\n/).filter(l => l.trim())
+      const head = /품목코드|기준코드|입고요청|공급업체|발주일자/.test(src[0] || '') ? [src[0]] : []
+      setBulkText([...head, ...failed.map(r => src[r.line - 1])].join('\n'))
+    } else { setBulkText(''); setShowBulk(false) }
+
+    const msg = []
+    if (notFound.length) msg.push(`못 찾은 품목코드 ${notFound.length}건: ${[...new Set(notFound)].join(', ')}`)
+    if (noVendor.length) msg.push(`못 찾은 공급업체 ${[...new Set(noVendor)].join(', ')} — 그 줄은 「업체없음」으로 담았습니다. 목록에서 골라 주세요`)
+    if (bad.length) msg.push(...bad)
+    if (msg.length) alert(msg.join('\n\n'))
   }
   function submitForm() {
     if (editId) { saveMut.mutate(form); return }
@@ -504,7 +574,18 @@ export default function PurchasePage() {
     setBomChecked({}); setShowBom(false)
   }
   function updateLine(i, field, value) {
-    setLines(prev => prev.map((l,j)=> j===i ? {...l, [field]: value} : l))
+    setLines(prev => {
+      const raw = prev[i]?.vendorRaw
+      // 붙여넣기로 담은 줄의 업체를 바꾸면, 시트에 같은 업체로 적힌 줄도 같이 바꾼다
+      //   (「세봉」「(주)세봉」처럼 쓰는 방식이 달라도 같은 업체면 같이)
+      if (field === 'vendor_id' && raw) {
+        const k = vkey(raw)
+        const n = prev.filter(l => l.vendorRaw && vkey(l.vendorRaw) === k).length
+        if (n > 1) toastSuccess(`시트에 「${raw}」로 적힌 ${n}줄을 같이 바꿨습니다`)
+        return prev.map(l => (l.vendorRaw && vkey(l.vendorRaw) === k) ? { ...l, vendor_id: value } : l)
+      }
+      return prev.map((l,j)=> j===i ? {...l, [field]: value} : l)
+    })
   }
   function exportStatusExcel() {
     try {
@@ -1153,9 +1234,10 @@ export default function PurchasePage() {
                     {showBulk && (
                       <div className="mt-2 space-y-2">
                         <p className="text-[11px] text-slate-400">엑셀에서 <b>기준코드 · 수량 · 단가(선택)</b> 열을 복사해 붙여넣기 (탭/쉼표 구분, 한 줄에 한 품목). 단가 비우면 등록단가 자동.</p>
+                        <p className="text-[11px] text-slate-500">또는 이카운트 발주서 모양 그대로 — <b>발주일자 · 입고요청일자 · 공급업체 · 품목코드 · 수량 · 발주금액(단가) · 메모</b> (머리줄 같이 붙여도 됨). 입고요청일·메모가 다르면 줄마다 따로 발주됩니다.</p>
                         <p className="text-[11px] text-indigo-500 font-semibold">위 구매처를 비워두면 품목별 기본 구매처로 자동 배정되어, 업체별로 나뉘어 발주됩니다.</p>
                         <textarea value={bulkText} onChange={e=>setBulkText(e.target.value)} rows={5}
-                          placeholder={"AX-510000540\t100\nAX-500001501\t50\t1200"}
+                          placeholder={"AX-510000540\t100\nAX-500001501\t50\t1200\n\n또는\n2026-09-28\t2026-11-03\t세봉\t641-0011-001\t3\t80,000\tEX3053"}
                           className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                         <div className="flex justify-end">
                           <button onClick={addBulkPaste} disabled={!bulkText.trim()} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">일괄 담기 →</button>
@@ -1230,6 +1312,25 @@ export default function PurchasePage() {
               {!editId && lines.length>0 && (
                 <div className="rounded-lg border border-indigo-200 bg-white p-2 space-y-1">
                   <p className="text-xs font-bold text-indigo-600">담은 품목 {lines.length}건</p>
+                  {/* 붙여넣은 줄은 업체·발주일·입고요청일이 같으면 한 발주서 — 저장 전에 몇 장으로 나뉘는지 보여 준다 */}
+                  {(() => {
+                    const auto = lines.filter(l => l._autoPo && !String(l.po_number || '').trim())
+                    if (!auto.length) return null
+                    const g = new Map()
+                    auto.forEach(l => { if (!l.vendor_id) return; const k = poGroupKey(l); g.set(k, [...(g.get(k) || []), l]) })
+                    const noV = auto.filter(l => !l.vendor_id).length
+                    return (
+                      <div className="flex flex-wrap items-center gap-1 pb-1 border-b border-slate-100 text-[10px]">
+                        <span className="font-bold text-slate-500">저장하면 발주서 {g.size}장:</span>
+                        {[...g.values()].map(ls => (
+                          <span key={poGroupKey(ls[0])} className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 font-bold">
+                            {vendors.find(v => v.id === ls[0].vendor_id)?.name || '-'} · 입고 {String(ls[0].promise_date || '미정').slice(5) || '미정'} ({ls.length}줄)
+                          </span>
+                        ))}
+                        {noV > 0 && <span className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 font-bold">업체없음 {noV}줄 — 업체를 고르세요</span>}
+                      </div>
+                    )
+                  })()}
                   {/* 업체별 요약 — 저장하면 업체 수만큼 발주가 나뉜다 */}
                   {(() => {
                     const by = {}
@@ -1284,6 +1385,8 @@ export default function PurchasePage() {
                           className="w-20 px-1 py-0.5 text-right border border-slate-200 rounded text-slate-700"/>
                       </label>
                       <span className="w-24 text-right font-semibold text-slate-700 shrink-0">₩{Math.round((Number(ln.qty_ordered)||0)*(Number(ln.unit_price)||0)).toLocaleString()}</span>
+                      <input type="date" value={ln.promise_date||''} onChange={e=>updateLine(i,'promise_date',e.target.value)} title="입고요청일(납기)"
+                        className="w-[118px] px-1 py-0.5 border border-slate-200 rounded text-slate-600 shrink-0"/>
                       <input value={ln.memo||''} onChange={e=>updateLine(i,'memo',e.target.value)} placeholder="메모"
                         className="w-24 px-1 py-0.5 border border-slate-200 rounded text-slate-600 shrink-0"/>
                       <button onClick={()=>setLines(prev=>prev.filter((_,j)=>j!==i))} className="text-red-400 hover:text-red-600 font-bold">✕</button>
