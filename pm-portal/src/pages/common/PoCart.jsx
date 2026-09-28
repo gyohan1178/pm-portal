@@ -25,7 +25,7 @@ export async function fetchCart() {
   const itemIds = [...new Set(rows.map((r) => r.item_id).filter(Boolean))]
   const vendIds = [...new Set(rows.map((r) => r.vendor_id).filter(Boolean))]
   const items = itemIds.length
-    ? must(await supabase.from('items').select('id,std_code,name,unit,type,manufacturer,manufacturer_code').in('id', itemIds), '품목 조회') || []
+    ? must(await supabase.from('items').select('id,std_code,name,unit,type,manufacturer,manufacturer_code,purchase_price').in('id', itemIds), '품목 조회') || []
     : []
   const vends = vendIds.length
     ? must(await supabase.from('vendors').select('id,name').in('id', vendIds), '구매처 조회') || []
@@ -38,10 +38,12 @@ export async function fetchCart() {
 export async function addToCart(rows) {
   const items = rows.filter((r) => r.item_id)
   if (!items.length) throw new Error('기준코드가 없는 건은 담을 수 없습니다')
-  // 품목 기본 구매처를 채워 둔다 (나중에 담기함에서 바꿀 수 있다)
+  // 품목 기본 구매처와 최근 매입가를 채워 둔다 (나중에 담기함에서 바꿀 수 있다)
+  //   최근 매입가 = items.purchase_price — 입고할 때마다 그 입고 단가로 갱신된다
   const ids = [...new Set(items.map((r) => r.item_id))]
-  const master = must(await supabase.from('items').select('id,vendor_id').in('id', ids), '품목 조회') || []
+  const master = must(await supabase.from('items').select('id,vendor_id,purchase_price').in('id', ids), '품목 조회') || []
   const vOf = new Map(master.map((m) => [m.id, m.vendor_id]))
+  const pOf = new Map(master.map((m) => [m.id, m.purchase_price]))
   // 고객사 — 요청에 있으면 그것, 없으면 고객사 코드로, 그것도 없으면 품목이 속한 BOM 기준
   const codes = [...new Set(items.map((r) => r.customer_code).filter(Boolean))]
   const csOf = new Map()
@@ -60,6 +62,7 @@ export async function addToCart(rows) {
     customer_id: r.customer_id || csOf.get(r.customer_code) || bomOf.get(r.item_id) || null,
     vendor_id: vOf.get(r.item_id) || null,
     qty: Number(r.qty) || 0, promise_date: r.need_date || null,
+    unit_price: pOf.get(r.item_id) ?? null,
     memo: `자재요청 ${r.req_no || ''}${r.purpose ? ' · ' + r.purpose : ''}`.trim(),
   }))
   must(await supabase.from('pm_po_cart').insert(payload), '발주 담기')
@@ -134,7 +137,9 @@ export default function PoCart({ open, onClose }) {
             order_type: 'purchase', type: c.items?.type || '자재', status: '진행중',
             po_number, qty_ordered: Number(c.qty), qty_received: 0,
             order_date, promise_date: c.promise_date || null,
-            unit_price: c.unit_price === null || c.unit_price === '' ? null : Number(c.unit_price),
+            // 단가를 안 넣었으면 최근 매입가 (예전에 담아 둔 줄도)
+            unit_price: c.unit_price === null || c.unit_price === ''
+              ? (c.items?.purchase_price ?? null) : Number(c.unit_price),
             memo: c.memo || null,
           })
         }
@@ -243,9 +248,17 @@ export default function PoCart({ open, onClose }) {
                               className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
                           </td>
                           <td className="px-3 py-2 text-right">
-                            <input type="number" defaultValue={c.unit_price ?? ''} step="0.01"
-                              onBlur={(e) => patch(c.id, { unit_price: e.target.value === '' ? null : Number(e.target.value) })}
-                              className="w-24 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+                            <input type="number" defaultValue={c.unit_price ?? c.items?.purchase_price ?? ''} step="0.01"
+                              onBlur={(e) => {
+                                const v = e.target.value === '' ? null : Number(e.target.value)
+                                if (v !== (c.unit_price ?? null)) patch(c.id, { unit_price: v })
+                              }}
+                              className={`w-24 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg ${c.unit_price == null && c.items?.purchase_price != null ? 'text-slate-400' : ''}`} />
+                            {c.items?.purchase_price != null && (
+                              <div className="text-[10px] text-slate-400 mt-0.5" title="입고할 때마다 갱신되는 최근 매입 단가">
+                                최근 매입 {n(c.items.purchase_price)}
+                              </div>
+                            )}
                           </td>
                           <td className="px-3 py-2">
                             <input defaultValue={c.memo || ''}
