@@ -200,7 +200,7 @@ export default function ScanView({ store: outer, rows: outerRows, full }) {
                   <button onClick={record} disabled={cool}
                     className={`w-full h-16 rounded-2xl text-white text-[19px] font-bold flex items-center justify-center gap-2 active:scale-[0.99] disabled:opacity-40 ${nx.k === 'elec_start' ? 'bg-indigo-600' : 'bg-emerald-600'}`}>
                     {nx.k === 'elec_start' ? Icon.play('#fff') : Icon.check('#fff')}
-                    {nx.k === 'elec_start' ? '전장 시작' : `${nx.l} 완료`}
+                    {nx.k === 'elec_start' ? '전장 시작' : nx.l.endsWith('완료') ? nx.l : `${nx.l} 완료`}
                   </button>
                 )}
               </div>
