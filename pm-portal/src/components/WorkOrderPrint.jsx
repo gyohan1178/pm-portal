@@ -81,14 +81,14 @@ export function WoSheet({ r, qr }) {
   const cell = { border: '1px solid #334155', padding: '1.4mm 2mm', fontSize: '10pt', lineHeight: 1.25 }
   const head = { ...cell, background: '#E2E8F0', fontWeight: 700, fontSize: '9pt' }
   return (
-    <div className="wo-sheet" style={{ width: '210mm', height: '297mm', overflow: 'hidden', boxSizing: 'border-box', padding: '11mm 12mm 8mm', background: '#fff', color: '#0F172A', fontFamily: "'Malgun Gothic',sans-serif", boxShadow: '0 1px 4px rgba(0,0,0,.15)' }}>
+    <div className="wo-sheet" style={{ width: '210mm', height: '297mm', overflow: 'hidden', boxSizing: 'border-box', padding: '11mm 12mm 8mm', background: '#fff', color: '#0F172A', fontFamily: "'Pretendard Variable', Pretendard, 'Malgun Gothic', sans-serif", boxShadow: '0 1px 4px rgba(0,0,0,.15)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6mm' }}>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: '20pt', fontWeight: 800 }}>PD 작업지시서</div>
           <div style={{ fontSize: '9pt', color: '#475569', marginTop: '1mm' }}>진선테크 · 발행 {todayISO()} · QR 시범 운영</div>
           <div style={{ marginTop: '5mm', display: 'flex', alignItems: 'baseline', gap: '4mm' }}>
-            <span style={{ fontFamily: 'Consolas,monospace', fontSize: '26pt', fontWeight: 800 }}>{r.pn}</span>
-            <span style={{ fontFamily: 'Consolas,monospace', fontSize: '26pt', fontWeight: 800, color: '#1D4ED8' }}>{r.hogi}</span>
+            <span style={{ fontSize: '26pt', fontWeight: 800, letterSpacing: '-0.01em' }}>{r.pn}</span>
+            <span style={{ fontSize: '26pt', fontWeight: 800, color: '#1D4ED8' }}>{r.hogi}</span>
           </div>
           <div style={{ fontSize: '12pt', marginTop: '1mm' }}>{r.name}</div>
         </div>
@@ -133,7 +133,7 @@ export function WoSheet({ r, qr }) {
         <thead><tr>{['품번', '품명', '수량', '입고 예정', '불출 확인'].map((h, i) => <th key={h} style={{ ...head, width: ['20%', '38%', '10%', '16%', '16%'][i] }}>{h}</th>)}</tr></thead>
         <tbody>
           {ms.map((m, i) => (
-            <tr key={i}><td style={{ ...cell, fontFamily: 'Consolas,monospace' }}>{m.pn}</td><td style={cell}>{m.name}</td><td style={{ ...cell, textAlign: 'right' }}>{m.qty}</td><td style={cell}>{m.date || '미정'}</td><td style={cell} /></tr>
+            <tr key={i}><td style={{ ...cell, fontVariantNumeric: 'tabular-nums' }}>{m.pn}</td><td style={cell}>{m.name}</td><td style={{ ...cell, textAlign: 'right' }}>{m.qty}</td><td style={cell}>{m.date || '미정'}</td><td style={cell} /></tr>
           ))}
           {Array.from({ length: blanks }).map((_, i) => <tr key={`b${i}`}>{[0, 1, 2, 3, 4].map((j) => <td key={j} style={{ ...cell, height: '5.6mm' }} />)}</tr>)}
         </tbody>

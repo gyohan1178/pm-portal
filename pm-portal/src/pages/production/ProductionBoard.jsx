@@ -21,7 +21,8 @@ import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow
 const RANGE_DAYS = 30          // 앞 세 칸 표시 범위 — 전장 완료예정 오늘~+30일 + 지연 전부
 const STALE_MIN = 15           // 이 시간 넘게 못 받으면 경고
 const dayMs = 86400000
-const NUM = "'Bahnschrift SemiCondensed','Bahnschrift','Arial Narrow',sans-serif"
+const FONT = "'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif"
+const NUM = FONT
 
 function dd(d) {
   if (!d) return null
@@ -157,7 +158,7 @@ export default function ProductionBoard() {
   const big = { fontFamily: NUM, fontWeight: 800 }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0B111C', color: '#EAF0F8', fontFamily: "'Malgun Gothic','Apple SD Gothic Neo',sans-serif", userSelect: 'none', overflow: narrow ? 'auto' : 'hidden' }}>
+    <div style={{ minHeight: '100vh', background: '#0B111C', color: '#EAF0F8', fontFamily: FONT, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em', userSelect: 'none', overflow: narrow ? 'auto' : 'hidden' }}>
       <div style={{ height: narrow ? 'auto' : '100vh', boxSizing: 'border-box', padding: narrow ? 12 : '22px 32px', display: 'flex', flexDirection: 'column', gap: 14, transform: `translate(${shift}px, ${shift / 2}px)` }}>
 
         {stale && (
@@ -216,10 +217,10 @@ export default function ProductionBoard() {
                 const near = c._d === 0 || c._d === 1
                 return (
                   <div key={c.id} data-card={c.id} style={{ borderRadius: 12, padding: '9px 12px', background: late ? 'rgba(255,107,94,0.16)' : '#182338', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 22 : 30 }}>{c.pn}</span>
-                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 22 : 30, color: '#7CC4FF' }}>{c.hogi}</span>
-                      <span style={{ marginLeft: 'auto', padding: '1px 10px', borderRadius: 8, ...big, fontSize: narrow ? 20 : 27,
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap', minWidth: 0 }}>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em' }}>{c.pn}</span>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em', color: '#7CC4FF' }}>{c.hogi}</span>
+                      <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap', padding: '1px 9px', borderRadius: 8, ...big, fontSize: narrow ? 19 : 24,
                         background: late ? '#FF6B5E' : near ? '#FFB547' : '#2A3B57', color: late ? '#1A0806' : near ? '#1C1204' : '#DCEBFF' }}>{ddText(c._d)}</span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: narrow ? 14 : 17 }}>

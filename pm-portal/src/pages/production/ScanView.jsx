@@ -13,7 +13,7 @@ import { QR_STEPS, doneFromRow, nextStep, parseQr, scanRevCheck, revInfo, md } f
 //
 //   폰에서 할 일은 하나 — 작업지시서 QR 을 찍고, 뜬 공정 버튼을 한 번 누른다.
 //   /scan (포털 틀 없이 꽉 찬 화면) 과 「QR 공정 데모」의 폰 화면 · 스캔 탭이 이 화면을 같이 쓴다.
-//   글꼴은 Pretendard (public/fonts/pretendard, OFL) — 이 화면에서만 불러온다.
+//   글꼴은 포털 전체와 같은 Pretendard (index.html 에서 불러옴).
 //
 //   ⚠ 데모 — 생산관리 체크칸에는 쓰지 않는다. 기록은 이 폰(브라우저)에만 남는다.
 
@@ -56,15 +56,6 @@ export function useDemoStore() {
   return { st, put, doneOf }
 }
 
-function usePretendard() {
-  useEffect(() => {
-    if (document.getElementById('pretendard-css')) return
-    const l = document.createElement('link')
-    l.id = 'pretendard-css'; l.rel = 'stylesheet'; l.href = '/fonts/pretendard/pretendardvariable-dynamic-subset.css'
-    document.head.appendChild(l)
-  }, [])
-}
-
 const Icon = {
   scan: (c = 'currentColor') => (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke={c} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -80,7 +71,6 @@ const Icon = {
 
 // 스캔 화면. store · rows 를 넘기면 그것을 쓰고(QR 공정 데모 안), 안 넘기면 직접 불러온다(/scan).
 export default function ScanView({ store: outer, rows: outerRows, full }) {
-  usePretendard()
   const own = useDemoStore()
   const { st, put, doneOf } = outer || own
   const q = useDemoRows()
