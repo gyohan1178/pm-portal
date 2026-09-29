@@ -17,12 +17,14 @@ import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow
 //   · D-day: 앞 세 칸은 전장 완료예정일(납기 − 품질MD), 품질·출하 칸은 납기
 //   · Rev: BREV(PO 발행) ≠ SREV(지금) 면 빨강 「Rev E→G」 — 도면 Rev 확인
 //   · 가공물 입고일이 비어 있으면 빨강 「가공물 입고일 미입력」
+//   · 1920 폭 기준으로 그리고 화면 폭에 맞춰 통째로 확대/축소 (v4.24.2 — 작은 TV · 윈도 배율에서 글자 잘림 방지)
 //   · 5분마다 갱신, 15분 넘게 못 받으면 빨간 띠. 화면 잔상 막으려고 5분마다 몇 px 씩 움직인다.
 const RANGE_DAYS = 30          // 앞 세 칸 표시 범위 — 전장 완료예정 오늘~+30일 + 지연 전부
 const STALE_MIN = 15           // 이 시간 넘게 못 받으면 경고
 const dayMs = 86400000
 const FONT = "'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif"
 const NUM = FONT
+const BASE_W = 1920            // 이 폭 기준으로 그린다
 
 function dd(d) {
   if (!d) return null
@@ -148,8 +150,12 @@ export default function ProductionBoard() {
   const msg = msgs.length ? msgs[mi % msgs.length] : null
 
   const narrow = win.w < 900
+  // 화면 크기 맞춤 — 1920 폭 기준으로 그린 뒤 화면 폭에 맞게 통째로 줄이거나 키운다.
+  //   (TV 해상도가 1366 · 1600 이거나 윈도 배율이 125% · 150% 여도 글자 배치가 1920 과 똑같다 → 잘림 없음)
+  const k = narrow ? 1 : win.w / BASE_W
+  const stageH = narrow ? win.h : win.h / k
   // 칸에 들어갈 카드 수 — 화면 높이에 맞춘다 (넘치면 「+N대 더」)
-  const maxCards = narrow ? 99 : Math.max(2, Math.floor((win.h - 420) / 146))   // 1080 높이 → 4장 + 「+N대 더」
+  const maxCards = narrow ? 99 : Math.max(2, Math.floor((stageH - 420) / 146))   // 1080 높이 → 4장 + 「+N대 더」
   const ageMin = dataUpdatedAt ? Math.floor((now.getTime() - dataUpdatedAt) / 60000) : null
   const stale = !!error || (ageMin != null && ageMin >= STALE_MIN)
   const shift = [0, 2, 4, 2][Math.floor(now.getMinutes() / 5) % 4]   // 잔상 방지
@@ -158,8 +164,9 @@ export default function ProductionBoard() {
   const big = { fontFamily: NUM, fontWeight: 800 }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0B111C', color: '#EAF0F8', fontFamily: FONT, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em', userSelect: 'none', overflow: narrow ? 'auto' : 'hidden' }}>
-      <div style={{ height: narrow ? 'auto' : '100vh', boxSizing: 'border-box', padding: narrow ? 12 : '22px 32px', display: 'flex', flexDirection: 'column', gap: 14, transform: `translate(${shift}px, ${shift / 2}px)` }}>
+    <div style={{ minHeight: '100vh', height: narrow ? 'auto' : '100vh', background: '#0B111C', color: '#EAF0F8', fontFamily: FONT, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.01em', userSelect: 'none', overflow: narrow ? 'auto' : 'hidden' }}>
+      <div data-stage style={{ width: narrow ? 'auto' : BASE_W, height: narrow ? 'auto' : stageH, boxSizing: 'border-box', padding: narrow ? 12 : '22px 32px', display: 'flex', flexDirection: 'column', gap: 14,
+        transformOrigin: '0 0', transform: narrow ? `translate(${shift}px, ${shift / 2}px)` : `scale(${k}) translate(${shift}px, ${shift / 2}px)` }}>
 
         {stale && (
           <div role="alert" style={{ padding: '10px 18px', borderRadius: 12, background: '#7F1D1D', color: '#FFE4E1', fontSize: 22, fontWeight: 800 }}>
@@ -217,19 +224,20 @@ export default function ProductionBoard() {
                 const near = c._d === 0 || c._d === 1
                 return (
                   <div key={c.id} data-card={c.id} style={{ borderRadius: 12, padding: '9px 12px', background: late ? 'rgba(255,107,94,0.16)' : '#182338', display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 7, whiteSpace: 'nowrap', minWidth: 0 }}>
-                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em' }}>{c.pn}</span>
-                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em', color: '#7CC4FF' }}>{c.hogi}</span>
+                    {/* 첫 줄이 넘치면 D-day 가 잘리지 않고 아랫줄로 내려간다 */}
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 7, rowGap: 3, minWidth: 0 }}>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{c.pn}</span>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em', color: '#7CC4FF', whiteSpace: 'nowrap' }}>{c.hogi}</span>
                       <span style={{ marginLeft: 'auto', flexShrink: 0, whiteSpace: 'nowrap', padding: '1px 9px', borderRadius: 8, ...big, fontSize: narrow ? 19 : 24,
                         background: late ? '#FF6B5E' : near ? '#FFB547' : '#2A3B57', color: late ? '#1A0806' : near ? '#1C1204' : '#DCEBFF' }}>{ddText(c._d)}</span>
                     </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: narrow ? 14 : 17 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 3, fontSize: narrow ? 14 : 17 }}>
                       <span title={c._rev.diff ? `PO 발행 BREV ${c._rev.b} · 지금 SREV ${c._rev.s}` : ''}
                         style={{ padding: '0 9px', borderRadius: 6, ...big, fontWeight: 700, fontSize: narrow ? 16 : 21,
                           background: c._rev.diff ? 'transparent' : '#243149', color: c._rev.diff ? '#FF8A80' : '#C3CEDF',
-                          border: c._rev.diff ? '2px solid #FF6B5E' : '2px solid transparent' }}>{c._rev.text}</span>
-                      {c._proto && <span style={{ padding: '0 8px', borderRadius: 6, background: '#3A3016', color: '#FFD27A', fontWeight: 800 }}>초도</span>}
-                      <span style={{ marginLeft: 'auto', color: '#93A3BD' }}>{c._dateLabel} {md(c._date)}</span>
+                          border: c._rev.diff ? '2px solid #FF6B5E' : '2px solid transparent', whiteSpace: 'nowrap' }}>{c._rev.text}</span>
+                      {c._proto && <span style={{ padding: '0 8px', borderRadius: 6, background: '#3A3016', color: '#FFD27A', fontWeight: 800, whiteSpace: 'nowrap' }}>초도</span>}
+                      <span style={{ marginLeft: 'auto', color: '#93A3BD', whiteSpace: 'nowrap' }}>{c._dateLabel} {md(c._date)}</span>
                     </div>
                     <div style={{ fontSize: narrow ? 14 : 18, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
                       color: c._why.tone === 'red' ? '#FF8A80' : c._why.tone === 'green' ? '#4FD6A1' : '#C3CEDF' }}>{c._why.t}</div>
