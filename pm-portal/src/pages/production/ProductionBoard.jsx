@@ -2,302 +2,265 @@ import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { MAIN_PNS } from './mainPns'
-import { isMainRow } from './mainPns'
+import { fetchAll } from '../../lib/paginate'
+import { must } from '../../lib/db'
+import { MAIN_PNS, isMainRow } from './mainPns'
 import { bdMinus } from '../../lib/bizdays'
-import { todayISO } from '../../lib/utils'
+import { todayISO, ymdKST } from '../../lib/utils'
+import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow'
 
-// 🖥 AXCELIS PD 생산 전광판 — 밀도형
-//  · 전장 완료예정일 기준 D-day (납품일 − 품질MD)
-//  · 표시범위: 전장완료 오늘~+RANGE_DAYS + 지연 전부
-//  · 양산 먼저 / 초도 뒤로 · 5분 자동갱신 · 조회 전용
-const RANGE_DAYS = 30            // 표시 범위 (여기 숫자만 바꾸면 조정)
+// 🖥 AXCELIS PD 생산 전광판 — 공정 흐름형 (v4.24.0, 시안 B2)
+//
+//   현장 TV 에 그냥 띄워 두는 화면. 마우스를 올려야 보이는 정보는 없다 — 전부 글자로.
+//   · 칸 5개: 가공물 대기 → 자재 대기 → 전장 작업 → 품질 검수 → 출하 대기 (lib/prodFlow.js)
+//   · 카드 = 호기. 첫 줄 품번·호기·D-day, 둘째 줄 Rev·날짜, 셋째 줄 = 지금 막힌 이유
+//   · D-day: 앞 세 칸은 전장 완료예정일(납기 − 품질MD), 품질·출하 칸은 납기
+//   · Rev: BREV(PO 발행) ≠ SREV(지금) 면 빨강 「Rev E→G」 — 도면 Rev 확인
+//   · 가공물 입고일이 비어 있으면 빨강 「가공물 입고일 미입력」
+//   · 5분마다 갱신, 15분 넘게 못 받으면 빨간 띠. 화면 잔상 막으려고 5분마다 몇 px 씩 움직인다.
+const RANGE_DAYS = 30          // 앞 세 칸 표시 범위 — 전장 완료예정 오늘~+30일 + 지연 전부
+const STALE_MIN = 15           // 이 시간 넘게 못 받으면 경고
 const dayMs = 86400000
+const NUM = "'Bahnschrift SemiCondensed','Bahnschrift','Arial Narrow',sans-serif"
 
-const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 'false')
-const md = (d) => d ? String(d).slice(5, 10).replace('-', '/') : ''
-function dd(d) { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
-
-// 역산 (ProductionPDBox와 동일 규칙 · 품질MD·조립MD + 영업일)
+function dd(d) {
+  if (!d) return null
+  const x = new Date(String(d).slice(0, 10) + 'T00:00:00')
+  if (isNaN(x)) return null
+  return Math.round((x - new Date(new Date().toDateString())) / dayMs)
+}
+const ddText = (n) => (n == null ? '-' : n < 0 ? `D+${-n}` : n === 0 ? '오늘' : `D-${n}`)
+// 역산 (ProductionPDBox 와 같은 규칙 · 품질MD · 영업일)
 const calcElec = (r, qcMd) => r.elec_done || bdMinus(r.req_date, Math.max(1, Math.ceil(Number(qcMd) || 2)))
-const calcStart = (r, qcMd, asmMd) => { const e = calcElec(r, qcMd); return e ? bdMinus(e, Math.max(1, Math.ceil(Number(asmMd) || 1))) : null }
-
-// 진행바 4칸 (가공 → 하네스 → 전장 → 품질)
-function steps(r) {
-  return [truthy(r.machine_recv), truthy(r.harness_recv), truthy(r.part_issue), truthy(r.elec_recv) || truthy(r.quality_recv)]
-}
-function stepLabel(r) {
-  if (truthy(r.quality_recv)) return { t: '출하대기', c: '#6ee7b7' }
-  if (truthy(r.elec_recv)) return { t: '품질', c: '#fda4af' }
-  if (truthy(r.harness_recv) || truthy(r.part_issue)) return { t: '전장', c: '#c4b5fd' }
-  if (truthy(r.machine_recv)) return { t: '가공', c: '#fbbf24' }
-  return { t: '미불출', c: '#64748b' }
-}
 
 async function fetchBoard() {
   const today = todayISO()
-  const [{ data: prod }, { data: items }, { count: shippedToday }] = await Promise.all([
-    supabase.from('production')
-      .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts')
-      .eq('customer_code', 'AX').neq('status', '완료'),
-    supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%'),
-    supabase.from('production').select('id', { count: 'exact', head: true }).eq('customer_code', 'AX').eq('shipped_date', today),
-  ])
-  const meta = Object.fromEntries((items || []).map(i => [String(i.std_code).replace('AX-', ''), { md: i.md_days, qc: i.qc_md_days, proto: i.is_prototype }]))
-  const rows = prod || []
-  rows._meta = meta
-  rows._shippedToday = shippedToday || 0
-  return rows
+  const mon = (() => { const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymdKST(d) })()
+  const prod = await fetchAll(() => supabase.from('production')
+    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,po_id,customer_code')
+    .eq('customer_code', 'AX').neq('status', '완료').order('id'))
+  const items = must(await supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%'), '품목 조회') || []
+  const shipped = must(await supabase.from('production').select('id,shipped_date').eq('customer_code', 'AX').gte('shipped_date', mon), '출하 조회') || []
+  const meta = Object.fromEntries(items.map((i) => [String(i.std_code).replace('AX-', ''), { qc: i.qc_md_days, proto: i.is_prototype }]))
+  return {
+    rows: prod, meta,
+    shippedToday: shipped.filter((s) => String(s.shipped_date).slice(0, 10) === today).length,
+    shippedWeek: shipped.length,
+  }
+}
+
+// 최근 7일 Rev 변경 — 고객사 PO 업로드가 남긴 변경 이력(changes)에서 SREV · BREV 만
+async function fetchRevChanges(rows) {
+  const since = ymdKST(new Date(Date.now() - 7 * dayMs))
+  const byPo = new Map()
+  rows.forEach((r) => { if (r.po_id) { if (!byPo.has(r.po_id)) byPo.set(r.po_id, []); byPo.get(r.po_id).push(r) } })
+  const ids = [...byPo.keys()]
+  const out = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = must(await supabase.from('purchase_orders').select('id,po_number,changes').in('id', ids.slice(i, i + 200)), 'Rev 변경 조회') || []
+    part.forEach((p) => (Array.isArray(p.changes) ? p.changes : []).forEach((c) => {
+      if ((c.field === 'item_rev' || c.field === 'item_brev') && String(c.at || '').slice(0, 10) >= since) {
+        const r = byPo.get(p.id)[0]
+        out.push({ pn: r.pn, hogi: r.hogi, po: p.po_number, kind: c.field === 'item_brev' ? 'BREV' : 'SREV', from: c.from, to: c.to, at: String(c.at).slice(0, 10) })
+      }
+    }))
+  }
+  return out.sort((a, b) => b.at.localeCompare(a.at))
 }
 
 export default function ProductionBoard() {
   const navigate = useNavigate()
   const [now, setNow] = useState(new Date())
-  useEffect(() => { const t = setInterval(() => setNow(new Date()), 30000); return () => clearInterval(t) }, [])
+  const [win, setWin] = useState(() => ({ w: typeof window !== 'undefined' ? window.innerWidth : 1920, h: typeof window !== 'undefined' ? window.innerHeight : 1080 }))
+  useEffect(() => { const t = setInterval(() => setNow(new Date()), 20000); return () => clearInterval(t) }, [])
+  useEffect(() => {
+    const f = () => setWin({ w: window.innerWidth, h: window.innerHeight })
+    window.addEventListener('resize', f); return () => window.removeEventListener('resize', f)
+  }, [])
   const toggleFull = () => {
     if (!document.fullscreenElement) document.documentElement.requestFullscreen?.()
     else document.exitFullscreen?.()
   }
-  const { data: rows = [], dataUpdatedAt } = useQuery({
-    queryKey: ['prodBoard'], queryFn: fetchBoard,
+
+  const { data, dataUpdatedAt, error } = useQuery({
+    queryKey: ['prodBoard2'], queryFn: fetchBoard,
     refetchInterval: 5 * 60 * 1000, refetchIntervalInBackground: true,
   })
-  const meta = rows._meta || {}
-
-  // 자재 부족·일정 변경 — 현장에서 바로 알아야 하는 두 가지
-  // 담당자가 생산관리에서 직접 적어둔 미불출 항목만 본다.
-  // BOM 전체 대조는 실제와 어긋날 수 있어(다른 호기용 재고 등) 쓰지 않는다.
-  const { data: missing = [] } = useQuery({
-    queryKey: ['boardMissing'],
-    queryFn: async () => {
-      const { data } = await supabase.rpc('pm_floor_missing', { p_limit: 30 })
-      return data || []
-    },
-    staleTime: 3 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
+  const rows = data?.rows || []
+  const meta = data?.meta || {}
+  const { data: revChg = [], error: revErr } = useQuery({
+    queryKey: ['boardRevChg', rows.map((r) => r.po_id).join(',')],
+    queryFn: () => fetchRevChanges(rows), enabled: rows.length > 0,
+    staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
-  // 납기 변경 — 생산관리 대상 PD BOX 품번만 본다.
-  // 현장에서 만드는 것이 그것뿐이라 나머지는 볼 이유가 없다.
-  const { data: schChg = [] } = useQuery({
+  // 납기 변경 — 전주 월요일 기준 납기가 바뀐 PD BOX 품번
+  const { data: schChg = [], error: schErr } = useQuery({
     queryKey: ['boardChanges'],
     queryFn: async () => {
-      const { data } = await supabase.rpc('pm_schedule_changes', { p_days: 30 })
-      return (data || [])
-        .filter(c => MAIN_PNS.has(String(c.std_code || '').replace(/^AX-/i, '').trim()))
-        .slice(0, 5)
+      const d = must(await supabase.rpc('pm_schedule_changes', { p_days: 30 }), '납기 변경 조회') || []
+      return d.filter((c) => MAIN_PNS.has(String(c.std_code || '').replace(/^AX-/i, '').trim()))
     },
     staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
 
   const view = useMemo(() => {
     const today = todayISO()
-    const main = rows.filter(r => isMainRow(r.pn, r.customer_code) && r.req_date)
-    const enriched = main.map(r => {
+    const cards = rows.filter((r) => isMainRow(r.pn, r.customer_code) && r.req_date).map((r) => {
       const m = meta[r.pn] || {}
-      const elec = calcElec(r, m.qc)
-      const start = calcStart(r, m.qc, m.md)
-      const arr = r.arrival_date ? String(r.arrival_date).slice(0, 10) : null
-      const beforeParts = arr && !truthy(r.machine_recv) && start && start < arr
-      const overdueStart = start && start < today && !truthy(r.part_issue)
-      const mchLate = arr && !truthy(r.machine_recv) && arr < today
-      const elecDone = truthy(r.elec_recv) || truthy(r.quality_recv) // 전장 완료(품질/출하대기 단계)
-      return { ...r, _elec: elec, _d: dd(elec), _proto: !!m.proto, _elecDone: elecDone, beforeParts, overdueStart, mchLate }
+      const lane = laneOf(r)
+      const byReq = lane === 'qc' || lane === 'ship'
+      const date = byReq ? String(r.req_date).slice(0, 10) : calcElec(r, m.qc)
+      const d = dd(date)
+      return { ...r, _lane: lane, _date: date, _dateLabel: byReq ? '납기' : '전장', _d: d, _proto: !!m.proto,
+        _rev: revInfo(r), _why: whyOf(r, lane, today), _miss: missingOf(r) }
     })
-    const shown = enriched.filter(r => r._d != null && (r._d < 0 || r._d <= RANGE_DAYS))
-    const shownIds = new Set(shown.map(r => r.id))  // 화면 표시 대상(1개월치+지연)만 경보 집계
-    const groups = {}
-    shown.forEach(r => { (groups[r.pn] ??= { pn: r.pn, name: r.name, proto: r._proto, rows: [] }).rows.push(r) })
-    const arr = Object.values(groups)
+    const shown = cards.filter((c) => c._lane === 'qc' || c._lane === 'ship' || (c._d != null && c._d <= RANGE_DAYS))
     const hogiNo = (h) => parseInt(String(h).replace(/[^0-9]/g, ''), 10) || 0
-    arr.forEach(g => g.rows.sort((a, b) => String(a._elec).localeCompare(String(b._elec)) || (hogiNo(a.hogi) - hogiNo(b.hogi))))
-    arr.sort((a, b) => (a.proto - b.proto) || String(a.pn).localeCompare(String(b.pn)))
-
-    const late = enriched.filter(r => r._d < 0 && !r._elecDone)  // 전장 미완료인 지연만 (출하대기 제외)
-    const bp = enriched.filter(r => r.beforeParts && shownIds.has(r.id))     // 표시된 1개월치만
-    const os = enriched.filter(r => r.overdueStart && shownIds.has(r.id) && !r._elecDone)
-    const mch = enriched.filter(r => r.mchLate)
-    const wkLoad = enriched.filter(r => r._d >= 0 && r._d <= 7).length
-    const byStatus = {}
-    rows.filter(r => r.pn).forEach(r => { byStatus[r.status] = (byStatus[r.status] || 0) + 1 })
-    return { groups: arr, late, bp, os, mch, wkLoad, byStatus, total: rows.filter(r => r.pn).length }
+    const lanes = LANES.map((L) => {
+      const list = shown.filter((c) => c._lane === L.k)
+        .sort((a, b) => (a._d ?? 9999) - (b._d ?? 9999) || String(a.pn).localeCompare(String(b.pn)) || hogiNo(a.hogi) - hogiNo(b.hogi))
+      return { ...L, list }
+    })
+    const lateElec = shown.filter((c) => ['mch', 'mat', 'elec'].includes(c._lane) && c._d < 0)
+    const missJobs = cards.filter((c) => c._miss.length)
+    const next = {
+      mch: `가공물 입고 예정 이번 주 ${shown.filter((c) => c._lane === 'mch' && c.arrival_date && dd(c.arrival_date) >= 0 && dd(c.arrival_date) <= 6).length}대`,
+      mat: `결품 ${lanes[1].list.reduce((a, c) => a + c._miss.length, 0)}건 · 불출 대기 ${lanes[1].list.filter((c) => !c._miss.length).length}대`,
+      elec: `오늘 · 내일 완료 ${lanes[2].list.filter((c) => c._d === 0 || c._d === 1).length}대`,
+      qc: `납기 3일 안 ${lanes[3].list.filter((c) => c._d != null && c._d <= 3).length}대`,
+      ship: `출하 대기 ${lanes[4].list.length}대`,
+    }
+    return { lanes, lateElec, missJobs, missCount: missJobs.reduce((a, c) => a + c._miss.length, 0), total: shown.length, next }
   }, [rows, meta])
 
-  const ddCls = (n) => n == null ? '#64748b' : n < 0 ? '#f87171' : n <= 2 ? '#fb923c' : n <= 7 ? '#fde047' : '#64748b'
-  const ddText = (n) => n == null ? '-' : n < 0 ? `D+${-n}` : n === 0 ? '오늘' : `D-${n}`
+  const pulled = schChg.filter((c) => c.to_date && c.from_date && c.to_date < c.from_date)
 
-  const massGroups = view.groups.filter(g => !g.proto)
-  const protoGroups = view.groups.filter(g => g.proto)
+  // 아래 알림 한 줄 — 8초마다 돌아간다
+  const msgs = useMemo(() => [
+    ...revChg.map((c) => ({ tag: 'Rev 변경', red: true, t: `${c.pn} ${c.hogi || ''} ${c.kind} ${c.from} → ${c.to} (${md(c.at)}) — 작업은 최소 BREV, 도면 Rev 확인` })),
+    ...pulled.map((c) => ({ tag: '납기 당겨짐', red: true, t: `${c.po_number} ${String(c.std_code || '').replace(/^AX-/, '')} ${c.from_date} → ${c.to_date} — 작업지시서 확인` })),
+    ...schChg.filter((c) => !pulled.includes(c)).slice(0, 5).map((c) => ({ tag: '납기 밀림', t: `${c.po_number} ${String(c.std_code || '').replace(/^AX-/, '')} ${c.from_date} → ${c.to_date}` })),
+    ...view.missJobs.slice(0, 8).map((c) => ({ tag: '미불출', red: true, t: `${c.pn} ${c.hogi || ''} — ${c._miss.map((m) => `${m.name || m.pn} ${m.qty || ''}개 ${m.date ? md(m.date) : '입고 미정'}`).join(' · ')}` })),
+  ], [revChg, schChg, pulled, view.missJobs])
+  const [mi, setMi] = useState(0)
+  useEffect(() => { const t = setInterval(() => setMi((i) => i + 1), 8000); return () => clearInterval(t) }, [])
+  const msg = msgs.length ? msgs[mi % msgs.length] : null
 
-  const Card = ({ g }) => {
-    const hasLate = g.rows.some(r => r._d < 0 && !r._elecDone)
-    return (
-    <div style={{ borderRadius: 14, border: `2px solid ${hasLate ? 'rgba(239,68,68,.55)' : '#334155'}`, background: hasLate ? 'rgba(239,68,68,.09)' : '#0f172a', padding: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '2px solid #1e293b', paddingBottom: 8, marginBottom: 8 }}>
-        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
-          <div style={{ fontFamily: 'monospace', fontSize: 24, fontWeight: 900, color: '#fff', lineHeight: 1, flexShrink: 0 }}>{g.pn}</div>
-          <div style={{ fontSize: 12, color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.name}</div>
-        </div>
-        <div style={{ fontSize: 13, color: '#94a3b8', textAlign: 'right', fontWeight: 700 }}>
-          {g.rows.length}대{hasLate && <div style={{ color: '#f87171', fontWeight: 900, fontSize: 14 }}>지연 {g.rows.filter(r => r._d < 0 && !r._elecDone).length}</div>}
-        </div>
-      </div>
-      {g.rows.slice(0, 6).map((r, i) => {
-        const sl = stepLabel(r); const st = steps(r)
-        return (
-          <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 6px', borderRadius: 7, background: i === 0 ? '#1e293b' : 'transparent', marginBottom: 3 }}>
-            <span style={{ fontFamily: 'monospace', fontWeight: 900, color: '#a5b4fc', width: 42, fontSize: 20 }}>{r.hogi}</span>
-            <span style={{ fontWeight: 800, width: 68, fontSize: 15, color: sl.c }}>{sl.t}</span>
-            <div style={{ flex: 1, display: 'flex', gap: 3, minWidth: 0 }}>
-              {st.map((on, j) => <i key={j} style={{ height: 9, flex: 1, borderRadius: 3, background: on ? (j === 3 ? '#34d399' : '#a78bfa') : '#334155', display: 'block' }} />)}
-            </div>
-            {(r.beforeParts || r.overdueStart) && <span title={r.beforeParts ? '부품 도착 전 착수 필요' : '착수일 지남·미불출'} style={{ fontSize: 16, fontWeight: 800 }}>🔩</span>}
-            {Array.isArray(r.missing_parts) && r.missing_parts.length > 0 && <span style={{ fontSize: 12, fontWeight: 800, color: '#fb7185' }}>결{r.missing_parts.length}</span>}
-            <span style={{ fontFamily: 'monospace', fontSize: 15, color: '#cbd5e1', width: 48, textAlign: 'right', fontWeight: 600 }}>{md(r._elec)}</span>
-            <span style={{ fontFamily: 'monospace', fontWeight: 900, fontSize: 20, width: 62, textAlign: 'right', color: ddCls(r._d) }}>{ddText(r._d)}</span>
-          </div>
-        )
-      })}
-      {g.rows.length > 6 && <div style={{ fontSize: 13, color: '#64748b', paddingTop: 4, fontWeight: 600 }}>외 {g.rows.length - 6}대…</div>}
-    </div>
-  )}
+  const narrow = win.w < 900
+  // 칸에 들어갈 카드 수 — 화면 높이에 맞춘다 (넘치면 「+N대 더」)
+  const maxCards = narrow ? 99 : Math.max(2, Math.floor((win.h - 420) / 146))   // 1080 높이 → 4장 + 「+N대 더」
+  const ageMin = dataUpdatedAt ? Math.floor((now.getTime() - dataUpdatedAt) / 60000) : null
+  const stale = !!error || (ageMin != null && ageMin >= STALE_MIN)
+  const shift = [0, 2, 4, 2][Math.floor(now.getMinutes() / 5) % 4]   // 잔상 방지
 
-  // 좁은 화면(태블릿·폰)에서는 칸 수를 줄이고 글자를 키운다
-  const narrow = typeof window !== 'undefined' && window.innerWidth < 900
-  const cols = narrow ? (window.innerWidth < 600 ? 1 : 2) : 4
+  const chip = (bg) => ({ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 18px', borderRadius: 14, background: bg })
+  const big = { fontFamily: NUM, fontWeight: 800 }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#020617', color: '#cbd5e1', padding: 16, userSelect: 'none', fontFamily: "'Malgun Gothic',sans-serif" }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap', borderBottom: '2px solid #334155', paddingBottom: 10, marginBottom: 12 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <h1 style={{ fontSize: narrow ? 20 : 34, fontWeight: 900, color: '#fff', letterSpacing: .5 }}>🏭 AXCELIS PD PRODUCTION STATUS</h1>
-          <span style={{ fontSize: 15, color: '#94a3b8' }}>진행 {view.total}대 · 오늘출하 <b style={{ color: '#6ee7b7' }}>{rows._shippedToday || 0}</b> · {new Date(dataUpdatedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 갱신</span>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{ fontFamily: 'monospace', fontSize: narrow ? 18 : 30, fontWeight: 800, color: '#fff' }}>
-            {now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })} {now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}
+    <div style={{ minHeight: '100vh', background: '#0B111C', color: '#EAF0F8', fontFamily: "'Malgun Gothic','Apple SD Gothic Neo',sans-serif", userSelect: 'none', overflow: narrow ? 'auto' : 'hidden' }}>
+      <div style={{ height: narrow ? 'auto' : '100vh', boxSizing: 'border-box', padding: narrow ? 12 : '22px 32px', display: 'flex', flexDirection: 'column', gap: 14, transform: `translate(${shift}px, ${shift / 2}px)` }}>
+
+        {stale && (
+          <div role="alert" style={{ padding: '10px 18px', borderRadius: 12, background: '#7F1D1D', color: '#FFE4E1', fontSize: 22, fontWeight: 800 }}>
+            ⚠ {error ? `불러오기 실패 — ${error.message}` : `${ageMin}분 넘게 갱신이 안 됐습니다`} · 화면이 최신이 아닐 수 있습니다 (네트워크 확인)
           </div>
-          <button onClick={() => navigate(-1)} title="뒤로가기" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 12px', cursor: 'pointer' }}>← 뒤로</button>
-          <button onClick={toggleFull} title="전체화면 (ESC로 해제)" style={{ background: '#1e293b', border: '1px solid #475569', borderRadius: 8, color: '#cbd5e1', fontSize: 18, padding: '6px 10px', cursor: 'pointer' }}>⛶</button>
+        )}
+
+        {/* 머리 */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 16, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: narrow ? 24 : 38, fontWeight: 800, letterSpacing: -0.5 }}>PD 공정 흐름</div>
+            <div style={{ fontSize: narrow ? 14 : 19, color: '#93A3BD' }}>진행 {view.total}대 · 카드 = 호기 · 셋째 줄 = 지금 막힌 이유</div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 700, color: stale ? '#FF8A80' : '#4FD6A1' }}>
+              <span style={{ width: 11, height: 11, borderRadius: 99, background: stale ? '#FF6B5E' : '#4FD6A1' }} />
+              {ageMin == null ? '불러오는 중' : ageMin < 1 ? '방금 갱신' : `${ageMin}분 전 갱신`}
+            </span>
+            <span style={{ fontSize: narrow ? 16 : 26, color: '#93A3BD', fontWeight: 700 }}>{now.toLocaleDateString('ko-KR', { month: 'long', day: 'numeric', weekday: 'short' })}</span>
+            <span style={{ ...big, fontSize: narrow ? 28 : 60, lineHeight: 0.9 }}>{now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false })}</span>
+            <button onClick={() => navigate(-1)} title="뒤로가기" style={{ background: '#182338', border: '1px solid #36465F', borderRadius: 8, color: '#C3CEDF', fontSize: 16, padding: '6px 10px', cursor: 'pointer' }}>← 뒤로</button>
+            <button onClick={toggleFull} title="전체화면 (ESC 로 해제)" style={{ background: '#182338', border: '1px solid #36465F', borderRadius: 8, color: '#C3CEDF', fontSize: 16, padding: '6px 10px', cursor: 'pointer' }}>⛶</button>
+          </div>
         </div>
-      </div>
 
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14, fontSize: 18, fontWeight: 800, alignItems: 'center' }}>
-        {view.late.length > 0 && <span title={view.late.map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)}, ${ddText(r._d)})`).join('\n')} style={{ padding: '8px 16px', borderRadius: 11, background: 'rgba(239,68,68,.14)', border: '1px solid rgba(239,68,68,.45)', color: '#fca5a5', cursor: 'help' }}>🚨 전장 지연 {view.late.length}대</span>}
-        {view.os.length > 0 && <span title={view.os.map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)})`).join('\n')} style={{ padding: '8px 16px', borderRadius: 11, background: 'rgba(249,115,22,.14)', border: '1px solid rgba(249,115,22,.4)', color: '#fdba74', cursor: 'help' }}>⏱ 착수일 지남·미불출 {view.os.length}대</span>}
-        {view.bp.length > 0 && <span title={view.bp.map(r => `${r.pn} ${r.hogi} (가공물 입고예정 ${md(r.arrival_date)})`).join('\n')} style={{ padding: '8px 16px', borderRadius: 11, background: 'rgba(244,63,94,.14)', border: '1px solid rgba(244,63,94,.4)', color: '#fda4af', cursor: 'help' }}>🔩 부품 도착 전 착수 {view.bp.length}대</span>}
-        {view.mch.length > 0 && <span title={view.mch.map(r => `${r.pn} ${r.hogi} (입고예정 ${md(r.arrival_date)})`).join('\n')} style={{ padding: '8px 16px', borderRadius: 11, background: 'rgba(245,158,11,.14)', border: '1px solid rgba(245,158,11,.4)', color: '#fcd34d', cursor: 'help' }}>⚙ 가공물 지연 {view.mch.length}건</span>}
-        <span title={view.groups.flatMap(g => g.rows).filter(r => r._d >= 0 && r._d <= 7).map(r => `${r.pn} ${r.hogi} (전장완료 ${md(r._elec)}, ${ddText(r._d)})`).join('\n')} style={{ padding: '8px 16px', borderRadius: 11, background: 'rgba(139,92,246,.12)', border: '1px solid rgba(139,92,246,.3)', color: '#c4b5fd', cursor: 'help' }}>⚡ 이번주 전장 {view.wkLoad}대</span>
-        <span style={{ marginLeft: 'auto', fontSize: 13, color: '#64748b' }}>전장 완료예정일 기준 · 🟥지남 🟧임박 🟨이번주 · 진행바: 가공·하네스·전장·품질</span>
-      </div>
+        {/* 알림 줄 */}
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: narrow ? 16 : 22, fontWeight: 800 }}>
+          <div style={chip(view.lateElec.length ? 'rgba(255,107,94,0.18)' : '#121B2B')}><span style={{ color: view.lateElec.length ? '#FF8A80' : '#93A3BD' }}>전장 지연 {view.lateElec.length}대</span></div>
+          <div style={chip('#121B2B')}><span style={{ color: view.missJobs.length ? '#FF8A80' : '#93A3BD' }}>미불출 {view.missJobs.length}호기 · {view.missCount}건</span></div>
+          <div style={chip('#121B2B')}><span style={{ color: pulled.length ? '#FFB547' : '#93A3BD' }}>납기 당겨짐 {pulled.length}</span></div>
+          <div style={chip(revChg.length ? 'rgba(255,107,94,0.18)' : '#121B2B')}>
+            <span style={{ color: revChg.length ? '#FF8A80' : '#93A3BD' }}>Rev 변경 {revChg.length}</span>
+            <span style={{ fontSize: '0.8em', fontWeight: 600, color: '#93A3BD' }}>최근 7일</span>
+          </div>
+          <div style={{ ...chip('#12241E'), marginLeft: narrow ? 0 : 'auto', gap: 20 }}>
+            <span style={{ color: '#9FE8C8', fontWeight: 700 }}>오늘 출하 <b style={{ ...big, fontSize: '1.4em', color: '#4FD6A1' }}>{data?.shippedToday ?? '-'}</b></span>
+            <span style={{ color: '#9FE8C8', fontWeight: 700 }}>이번 주 <b style={{ ...big, fontSize: '1.4em', color: '#4FD6A1' }}>{data?.shippedWeek ?? '-'}</b></span>
+          </div>
+        </div>
 
-      {/* 자재 부족 · 납기 변경 — 현장에서 즉시 알아야 하는 것 */}
-      {/* 미불출 자재 · 납기 변경 — 현장에서 즉시 알아야 하는 것 */}
-      {(missing.length > 0 || schChg.length > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: narrow ? '1fr' : '1fr 1fr', gap: 10, marginBottom: 14 }}>
-          {missing.length > 0 && (() => {
-            // 같은 호기끼리 묶는다. 한 프로젝트에 여러 자재가 빠진 경우가 많다.
-            const byJob = []
-            missing.forEach(m => {
-              const key = `${m.pn}|${m.unit_no || ''}`
-              let g = byJob.find(x => x.key === key)
-              if (!g) { g = { key, pn: m.pn, unit_no: m.unit_no, req_date: m.req_date, items: [] }; byJob.push(g) }
-              g.items.push(m)
-            })
-            return (
-              <div style={{ background: 'rgba(239,68,68,.08)', border: '1px solid rgba(239,68,68,.35)', borderRadius: 12, padding: 12 }}>
-                <div style={{ fontSize: 16, fontWeight: 800, color: '#fca5a5', marginBottom: 8 }}>
-                  📦 미불출 자재 — {byJob.length}개 호기 · {missing.length}건
+        {/* 칸 5개 */}
+        <div style={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: narrow ? '1fr' : 'repeat(5, minmax(0, 1fr))', gap: 12 }}>
+          {view.lanes.map((L) => (
+            <div key={L.k} data-lane={L.k} style={{ borderRadius: 16, background: '#121B2B', padding: '14px 12px', display: 'flex', flexDirection: 'column', gap: 8, minHeight: 0, overflow: 'hidden' }}>
+              <div style={{ padding: '0 6px 10px', borderBottom: `3px solid ${L.line}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: narrow ? 20 : 28, fontWeight: 800 }}>{L.l}</span>
+                  <span style={{ ...big, fontSize: narrow ? 40 : 66, lineHeight: 0.8, color: L.line }}>{L.list.length}</span>
                 </div>
-                {byJob.slice(0, 5).map((g, gi) => (
-                  <div key={g.key} style={{ marginBottom: 8,
-                    paddingBottom: gi < Math.min(byJob.length, 5) - 1 ? 8 : 0,
-                    borderBottom: gi < Math.min(byJob.length, 5) - 1 ? '1px solid rgba(148,163,184,.15)' : 'none' }}>
-                    <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 3 }}>
-                      <span style={{ fontFamily: 'monospace', fontSize: 16, fontWeight: 800, color: '#fff' }}>
-                        {g.pn} {g.unit_no}
-                      </span>
-                      <span style={{ fontSize: 13, color: '#f87171', fontWeight: 700 }}>{g.items.length}건</span>
-                      {g.req_date && (
-                        <span style={{ fontSize: 12, color: '#64748b', marginLeft: 'auto' }}>납기 {g.req_date}</span>
-                      )}
-                    </div>
-                    {g.items.map((m, i) => (
-                      <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline',
-                        paddingLeft: 12, marginBottom: 2 }}>
-                        <span style={{ fontSize: 14, color: '#e2e8f0', flex: 1, minWidth: 0,
-                          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {m.part_name || m.part_pn}
-                        </span>
-                        <span style={{ fontSize: 14, fontWeight: 800, color: '#fca5a5' }}>{m.part_qty}개</span>
-                        <span style={{ fontFamily: 'monospace', fontSize: 14, fontWeight: 700,
-                          color: m.eta ? '#7dd3fc' : '#64748b', minWidth: 90, textAlign: 'right' }}>
-                          {m.eta || '예정 미정'}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                ))}
-                {byJob.length > 5 && (
-                  <div style={{ fontSize: 12, color: '#64748b' }}>외 {byJob.length - 5}개 호기…</div>
-                )}
+                <span style={{ fontSize: narrow ? 13 : 17, color: '#C3CEDF' }}>{view.next[L.k]}</span>
               </div>
-            )
-          })()}
-
-          {schChg.length > 0 && (
-            <div style={{ background: 'rgba(245,158,11,.08)', border: '1px solid rgba(245,158,11,.35)', borderRadius: 12, padding: 12 }}>
-              <div style={{ fontSize: 16, fontWeight: 800, color: '#fcd34d', marginBottom: 8 }}>
-                ⚠ 납기 변경 {schChg.length}건 — 작업지시서 확인
-              </div>
-              {schChg.map((c, i) => {
-                const pulled = c.to_date < c.from_date
+              {L.list.length === 0 && <div style={{ textAlign: 'center', color: '#6F809B', fontSize: 18, padding: 20 }}>없음</div>}
+              {L.list.slice(0, maxCards).map((c) => {
+                const late = c._d != null && c._d < 0
+                const near = c._d === 0 || c._d === 1
                 return (
-                  <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 5 }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 800, color: '#fff' }}>{c.po_number}</span>
-                    <span style={{ fontSize: 13, color: '#94a3b8', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.item_name}
-                    </span>
-                    <span style={{ fontFamily: 'monospace', fontSize: 14 }}>
-                      <span style={{ color: '#64748b' }}>{c.from_date}</span>
-                      <span style={{ margin: '0 5px', fontWeight: 800, color: pulled ? '#fca5a5' : '#7dd3fc' }}>
-                        {pulled ? '◀' : '▶'}
-                      </span>
-                      <span style={{ fontWeight: 800, color: pulled ? '#fca5a5' : '#7dd3fc' }}>{c.to_date}</span>
-                    </span>
+                  <div key={c.id} data-card={c.id} style={{ borderRadius: 12, padding: '9px 12px', background: late ? 'rgba(255,107,94,0.16)' : '#182338', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 22 : 30 }}>{c.pn}</span>
+                      <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 22 : 30, color: '#7CC4FF' }}>{c.hogi}</span>
+                      <span style={{ marginLeft: 'auto', padding: '1px 10px', borderRadius: 8, ...big, fontSize: narrow ? 20 : 27,
+                        background: late ? '#FF6B5E' : near ? '#FFB547' : '#2A3B57', color: late ? '#1A0806' : near ? '#1C1204' : '#DCEBFF' }}>{ddText(c._d)}</span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: narrow ? 14 : 17 }}>
+                      <span title={c._rev.diff ? `PO 발행 BREV ${c._rev.b} · 지금 SREV ${c._rev.s}` : ''}
+                        style={{ padding: '0 9px', borderRadius: 6, ...big, fontWeight: 700, fontSize: narrow ? 16 : 21,
+                          background: c._rev.diff ? 'transparent' : '#243149', color: c._rev.diff ? '#FF8A80' : '#C3CEDF',
+                          border: c._rev.diff ? '2px solid #FF6B5E' : '2px solid transparent' }}>{c._rev.text}</span>
+                      {c._proto && <span style={{ padding: '0 8px', borderRadius: 6, background: '#3A3016', color: '#FFD27A', fontWeight: 800 }}>초도</span>}
+                      <span style={{ marginLeft: 'auto', color: '#93A3BD' }}>{c._dateLabel} {md(c._date)}</span>
+                    </div>
+                    <div style={{ fontSize: narrow ? 14 : 18, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      color: c._why.tone === 'red' ? '#FF8A80' : c._why.tone === 'green' ? '#4FD6A1' : '#C3CEDF' }}>{c._why.t}</div>
                   </div>
                 )
               })}
+              {L.list.length > maxCards && (
+                <div style={{ textAlign: 'center', fontSize: 18, color: '#93A3BD', fontWeight: 700 }}>+{L.list.length - maxCards}대 더</div>
+              )}
             </div>
-          )}
+          ))}
         </div>
-      )}
 
-      {massGroups.length > 0 && (
-        <>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#7dd3fc', margin: '8px 0 8px' }}>🔵 양산품</div>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 10 }}>
-            {massGroups.map(g => <Card key={g.pn} g={g} />)}
+        {/* 아래 — 돌아가는 알림 한 줄 + 범례 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, minHeight: 50, padding: '6px 16px', borderRadius: 14, background: '#121B2B', flexWrap: narrow ? 'wrap' : 'nowrap' }}>
+          {msg ? (
+            <>
+              <span style={{ flexShrink: 0, padding: '3px 12px', borderRadius: 8, fontSize: 18, fontWeight: 800,
+                background: msg.red ? 'rgba(255,107,94,0.18)' : 'rgba(124,196,255,0.16)', color: msg.red ? '#FF8A80' : '#8FD0FF' }}>{msg.tag}</span>
+              <span style={{ fontSize: narrow ? 15 : 21, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}>{msg.t}</span>
+              <span style={{ flexShrink: 0, fontSize: 16, color: '#6F809B' }}>{(mi % msgs.length) + 1} / {msgs.length}</span>
+            </>
+          ) : <span style={{ fontSize: 19, color: '#6F809B' }}>새 알림 없음 (Rev · 납기 변경 · 미불출)</span>}
+          {(revErr || schErr) && <span style={{ fontSize: 15, color: '#FF8A80' }}>일부 알림을 못 불러왔습니다</span>}
+          <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 14, fontSize: 15, color: '#93A3BD' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><i style={{ width: 14, height: 14, borderRadius: 4, background: '#FF6B5E', display: 'block' }} />지남</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><i style={{ width: 14, height: 14, borderRadius: 4, background: '#FFB547', display: 'block' }} />오늘·내일</span>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 5 }}><i style={{ width: 14, height: 14, borderRadius: 4, border: '2px solid #FF6B5E', boxSizing: 'border-box', display: 'block' }} />Rev 다름</span>
+            <span>5분마다 갱신</span>
           </div>
-        </>
-      )}
-      {protoGroups.length > 0 && (
-        <>
-          <div style={{ fontSize: 17, fontWeight: 800, color: '#fbbf24', margin: '16px 0 8px' }}>🟡 초도품 · 신규</div>
-          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols},1fr)`, gap: 10 }}>
-            {protoGroups.map(g => <Card key={g.pn} g={g} />)}
-          </div>
-        </>
-      )}
-      {view.groups.length === 0 && <div style={{ textAlign: 'center', padding: 60, color: '#475569' }}>표시할 호기가 없습니다 (전장완료 예정 {RANGE_DAYS}일 이내)</div>}
-
-      <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
-        {['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기'].map(st => (
-          <div key={st} style={{ flex: narrow ? '1 1 30%' : 1, background: '#0f172a', border: '1px solid #334155', borderRadius: 10, padding: 12, textAlign: 'center' }}>
-            <b style={{ display: 'block', fontSize: narrow ? 24 : 32, fontWeight: 900, color: '#fff' }}>{view.byStatus[st] || 0}</b>
-            <span style={{ fontSize: 13, color: '#94a3b8', fontWeight: 700 }}>{st === 'PO접수' ? '미불출(PO접수)' : st}</span>
-          </div>
-        ))}
+        </div>
       </div>
-      <div style={{ textAlign: 'center', fontSize: 10, color: '#334155', marginTop: 8 }}>F11 전체화면 · 조회 전용 · 5분 자동갱신</div>
     </div>
   )
 }

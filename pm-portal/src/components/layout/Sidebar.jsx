@@ -24,7 +24,7 @@ const MENU_META = {
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
   '/sales-quote': ['📤','매출견적'],
   '/field-search': ['🔎','현장 검색'], '/production': ['🏭','생산 대시보드'],
-  '/production/AX': ['🔧','생산 관리'], '/board': ['🖥','생산 전광판'], '/drawings': ['📐','도면 조회'],
+  '/production/AX': ['🔧','생산 관리'], '/production/qr-demo': ['🧪','QR 공정 데모'], '/board': ['🖥','생산 전광판'], '/drawings': ['📐','도면 조회'],
   '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
   '/sales': ['💼','매출 대시보드'], '/cost': ['💵','원가분석'],
   '/request-load': ['🗂','자재요청 업무량'],
@@ -356,6 +356,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
+          <MenuItem to="/production/qr-demo" icon="🧪" onNavigate={onNavigate}>QR 공정 데모</MenuItem>
         </CollapseSection>
         )}
     </>),

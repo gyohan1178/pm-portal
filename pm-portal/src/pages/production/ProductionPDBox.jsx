@@ -4,6 +4,7 @@ import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
+import { WorkOrderPrinter } from '../../components/WorkOrderPrint'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 import { parseEdMonthly } from '../../lib/edMonthly'
@@ -189,6 +190,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   }, []))
   const [bulkField, setBulkField] = useState('arrival_date')
   const [bulkDate, setBulkDate] = useState('')
+  // 작업지시서 인쇄 — 고른 호기를 QR 작업지시서로 (components/WorkOrderPrint.jsx, QR 공정 데모와 같은 양식)
+  const [woRows, setWoRows] = useState(null)
+  const printWo = () => {
+    const list = (rows || []).filter((r) => sel.has(r.id))
+    if (!list.length) { toastError('작업지시서를 뽑을 호기를 고르세요'); return }
+    setWoRows(list.map((r) => ({ ...r, _po: r.po_number || '', _elec: calcElec(r) })))
+  }
 
   // 품목별 기초 공수 MD (items.md_days)
   const { data: mdMap = {} } = useQuery({
@@ -436,6 +444,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
   return (
     <>
+      {woRows && <WorkOrderPrinter rows={woRows} onDone={() => setWoRows(null)} />}
       <div className="flex items-center gap-2 flex-wrap mb-3">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품번·PD명·호기 검색"
           className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
@@ -587,6 +596,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               </button>
               <button onClick={()=>{ if(window.confirm(`선택 ${sel.size}건의 날짜를 비울까요?`)) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null }) }}
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
+              <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
+                {woRows ? 'QR 만드는 중…' : `🖨 작업지시서 (${sel.size})`}
+              </button>
               <button onClick={()=>setSel(new Set())}
                 className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
             </div>
@@ -683,13 +696,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     {(() => {
                       // SREV / BREV.
                       //   BREV = PO 발행 시점 Rev (제작은 최소 BREV 까지) · SREV = 지금 고객사 Rev (바뀔 수 있다)
-                      //   둘이 다르면 오류가 아니라 「도면 Rev 확인」이다 → 빨강 ⚠ 대신 파랑 (생산 전광판과 같은 기준)
+                      //   둘이 다르면 「도면 Rev 확인」 — 눈에 잘 띄게 빨강 (생산 전광판과 같은 기준)
                       const sv = (r.rev || '').trim()
                       const bv = (r.brev || '').trim()
                       const same = sv && bv && sv.toUpperCase() === bv.toUpperCase()
                       const cls = !sv || !bv ? 'text-slate-400'
                                 : same       ? 'text-slate-500'
-                                             : 'text-sky-600'
+                                             : 'text-rose-600'
                       return (
                         <span className={`inline-flex items-baseline gap-0.5 font-bold font-mono ${cls}`}
                           title={!sv || !bv ? 'SREV 또는 BREV 가 아직 없습니다'
@@ -698,6 +711,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                           <span>{sv || '-'}</span>
                           <span className="opacity-40">/</span>
                           <span>{bv || '-'}</span>
+                          {!same && sv && bv && <span className="ml-0.5 text-[9px]">⚠</span>}
                         </span>
                       )
                     })()}

@@ -62,6 +62,7 @@ const ProductionDashboard = lazy(() => import('./pages/production/ProductionDash
 const ProductionCustomer = lazy(() => import('./pages/production/ProductionCustomer'))
 const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
 const DrawingSearch = lazy(() => import('./pages/production/DrawingSearch'))
+const QrDemo = lazy(() => import('./pages/production/QrDemo'))
 
 function ControlTowerRoute() {
   const { scope } = useParams()
@@ -196,6 +197,7 @@ export default function App() {
         <Route path="restore" element={<SnapshotRestore />} />
         <Route path="todo" element={<Todo />} />
         <Route path="production" element={<ProductionDashboard />} />
+        <Route path="production/qr-demo" element={<QrDemo />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
         <Route path="drawings" element={<DrawingSearch />} />
       </Route>

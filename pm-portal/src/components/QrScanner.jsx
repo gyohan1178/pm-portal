@@ -7,7 +7,15 @@ import { useState, useRef, useEffect, useCallback } from 'react'
 //
 //   태그 QR 에는 위치 코드만 들어 있다 (예: A1-01-3).
 //   라벨이 작아 URL 을 넣으면 QR 이 촘촘해져 인식이 어렵기 때문이다.
-export default function QrScanner({ onScan, onClose }) {
+//   parse · hint · placeholder 를 넘기면 다른 QR 에도 쓴다 (예: 작업지시서 QR — QR 공정 데모).
+//     parse(text) 가 값을 돌려주면 인식, null 이면 무시하고 계속 찾는다.
+const parseLocDefault = (text) => {
+  const t = String(text || '').trim().toUpperCase()
+  const m = t.match(/([A-Z]+[0-9]*-[0-9]+-[0-9]+)/)
+  return m ? m[1] : null
+}
+
+export default function QrScanner({ onScan, onClose, parse, hint, placeholder }) {
   const videoRef = useRef(null)
   const canvasRef = useRef(null)
   const rafRef = useRef(null)
@@ -18,11 +26,8 @@ export default function QrScanner({ onScan, onClose }) {
   const [last, setLast] = useState('')
 
   // 위치 코드만 뽑아낸다. URL 이 들어와도 뒤쪽 코드를 인식한다.
-  const parseLoc = (text) => {
-    const t = String(text || '').trim().toUpperCase()
-    const m = t.match(/([A-Z]+[0-9]*-[0-9]+-[0-9]+)/)
-    return m ? m[1] : null
-  }
+  //   ⚠ parse 는 컴포넌트 밖에서 만든 함수를 넘길 것 — 렌더마다 바뀌면 카메라가 다시 켜진다
+  const parseLoc = parse || parseLocDefault
 
   // 한 번 인식하면 곧바로 멈춘다.
   // ref 로 막는 이유: setState 는 다음 렌더에 반영되어
@@ -36,7 +41,7 @@ export default function QrScanner({ onScan, onClose }) {
     setLast(loc)
     if (navigator.vibrate) navigator.vibrate(60)
     onScan(loc)
-  }, [onScan])
+  }, [onScan, parseLoc])
 
   useEffect(() => {
     let detector = null
@@ -148,13 +153,13 @@ export default function QrScanner({ onScan, onClose }) {
       {/* 안내 · 직접 입력 */}
       <div className="bg-white p-4 space-y-3">
         <p className="text-xs text-slate-500 text-center">
-          랙에 붙인 위치 태그를 비추면 자동으로 열립니다
+          {hint || '랙에 붙인 위치 태그를 비추면 자동으로 열립니다'}
         </p>
         <div className="flex gap-2">
           <input value={manual} onChange={e => setManual(e.target.value)}
             onKeyDown={e => { const l = parseLoc(manual); if (e.key === 'Enter' && l && !doneRef.current) { doneRef.current = true; onScan(l) } }}
-            placeholder="직접 입력 (예: A1-01-3)"
-            className="flex-1 px-3 py-2.5 text-sm border border-slate-200 rounded-lg uppercase" />
+            placeholder={placeholder || '직접 입력 (예: A1-01-3)'}
+            className={`flex-1 px-3 py-2.5 text-sm border border-slate-200 rounded-lg ${parse ? '' : 'uppercase'}`} />
           <button onClick={() => { const l = parseLoc(manual); if (l && !doneRef.current) { doneRef.current = true; onScan(l) } }}
             disabled={!parseLoc(manual)}
             className="px-4 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-30">
