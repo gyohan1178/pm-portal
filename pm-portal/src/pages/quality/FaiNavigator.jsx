@@ -34,6 +34,17 @@ import {
 //     완료 표시는 품질이 직접 한다 (툴 결과만으로 끝내지 않게) — 반영은 「진행」까지.
 
 const APP_VER = 'v3.2 (포털 2단계)'
+// Part Report · 도면이 있는 NAS 폴더 — 브라우저는 NAS 폴더를 직접 못 열어서 주소를 복사해 탐색기 주소창에 붙여 넣는다
+const NAS_DIR = '\\\\jinsuntech-nas\\1. 공용폴더\\1. 업체별 프로젝트\\3. AXCELIS\\1. 도면'
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true } catch { /* http 이거나 권한 없음 → 아래 방법 */ }
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = t; ta.style.position = 'fixed'; ta.style.opacity = '0'
+    document.body.appendChild(ta); ta.select()
+    const ok = document.execCommand('copy'); ta.remove(); return ok
+  } catch { return false }
+}
 const LS_OPT = 'pm_fai_opt'
 const LS_REP = 'pm_fai_rep'
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }
@@ -428,6 +439,12 @@ export default function FaiNavigator() {
           ) : (
             <p className="text-xs text-slate-400 mt-0.5">Windchill 에서 받은 Part report 파일을 끌어다 놓거나 선택하세요. 한 번 올리면 이 PC 에 기억됩니다.</p>
           )}
+          <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+            <span className="text-[11px] font-semibold text-slate-500">Part Report 위치</span>
+            <code className="px-2 py-0.5 rounded bg-white border border-slate-200 text-[11px] text-slate-600 select-all">{NAS_DIR}</code>
+            <button type="button" onClick={async () => { if (await copyText(NAS_DIR)) toastSuccess('주소를 복사했습니다 — 파일 선택 창이나 탐색기 주소창에 붙여 넣으세요'); else toastError('복사하지 못했습니다 — 주소를 드래그해서 복사하세요') }}
+              className="px-2 py-0.5 text-[11px] font-bold rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">📋 복사</button>
+          </div>
         </div>
         <button onClick={() => fileRef.current?.click()}
           className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">

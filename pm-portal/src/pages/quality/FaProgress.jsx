@@ -12,7 +12,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { ResizableTable } from '../../components/ResizableTable'
 import { customerRows, customerSummary, custTone, CUST_COLS, exportFaCustomer } from '../../lib/faCustomerReport'
 import {
-  FA_TYPES, FA_GATES, faTypeLabel, gatesOf, gateInfo, stepsOf, stepLabel, stepState, stepText,
+  FA_TYPES, FA_GATES, faTypeLabel, faTypeTone, gatesOf, gateInfo, stepsOf, stepLabel, stepState, stepText,
   faProgress, faStage, faApproved, faDelay, dayDiff, parseFaPaste,
   FA_ISSUE_CATS, issueTone, CUST_CAT, splitFaLogs, revCheck, revDiff,
 } from '../../lib/faTemplate'
@@ -67,7 +67,7 @@ function IssueBadge({ r }) {
   )
 }
 const RevTag = ({ r }) => (revUp(r)
-  ? <span title={`PO 발행 Rev(BREV) ${r.brev} · 지금 고객사 Rev(SREV) ${r.srev} — 제작은 최소 BREV 까지`} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200">Rev {r.brev}→{r.srev}</span>
+  ? <span title={`PO 발행 Rev(BREV) ${r.brev} · 지금 고객사 Rev(SREV) ${r.srev} — 제작은 최소 BREV 까지`} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-300">Rev {r.brev}→{r.srev}</span>
   : null)
 
 function ProgressBar({ pct }) {
@@ -364,7 +364,9 @@ export default function FaProgress() {
           <>
             <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
               {[{ key: '', label: '전체' }, ...FA_TYPES].map((t) => (
-                <button key={t.key || 'all'} onClick={() => setTypeF(t.key)} className={chip(typeF === t.key)}>{t.label}</button>
+                <button key={t.key || 'all'} onClick={() => setTypeF(t.key)} className={`${chip(typeF === t.key)} inline-flex items-center gap-1.5`}>
+                  {t.key && <span className={`w-2 h-2 rounded-full ${faTypeTone(t.key).dot}`} />}{t.label}
+                </button>
               ))}
             </div>
             <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
@@ -527,7 +529,7 @@ function Board({ columns, today, canEdit, onOpen, onPass, showDone }) {
                   </div>
                   <div className="text-[11px] text-slate-600 truncate" title={r.item_desc || ''}>{r.item_desc}</div>
                   <div className="mt-1 flex items-center gap-1 text-[11px] whitespace-nowrap overflow-hidden">
-                    <span className="text-[10px] font-bold px-1 rounded bg-slate-100 text-slate-600">{faTypeLabel(r.fa_type)}</span>
+                    <span className={`text-[10px] font-bold px-1.5 rounded ${faTypeTone(r.fa_type).badge}`}>{faTypeLabel(r.fa_type)}</span>
                     <span className={`truncate ${r._cur?.late ? 'font-bold text-rose-600' : 'text-slate-500'}`}>
                       {r._cur?.late ? `${md(p)} +${r._cur.diff}일 늦음` : p ? `예정 ${md(p)}` : '예정 없음'}
                     </span>
@@ -590,7 +592,7 @@ function FaGroupRows({ g, folded, colSpan, onFold, onOpen }) {
         <td colSpan={colSpan} className="px-3 py-2">
           <button onClick={onFold} className="flex items-center gap-3 text-left w-full">
             <span className="text-slate-400 w-3">{folded ? '▸' : '▾'}</span>
-            <span className="text-sm font-extrabold text-slate-800">{g.label}</span>
+            <span className={`px-2.5 py-0.5 rounded-md text-sm font-extrabold ${faTypeTone(g.key).badge}`}>{g.label}</span>
             <span className="text-xs font-bold text-slate-500">{g.list.length}건</span>
             <span className="text-xs text-slate-400">평균 진척도 <b className="text-slate-600">{g.avg}%</b></span>
             {g.late > 0 && <span className="text-xs font-bold text-rose-600">예정일 지남 {g.late}</span>}
@@ -610,7 +612,7 @@ function FaGroupRows({ g, folded, colSpan, onFold, onOpen }) {
               <div className="text-[11px] text-slate-500 whitespace-nowrap overflow-hidden text-ellipsis">{r.item_desc}</div>
             </button>
           </td>
-          <td className={`px-3 py-2 font-mono whitespace-nowrap ${revUp(r) ? 'text-sky-700 font-bold' : 'text-slate-500'}`}
+          <td className={`px-3 py-2 font-mono whitespace-nowrap ${revUp(r) ? 'text-rose-600 font-bold' : 'text-slate-500'}`}
             title={revUp(r) ? `PO 발행 Rev(BREV) ${r.brev} → 지금 SREV ${r.srev}` : ''}>{r.srev || '-'} / {r.brev || '-'}</td>
           <td className="px-3 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap overflow-hidden">{r.po_number}</td>
           <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-ellipsis text-slate-600" title={r.fa_ready_text || ''}>
@@ -837,7 +839,10 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
       {/* 머리 */}
       <div className="rounded-2xl border border-slate-200 bg-white p-5 flex items-start justify-between gap-4 flex-wrap">
         <div className="min-w-0">
-          <div className="text-xs font-bold text-slate-400">{faTypeLabel(fa.fa_type)} · CCN {fa.ccn || '-'} · FA PO <span className="font-mono text-slate-600">{fa.po_number}</span></div>
+          <div className="text-xs font-bold text-slate-400 flex items-center gap-2">
+            <span className={`px-2 py-0.5 rounded text-[11px] font-extrabold ${faTypeTone(fa.fa_type).badge}`}>{faTypeLabel(fa.fa_type)}</span>
+            <span>CCN {fa.ccn || '-'} · FA PO <span className="font-mono text-slate-600">{fa.po_number}</span></span>
+          </div>
           <div className="mt-1 flex items-baseline gap-3 flex-wrap">
             <h1 className="text-2xl font-extrabold font-mono text-slate-900">{fa.item_code}</h1>
             <span className="text-base text-slate-600">{fa.item_desc}</span>
@@ -1250,7 +1255,7 @@ function PasteModal({ rows, csId, me, onClose, onDone }) {
                       return (
                         <tr key={`${r.po_number}|${r.item_code}`} className="border-t border-slate-100">
                           <td className="px-2 py-1">{old ? <span className="text-emerald-700 font-bold">갱신</span> : <span className="text-indigo-700 font-bold">새로</span>}</td>
-                          <td className="px-2 py-1">{faTypeLabel(old?.fa_type || r.fa_type)}</td>
+                          <td className="px-2 py-1"><span className={`px-1.5 rounded font-bold ${faTypeTone(old?.fa_type || r.fa_type).badge}`}>{faTypeLabel(old?.fa_type || r.fa_type)}</span></td>
                           <td className="px-2 py-1 font-mono">{r.item_code}</td>
                           <td className="px-2 py-1 max-w-[220px] truncate">{r.item_desc}</td>
                           <td className={`px-2 py-1 font-mono ${revOf.has(`${r.po_number}|${r.item_code}`) ? 'text-sky-700 font-bold' : ''}`}

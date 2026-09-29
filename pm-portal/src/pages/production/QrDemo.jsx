@@ -1,68 +1,37 @@
-import { useState, useMemo, useEffect, useCallback } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { supabase } from '../../lib/supabase'
-import { fetchAll } from '../../lib/paginate'
-import { must } from '../../lib/db'
-import { toastError, toastSuccess } from '../../lib/toast'
-import QrScanner from '../../components/QrScanner'
+import QRCode from 'qrcode'
+import { toastError } from '../../lib/toast'
 import { WoSheet, WorkOrderPrinter, useWoQr } from '../../components/WorkOrderPrint'
-import { isMainRow } from './mainPns'
-import { bdMinus } from '../../lib/bizdays'
-import {
-  QR_STEPS, doneFromRow, nextStep, qrText, parseQr, scanRevCheck, revInfo, laneOf, LANES, md,
-} from '../../lib/prodFlow'
+import ScanView, { useDemoRows, useDemoStore, hm } from './ScanView'
+import { QR_STEPS, nextStep, qrText, revInfo, laneOf, LANES, md } from '../../lib/prodFlow'
 
 // 🧪 QR 공정 데모 (v4.24.0)
 //
-//   작업지시서에 호기별 QR 을 찍어 내고 → 폰으로 찍으면 그 호기의 다음 공정이 뜨고 → 한 번 누르면 기록 → 흐름이 보인다.
+//   PC — ① 작업지시서 발행 ② 스캔 ③ 공정 흐름.  폰 — 스캔만 (ScanView, /scan 과 같은 화면).
 //   셀 방식 — 한 사람이 한 호기를 맡는다. 폰마다 「이 폰 사용자」를 한 번 정해 두면 누가 했는지 남는다.
 //   전장만 시작 · 완료 둘 다, 나머지 공정은 완료만. 포장 · 출하는 따로.
 //
 //   ⚠ 데모 — 생산관리 체크칸(production)에는 쓰지 않는다. 기록은 이 기기(브라우저)에만 남는다.
-//     생산관리 데이터는 읽기만 한다 (지금 어디까지 끝났는지 출발점으로).
 //     정식 전환 때: 기록을 pm_prod_scan 표에 남기고, 완료 스캔이 생산관리 체크칸을 켜게 한다.
 
-const LS = 'pm_qr_demo_v1'
-const load = () => { try { return JSON.parse(localStorage.getItem(LS) || '{}') } catch { return {} } }
-const save = (v) => { try { localStorage.setItem(LS, JSON.stringify(v)); return true } catch { return false } }
-const hm = (ts) => { const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false }) }
 const mins = (a, b) => Math.max(0, Math.round((b - a) / 60000))
 const dur = (m) => (m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`)
-const calcElec = (r, qc) => r.elec_done || bdMinus(r.req_date, Math.max(1, Math.ceil(Number(qc) || 2)))
-
-async function fetchRows() {
-  const prod = await fetchAll(() => supabase.from('production')
-    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,ccn,po_id,customer_code')
-    .eq('customer_code', 'AX').neq('status', '완료').order('id'))
-  const main = prod.filter((r) => isMainRow(r.pn, r.customer_code))
-  const ids = [...new Set(main.map((r) => r.po_id).filter(Boolean))]
-  const po = {}
-  for (let i = 0; i < ids.length; i += 200) {
-    const part = must(await supabase.from('purchase_orders').select('id,po_number').in('id', ids.slice(i, i + 200)), 'PO 조회') || []
-    part.forEach((p) => { po[p.id] = p.po_number })
-  }
-  const items = must(await supabase.from('items').select('std_code,qc_md_days').like('std_code', 'AX-11%'), '품목 조회') || []
-  const qc = Object.fromEntries(items.map((i) => [String(i.std_code).replace('AX-', ''), i.qc_md_days]))
-  return main.map((r) => ({ ...r, _po: po[r.po_id] || '', _elec: calcElec(r, qc[r.pn]) }))
-    .sort((a, b) => String(a.req_date || '9').localeCompare(String(b.req_date || '9')) || String(a.pn).localeCompare(String(b.pn)))
-}
+const isPhone = () => typeof window !== 'undefined' && window.innerWidth < 768
 
 export default function QrDemo() {
   const [sp, setSp] = useSearchParams()
   const tab = sp.get('t') || 'wo'
   const setTab = (t) => setSp((x) => { const s = new URLSearchParams(x); if (t === 'wo') s.delete('t'); else s.set('t', t); return s })
-  const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['qrDemoRows'], queryFn: fetchRows, staleTime: 60 * 1000 })
-  const [st, setSt] = useState(() => { const v = load(); return { worker: v.worker || '', events: Array.isArray(v.events) ? v.events : [] } })
-  const put = (next) => { setSt(next); if (!save(next)) toastError('이 브라우저에 저장하지 못했습니다 (사생활 보호 모드?) — 새로고침하면 사라집니다') }
+  const { data: rows = [], isLoading, error } = useDemoRows()
+  const store = useDemoStore()
+  const [phone, setPhone] = useState(isPhone)
+  useEffect(() => { const f = () => setPhone(isPhone()); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f) }, [])
 
-  // 호기별 끝난 공정 = 생산관리 체크칸 + 데모 기록
-  const doneOf = useCallback((r) => {
-    const s = doneFromRow(r)
-    st.events.filter((e) => String(e.pid) === String(r.id)).forEach((e) => s.add(e.step))
-    return s
-  }, [st.events])
+  // 폰 — 스캔 화면만
+  if (phone) return <div className="-m-4"><ScanView store={store} rows={rows} full /></div>
 
+  const { st, put, doneOf } = store
   const tabs = [['wo', '① 작업지시서'], ['scan', '② 스캔'], ['flow', '③ 공정 흐름']]
   return (
     <div className="space-y-4">
@@ -71,24 +40,24 @@ export default function QrDemo() {
         <h1 className="text-xl font-extrabold text-slate-900">QR 공정 데모</h1>
         <p className="text-[13px] text-slate-400 mt-0.5 break-keep">
           작업지시서의 QR 을 폰으로 찍으면 그 호기의 다음 공정이 떠서, 한 번 누르면 기록됩니다.
-          셀 방식 — 한 사람이 한 호기를 맡고, 전장만 시작 · 완료를 둘 다 찍습니다.
+          셀 방식 — 한 사람이 한 호기를 맡고, 전장만 시작 · 완료를 둘 다 찍습니다. 폰에서 이 메뉴를 열면 스캔 화면만 나옵니다.
         </p>
         <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 font-semibold break-keep">
           🧪 데모 — 생산관리 체크칸에는 기록하지 않습니다. 찍은 기록은 이 기기에만 남습니다.
         </div>
       </div>
 
-      <div className="grid grid-cols-3 sm:inline-grid sm:w-auto rounded-lg border border-slate-200 overflow-hidden text-sm font-bold">
+      <div className="inline-grid grid-cols-3 rounded-lg border border-slate-200 overflow-hidden text-sm font-bold">
         {tabs.map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
-            className={`px-2 sm:px-4 py-2.5 whitespace-nowrap border-r last:border-r-0 border-slate-200 ${tab === k ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{l}</button>
+            className={`px-4 py-2 whitespace-nowrap border-r last:border-r-0 border-slate-200 ${tab === k ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{l}</button>
         ))}
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">생산관리 데이터를 못 불러왔습니다 — {error.message}</div>}
       {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p>
         : tab === 'wo' ? <WorkOrders rows={rows} />
-        : tab === 'scan' ? <ScanTab rows={rows} st={st} put={put} doneOf={doneOf} />
+        : tab === 'scan' ? <ScanTab rows={rows} store={store} />
         : <FlowTab rows={rows} st={st} put={put} doneOf={doneOf} />}
     </div>
   )
@@ -170,105 +139,20 @@ function WorkOrders({ rows }) {
   )
 }
 
-/* ───────── ② 스캔 (폰) ───────── */
-function ScanTab({ rows, st, put, doneOf }) {
-  const [name, setName] = useState(st.worker)
-  const [open, setOpen] = useState(false)
-  const [cur, setCur] = useState(null)      // { id, qrRev }
-  const [last, setLast] = useState(null)    // 방금 기록 { ev, at }
-  const [, tick] = useState(0)
-  useEffect(() => { if (!last) return undefined; const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t) }, [last])
-
-  const onScan = useCallback((p) => {
-    setOpen(false)
-    if (!rows.some((r) => String(r.id) === String(p.id))) { toastError('진행 중인 PD 호기가 아닙니다 (완료됐거나 다른 QR)'); return }
-    setCur({ id: p.id, qrRev: p.rev }); setLast(null)
-  }, [rows])
-
-  const r = cur ? rows.find((x) => String(x.id) === String(cur.id)) : null
-  const done = r ? doneOf(r) : null
-  const nx = done ? nextStep(done) : null
-  const checks = r ? scanRevCheck(r, cur.qrRev) : []
-
-  function record() {
-    if (!st.worker) { toastError('먼저 「이 폰 사용자」를 정하세요'); return }
-    if (!r || !nx) return
-    const ev = { id: `${Date.now()}`, pid: String(r.id), step: nx.k, at: Date.now(), by: st.worker }
-    put({ ...st, events: [...st.events, ev] })
-    setLast({ ev, at: Date.now() })
-    toastSuccess(`${r.pn} ${r.hogi} — ${nx.l} 기록 (데모)`)
-  }
-  function undo() {
-    if (!last) return
-    put({ ...st, events: st.events.filter((e) => e.id !== last.ev.id) })
-    setLast(null)
-  }
-  const undoLeft = last ? Math.max(0, 8 - Math.floor((Date.now() - last.at) / 1000)) : 0
-
+/* ───────── ② 스캔 — PC 에서는 폰 화면을 옆에 띄워 보고, 폰으로 여는 QR 을 준다 ───────── */
+function ScanTab({ rows, store }) {
+  const url = `${window.location.origin}/scan`
+  const [img, setImg] = useState('')
+  useEffect(() => { QRCode.toDataURL(url, { width: 220, margin: 1 }).then(setImg).catch((e) => toastError('QR 을 만들지 못했습니다: ' + e.message)) }, [url])
   return (
-    <div className="max-w-md mx-auto sm:mx-0 space-y-3">
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
-        <label className="flex flex-col gap-1.5 text-xs font-bold text-slate-500">이 폰 사용자 (처음 한 번만)
-          <div className="flex gap-2">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder="이름" aria-label="이 폰 사용자"
-              className="flex-1 px-3 py-2.5 text-base font-normal border border-slate-200 rounded-lg" />
-            <button onClick={() => { put({ ...st, worker: name.trim() }); toastSuccess('이 폰 사용자를 저장했습니다') }} disabled={!name.trim() || name.trim() === st.worker}
-              className="shrink-0 px-4 py-2.5 text-sm font-bold rounded-lg bg-slate-800 text-white disabled:opacity-30">저장</button>
-          </div>
-        </label>
-        {st.worker && <p className="text-xs text-slate-500">지금 <b className="text-slate-800">{st.worker}</b>(으)로 기록됩니다</p>}
+    <div className="flex gap-6 items-start flex-wrap">
+      <div className="w-[400px] max-w-full shadow-sm"><ScanView store={store} rows={rows} /></div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2 max-w-xs">
+        <div className="text-sm font-extrabold text-slate-800">폰에서 열기</div>
+        {img ? <img src={img} alt="스캔 화면 주소 QR" className="w-40 h-40" /> : <div className="w-40 h-40 bg-slate-100 rounded" />}
+        <div className="font-mono text-xs text-slate-500 break-all">{url}</div>
+        <p className="text-xs text-slate-500 break-keep">폰 카메라로 이 QR 을 찍으면 포털 틀 없이 스캔 화면만 꽉 차게 열립니다 (로그인 필요). 홈 화면에 추가해 두면 앱처럼 씁니다.</p>
       </div>
-
-      <button onClick={() => setOpen(true)} className="w-full py-5 text-lg font-extrabold rounded-2xl bg-indigo-600 text-white hover:bg-indigo-700">📷 작업지시서 QR 찍기</button>
-      <label className="flex flex-col gap-1.5 text-xs font-bold text-slate-500">카메라 없이 호기 고르기
-        <select value={cur?.id || ''} onChange={(e) => { const x = rows.find((y) => String(y.id) === e.target.value); if (x) { setCur({ id: String(x.id), qrRev: revInfo(x).b }); setLast(null) } }}
-          className="px-3 py-2.5 text-sm font-normal border border-slate-200 rounded-lg bg-white">
-          <option value="">— 호기 —</option>
-          {rows.map((x) => <option key={x.id} value={x.id}>{x.pn} {x.hogi}</option>)}
-        </select>
-      </label>
-
-      {r && (
-        <div className="rounded-2xl border-2 border-indigo-200 bg-white p-4 space-y-3" data-scan-card>
-          <div>
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-2xl font-extrabold">{r.pn}</span>
-              <span className="font-mono text-2xl font-extrabold text-indigo-600">{r.hogi}</span>
-            </div>
-            <div className="text-sm text-slate-600 truncate">{r.name}</div>
-            <div className="text-xs text-slate-400 whitespace-nowrap">납기 {md(r.req_date)} · 전장 완료예정 {md(r._elec)}</div>
-          </div>
-          {checks.map((c, i) => (
-            <div key={i} className="rounded-lg border-2 border-rose-400 bg-rose-50 px-3 py-2 text-sm font-bold text-rose-700">⚠ {c.t}</div>
-          ))}
-          <ol className="grid grid-cols-2 gap-1.5">
-            {QR_STEPS.map((s, i) => {
-              const on = done.has(s.k)
-              const isNext = nx?.k === s.k
-              return (
-                <li key={s.k} className={`flex items-center gap-2 rounded-lg px-2.5 py-2 text-sm font-bold whitespace-nowrap ${on ? 'bg-emerald-100 text-emerald-800' : isNext ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
-                  <span className={`w-5 text-center text-xs ${on ? '' : 'opacity-70'}`}>{on ? '✔' : i + 1}</span>{s.l}
-                </li>
-              )
-            })}
-          </ol>
-          {nx ? (
-            <button onClick={record} disabled={!st.worker}
-              className="w-full py-5 text-xl font-extrabold rounded-2xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
-              {nx.l}{nx.k === 'elec_start' ? ' ▶' : ' ✔'}
-            </button>
-          ) : <p className="text-center text-sm font-bold text-emerald-700">모든 공정이 끝났습니다</p>}
-          {!st.worker && <p className="text-xs text-rose-600 font-semibold">위에서 「이 폰 사용자」를 먼저 저장하세요</p>}
-          {last && undoLeft > 0 && (
-            <button onClick={undo} className="w-full py-3 text-sm font-bold rounded-xl border border-slate-300 text-slate-700 bg-white">잘못 찍었어요 — 되돌리기 ({undoLeft}초)</button>
-          )}
-        </div>
-      )}
-
-      {open && (
-        <QrScanner onScan={onScan} onClose={() => setOpen(false)} parse={parseQr}
-          hint="작업지시서 오른쪽 위 QR 을 비추세요" placeholder="직접 입력 (예: PD|123|E)" />
-      )}
     </div>
   )
 }

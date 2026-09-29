@@ -63,6 +63,7 @@ const ProductionCustomer = lazy(() => import('./pages/production/ProductionCusto
 const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
 const DrawingSearch = lazy(() => import('./pages/production/DrawingSearch'))
 const QrDemo = lazy(() => import('./pages/production/QrDemo'))
+const ScanPage = lazy(() => import('./pages/production/ScanView').then((m) => ({ default: m.ScanPage })))
 
 function ControlTowerRoute() {
   const { scope } = useParams()
@@ -129,6 +130,7 @@ export default function App() {
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
+      <Route path="/scan" element={<ProtectedRoute session={session}><ScanPage /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
         {/* 관제탑은 menu_scope 에 'home' 이 있는 계정만 볼 수 있다 */}
         <Route index element={canAccessPath(profile, '/') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />

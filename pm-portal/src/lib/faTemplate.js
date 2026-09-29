@@ -19,6 +19,14 @@ export const FA_TYPES = [
   { key: 'PART', label: '단품' },
 ]
 export const faTypeLabel = (t) => FA_TYPES.find((x) => x.key === t)?.label || t || '-'
+// 구분 색 — 카드 · 목록 · 상세에서 한눈에 (문의 빨강 · 보류 회색과 겹치지 않게)
+export const FA_TYPE_TONE = {
+  PD: { badge: 'bg-indigo-100 text-indigo-800', dot: 'bg-indigo-500' },
+  ASSY: { badge: 'bg-emerald-100 text-emerald-800', dot: 'bg-emerald-500' },
+  HARNESS: { badge: 'bg-amber-100 text-amber-900', dot: 'bg-amber-500' },
+  PART: { badge: 'bg-fuchsia-100 text-fuchsia-800', dot: 'bg-fuchsia-500' },
+}
+export const faTypeTone = (t) => FA_TYPE_TONE[t] || { badge: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' }
 
 const ALL = ['PD', 'ASSY', 'HARNESS', 'PART']
 const MADE = ['PD', 'ASSY', 'HARNESS']
