@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { downloadPurchaseHistory } from '../../lib/purchaseHistoryExcel'
 import { useCustomer } from '../../hooks/useCustomers'
@@ -602,12 +603,15 @@ export default function BOM() {
     enabled: !!selAssembly?.id && bomDetail.length > 0,
     queryFn: () => fetchSupply(bomDetail.map(b => b.item_id)),
   })
-  const subCodes = new Set(assemblies.map(a => a.code))
-  const supTree = bomSupplyTree(bomDetail, sup.map, subCodes)
+  // ⚠ 체크 하나마다 수천 줄을 다시 계산·그리지 않게 — 계산은 BOM·표시가 바뀔 때만, 줄은 BomDetailRow(memo)
+  const supTree = useMemo(() => bomSupplyTree(bomDetail, sup.map, new Set(assemblies.map(a => a.code))), [bomDetail, sup.map, assemblies])
   const [supSel, setSupSel] = useState(() => new Set())
   useEffect(() => { setSupSel(new Set()) }, [selAssembly?.id])
-  const supParents = [...new Set(bomDetail.filter(b => supTree.get(b.id)?.parentable).map(b => b.item_id))]
-  const supCnt = { buy: supParents.filter(id => sup.map[id] === 'buy').length, make: supParents.filter(id => sup.map[id] === 'make').length }
+  const { supParents, supCnt } = useMemo(() => {
+    const ps = [...new Set(bomDetail.filter(b => supTree.get(b.id)?.parentable).map(b => b.item_id))]
+    return { supParents: ps, supCnt: { buy: ps.filter(id => sup.map[id] === 'buy').length, make: ps.filter(id => sup.map[id] === 'make').length } }
+  }, [bomDetail, supTree, sup.map])
+  const toggleSup = useCallback((id) => setSupSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
   const supMut = useMutation({
     mutationFn: async ({ ids, mode }) => {
       if (!mode) {
@@ -630,6 +634,28 @@ export default function BOM() {
   })
   const [addOpen, setAddOpen] = useState(false)
   const [pnHit, setPnHit] = useState(null)          // 품번 조회 결과
+  // 세부 표 — 검색 걸러내기 · 줄 버튼 (체크·수정 때 줄마다 새로 만들지 않게 고정)
+  const detailRows = useMemo(() => {
+    const q = detailSearch.trim().toLowerCase(); if (!q) return bomDetail
+    return bomDetail.filter(b => { const it = b.items || {}; return [it.std_code, it.name, it.manufacturer, it.manufacturer_code].some(x => (x || '').toLowerCase().includes(q)) })
+  }, [bomDetail, detailSearch])
+  // 1,000줄 넘는 BOM 은 한 번에 다 그리면 체크·수정마다 화면 전체를 다시 칠해 느리다 →
+  //   300줄씩 그리고, 아래로 내려 끝에 닿으면 다음 300줄을 알아서 붙인다 (「전체 보기」도 있음)
+  const detailVis = useVisibleRows(detailRows, 300, [selAssembly?.id, detailSearch])
+  const moreRef = useRef(null)
+  const detailMore = detailVis.more
+  useEffect(() => {
+    const el = moreRef.current
+    if (!el || !detailVis.hasMore || typeof IntersectionObserver === 'undefined') return
+    const ob = new IntersectionObserver(es => { if (es.some(e => e.isIntersecting)) detailMore() }, { rootMargin: '600px' })
+    ob.observe(el)
+    return () => ob.disconnect()
+  }, [detailVis.hasMore, detailVis.visible, detailMore])
+  const openEdit = useCallback((b) => { setEditRow(b); setPnHit(null) }, [])
+  const partMutate = partMut.mutate
+  const askDelete = useCallback((b) => {
+    if (window.confirm(`${b.items?.std_code} 을 이 BOM 에서 뺄까요?`)) partMutate({ id: b.id, del: true })
+  }, [partMutate])
 
   // 품번으로 items 조회 (AX- 접두 자동 처리)
   async function lookupItem(code) {
@@ -1144,83 +1170,14 @@ export default function BOM() {
                           <tr><td colSpan={11} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
                         ) : bomDetail.length === 0 ? (
                           <tr><td colSpan={11} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
-                        ) : bomDetail.filter(b=>{
-                          const q=detailSearch.trim().toLowerCase(); if(!q) return true
-                          const it=b.items||{}
-                          return [it.std_code,it.name,it.manufacturer,it.manufacturer_code].some(x=>(x||'').toLowerCase().includes(q))
-                        }).map(b => { const st = supTree.get(b.id) || {}; const off = st.state === 'buySkip' || st.state === 'makeParent'; return (
-                          <tr key={b.id} title={st.state === 'buySkip' ? '상위품목을 구매 — 이 줄은 소요에서 빠집니다' : st.state === 'makeParent' ? '자작 — 이 상위품목은 소요에서 빠지고 하위만 계산합니다' : undefined}
-                            className={`border-b border-slate-100 hover:bg-indigo-50/40 ${off ? 'opacity-40' : ''} ${(b.level||1)>=4?'bg-slate-200/50':(b.level||1)===3?'bg-slate-100/60':(b.level||1)===2?'bg-slate-50':''}`}>
-                            <td className="px-2 py-2 text-center">
-                              {st.parentable && !sup.missing && (canEdit
-                                ? <input type="checkbox" checked={supSel.has(b.item_id)}
-                                    onChange={() => setSupSel(prev => { const n = new Set(prev); n.has(b.item_id) ? n.delete(b.item_id) : n.add(b.item_id); return n })} />
-                                : <span className="text-slate-300">·</span>)}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(b.level)}`}>L{b.level}</span>
-                            </td>
-                            <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${indentOf(b.level)}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}
-                              {st.parentable && !sup.missing && (st.mode
-                                ? <span className={`ml-1 px-1 py-0.5 rounded text-[10px] font-bold font-sans ${st.mode === 'buy' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{SUPPLY_LABEL[st.mode]}</span>
-                                : <span className="ml-1 px-1 py-0.5 rounded text-[10px] font-semibold font-sans bg-slate-100 text-slate-400" title="구매/자작 미지정 — 상위와 하위를 둘 다 소요로 계산 중">미지정</span>)}
-                            </td>
-                            <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
-                            <td className="px-3 py-2 text-center whitespace-nowrap">
-                              {(() => {
-                                const dw = dwMap[b.items?.std_code]
-                                const st = b.item_rev ? compareRev(b.item_rev, dw) : null
-                                if (!b.item_rev) return <span className="text-slate-300">-</span>
-                                if (!st) return <span className="font-mono text-slate-500">{b.item_rev}</span>
-                                const s2 = REV_STATE[st]
-                                return (
-                                  <span title={st === 'none' ? 'NAS에 도면이 없습니다' : `BOM 요구 ${b.item_rev} / NAS 최신 ${dw?.rev} · ${s2.label}`}
-                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-mono font-bold ${s2.cls}`}>
-                                    <span>{s2.dot}</span>
-                                    <span>{b.item_rev}</span>
-                                    {st !== 'match' && st !== 'none' && <span className="opacity-60">→{dw?.rev}</span>}
-                                  </span>
-                                )
-                              })()}
-                            </td>
-                            <td className="px-3 py-2">
-                              <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
-                              {b.items?.dept && (
-                                <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(b.items.dept)}`}>
-                                  {deptShort(b.items.dept)}
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
-                            <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
-                            <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
-                            <td className="px-3 py-2 text-right font-bold text-slate-900 whitespace-nowrap">{b.qty_per_unit}
-                              {st.eff != null && Math.abs(st.eff - Number(b.qty_per_unit || 0)) > 1e-9 && (
-                                <div className="text-[10px] font-semibold text-violet-600" title="상위 수량을 곱한 완제품 1대당 소요">대당 {Math.round(st.eff * 1000) / 1000}</div>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-center whitespace-nowrap">
-                              {canEdit ? (
-                                <>
-                                <button onClick={() => { setEditRow(b); setPnHit(null) }}
-                                  title="대체품 교체·수량 수정"
-                                  className="px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">
-                                  수정
-                                </button>
-                                <button onClick={() => {
-                                    if (window.confirm(`${b.items?.std_code} 을 이 BOM 에서 뺄까요?`)) partMut.mutate({ id: b.id, del: true })
-                                  }}
-                                  title="이 BOM 에서 제외"
-                                  className="ml-1 px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600">
-                                  삭제
-                                </button>
-                                </>
-                              ) : <span className="text-slate-300">-</span>}
-                            </td>
-                          </tr>
-                        )})}
+                        ) : detailVis.shown.map(b => (
+                          <BomDetailRow key={b.id} b={b} st={supTree.get(b.id)} dw={dwMap[b.items?.std_code]}
+                            checked={supSel.has(b.item_id)} canEdit={canEdit} supMissing={sup.missing}
+                            onToggle={toggleSup} onEdit={openEdit} onDelete={askDelete} />
+                        ))}
                       </tbody>
                     </table>
+                    <div ref={moreRef}><MoreRows {...detailVis} step={300} /></div>
                   </div>
                 </div>
               )}
@@ -1402,6 +1359,79 @@ export default function BOM() {
 
 // BOM 행 편집·추가 모달
 // 대체품을 쓰는 경우 품번을 바꾸면 품명·제조사가 자동으로 따라온다.
+// BOM 세부 한 줄 — 체크·수정 때 바뀐 줄만 다시 그리도록 따로 뺐다 (2026-09-30 · 1,500줄 BOM 에서 체크마다 전체가 다시 그려져 렉)
+const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEdit, supMissing, onToggle, onEdit, onDelete }) {
+  const off = st.state === 'buySkip' || st.state === 'makeParent'
+  return (
+        <tr title={st.state === 'buySkip' ? '상위품목을 구매 — 이 줄은 소요에서 빠집니다' : st.state === 'makeParent' ? '자작 — 이 상위품목은 소요에서 빠지고 하위만 계산합니다' : undefined}
+          className={`border-b border-slate-100 hover:bg-indigo-50/40 ${off ? 'opacity-40' : ''} ${(b.level||1)>=4?'bg-slate-200/50':(b.level||1)===3?'bg-slate-100/60':(b.level||1)===2?'bg-slate-50':''}`}>
+          <td className="px-2 py-2 text-center">
+            {st.parentable && !supMissing && (canEdit
+              ? <input type="checkbox" checked={checked}
+                  onChange={() => onToggle(b.item_id)} />
+              : <span className="text-slate-300">·</span>)}
+          </td>
+          <td className="px-3 py-2">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(b.level)}`}>L{b.level}</span>
+          </td>
+          <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${indentOf(b.level)}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}
+            {st.parentable && !supMissing && (st.mode
+              ? <span className={`ml-1 px-1 py-0.5 rounded text-[10px] font-bold font-sans ${st.mode === 'buy' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{SUPPLY_LABEL[st.mode]}</span>
+              : <span className="ml-1 px-1 py-0.5 rounded text-[10px] font-semibold font-sans bg-slate-100 text-slate-400" title="구매/자작 미지정 — 상위와 하위를 둘 다 소요로 계산 중">미지정</span>)}
+          </td>
+          <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
+          <td className="px-3 py-2 text-center whitespace-nowrap">
+            {(() => {
+              const st = b.item_rev ? compareRev(b.item_rev, dw) : null
+              if (!b.item_rev) return <span className="text-slate-300">-</span>
+              if (!st) return <span className="font-mono text-slate-500">{b.item_rev}</span>
+              const s2 = REV_STATE[st]
+              return (
+                <span title={st === 'none' ? 'NAS에 도면이 없습니다' : `BOM 요구 ${b.item_rev} / NAS 최신 ${dw?.rev} · ${s2.label}`}
+                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border font-mono font-bold ${s2.cls}`}>
+                  <span>{s2.dot}</span>
+                  <span>{b.item_rev}</span>
+                  {st !== 'match' && st !== 'none' && <span className="opacity-60">→{dw?.rev}</span>}
+                </span>
+              )
+            })()}
+          </td>
+          <td className="px-3 py-2">
+            <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catStyle(b.items?.category || b.items?.type)}`}>{b.items?.category || b.items?.type}</span>
+            {b.items?.dept && (
+              <span className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${deptStyle(b.items.dept)}`}>
+                {deptShort(b.items.dept)}
+              </span>
+            )}
+          </td>
+          <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
+          <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
+          <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
+          <td className="px-3 py-2 text-right font-bold text-slate-900 whitespace-nowrap">{b.qty_per_unit}
+            {st.eff != null && Math.abs(st.eff - Number(b.qty_per_unit || 0)) > 1e-9 && (
+              <div className="text-[10px] font-semibold text-violet-600" title="상위 수량을 곱한 완제품 1대당 소요">대당 {Math.round(st.eff * 1000) / 1000}</div>
+            )}
+          </td>
+          <td className="px-3 py-2 text-center whitespace-nowrap">
+            {canEdit ? (
+              <>
+              <button onClick={() => onEdit(b)}
+                title="대체품 교체·수량 수정"
+                className="px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">
+                수정
+              </button>
+              <button onClick={() => onDelete(b)}
+                title="이 BOM 에서 제외"
+                className="ml-1 px-1.5 py-0.5 text-[11px] rounded border border-slate-200 text-slate-400 hover:border-rose-300 hover:text-rose-600">
+                삭제
+              </button>
+              </>
+            ) : <span className="text-slate-300">-</span>}
+          </td>
+        </tr>
+  )
+})
+
 function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setHit, busy }) {
   const isEdit = mode === 'edit'
   const [code, setCode] = useState(isEdit ? (row.items?.std_code || '') : '')
