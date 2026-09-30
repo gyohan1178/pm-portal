@@ -8,6 +8,8 @@ import { WorkOrderPrinter } from '../../components/WorkOrderPrint'
 import { supabase } from '../../lib/supabase'
 import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 import { parseEdMonthly } from '../../lib/edMonthly'
+import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
+import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -225,6 +227,58 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
+  // ── Edwards: 포캐스트 반영 · 불출 기준 · 미불출 ─────────────────────
+  //   작업자가 따로 쓰던 「Forecast 자재 준비 현황」을 옮긴 것 (lib/edForecast.js)
+  const edFcRef = useRef(null)
+  const [edF, setEdF] = useState({ kind: 'all', po: 'all', quick: null })
+  const [showRules, setShowRules] = useState(false)
+  const [missRow, setMissRow] = useState(null)
+  const [fcUnknown, setFcUnknown] = useState([])
+  const { data: edRulesData } = useQuery({
+    queryKey: ['edFcRules'], queryFn: () => loadRules(supabase), enabled: isED, staleTime: 60000,
+  })
+  const edRules = useMemo(() => edRulesData || mergeRules(null), [edRulesData])
+  const rulesMut = useMutation({
+    mutationFn: async (value) => {
+      const { error } = await supabase.from('pm_settings')
+        .upsert({ key: 'ed_fc_rules', value, updated_at: new Date().toISOString() })
+      if (error) throw error
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['edFcRules'] }); setShowRules(false); toastSuccess('불출 기준을 저장했습니다') },
+    onError: (e) => toastError('불출 기준 저장 오류: ' + e.message),
+  })
+  const fcMut = useMutation({
+    mutationFn: (plan) => applyFcPlan(supabase, plan),
+    onSuccess: (r) => {
+      toastSuccess(`포캐스트 반영 — 갱신 ${r.updated ?? 0}줄 · 새 줄 ${r.inserted ?? 0}줄${r.gone ? ` · 빠짐 표시 ${r.gone}줄` : ''}`)
+      qc.invalidateQueries({ queryKey: ['production', csCode] })
+    },
+    onError: (e) => toastError('포캐스트 반영 오류: ' + e.message),
+  })
+  async function onEdFcFile(e) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    try {
+      if (rows.length && !('fc_tag' in rows[0])) { toastError('SQL pm_ed_forecast_260930 을 먼저 실행하세요'); return }
+      const { rows: fcRows, error, updated } = parseEdForecastDetail(await f.arrayBuffer())
+      if (error) { toastError(error); return }
+      if (!fcRows.length) { toastError('포캐스트에 System Tag 줄이 없습니다'); return }
+      const plan = planFcApply(fcRows, rows, edRules)
+      setFcUnknown([...new Set(plan.unknown.map(u => u.item).filter(Boolean))])
+      if (!plan.upd.length && !plan.ins.length && !plan.goneIds.length) {
+        toastSuccess(`포캐스트 ${fcRows.length}대 — 바뀐 것이 없습니다`); return
+      }
+      const ok = window.confirm(
+        `포캐스트${updated ? ` (${updated} 기준)` : ''} ${fcRows.length}대를 생산관리에 반영할까요?\n\n` +
+        planSummary(plan) +
+        `\n\n확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다.`)
+      if (!ok) return
+      fcMut.mutate(plan)
+    } catch (err) { toastError('포캐스트 파일을 읽지 못했습니다: ' + err.message) }
+  }
+  const setField = (id, field, value) => toggleMut.mutate({ id, field, value })
+
   // 선택 항목 일괄 날짜수정
   const bulkMut = useMutation({
     mutationFn: async ({ ids, field, value }) => {
@@ -249,14 +303,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   async function lookupPart(i, pn) {
     const v = String(pn || '').trim()
     if (!v) return
-    const codes = v.toUpperCase().startsWith('AX-') ? [v] : [`AX-${v}`, v]
+    const pfx = isED ? 'ED-' : 'AX-'
+    const codes = /^(AX|ED)-/i.test(v) ? [v] : [`${pfx}${v}`, v]
     const { data } = await supabase.from('items')
       .select('std_code,name,manufacturer,manufacturer_code')
       .in('std_code', codes).limit(1)
     const it = data?.[0]
     if (!it) return
     setMP(i, {
-      pn: it.std_code.replace(/^AX-/, ''),
+      pn: it.std_code.replace(/^(AX|ED)-/, ''),
       name: it.name || '',
       maker: it.manufacturer || '',
       makerPn: it.manufacturer_code || '',
@@ -290,8 +345,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     mutationFn: async ({ records, edMode = false }) => {
       // 기존 데이터 (품번+호기 키)
       // Edwards 는 한 줄이 프로젝트+호기+구분이라 구분까지 키에 넣는다
-      const keyOf = (pn, hogi, part) =>
-        `${(pn || '').trim()}|${(hogi || '').trim()}` + (isED ? `|${(part || '').trim()}` : '')
+      //   Edwards 프로젝트 이름은 '_' · 띄어쓰기 · 대소문자가 섞여 들어온다 — 정리해서 견준다
+      const keyOf = (pn, hogi, part) => isED
+        ? `${normProj(pn)}|${(hogi || '').trim()}|${(part || '').trim()}`
+        : `${(pn || '').trim()}|${(hogi || '').trim()}`
       const existMap = {}
       for (const r of rows) existMap[keyOf(r.pn, r.hogi, r.part)] = r
 
@@ -306,7 +363,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           const patch = { id: exist.id, updated_at: new Date().toISOString() }
           // 월간 실적으로 다시 올릴 때 담당자가 손으로 넣은 것을 지우지 않는다.
           //   상태·비고·담당자는 현장에서 관리하는 값이다.
-          const keep = edMode ? ['status', 'note', 'memo', 'manager'] : []
+          //   ⚠ 발주서 체크(po_received) · 미불출 자재도 사람이 넣는 값이다.
+          //     예전에는 다시 올리면 발주서가 모두 체크되고 미불출이 비워졌다.
+          const keep = edMode ? ['status', 'note', 'memo', 'manager', 'po_received', 'missing_parts'] : []
           // AXCELIS: 예전에 내려받은 파일을 다시 올려도 어긋나지 않게
           //   · 이미 완료된 호기는 완료로 둔다 (되돌리면 납품된 호기가 다시 PO 에 붙는다)
           //   · 고객 PO 에 붙은 호기의 납기·CCN·REV 는 PO 가 정한다 (PO 연동이 채운다)
@@ -403,6 +462,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
     r = r.filter(x => isMainRow(x.pn, csCode) === (mainTab === 'main'))
+    // Edwards 는 정한 납기(없으면 납품요청일) 순으로 묶는다
+    if (isED) r = r.filter(x => edPass(x, edF, edRules))
+    const dOf = (x) => (isED ? edDateOf(x) : x.req_date)
     if (dq.trim()) {
       const s = dq.toLowerCase()
       // 화면에 보이는 열은 모두 검색되어야 한다
@@ -410,7 +472,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         .some(v => String(v || '').toLowerCase().includes(s)))
     }
     r.sort((a, b) => {
-      const d = (a.req_date || '9999').localeCompare(b.req_date || '9999')
+      const d = (dOf(a) || '9999').localeCompare(dOf(b) || '9999')
       if (d !== 0) return d
       // 납품일 같으면 품번 → 호기번호 → id 순 (안정적)
       const p = (a.pn || '').localeCompare(b.pn || '')
@@ -423,12 +485,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     // 월별 그룹 삽입
     const out = []; let cur = null
     for (const x of r) {
-      const mk = x.req_date ? x.req_date.slice(0, 7) : '미정'
+      const mk = dOf(x) ? dOf(x).slice(0, 7) : '미정'
       if (mk !== cur) { out.push({ _month: mk }); cur = mk }
       out.push(x)
     }
     return out
-  }, [rows, showDone, dq, mainTab])
+  }, [rows, showDone, dq, mainTab, isED, edF, edRules])
 
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
@@ -485,6 +547,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
               {importMut.isPending ? '올리는 중…' : '📤 PO 업로드'}
             </button>
+            <input ref={edFcRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={onEdFcFile} />
+            <button onClick={() => edFcRef.current?.click()} disabled={fcMut.isPending}
+              title="Edwards 포캐스트 파일(System Tag · to 정한 · Frame 입고 · H2D 자재)을 읽어 정한 납기를 채웁니다. 사람이 넣은 값은 그대로 둡니다."
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40">
+              {fcMut.isPending ? '반영 중…' : '📅 포캐스트 반영'}
+            </button>
+            <button onClick={() => setShowRules(true)}
+              title="불출 예정일 = 정한 납기 − N주 · 포캐스트 품번별 구분"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출 기준</button>
           </>
         )}
         <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? '가져오는 중...' : '📤 CSV 가져오기'}</button>
@@ -492,6 +563,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
       </div>
 
+      {isED && !isLoading && view === 'list' && (
+        <>
+          <EdSummary rows={rows} rules={edRules} quick={edF.quick} setQuick={(q) => setEdF(s => ({ ...s, quick: q }))} />
+          <EdFilters f={edF} setF={setEdF} />
+        </>
+      )}
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
@@ -582,7 +659,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               <span className="text-xs font-bold text-indigo-700">✓ {sel.size}건 선택</span>
               <select value={bulkField} onChange={e=>setBulkField(e.target.value)}
                 className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
-                <option value="arrival_date">⚙ 가공물 입고예정</option>
+                <option value="arrival_date">{isED ? '⚙ Frame 입고 (확정)' : '⚙ 가공물 입고예정'}</option>
+                {isED && <option value="due_fix">📅 확정 납기</option>}
                 <option value="machine_date">⚙ 가공물 발주일</option>
                 <option value="elec_done">⚡ 전장 완료요청</option>
                 <option value="req_date">📦 납품요청일</option>
@@ -604,6 +682,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
             </div>
           )}
+          {isED ? (
+            <EdTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel} rules={edRules}
+              onField={setField} onEdit={(r) => setEdit({ ...r })} onMissing={(r) => setMissRow(r)}
+              statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor} />
+          ) : (
           <table className="w-full text-xs whitespace-nowrap">
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 text-center">
@@ -785,6 +868,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               ))}
             </tbody>
           </table>
+          )}
           </>)}
         </div>
         </>}
@@ -816,6 +900,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 </Field>
               </div>
               <Field label="납품요청일"><input type="date" value={edit.req_date || ''} onChange={e => setEdit(s => ({ ...s, req_date: e.target.value }))} className="inp" /></Field>
+              {isED && (
+                <Field label="📅 확정 납기 (비우면 포캐스트 정한 납기)">
+                  <input type="date" value={edit.due_fix ? String(edit.due_fix).slice(0, 10) : ''} onChange={e => setEdit(s => ({ ...s, due_fix: e.target.value || null }))} className="inp" />
+                </Field>
+              )}
               <div className="rounded-lg bg-amber-50 p-3 space-y-2">
                 <p className="text-xs font-bold text-amber-600">⚙ 가공물</p>
                 <div className="grid grid-cols-2 gap-3">
@@ -910,6 +999,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             </div>
           </div>
         </div>
+      )}
+      {missRow && (
+        <MissingModal row={missRow} saving={toggleMut.isPending} onClose={() => setMissRow(null)}
+          onSave={(list) => toggleMut.mutate({ id: missRow.id, field: 'missing_parts', value: list }, { onSuccess: () => setMissRow(null) })} />
+      )}
+      {showRules && (
+        <RulesModal rules={edRules} defaults={DEFAULT_RULES} saving={rulesMut.isPending}
+          items={[...new Set(rows.map(r => r.fc_item).filter(Boolean))]} unknown={fcUnknown}
+          onClose={() => setShowRules(false)} onSave={(v) => rulesMut.mutate(v)} />
       )}
       <style>{`.inp{width:100%;padding:6px 10px;border:1px solid #e2e8f0;border-radius:8px;font-size:13px}.inp:focus{outline:none;border-color:#6366f1}`}</style>
     </>

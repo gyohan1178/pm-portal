@@ -8,6 +8,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import CustomerTabs from '../../components/CustomerTabs'
+import { parseEdForecastDetail, loadRules, fetchEdProduction, planFcApply, applyFcPlan, planSummary } from '../../lib/edForecast'
 
 const AX = (pn, prefix) => {
   const t = String(pn || '').replace(/\.0$/, '').trim()
@@ -268,7 +269,12 @@ export default function Forecast() {
         const wb = XLSX.read(ev.target.result, { type: 'array', cellDates: true })
         const parsed = parseForecast(wb, csCode)
         const months = [...new Set(parsed.map(p => p.year_month))].sort()
-        setPreview({ rows: parsed, months, count: parsed.length, items: new Set(parsed.map(p => p.std_code)).size })
+        // Edwards — 같은 파일로 생산관리 정한 납기도 채운다 (호기별 날짜)
+        let edDetail = null
+        if (String(csCode).toUpperCase() === 'ED') {
+          try { edDetail = parseEdForecastDetail(wb) } catch { edDetail = null }
+        }
+        setPreview({ rows: parsed, months, count: parsed.length, items: new Set(parsed.map(p => p.std_code)).size, edDetail })
         setResult(null)
       } catch (err) { toastError('파싱 오류: ' + err.message) }
     }
@@ -298,10 +304,25 @@ export default function Forecast() {
         const { error } = await supabase.from('forecasts').insert(payload.slice(i, i + 500))
         if (error) throw error
       }
-      return { count: payload.length, matched: payload.filter(p => p.item_id).length, hadPrev }
+      // Edwards — 생산관리에도 반영할지 묻는다. 여기서 실패해도 포캐스트 저장은 끝난 것이다.
+      let prod = ''
+      const ed = preview.edDetail
+      if (ed?.rows?.length) {
+        try {
+          const [rules, prodRows] = await Promise.all([loadRules(supabase), fetchEdProduction(supabase)])
+          const plan = planFcApply(ed.rows, prodRows, rules)
+          if (!plan.upd.length && !plan.ins.length && !plan.goneIds.length) prod = ' · 생산관리: 바뀐 날짜 없음'
+          else if (window.confirm(`포캐스트는 저장했습니다.\n\n생산관리(Edwards)의 정한 납기에도 반영할까요?\n\n${planSummary(plan)}\n\n확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다.`)) {
+            const a = await applyFcPlan(supabase, plan)
+            prod = ` · 생산관리 반영 — 갱신 ${a.updated ?? 0}줄 · 새 줄 ${a.inserted ?? 0}줄`
+            qc.invalidateQueries({ queryKey: ['production', 'ED'] })
+          } else prod = ' · 생산관리에는 반영하지 않음 (생산관리 「📅 포캐스트 반영」으로 나중에 가능)'
+        } catch (e) { prod = ` · 생산관리 반영 못 함: ${e.message}` }
+      }
+      return { count: payload.length, matched: payload.filter(p => p.item_id).length, hadPrev, prod }
     },
     onSuccess: (r) => {
-      setResult(`접수 완료 — ${r.count}건 (품목매칭 ${r.matched}건). ${r.hadPrev ? '직전 회차 대비 증감이 표시됩니다.' : '첫 회차입니다 — 다음 업로드부터 증감이 표시됩니다.'}`)
+      setResult(`접수 완료 — ${r.count}건 (품목매칭 ${r.matched}건). ${r.hadPrev ? '직전 회차 대비 증감이 표시됩니다.' : '첫 회차입니다 — 다음 업로드부터 증감이 표시됩니다.'}${r.prod || ''}`)
       setPreview(null); qc.invalidateQueries(['forecast', cs?.id])
     },
     onError: (e) => toastError('저장 오류: ' + e.message),
