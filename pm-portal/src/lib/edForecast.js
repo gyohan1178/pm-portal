@@ -60,7 +60,9 @@ export function mergeRules(saved) {
     weeks[k] = { elec: num(v.elec, d.elec), harn: num(v.harn, d.harn) }
   }
   const map = { ...DEFAULT_RULES.map, ...(s.map || {}) }
-  return { weeks, map }
+  // bom: '구분|NKB기종|harn·elec' → BOM 프로젝트 코드 (소요량 매칭 · lib/edNeed.js). 없으면 이름으로 짐작
+  const bom = { ...(s.bom || {}) }
+  return { weeks, map, bom }
 }
 
 // ── 날짜 ─────────────────────────────────────────────────────────────

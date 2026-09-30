@@ -11,6 +11,7 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { KINDS, kindOf, dueOf, issueDueOf } from '../../lib/edForecast'
+import { guessBom, bomKey, WHICH_LABEL } from '../../lib/edNeed'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -154,16 +155,18 @@ function DueCell({ r, onField }) {
       <span className="block text-[8px] text-slate-400 mt-0.5">비우면 포캐스트로</span>
     </td>
   }
-  if (!k) {
-    return <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300"
-      title="MFM · BDM · 단품 — 자재 준비 대상이 아닙니다 (회색 = 납품요청일)">{md(r.req_date) || '—'}</td>
-  }
-  const n = d ? dday(d.date) : null
+  // 남은 날만 D-N 으로 띄운다 (지난 날은 표시 안 함 · 2026-09-30 확정).
+  //   포캐스트 날짜가 없어 납품요청일을 대신 보여 줄 때도 D-N 을 띄운다.
+  const shownDate = d?.date || (r.req_date ? String(r.req_date).slice(0, 10) : null)
+  const n = shownDate ? dday(shownDate) : null
   const live = r.status !== '완료'
-  // 남은 날만 D-N 으로 띄운다. 지난 날은 표시하지 않는다.
   const tag = live && n != null && n >= 0
-    ? <span className={`ml-1 text-[10px] font-bold ${n <= 7 ? 'text-orange-600' : n <= 14 ? 'text-yellow-600' : 'text-slate-400'}`}>{n === 0 ? 'D-Day' : `D-${n}`}</span>
+    ? <span className={`ml-1 text-[10px] font-bold ${n <= 7 ? 'text-orange-600' : n <= 14 ? 'text-yellow-600' : 'text-slate-500'}`}>{n === 0 ? 'D-Day' : `D-${n}`}</span>
     : null
+  if (!k) {
+    return <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300 whitespace-nowrap"
+      title="MFM · BDM · 단품 — 자재 준비 대상이 아닙니다 (회색 = 납품요청일)">{md(r.req_date) || '—'}{tag}</td>
+  }
   const src = k === 'EUV' ? 'to 정한' : 'H2D 자재'
   return (
     <td data-no-select className="px-2 py-2 border-l border-slate-100 text-center whitespace-nowrap group"
@@ -425,9 +428,10 @@ export function MissingModal({ row, onClose, onSave, saving }) {
 
 // ── 불출 기준 창 ─────────────────────────────────────────────────────
 //   ① 정한 납기보다 몇 주 먼저 불출하나  ② 포캐스트 품번 → 들어가는 갈래
-export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults }) {
+export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults, projects = [], bomGroups = [] }) {
   const [weeks, setWeeks] = useState(() => JSON.parse(JSON.stringify(rules.weeks)))
   const [map, setMap] = useState(() => ({ ...rules.map }))
+  const [bom, setBom] = useState(() => ({ ...(rules.bom || {}) }))
   const all = [...new Set([...Object.keys(map), ...items, ...unknown].filter(Boolean))]
     .sort((a, b) => (map[a] === undefined ? 0 : 1) - (map[b] === undefined ? 0 : 1) || a.localeCompare(b))
   const toggle = (it, k) => setMap(m => {
@@ -437,9 +441,9 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
   const setW = (k, w, v) => setWeeks(s => ({ ...s, [k]: { ...s[k], [w]: v === '' ? '' : Math.max(0, Math.min(26, Number(v))) } }))
   return (
     <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">⚙ 불출 기준 · 품번별 구분</h3>
+          <h3 className="text-sm font-bold text-slate-800">⚙ 불출 기준 · 품번별 구분 · BOM 연결</h3>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
         </div>
         <div className="p-5 overflow-y-auto space-y-5 text-xs">
@@ -489,6 +493,43 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
               })}
             </div>
           </section>
+          <section>
+            <p className="font-bold text-slate-700 mb-1">③ BOM 연결 (📦 소요량 매칭)</p>
+            <p className="text-[11px] text-slate-400 mb-1.5">불출 건마다 어느 BOM 으로 소요량을 셀지 정합니다. 「자동」은 BOM 이름(예: NKB943_EUV · H2D-LH_하네스)으로 찾은 것입니다.</p>
+            {!projects.length
+              ? <p className="text-[11px] text-orange-600">Edwards BOM 을 불러오지 못했거나 등록된 BOM 이 없습니다.</p>
+              : (
+                <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
+                  <thead className="bg-slate-50 text-slate-500"><tr>
+                    <th className="px-3 py-1.5 text-left">구분</th>
+                    {['harn', 'elec'].map(w => <th key={w} className="px-3 py-1.5 text-left">{WHICH_LABEL[w]} BOM</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {bomGroups.map(({ kind, group }) => (
+                      <tr key={kind + group} className="border-t border-slate-100">
+                        <td className="px-3 py-1.5 font-bold text-slate-700 whitespace-nowrap">{kind}{group !== '*' ? <span className="ml-1 font-mono text-[10px] text-slate-400">{group === '?' ? '기종 모름' : group}</span> : null}</td>
+                        {['harn', 'elec'].map(w => {
+                          const k = bomKey(kind, group, w)
+                          const g = guessBom(projects, kind, group, w)
+                          return (
+                            <td key={w} className="px-2 py-1">
+                              <select value={bom[k] === undefined ? '__auto' : bom[k]}
+                                onChange={e => setBom(b => { const n = { ...b }; if (e.target.value === '__auto') delete n[k]; else n[k] = e.target.value; return n })}
+                                className={`w-full max-w-[230px] px-1.5 py-1 text-[11px] border rounded ${bom[k] === undefined && !g ? 'border-orange-300 text-orange-600' : 'border-slate-200'}`}>
+                                <option value="__auto">자동 — {g ? g.code : '못 찾음'}</option>
+                                <option value="">연결 안 함</option>
+                                {projects.map(p => <option key={p.id} value={p.code}>{p.code}{p.name && p.name !== p.code ? ` · ${p.name}` : ''}</option>)}
+                              </select>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                    {!bomGroups.length && <tr><td colSpan={3} className="px-3 py-2 text-slate-400">진행 중인 EUV · H2D 줄이 없습니다</td></tr>}
+                  </tbody>
+                </table>
+              )}
+          </section>
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2">
           <button onClick={() => setWeeks(JSON.parse(JSON.stringify(defaults.weeks)))} className="px-3 py-2 text-xs rounded-lg text-slate-400 hover:text-slate-600">주수 기본값</button>
@@ -496,7 +537,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
           <button disabled={saving} onClick={() => {
             const w = {}
             for (const k of KINDS) w[k] = { harn: Number(weeks[k].harn) || 0, elec: Number(weeks[k].elec) || 0 }
-            onSave({ weeks: w, map })
+            onSave({ weeks: w, map, bom })
           }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? '저장 중…' : '저장'}</button>
         </div>
       </div>

@@ -10,6 +10,9 @@ import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 import { parseEdMonthly } from '../../lib/edMonthly'
 import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
+import EdNeedMatch, { fetchEdProjects } from './EdNeedMatch'
+import { kindOf } from '../../lib/edForecast'
+import { bomGroupOf } from '../../lib/edNeed'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -238,6 +241,18 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     queryKey: ['edFcRules'], queryFn: () => loadRules(supabase), enabled: isED, staleTime: 60000,
   })
   const edRules = useMemo(() => edRulesData || mergeRules(null), [edRulesData])
+  // Edwards BOM 프로젝트 — 소요량 매칭 · 불출 기준(BOM 연결)에서 쓴다
+  const { data: edProj } = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, enabled: isED, staleTime: 300000 })
+  const edBomGroups = useMemo(() => {
+    const seen = new Map()
+    for (const r of rows) {
+      if (r.status === '완료') continue
+      const kind = kindOf(r); if (!kind) continue
+      const group = bomGroupOf(r)
+      seen.set(kind + '|' + group, { kind, group })
+    }
+    return [...seen.values()].sort((a, b) => (a.kind + a.group).localeCompare(b.kind + b.group))
+  }, [rows])
   const rulesMut = useMutation({
     mutationFn: async (value) => {
       const { error } = await supabase.from('pm_settings')
@@ -389,7 +404,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             id: 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
             customer_code: csCode, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
             name: rec.name, pn: rec.pn, hogi: rec.hogi, ccn: rec.ccn, rev: rec.rev,
-            status: rec.status, po_received: rec.po_received,
+            // Edwards 발주서 체크는 사람이 확인하면서 켠다 — 새 줄은 꺼진 채로
+            status: rec.status, po_received: isED ? false : rec.po_received,
             req_date: rec.req_date || null, machine_date: rec.machine_date || null, arrival_date: rec.arrival_date || null,
             harness_issue: rec.harness_issue || null, harness_done: rec.harness_done || null,
             part_issue: rec.part_issue || null, elec_done: rec.elec_done || null,
@@ -513,7 +529,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold">
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> 완료 포함
         </label>
-        <button onClick={() => setEdit({ ...EMPTY })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
+        <button onClick={() => setEdit({ ...EMPTY, ...(isED ? { po_received: false } : {}) })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
         <div className="flex gap-1 p-0.5 bg-indigo-100/70 rounded-lg">
           <button onClick={() => { setMainTab('main') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='main'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>⭐ 주요 관리</button>
           <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>Sub Assy</button>
@@ -524,6 +540,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           <button onClick={() => setView('model')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='model'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📊 모델별</button>
           <button onClick={() => setView('kanban')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='kanban'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>🗂 칸반</button>
           <button onClick={() => setView('load')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='load'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📈 주간부하</button>
+          {isED && <button onClick={() => setView('need')} title="불출 예정 순으로 BOM 을 재고 · 발주에서 차례로 빼 보고 모자라는 품목을 보여 줍니다"
+            className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='need'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📦 소요량 매칭</button>}
         </div>
         )}
         <button onClick={() => {
@@ -572,7 +590,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
-          {view === 'kanban' ? (
+          {isED && view === 'need' ? (
+            <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} />
+          ) : view === 'kanban' ? (
             <KanbanBoard rows={filtered.filter(x => !x._month)} mdMap={mdMap}
               onStatus={(id, status) => toggleMut.mutate({ id, field: 'status', value: status })}
               onOpen={(r) => setEdit({ ...r })} showDone={showDone} />
@@ -1006,6 +1026,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       )}
       {showRules && (
         <RulesModal rules={edRules} defaults={DEFAULT_RULES} saving={rulesMut.isPending}
+          projects={edProj?.projects || []} bomGroups={edBomGroups}
           items={[...new Set(rows.map(r => r.fc_item).filter(Boolean))]} unknown={fcUnknown}
           onClose={() => setShowRules(false)} onSave={(v) => rulesMut.mutate(v)} />
       )}
