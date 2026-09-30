@@ -13,20 +13,29 @@ export const SUPPLY_LABEL = { buy: '🛒 구매', make: '🔧 자작' }
 
 // rows: BOM 한 장 (seq 순서) — { id, item_id, level, seq, qty_per_unit, items:{std_code} }
 // supply: { [item_id]: 'buy' | 'make' } · subCodes: 서브 BOM 이 있는 품번 Set
-// → 줄마다 { hasKids, parentable, mode, state, eff }
+// → 줄마다 { hasKids, sub, refExpanded, parentable, mode, state, eff }
+//   sub: 이 BOM 안엔 하위가 없는데 그 품번의 별도 BOM 이 있음 (고객사 리포트에서 전개가 빠진 조립품)
+//        → 부족자재·소요량 계산은 그 별도 BOM 으로 펼친다 (DB pm_bom_explode)
+//   refExpanded: 같은 BOM 의 다른 위치에서는 전개돼 있음 (리포트가 첫 위치에만 전개하는 경우)
 //   state: normal | buyParent | buySkip(구매 상위의 하위 — 소요 제외) | makeParent(자작 — 소요 제외)
 export function bomSupplyTree(rows, supply = {}, subCodes = new Set()) {
   const out = new Map()
   const stack = []   // { lv, mul, skip }
+  const kidsOf = rows.map((r, i) => {
+    const nx = rows[i + 1]
+    return r.seq != null && !!nx && nx.seq != null && (Number(nx.level) || 1) > (Number(r.level) || 1)
+  })
+  const expandedItems = new Set(rows.filter((r, i) => kidsOf[i]).map(r => r.item_id))
   rows.forEach((r, i) => {
     const lv = Number(r.level) || 1
     const q = Number(r.qty_per_unit) || 0
     const mode = supply[r.item_id] || null
-    const nx = rows[i + 1]
-    const hasKids = r.seq != null && !!nx && nx.seq != null && (Number(nx.level) || 1) > lv
-    const parentable = hasKids || subCodes.has(r.items?.std_code)
+    const hasKids = kidsOf[i]
+    const sub = !hasKids && subCodes.has(r.items?.std_code)
+    const refExpanded = sub && expandedItems.has(r.item_id)
+    const parentable = hasKids || sub
     if (r.seq == null) {
-      out.set(r.id, { hasKids: false, parentable, mode, state: 'normal', eff: q })
+      out.set(r.id, { hasKids: false, sub, refExpanded, parentable, mode, state: sub && mode === 'make' ? 'makeParent' : 'normal', eff: q })
       return
     }
     while (stack.length && stack[stack.length - 1].lv >= lv) stack.pop()
@@ -35,9 +44,9 @@ export function bomSupplyTree(rows, supply = {}, subCodes = new Set()) {
     const eff = q * pe
     let state = 'normal'
     if (ps) state = 'buySkip'
-    else if (hasKids && mode === 'make') state = 'makeParent'
-    else if (hasKids && mode === 'buy') state = 'buyParent'
-    out.set(r.id, { hasKids, parentable, mode, state, eff })
+    else if (parentable && mode === 'make') state = 'makeParent'
+    else if (parentable && mode === 'buy') state = 'buyParent'
+    out.set(r.id, { hasKids, sub, refExpanded, parentable, mode, state, eff })
     stack.push({ lv, mul: q > 0 ? eff : pe, skip: ps || (hasKids && mode === 'buy') })
   })
   return out

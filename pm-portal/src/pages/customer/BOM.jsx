@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, memo } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, memo, Fragment } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { downloadPurchaseHistory } from '../../lib/purchaseHistoryExcel'
@@ -604,7 +604,40 @@ export default function BOM() {
     queryFn: () => fetchSupply(bomDetail.map(b => b.item_id)),
   })
   // ⚠ 체크 하나마다 수천 줄을 다시 계산·그리지 않게 — 계산은 BOM·표시가 바뀔 때만, 줄은 BomDetailRow(memo)
-  const supTree = useMemo(() => bomSupplyTree(bomDetail, sup.map, new Set(assemblies.map(a => a.code))), [bomDetail, sup.map, assemblies])
+  const asmByCode = useMemo(() => new Map(assemblies.map(a => [a.code, a])), [assemblies])
+  const supTree = useMemo(() => bomSupplyTree(bomDetail, sup.map,
+    new Set(assemblies.filter(a => a.code !== selAssembly?.code && Number(a.item_count ?? 1) > 0).map(a => a.code))), [bomDetail, sup.map, assemblies, selAssembly?.code])
+  // 별도 BOM(전개 누락) — 줄 안에서 펼쳐 보기
+  const [openSubs, setOpenSubs] = useState(() => new Set())
+  useEffect(() => { setOpenSubs(new Set()) }, [selAssembly?.id])
+  const toggleSub = useCallback((id) => setOpenSubs(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
+  const subCnt = useMemo(() => {
+    let all = 0, miss = 0
+    bomDetail.forEach(b => { const t = supTree.get(b.id); if (t?.sub) { all++; if (!t.refExpanded) miss++ } })
+    return { all, miss }
+  }, [bomDetail, supTree])
+  const [missBusy, setMissBusy] = useState(false)
+  async function downloadMissing() {
+    setMissBusy(true)
+    try {
+      const rows = await fetchAll(() => supabase.rpc('pm_bom_missing_expansion', { cs_id: cs.id }).order('bom_code').order('seq'))
+      if (!rows.length) { toast('전개가 빠진 조립품이 없습니다'); return }
+      const out = rows.map(r => ({
+        'BOM(상위품번)': r.bom_code, 'BOM 품명': r.bom_name, 'SEQ': r.seq, 'LV': r.level,
+        '조립품 품번': r.std_code, '조립품 품명': r.item_name, '수량': Number(r.qty),
+        '구분': r.in_bom_expanded ? '같은 BOM 다른 위치에 전개됨' : '⚠ BOM 어디에도 전개 없음 — 고객사 확인',
+        '별도 BOM 줄 수': Number(r.sub_rows), '구매/자작': r.mode === 'buy' ? '구매' : r.mode === 'make' ? '자작' : '미지정',
+      }))
+      const ws = XLSX.utils.json_to_sheet(out)
+      ws['!cols'] = [14, 28, 6, 4, 14, 32, 6, 34, 10, 8].map(w => ({ wch: w }))
+      const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '전개 누락')
+      XLSX.writeFile(wb, `BOM_전개누락_${cs.code || ''}_${todayISO()}.xlsx`)
+      toastSuccess(`${out.length}줄 · 고객사 확인 대상 ${out.filter(x => x['구분'].startsWith('⚠')).length}줄`)
+    } catch (e) {
+      toastError(/pm_bom_missing_expansion|Could not find the function|schema cache/i.test(e?.message || '')
+        ? '먼저 pm_bom_subexpand_260930.sql 을 실행해 주세요' : '목록 만들기 실패: ' + e.message)
+    } finally { setMissBusy(false) }
+  }
   const [supSel, setSupSel] = useState(() => new Set())
   useEffect(() => { setSupSel(new Set()) }, [selAssembly?.id])
   const { supParents, supCnt } = useMemo(() => {
@@ -1160,6 +1193,15 @@ export default function BOM() {
                   <span className="font-bold text-violet-800">상위품목 {supParents.length}개</span>
                   <span className="text-slate-500">· {SUPPLY_LABEL.buy} {supCnt.buy} · {SUPPLY_LABEL.make} {supCnt.make} · 미지정 {supParents.length - supCnt.buy - supCnt.make}</span>
                   <span className="text-[11px] text-slate-400">구매 = 상위만 발주 · 하위 제외 / 자작 = 상위 제외 · 하위만 발주 / 미지정 = 둘 다 계산</span>
+                  {subCnt.all > 0 && (
+                    <span className="text-[11px] font-semibold text-violet-700" title="이 BOM 안엔 하위가 없고 품번의 별도 BOM 이 있는 조립품 — 계산은 별도 BOM 으로 펼칩니다">
+                      · 📎 별도 BOM {subCnt.all}줄{subCnt.miss > 0 && <b className="text-rose-600"> (⚠ 전개 누락 {subCnt.miss})</b>}
+                    </span>
+                  )}
+                  <button onClick={downloadMissing} disabled={missBusy} title="모든 BOM 에서 전개가 빠진 조립품 목록 — 고객사 요청용"
+                    className="px-2 py-0.5 rounded-lg border border-violet-200 bg-white text-[11px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-40">
+                    {missBusy ? '만드는 중…' : '📋 전개 누락 목록 (엑셀)'}
+                  </button>
                   {canEdit && supSel.size > 0 && (
                     <span className="ml-auto flex items-center gap-1.5">
                       <b className="text-violet-700">{supSel.size}개 선택</b>
@@ -1193,11 +1235,15 @@ export default function BOM() {
                           <tr><td colSpan={11} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
                         ) : bomDetail.length === 0 ? (
                           <tr><td colSpan={11} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
-                        ) : detailVis.shown.map(b => (
-                          <BomDetailRow key={b.id} b={b} st={supTree.get(b.id)} dw={dwMap[b.items?.std_code]}
-                            checked={supSel.has(b.item_id)} canEdit={canEdit} supMissing={sup.missing}
-                            onToggle={toggleSup} onEdit={openEdit} onDelete={askDelete} />
-                        ))}
+                        ) : detailVis.shown.map(b => { const st = supTree.get(b.id); const open = openSubs.has(b.id); return (
+                          <Fragment key={b.id}>
+                            <BomDetailRow b={b} st={st} dw={dwMap[b.items?.std_code]}
+                              checked={supSel.has(b.item_id)} canEdit={canEdit} supMissing={sup.missing}
+                              onToggle={toggleSup} onEdit={openEdit} onDelete={askDelete} open={open} onToggleSub={toggleSub} />
+                            {open && st?.sub && <SubBomRows csId={cs?.id} parent={b} st={st} asm={asmByCode.get(b.items?.std_code)} supMap={sup.map}
+                              onOpen={(a) => { setSelAssembly(a); setDetailSearch('') }} />}
+                          </Fragment>
+                        )})}
                       </tbody>
                     </table>
                     <div ref={moreRef}><MoreRows {...detailVis} step={300} /></div>
@@ -1385,9 +1431,9 @@ export default function BOM() {
 // BOM 세부 한 줄 — 체크·수정 때 바뀐 줄만 다시 그리도록 따로 뺐다 (2026-09-30 · 1,500줄 BOM 에서 체크마다 전체가 다시 그려져 렉)
 // st 는 저장 때마다 새로 만들어지므로 내용(state·mode·eff)으로 비교 — 표시가 안 바뀐 줄은 다시 그리지 않는다
 const sameRow = (p, n) => p.b === n.b && p.dw === n.dw && p.checked === n.checked && p.canEdit === n.canEdit && p.supMissing === n.supMissing
-  && p.onToggle === n.onToggle && p.onEdit === n.onEdit && p.onDelete === n.onDelete
+  && p.onToggle === n.onToggle && p.onEdit === n.onEdit && p.onDelete === n.onDelete && p.open === n.open && p.onToggleSub === n.onToggleSub
   && (p.st === n.st || (!!p.st && !!n.st && p.st.state === n.st.state && p.st.mode === n.st.mode && p.st.eff === n.st.eff && p.st.parentable === n.st.parentable))
-const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEdit, supMissing, onToggle, onEdit, onDelete }) {
+const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEdit, supMissing, onToggle, onEdit, onDelete, open, onToggleSub }) {
   const off = st.state === 'buySkip' || st.state === 'makeParent'
   return (
         <tr title={st.state === 'buySkip' ? '상위품목을 구매 — 이 줄은 소요에서 빠집니다' : st.state === 'makeParent' ? '자작 — 이 상위품목은 소요에서 빠지고 하위만 계산합니다' : undefined}
@@ -1405,6 +1451,14 @@ const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEd
             {st.parentable && !supMissing && (st.mode
               ? <span className={`ml-1 px-1 py-0.5 rounded text-[10px] font-bold font-sans ${st.mode === 'buy' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{SUPPLY_LABEL[st.mode]}</span>
               : <span className="ml-1 px-1 py-0.5 rounded text-[10px] font-semibold font-sans bg-slate-100 text-slate-400" title="구매/자작 미지정 — 상위와 하위를 둘 다 소요로 계산 중">미지정</span>)}
+            {st.sub && (
+              <button onClick={() => onToggleSub(b.id)}
+                title={st.refExpanded ? '이 BOM 의 다른 위치에는 전개돼 있습니다 (리포트가 첫 위치에만 전개) — 계산은 별도 BOM 으로 펼칩니다'
+                  : '⚠ 이 BOM 어디에도 하위 전개가 없습니다 — 고객사 확인 필요 · 계산은 별도 BOM 으로 펼칩니다'}
+                className={`ml-1 px-1 py-0.5 rounded text-[10px] font-bold font-sans border ${st.refExpanded ? 'border-violet-200 bg-violet-50 text-violet-700' : 'border-rose-200 bg-rose-50 text-rose-600'} hover:brightness-95`}>
+                {st.refExpanded ? '📎 별도 BOM' : '⚠ 전개 누락'} {open ? '▾' : '▸'}
+              </button>
+            )}
           </td>
           <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
           <td className="px-3 py-2 text-center whitespace-nowrap">
@@ -1458,6 +1512,56 @@ const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEd
         </tr>
   )
 }, sameRow)
+
+// 별도 BOM 을 그 줄 아래에 펼쳐 보기 (읽기 전용) — 계산(부족자재·소요량)도 이 내용으로 펼친다
+function SubBomRows({ csId, parent, st, asm, supMap, onOpen }) {
+  const { data: rows = [], isLoading, error } = useQuery({
+    queryKey: ['bomDetail', csId, asm?.id], enabled: !!csId && !!asm?.id,
+    queryFn: () => fetchBOMDetail(csId, asm.id),
+  })
+  const base = Number(parent.level) || 1
+  const pe = Number(st?.eff) || 0
+  const tree = useMemo(() => bomSupplyTree(rows, supMap), [rows, supMap])
+  const skip = st?.mode === 'buy'
+  const head = (
+    <tr className="bg-violet-50/60 border-b border-violet-100">
+      <td /><td colSpan={10} className="px-3 py-1.5 text-[11px] text-violet-700" style={{ paddingLeft: `${indentOf(base + 1)}px` }}>
+        📎 별도 BOM <b className="font-mono">{asm?.code}</b> · {rows.length}줄
+        {skip ? ' — 🛒 구매로 지정돼 아래 부품은 소요에서 빠집니다' : ' — 아래 부품이 부족자재·소요량에 이 조립품 수량만큼 들어갑니다'}
+        {!st?.refExpanded && <b className="ml-1 text-rose-600">· ⚠ 고객사 리포트에 전개 없음 — 확인 요청 필요</b>}
+        {asm && <button onClick={() => onOpen(asm)} className="ml-2 px-1.5 py-0.5 rounded border border-violet-200 bg-white font-bold hover:bg-violet-100">이 BOM 열기 →</button>}
+      </td>
+    </tr>
+  )
+  if (isLoading || error) return <>{head}<tr><td /><td colSpan={10} className="px-3 py-2 text-[11px] text-slate-400">{error ? '불러오기 실패: ' + error.message : '불러오는 중…'}</td></tr></>
+  return (
+    <>
+      {head}
+      {rows.map(r => {
+        const t = tree.get(r.id) || {}
+        const lv = base + (Number(r.level) || 1)
+        const off = skip || t.state === 'buySkip' || t.state === 'makeParent'
+        return (
+          <tr key={'s' + r.id} className={`border-b border-violet-50 bg-violet-50/20 text-slate-500 ${off ? 'opacity-40' : ''}`}>
+            <td />
+            <td className="px-3 py-1.5"><span className={`inline-flex px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(lv)}`}>L{lv}</span></td>
+            <td className="px-3 py-1.5 font-mono text-xs text-violet-600" style={{ paddingLeft: `${indentOf(lv)}px` }}><span className="text-slate-300 select-none mr-0.5">└</span>{r.items?.std_code}</td>
+            <td className="px-3 py-1.5 font-semibold text-slate-600">{r.items?.name}</td>
+            <td className="px-3 py-1.5 text-center text-slate-300">-</td>
+            <td className="px-3 py-1.5 text-[11px]">{r.items?.category || r.items?.type}</td>
+            <td className="px-3 py-1.5 text-slate-400">{r.items?.manufacturer || '-'}</td>
+            <td className="px-3 py-1.5 font-mono text-xs text-slate-400">{r.items?.manufacturer_code || '-'}</td>
+            <td className="px-3 py-1.5 text-slate-400">{r.items?.unit}</td>
+            <td className="px-3 py-1.5 text-right font-bold text-slate-700 whitespace-nowrap">{r.qty_per_unit}
+              <div className="text-[10px] font-semibold text-violet-600" title="이 BOM 완제품 1대당">대당 {Math.round((t.eff || 0) * pe * 1000) / 1000}</div>
+            </td>
+            <td className="px-3 py-1.5 text-center text-[10px] text-violet-400">별도 BOM</td>
+          </tr>
+        )
+      })}
+    </>
+  )
+}
 
 function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setHit, busy }) {
   const isEdit = mode === 'edit'
