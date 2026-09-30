@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
+import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 import { todayISO } from '../../lib/utils'
@@ -239,7 +240,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       if (proj) {
         let rows
-        try { rows = await fetchQuoteBOM(customerId, proj.id) }
+        // 전개가 빠진 조립품은 별도 BOM 을 끼워 넣어 부품 원가까지 센다 (2026-09-30)
+        try { rows = (await spliceSubBoms(customerId, await fetchQuoteBOM(customerId, proj.id), fetchQuoteBOM, proj.id)).rows }
         catch (bErr) { throw new Error('하위품목 조회 — ' + (bErr?.message || bErr)) }
 
         const mapped = (rows || []).map((b, i) => ({

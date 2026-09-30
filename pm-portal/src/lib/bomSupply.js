@@ -1,7 +1,7 @@
 // BOM 상위품목 구매 / 자작 구분 (2026-09-30)
 //   DB 의 pm_bom_eff · pm_bom_explode 와 같은 규칙 — 화면 표시용(BOM 상세)과 소요량 산출(ReqBOM)에서 쓴다.
 //
-//   · 하위 수량은 「상위 1개당」 → 위로 곱해 올라간다 (상위 수량 0 이면 곱하지 않음)
+//   · 하위 수량은 「상위 1개당」 → 위로 곱해 올라간다 · 수량 0 = 참조용 → 그 밑 하위도 0 (2026-09-30 확인)
 //   · 구매(buy) 상위 : 상위만 세고 그 밑 하위는 전부 뺀다
 //   · 자작(make) 상위: 상위는 빼고 하위만 센다
 //   · 미지정         : 상위 · 하위 둘 다 센다 (예전과 같음)
@@ -47,7 +47,7 @@ export function bomSupplyTree(rows, supply = {}, subCodes = new Set()) {
     else if (parentable && mode === 'make') state = 'makeParent'
     else if (parentable && mode === 'buy') state = 'buyParent'
     out.set(r.id, { hasKids, sub, refExpanded, parentable, mode, state, eff })
-    stack.push({ lv, mul: q > 0 ? eff : pe, skip: ps || (hasKids && mode === 'buy') })
+    stack.push({ lv, mul: eff, skip: ps || (hasKids && mode === 'buy') })   // 수량 0(참조용)이면 하위도 0
   })
   return out
 }

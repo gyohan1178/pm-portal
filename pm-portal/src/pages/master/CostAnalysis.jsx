@@ -3,6 +3,7 @@ import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
+import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile } from '../../hooks/useProfile'
 import { orderedCustomers, primaryCsCode } from '../../lib/customers'
@@ -54,7 +55,10 @@ export default function CostAnalysis() {
     ? assemblies.filter(a => normCode(a.code + ' ' + (a.name || '')).includes(normCode(asmSearch)))
     : assemblies
   const { data: bomRows = [], isLoading } = useQuery({
-    queryKey: ['ca-bom', cs?.id, projectId], queryFn: () => fetchCostBOM(cs?.id, projectId), enabled: !!cs?.id && !!projectId,
+    // 전개가 빠진 조립품은 별도 BOM 을 끼워 넣어 부품 원가까지 센다 (2026-09-30)
+    queryKey: ['ca-bom', cs?.id, projectId],
+    queryFn: async () => (await spliceSubBoms(cs?.id, await fetchCostBOM(cs?.id, projectId), fetchCostBOM, projectId)).rows,
+    enabled: !!cs?.id && !!projectId,
   })
 
   // 설정값
@@ -92,7 +96,7 @@ export default function CostAnalysis() {
   const exploded = useMemo(() => {
     const mapped = bomRows.map((b, i) => ({
       uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
-      bomId: b.id,
+      bomId: b.id, fromSub: b.fromSub || null, subExpanded: !!b.subExpanded,
       // DB에 저장된 견적 제외 (고객 지급자재 등) — 새로고침해도 유지된다
       savedExcluded: !!b.quote_excluded,
       excludeMemo: b.exclude_memo || '',
@@ -277,7 +281,10 @@ export default function CostAnalysis() {
                 {vis.shown.map(r => (
                   <tr key={r.uid} className={`border-t border-slate-100 ${r.excluded ? 'opacity-40' : ''} ${r.status === 'noprice' ? 'bg-amber-50' : ''} ${r.status === 'unreg' ? 'bg-rose-50' : ''}`}>
                     <td className="px-2 py-1.5 text-slate-400">{r.level}</td>
-                    <td className="px-2 py-1.5 font-mono text-xs" style={{ paddingLeft: `${8 + (Number(r.level) || 0) * 12}px` }}>{r.std_code || '—'}</td>
+                    <td className="px-2 py-1.5 font-mono text-xs" style={{ paddingLeft: `${8 + (Number(r.level) || 0) * 12}px` }}>{r.std_code || '—'}
+                      {r.subExpanded && <span className="ml-1 px-1 rounded bg-rose-50 border border-rose-200 text-rose-600 text-[9px] font-bold font-sans" title="고객사 리포트에 하위 전개가 없어 별도 BOM 을 아래에 넣어 부품 원가로 계산했습니다">⚠ 전개 누락 → 별도 BOM 반영</span>}
+                      {r.fromSub && <span className="ml-1 px-1 rounded bg-violet-50 text-violet-600 text-[9px] font-semibold font-sans" title={`별도 BOM ${r.fromSub} 에서 가져온 줄`}>별도 BOM</span>}
+                    </td>
                     <td className="px-2 py-1.5 text-slate-600 max-w-[220px] truncate" title={r.name}>{r.name}</td>
                     <td className="px-2 py-1.5 text-slate-500 max-w-[130px] truncate" title={r.manufacturer}>{r.manufacturer || '-'}</td>
                     <td className="px-2 py-1.5 font-mono text-xs text-slate-500 max-w-[150px] truncate" title={r.manufacturer_code}>{r.manufacturer_code || '-'}</td>
@@ -288,7 +295,7 @@ export default function CostAnalysis() {
                     <td className="px-2 py-1.5 text-right font-semibold">{r.counted ? won(r.buyKrwTotal) : '—'}</td>
                     <td className="px-2 py-1.5 text-center">
                       <input type="checkbox" checked={!!r.excluded} onChange={() => toggleExclude(r.uid, r.excluded)}
-                        title={r.bomId ? '체크하면 원가에서 제외되고 저장됩니다 (고객 지급자재 등)' : '중간 어셈블리는 상하위 중복 방지로 자동 제외됩니다'} />
+                        title={r.bomId ? '체크하면 원가에서 제외되고 저장됩니다 (고객 지급자재 등)' : r.fromSub ? '별도 BOM 줄 — 여기서 제외는 이 화면에만 (저장하려면 그 별도 BOM 에서)' : '중간 어셈블리는 상하위 중복 방지로 자동 제외됩니다'} />
                       {r.savedExcluded && <span className="ml-0.5 text-[9px] text-rose-500 font-bold" title="저장된 제외">●</span>}
                     </td>
                   </tr>
