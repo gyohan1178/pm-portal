@@ -612,6 +612,9 @@ export default function BOM() {
     return { supParents: ps, supCnt: { buy: ps.filter(id => sup.map[id] === 'buy').length, make: ps.filter(id => sup.map[id] === 'make').length } }
   }, [bomDetail, supTree, sup.map])
   const toggleSup = useCallback((id) => setSupSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n }), [])
+  // 저장 즉시 화면부터 바꾸고(서버 응답을 기다리지 않음) 뒤에서 저장한다 — 실패하면 원래대로 되돌린다.
+  //   예전: 저장 → 표시 다시 읽기(왕복 2~3번) → 그다음에야 화면이 바뀌어 체크 뒤 저장이 굼떴다.
+  const supKey = ['itemSupply', selAssembly?.id, bomDetail.length]
   const supMut = useMutation({
     mutationFn: async ({ ids, mode }) => {
       if (!mode) {
@@ -624,13 +627,33 @@ export default function BOM() {
       }
       return { n: ids.length, mode }
     },
+    onMutate: async ({ ids, mode }) => {
+      await qc.cancelQueries({ queryKey: supKey })
+      const was = {}; const cur = qc.getQueryData(supKey)?.map || {}
+      ids.forEach(id => { was[id] = cur[id] || null })
+      qc.setQueryData(supKey, (old) => {
+        const map = { ...(old?.map || {}) }
+        ids.forEach(id => { if (mode) map[id] = mode; else delete map[id] })
+        return { ...(old || { missing: false }), map }
+      })
+      setSupSel(new Set())
+      return { was, key: supKey }
+    },
     onSuccess: ({ n, mode }) => {
       toastSuccess(`${n}개 ${mode ? SUPPLY_LABEL[mode] : '지정 해제'} — 부족자재·소요량에 바로 반영 · 소요예측은 ↻ 재계산을 눌러 주세요`)
-      setSupSel(new Set())
-      qc.invalidateQueries({ queryKey: ['itemSupply'], exact: false })
+      // 이 BOM 은 이미 화면에 반영됨 → 다른 BOM 의 표시만 새로 읽게 표시
+      qc.invalidateQueries({ queryKey: ['itemSupply'], predicate: (q) => q.queryKey[1] !== selAssembly?.id, refetchType: 'none' })
       refreshProcurement(qc)
     },
-    onError: (e) => toastError('구매/자작 저장 실패: ' + e.message),
+    onError: (e, _v, ctx) => {
+      // 이 저장에 들어간 품목만 원래 값으로 (그사이 다른 저장은 그대로 둔다)
+      if (ctx?.key) qc.setQueryData(ctx.key, (old) => {
+        const map = { ...(old?.map || {}) }
+        Object.entries(ctx.was).forEach(([id, m]) => { if (m) map[id] = m; else delete map[id] })
+        return { ...(old || { missing: false }), map }
+      })
+      toastError('구매/자작 저장 실패 — 원래대로 되돌렸습니다: ' + e.message)
+    },
   })
   const [addOpen, setAddOpen] = useState(false)
   const [pnHit, setPnHit] = useState(null)          // 품번 조회 결과
@@ -1140,11 +1163,11 @@ export default function BOM() {
                   {canEdit && supSel.size > 0 && (
                     <span className="ml-auto flex items-center gap-1.5">
                       <b className="text-violet-700">{supSel.size}개 선택</b>
-                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: 'buy' })}
-                        className="px-2.5 py-1 rounded-lg font-bold bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40">{SUPPLY_LABEL.buy} (하위 제외)</button>
-                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: 'make' })}
-                        className="px-2.5 py-1 rounded-lg font-bold bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40">{SUPPLY_LABEL.make} (상위 제외)</button>
-                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: null })}
+                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: 'buy' })}
+                        className="px-2.5 py-1 rounded-lg font-bold bg-sky-600 text-white hover:bg-sky-700">{SUPPLY_LABEL.buy} (하위 제외)</button>
+                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: 'make' })}
+                        className="px-2.5 py-1 rounded-lg font-bold bg-amber-500 text-white hover:bg-amber-600">{SUPPLY_LABEL.make} (상위 제외)</button>
+                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: null })}
                         className="px-2.5 py-1 rounded-lg font-bold border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">지정 해제</button>
                       <button onClick={() => setSupSel(new Set())} className="px-1.5 text-slate-400 hover:text-slate-600">✕</button>
                     </span>
@@ -1360,6 +1383,10 @@ export default function BOM() {
 // BOM 행 편집·추가 모달
 // 대체품을 쓰는 경우 품번을 바꾸면 품명·제조사가 자동으로 따라온다.
 // BOM 세부 한 줄 — 체크·수정 때 바뀐 줄만 다시 그리도록 따로 뺐다 (2026-09-30 · 1,500줄 BOM 에서 체크마다 전체가 다시 그려져 렉)
+// st 는 저장 때마다 새로 만들어지므로 내용(state·mode·eff)으로 비교 — 표시가 안 바뀐 줄은 다시 그리지 않는다
+const sameRow = (p, n) => p.b === n.b && p.dw === n.dw && p.checked === n.checked && p.canEdit === n.canEdit && p.supMissing === n.supMissing
+  && p.onToggle === n.onToggle && p.onEdit === n.onEdit && p.onDelete === n.onDelete
+  && (p.st === n.st || (!!p.st && !!n.st && p.st.state === n.st.state && p.st.mode === n.st.mode && p.st.eff === n.st.eff && p.st.parentable === n.st.parentable))
 const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEdit, supMissing, onToggle, onEdit, onDelete }) {
   const off = st.state === 'buySkip' || st.state === 'makeParent'
   return (
@@ -1430,7 +1457,7 @@ const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEd
           </td>
         </tr>
   )
-})
+}, sameRow)
 
 function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setHit, busy }) {
   const isEdit = mode === 'edit'
