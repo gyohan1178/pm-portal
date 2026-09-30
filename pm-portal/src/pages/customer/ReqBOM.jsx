@@ -8,6 +8,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
+import { explodeProjects } from '../../lib/bomSupply'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import ShortageTabs from '../../components/ShortageTabs'
@@ -100,6 +101,30 @@ function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
   })), { poNumber: poNumber || 'auto', log: '소요량 역산에서 발주 생성', customerName: csName })
 }
 
+
+// BOM → 상위품번 1대당 소요 (2026-09-30)
+//   부족자재와 같은 규칙(pm_bom_explode): 상위품목 구매/자작 표시 · 하위 수량 × 상위 수량.
+//   SQL(pm_bom_supply_260930.sql) 을 아직 안 돌렸으면 예전처럼 BOM 줄을 그대로 쓴다.
+const ITEM_COLS = 'id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price'
+async function bomRowsFor(customerId, projIds) {
+  const ex = await explodeProjects(customerId, projIds)
+  if (ex === null) {
+    // ⚠ BOM 은 상위품번 몇 개만 골라도 1,000행을 쉽게 넘는다 — 끝까지 · 정렬해서
+    return fetchAll(() => supabase.from('bom')
+      .select(`project_id,qty_per_unit,item_id,id, items!bom_item_id_fkey(${ITEM_COLS})`)
+      .eq('customer_id', customerId).in('project_id', projIds)
+      .order('id'))
+  }
+  const ids = [...new Set(ex.map(r => r.item_id))]
+  const itemMap = {}
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data, error } = await supabase.from('items').select(ITEM_COLS).in('id', ids.slice(i, i + 300))
+    if (error) throw error
+    ;(data || []).forEach(x => { itemMap[x.id] = x })
+  }
+  return ex.map(r => ({ ...r, items: itemMap[r.item_id] }))
+}
+
 async function fetchReqBOM(customerId, projectIds, manualItems) {
   // meta — 무엇이 몇 행 반영됐는지 화면에 보여 주기 위한 것.
   //   BOM 이 말없이 잘려 자재가 빠진 적이 있어(v3.84), 눈으로 확인할 수 있어야 한다.
@@ -118,11 +143,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
     // ⚠ BOM 은 상위품번 몇 개만 골라도 1,000행을 쉽게 넘는다.
     //   그냥 조회하면 말없이 잘리고 오류도 안 난다 (실제로 1,452행 중 452행이 빠졌다).
     //   정렬이 없으면 어느 1,000행이 올지도 매번 달라진다.
-    const bomRows = await fetchAll(() => supabase
-      .from('bom')
-      .select('*, items!bom_item_id_fkey(id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price)')
-      .eq('customer_id', customerId).in('project_id', projectIds)
-      .order('id'))
+    const bomRows = await bomRowsFor(customerId, projectIds)
 
     const cpoMap = {}
     ;(poRows||[]).forEach(r=>{ if(r.project_id) cpoMap[r.project_id]=(cpoMap[r.project_id]||0)+(r.qty_remaining||0) })
@@ -165,10 +186,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
       // 1) 어셈블리 → 하위품목 전개 (소요량 = 입력수량 × qty_per_unit)
       if (asmCodes.length) {
         const projIds = asmCodes.map(c=>projByCode[c])
-        const bomRows = await fetchAll(() => supabase.from('bom')
-          .select('project_id,qty_per_unit,item_id,id, items!bom_item_id_fkey(id,std_code,name,type,js_code,unit,lt_weeks,manufacturer,manufacturer_code,dept,category,purchase_price)')
-          .eq('customer_id', customerId).in('project_id', projIds)
-          .order('id'))
+        const bomRows = await bomRowsFor(customerId, projIds)
         const qtyByProj = {}
         asmCodes.forEach(c=>{ const m=manualItems.find(x=>x.code===c); qtyByProj[projByCode[c]]=Number(m?.qty)||0 })
         // 상위품번마다 몇 행이 반영됐는지 남긴다

@@ -210,9 +210,24 @@ export function buildForecast(cur, prev) {
   const totCur = r1(monthly.filter(x => x.kind === 'cmp').reduce((s, x) => s + x.cur, 0))
   const totPrev = r1(monthly.filter(x => x.kind === 'cmp').reduce((s, x) => s + x.prev, 0))
 
+  // 주요 110 품번(완제품 PD BOX 등) — 달마다 직전→최신을 한눈에
+  const isMain = code => /^[A-Z]+-110/i.test(code || '')
+  const main = [
+    ...latest.filter(r => isMain(r.std_code)).map(r => ({
+      std_code: r.std_code, item_name: r.item_name, cur: r.cells, prev: r.prev, isNew: r.isNew, removed: false,
+      curW: r.curW, prevW: r.prevW, diffW: r.diffW, changed: r.changed, shift: r.shift,
+    })),
+    ...removedInWin.filter(x => isMain(x.std_code)).map(x => {
+      const pq = {}; win.forEach(m => { pq[m] = P[x.std_code].q[m] || 0 })
+      return { std_code: x.std_code, item_name: x.item_name, cur: {}, prev: pq, isNew: false, removed: true,
+        curW: 0, prevW: x.prevW, diffW: r1(-x.prevW), changed: true, shift: null }
+    }),
+  ].sort((x, y) => (y.changed - x.changed) || Math.abs(y.diffW || 0) - Math.abs(x.diffW || 0) || x.std_code.localeCompare(y.std_code))
+
   return {
     latest, months,
     analysis: {
+      main,
       win, droppedMonths, addedMonths, tailGone,
       totCur, totPrev, totDiff: r1(totCur - totPrev),
       monthly, up, down, movedOnly, added, addedOutside, removed: removedInWin, endedPast,
@@ -486,6 +501,8 @@ function ForecastAnalysis({ a, latestBatch, prevBatch, open, setOpen, onPick }) 
             ))}
           </div>
 
+          {a.main.length > 0 && <MainChanges a={a} onPick={onPick} />}
+
           <div className="rounded-lg border border-slate-200 bg-white overflow-x-auto">
             <table className="text-[11px] whitespace-nowrap w-full">
               <thead><tr className="bg-slate-50 text-slate-500">
@@ -518,6 +535,65 @@ function ForecastAnalysis({ a, latestBatch, prevBatch, open, setOpen, onPick }) 
               render={r => <span className="text-slate-500">직전 {fmt1(r.prevW)} → 0</span>} />
           </div>
           <p className="text-[10px] text-slate-400">품목을 누르면 아래 표에서 그 품목만 보입니다 · 「밀림/당겨짐」은 비교 구간 안에서 수요의 무게중심이 옮겨 간 정도(개월)입니다 · 빠진 품목은 표에 없습니다</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// 주요 110 품번 변동 — 품번마다 달별 「최신 수량 ▲▼증감」
+function MainChanges({ a, onPick }) {
+  const [onlyChg, setOnlyChg] = useState(true)
+  const nChg = a.main.filter(r => r.changed).length
+  const rows = onlyChg ? a.main.filter(r => r.changed) : a.main
+  const ms = a.monthly.map(x => x.m)
+  const W = new Set(a.win)
+  return (
+    <div className="rounded-lg border border-violet-200 bg-white">
+      <div className="flex items-center justify-between gap-2 flex-wrap px-3 py-2 border-b border-violet-100">
+        <span className="text-xs font-bold text-violet-700">⭐ 주요 110 품번 변동 <span className="text-slate-400 font-semibold">· 전체 {a.main.length}개 중 바뀐 것 {nChg}개</span></span>
+        <label className="flex items-center gap-1 text-[11px] text-slate-500 cursor-pointer">
+          <input type="checkbox" checked={onlyChg} onChange={e => setOnlyChg(e.target.checked)} /> 바뀐 것만
+        </label>
+      </div>
+      {rows.length === 0 ? <div className="px-3 py-3 text-[11px] text-slate-400">110 품번은 직전 접수와 같습니다</div> : (
+        <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
+          <table className="text-[11px] whitespace-nowrap w-full">
+            <thead className="sticky top-0 z-10"><tr className="bg-violet-50 text-slate-500">
+              <th className="px-2 py-1.5 text-left font-bold sticky left-0 bg-violet-50">품번 · 품명</th>
+              <th className="px-2 py-1.5 text-right font-bold">비교 구간 합</th>
+              {ms.map(m => <th key={m} className={`px-2 py-1.5 text-right font-bold ${W.has(m) ? '' : 'text-emerald-600'}`}>{m.slice(2)}</th>)}
+            </tr></thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.std_code} className={`border-t border-slate-100 ${r.removed ? 'bg-slate-50' : ''}`}>
+                  <td className="px-2 py-1 sticky left-0 bg-white">
+                    <button onClick={() => !r.removed && onPick(r.std_code)} className={`font-mono ${r.removed ? 'text-slate-400 line-through cursor-default' : 'text-indigo-600 hover:underline'}`}>{r.std_code}</button>
+                    {r.isNew && <span className="ml-1 px-1 rounded bg-emerald-100 text-emerald-700 text-[9px] font-bold">신규</span>}
+                    {r.removed && <span className="ml-1 px-1 rounded bg-slate-200 text-slate-600 text-[9px] font-bold">빠짐</span>}
+                    {shiftTxt(r.shift) && <span className="ml-1 text-[10px] text-amber-600 font-semibold">{shiftTxt(r.shift)}</span>}
+                    <div className="text-[10px] text-slate-400 max-w-[220px] truncate">{r.item_name}</div>
+                  </td>
+                  <td className="px-2 py-1 text-right">
+                    {r.prevW == null ? <span className="text-emerald-600 font-bold">{fmt1(r.curW)}</span>
+                      : <><span className="text-slate-400">{fmt1(r.prevW)}→</span><b className="text-slate-700">{fmt1(r.curW)}</b>
+                        {r.diffW !== 0 && <span className={`ml-1 font-bold ${r.diffW > 0 ? 'text-red-500' : 'text-blue-500'}`}>{sgn(r.diffW)}</span>}</>}
+                  </td>
+                  {ms.map(m => {
+                    const c = r.cur[m] || 0
+                    const p = W.has(m) && r.prev[m] != null ? r.prev[m] : null
+                    const d = p == null ? null : r1(c - p)
+                    return (
+                      <td key={m} className="px-2 py-1 text-right">
+                        {c ? <span className="font-semibold text-slate-700">{fmt1(c)}</span> : <span className="text-slate-200">·</span>}
+                        {d != null && d !== 0 && <span className={`ml-0.5 text-[10px] font-bold ${d > 0 ? 'text-red-500' : 'text-blue-500'}`}>{d > 0 ? '▲' : '▼'}{fmt1(Math.abs(d))}</span>}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>

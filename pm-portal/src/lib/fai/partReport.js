@@ -116,7 +116,7 @@ export function clsKey(P) {
   if (/^Sole/i.test(P.cls)) return 'sole'
   return 'uncls'
 }
-export const CLS_LABEL = { generic: 'Generic', limited: 'Limited', sole: 'Sole', uncls: '미분류', nomfr: '제조사미등록', assy: '조립품' }
+export const CLS_LABEL = { generic: 'Generic', limited: 'Limited', sole: 'Sole', uncls: 'Class 없음', nomfr: '제조사미등록', assy: '조립품' }
 export const CLS_BADGE = { generic: 'b-blue', limited: 'b-amber', sole: 'b-red', uncls: 'b-gray', nomfr: 'b-gray', assy: 'b-gray' }
 
 /* ================= 판정 ================= */
@@ -127,6 +127,7 @@ export const V = {
   NOMFR_OK: { t: '✅ 구매확인', b: 'b-green', grp: 'ok', ord: 4 },
   GEN: { t: '🟦 Generic 자체판단', b: 'b-blue', grp: 'gen', ord: 3 },
   APR: { t: '⚠ 승인이력 필요', b: 'b-amber', grp: 'chk', ord: 1 },
+  UNCLS: { t: '⚠ Class 미표기 — 확인필요', b: 'b-amber', grp: 'chk', ord: 1 },
   MFRONLY: { t: '⚠ 제조사만 일치', b: 'b-amber', grp: 'chk', ord: 1 },
   DNU: { t: '⛔ 사용금지 품번', b: 'b-red', grp: 'chk', ord: 0 },
   NOREC: { t: '⚪ 구매이력 없음', b: 'b-gray', grp: 'none', ord: 2 },
@@ -184,9 +185,11 @@ export const normVo = (t) => {
   return ''
 }
 
-// ctx: { buyIdx: Map, man: {pn: {...}}, uncls: 'limited' | 'generic' }
+// ctx: { buyIdx: Map, man: {pn: {...}} }
+//   ⚠ Class 가 비어 있는 품목(미분류)은 Generic/Limited/Sole 을 알 수 없다 → Generic 으로 간주하지 않고
+//     등록품과 안 맞으면 「Class 미표기 — 확인필요」 (2026-09-30 품질 요청 · 예전의 「Generic 처럼」 선택은 없앰)
 export function evaluateAuto(P, ctx) {
-  const { buyIdx = new Map(), man: MAN = {}, uncls = 'limited' } = ctx || {}
+  const { buyIdx = new Map(), man: MAN = {} } = ctx || {}
   const cat = category(P)
   const key = normAx(P.pn)
   const recs = buyIdx.get(key) || []
@@ -216,9 +219,9 @@ export function evaluateAuto(P, ctx) {
     return out
   }
   const ck = clsKey(P)
-  const genericLike = ck === 'generic' || (ck === 'uncls' && uncls === 'generic')
-  if (genericLike) { out.v = 'GEN'; return out }
+  if (ck === 'generic') { out.v = 'GEN'; return out }
   if (man.apr) { out.v = 'APR_OK'; return out }
+  if (ck === 'uncls') { out.v = 'UNCLS'; return out }
   const mfrHit = act.mfr && P.mfrs.find((m) => normMfr(m.mfr) && (normMfr(m.mfr) === normMfr(act.mfr)))
   out.v = (mfrHit && !act.mpn) ? 'MFRONLY' : 'APR'
   return out

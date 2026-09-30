@@ -130,7 +130,7 @@ export default function FaiNavigator() {
     if (!saved?.txt) return null
     try { return Object.assign(parseReport(saved.txt), { fileName: saved.name }) } catch { return null }
   })
-  const [opt, setOpt] = useState(() => Object.assign({ mode: 'uniq', incAssy: true, uncls: 'limited' }, lsGet(LS_OPT, {})))
+  const [opt, setOpt] = useState(() => (({ uncls, ...o }) => o)(Object.assign({ mode: 'uniq', incAssy: true }, lsGet(LS_OPT, {}))))
   const setO = (p) => setOpt((o) => { const n = { ...o, ...p }; lsSet(LS_OPT, n); return n })
   const [filt, setFilt] = useState({ grp: null, cls: null, q: '' })
   const [sort, setSort] = useState({ k: 'no', d: 'asc' })
@@ -184,7 +184,7 @@ export default function FaiNavigator() {
 
   const rows = useMemo(() => {
     if (!rep) return []
-    const ctx = { buyIdx: buildBuyIndex(buy?.recs || []), man: {}, uncls: opt.uncls }
+    const ctx = { buyIdx: buildBuyIndex(buy?.recs || []), man: {} }
     return buildRows(rep, opt, ctx)
   }, [rep, buy, opt])
 
@@ -399,7 +399,7 @@ export default function FaiNavigator() {
     { g: null, s: '', t: '대상 품목', v: base.length, n: `${opt.mode === 'uniq' ? '고유 품번' : 'BOM 전개 줄'} · 자체제작 ${(rows.length - base.length).toLocaleString('ko-KR')}건 별도` },
     { g: 'ok', s: 'ok', t: '적합', v: cnt('ok'), n: '등록품 일치 · 승인이력 · 구매확인' },
     { g: 'gen', s: 'gen', t: 'Generic 자체판단', v: cnt('gen'), n: '스펙 문구와 대조만 하면 됨' },
-    { g: 'chk', s: 'chk', t: '확인 필요', v: cnt('chk'), n: '승인이력 필요 · 사용금지 · 품번 불명' },
+    { g: 'chk', s: 'chk', t: '확인 필요', v: cnt('chk'), n: '승인이력 필요 · Class 미표기 · 사용금지 · 품번 불명' },
     { g: 'none', s: 'none', t: '이력 없음', v: cnt('none'), n: '발주 이력 없음 · 제조사 미등록품' },
     { g: '__cov', s: 'cov', t: '발주 이력 연결률', v: base.length ? Math.round((linked / base.length) * 100) + '%' : '—',
       n: buy ? `품목 ${buy.itemCount.toLocaleString('ko-KR')}/${buy.codeCount.toLocaleString('ko-KR')}개 등록 · 발주 ${buy.recs.length.toLocaleString('ko-KR')}줄` : (buyLoading ? '불러오는 중…' : '—') },
@@ -553,14 +553,9 @@ export default function FaiNavigator() {
                 <input type="checkbox" checked={opt.incAssy} onChange={(e) => setO({ incAssy: e.target.checked })} /> 조립품도 목록에
               </label>
             )}
-            <label className="flex items-center gap-1.5 text-slate-600">
-              미분류(Class 표기 없음)는
-              <select value={opt.uncls} onChange={(e) => setO({ uncls: e.target.value })}
-                className="px-2 py-1 border border-slate-200 rounded-lg bg-white">
-                <option value="limited">등록품만 인정</option>
-                <option value="generic">Generic 처럼 자체판단</option>
-              </select>
-            </label>
+            <span className="text-slate-500" title="Class 가 비어 있으면 Generic/Limited/Sole 을 알 수 없어 Generic 으로 보지 않습니다">
+              Class 표기 없음 → 등록품과 안 맞으면 <b className="text-amber-600">확인필요</b>
+            </span>
           </div>
 
           {buyErr && (

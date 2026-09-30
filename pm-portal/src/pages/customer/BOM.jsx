@@ -15,6 +15,8 @@ import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import { todayISO } from '../../lib/utils'
+import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
+import { refreshProcurement } from '../../lib/refresh'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -591,6 +593,41 @@ export default function BOM() {
   // 같은 리포트를 다시 올리면 사라진다. (대체품은 보통 리포트에 없으므로 주의)
   const canEdit = useCanEdit()
   const [editRow, setEditRow] = useState(null)      // 편집 중인 bom 행
+
+  // ── 상위품목 구매 / 자작 (2026-09-30) ─────────────────────────
+  //   구매: 상위만 소요 · 하위 제외 / 자작: 상위 제외 · 하위만 소요 — 부족자재·소요예측·소요량에 반영
+  //   품목 단위로 저장 → 그 상위품목이 들어간 모든 BOM 에 같이 적용
+  const { data: sup = { map: {}, missing: false } } = useQuery({
+    queryKey: ['itemSupply', selAssembly?.id, bomDetail.length],
+    enabled: !!selAssembly?.id && bomDetail.length > 0,
+    queryFn: () => fetchSupply(bomDetail.map(b => b.item_id)),
+  })
+  const subCodes = new Set(assemblies.map(a => a.code))
+  const supTree = bomSupplyTree(bomDetail, sup.map, subCodes)
+  const [supSel, setSupSel] = useState(() => new Set())
+  useEffect(() => { setSupSel(new Set()) }, [selAssembly?.id])
+  const supParents = [...new Set(bomDetail.filter(b => supTree.get(b.id)?.parentable).map(b => b.item_id))]
+  const supCnt = { buy: supParents.filter(id => sup.map[id] === 'buy').length, make: supParents.filter(id => sup.map[id] === 'make').length }
+  const supMut = useMutation({
+    mutationFn: async ({ ids, mode }) => {
+      if (!mode) {
+        const { error } = await supabase.from('pm_item_supply').delete().in('item_id', ids)
+        if (error) throw error
+      } else {
+        const { error } = await supabase.from('pm_item_supply')
+          .upsert(ids.map(item_id => ({ item_id, mode, updated_at: new Date().toISOString() })), { onConflict: 'item_id' })
+        if (error) throw error
+      }
+      return { n: ids.length, mode }
+    },
+    onSuccess: ({ n, mode }) => {
+      toastSuccess(`${n}개 ${mode ? SUPPLY_LABEL[mode] : '지정 해제'} — 부족자재·소요량에 바로 반영 · 소요예측은 ↻ 재계산을 눌러 주세요`)
+      setSupSel(new Set())
+      qc.invalidateQueries({ queryKey: ['itemSupply'], exact: false })
+      refreshProcurement(qc)
+    },
+    onError: (e) => toastError('구매/자작 저장 실패: ' + e.message),
+  })
   const [addOpen, setAddOpen] = useState(false)
   const [pnHit, setPnHit] = useState(null)          // 품번 조회 결과
 
@@ -1065,6 +1102,29 @@ export default function BOM() {
                 대체품 사용 등으로 수정한 내용은 <b>같은 어셈블리의 리포트를 다시 업로드하면 사라집니다</b>
                 (업로드 시 어셈블리 전체가 새로 등록되기 때문).
               </p>
+              {selAssembly && bomDetail.length > 0 && (sup.missing ? (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  상위품목 구매/자작 표시를 쓰려면 먼저 <b>pm_bom_supply_260930.sql</b> 을 실행해 주세요.
+                </div>
+              ) : supParents.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap rounded-lg border border-violet-200 bg-violet-50/50 px-3 py-2 text-xs">
+                  <span className="font-bold text-violet-800">상위품목 {supParents.length}개</span>
+                  <span className="text-slate-500">· {SUPPLY_LABEL.buy} {supCnt.buy} · {SUPPLY_LABEL.make} {supCnt.make} · 미지정 {supParents.length - supCnt.buy - supCnt.make}</span>
+                  <span className="text-[11px] text-slate-400">구매 = 상위만 발주 · 하위 제외 / 자작 = 상위 제외 · 하위만 발주 / 미지정 = 둘 다 계산</span>
+                  {canEdit && supSel.size > 0 && (
+                    <span className="ml-auto flex items-center gap-1.5">
+                      <b className="text-violet-700">{supSel.size}개 선택</b>
+                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: 'buy' })}
+                        className="px-2.5 py-1 rounded-lg font-bold bg-sky-600 text-white hover:bg-sky-700 disabled:opacity-40">{SUPPLY_LABEL.buy} (하위 제외)</button>
+                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: 'make' })}
+                        className="px-2.5 py-1 rounded-lg font-bold bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40">{SUPPLY_LABEL.make} (상위 제외)</button>
+                      <button disabled={supMut.isPending} onClick={() => supMut.mutate({ ids: [...supSel], mode: null })}
+                        className="px-2.5 py-1 rounded-lg font-bold border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">지정 해제</button>
+                      <button onClick={() => setSupSel(new Set())} className="px-1.5 text-slate-400 hover:text-slate-600">✕</button>
+                    </span>
+                  )}
+                </div>
+              ))}
               {detailError ? (
                 <div className="text-center py-8 text-red-500 text-sm">오류: {detailError.message}</div>
               ) : (
@@ -1073,6 +1133,7 @@ export default function BOM() {
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-slate-50 border-b border-slate-200">
+                          <th className="px-2 py-2.5 text-center font-bold text-slate-400 text-[10px] whitespace-nowrap" title="상위품목(하위가 딸린 줄 · 서브 BOM 이 있는 품목)만 고를 수 있습니다">구매<br/>자작</th>
                           {['LV','기준코드','품명','REV 대조','구분','제조사','제조사품번','단위','소요량','수정'].map(h => (
                             <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                           ))}
@@ -1080,19 +1141,30 @@ export default function BOM() {
                       </thead>
                       <tbody>
                         {detailLoading ? (
-                          <tr><td colSpan={10} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+                          <tr><td colSpan={11} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
                         ) : bomDetail.length === 0 ? (
-                          <tr><td colSpan={10} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
+                          <tr><td colSpan={11} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
                         ) : bomDetail.filter(b=>{
                           const q=detailSearch.trim().toLowerCase(); if(!q) return true
                           const it=b.items||{}
                           return [it.std_code,it.name,it.manufacturer,it.manufacturer_code].some(x=>(x||'').toLowerCase().includes(q))
-                        }).map(b => (
-                          <tr key={b.id} className={`border-b border-slate-100 hover:bg-indigo-50/40 ${(b.level||1)>=4?'bg-slate-200/50':(b.level||1)===3?'bg-slate-100/60':(b.level||1)===2?'bg-slate-50':''}`}>
+                        }).map(b => { const st = supTree.get(b.id) || {}; const off = st.state === 'buySkip' || st.state === 'makeParent'; return (
+                          <tr key={b.id} title={st.state === 'buySkip' ? '상위품목을 구매 — 이 줄은 소요에서 빠집니다' : st.state === 'makeParent' ? '자작 — 이 상위품목은 소요에서 빠지고 하위만 계산합니다' : undefined}
+                            className={`border-b border-slate-100 hover:bg-indigo-50/40 ${off ? 'opacity-40' : ''} ${(b.level||1)>=4?'bg-slate-200/50':(b.level||1)===3?'bg-slate-100/60':(b.level||1)===2?'bg-slate-50':''}`}>
+                            <td className="px-2 py-2 text-center">
+                              {st.parentable && !sup.missing && (canEdit
+                                ? <input type="checkbox" checked={supSel.has(b.item_id)}
+                                    onChange={() => setSupSel(prev => { const n = new Set(prev); n.has(b.item_id) ? n.delete(b.item_id) : n.add(b.item_id); return n })} />
+                                : <span className="text-slate-300">·</span>)}
+                            </td>
                             <td className="px-3 py-2">
                               <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-bold ${levelCls(b.level)}`}>L{b.level}</span>
                             </td>
-                            <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${indentOf(b.level)}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}</td>
+                            <td className="px-3 py-2 font-mono text-xs text-indigo-600" style={{paddingLeft:`${indentOf(b.level)}px`}}>{(b.level||1)>1&&<span className="text-slate-300 select-none mr-0.5">└</span>}{b.items?.std_code}
+                              {st.parentable && !sup.missing && (st.mode
+                                ? <span className={`ml-1 px-1 py-0.5 rounded text-[10px] font-bold font-sans ${st.mode === 'buy' ? 'bg-sky-100 text-sky-700' : 'bg-amber-100 text-amber-700'}`}>{SUPPLY_LABEL[st.mode]}</span>
+                                : <span className="ml-1 px-1 py-0.5 rounded text-[10px] font-semibold font-sans bg-slate-100 text-slate-400" title="구매/자작 미지정 — 상위와 하위를 둘 다 소요로 계산 중">미지정</span>)}
+                            </td>
                             <td className="px-3 py-2 font-semibold text-slate-800">{b.items?.name}</td>
                             <td className="px-3 py-2 text-center whitespace-nowrap">
                               {(() => {
@@ -1122,7 +1194,11 @@ export default function BOM() {
                             <td className="px-3 py-2 text-slate-400">{b.items?.manufacturer||'-'}</td>
                             <td className="px-3 py-2 font-mono text-xs text-slate-400">{b.items?.manufacturer_code||'-'}</td>
                             <td className="px-3 py-2 text-slate-500">{b.items?.unit}</td>
-                            <td className="px-3 py-2 text-right font-bold text-slate-900">{b.qty_per_unit}</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-900 whitespace-nowrap">{b.qty_per_unit}
+                              {st.eff != null && Math.abs(st.eff - Number(b.qty_per_unit || 0)) > 1e-9 && (
+                                <div className="text-[10px] font-semibold text-violet-600" title="상위 수량을 곱한 완제품 1대당 소요">대당 {Math.round(st.eff * 1000) / 1000}</div>
+                              )}
+                            </td>
                             <td className="px-3 py-2 text-center whitespace-nowrap">
                               {canEdit ? (
                                 <>
@@ -1142,7 +1218,7 @@ export default function BOM() {
                               ) : <span className="text-slate-300">-</span>}
                             </td>
                           </tr>
-                        ))}
+                        )})}
                       </tbody>
                     </table>
                   </div>
