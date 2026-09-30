@@ -58,8 +58,17 @@ const HIST_COLS = [
 const emptyRow = () => ({
   key: Math.random().toString(36).slice(2),
   item_id: null, std_code: '', item_name: '', maker: '', maker_code: '',
-  qty: '', unit: 'EA', reason: '',
+  qty: '', unit: 'EA', reason: '', cut_mm: '', strip_l_mm: '', strip_r_mm: '',
 })
+
+// 절단 요청 내용 한 줄 — 「✂ 1,200mm · 탈피 좌 10 / 우 15」 (2026-09-30)
+const mmTxt = v => Number(v).toLocaleString('ko-KR')
+export function cutLabel(r, { icon = true } = {}) {
+  if (!r || r.req_kind !== '절단' || !(Number(r.cut_mm) > 0)) return ''
+  const L = Number(r.strip_l_mm) > 0, R = Number(r.strip_r_mm) > 0
+  const strip = L || R ? ` · 탈피 좌 ${L ? mmTxt(r.strip_l_mm) : '-'} / 우 ${R ? mmTxt(r.strip_r_mm) : '-'}` : ''
+  return `${icon ? '✂ ' : ''}${mmTxt(r.cut_mm)}mm${strip}`
+}
 
 // 자재 요청.
 //
@@ -287,7 +296,7 @@ export default function MaterialRequest() {
     }
     if (head.check_dept === '하네스팀' && head.req_kind === '절단'
         && valid.some(r => !(Number(r.cut_mm) > 0))) {
-      toastError('절단 길이를 적어 주세요'); return
+      toastError('절단은 품목마다 총 절단길이(mm)를 적어 주세요'); return
     }
     setBusy(true)
     try {
@@ -298,6 +307,11 @@ export default function MaterialRequest() {
         req_kind: head.check_dept === '하네스팀' ? (head.req_kind || null) : null,
         cut_mm: head.check_dept === '하네스팀' && head.req_kind === '절단'
           ? (Number(r.cut_mm) || null) : null,
+        // 좌·우 탈피 길이 (선택) — 절단일 때만
+        strip_l_mm: head.check_dept === '하네스팀' && head.req_kind === '절단'
+          ? (Number(r.strip_l_mm) || null) : null,
+        strip_r_mm: head.check_dept === '하네스팀' && head.req_kind === '절단'
+          ? (Number(r.strip_r_mm) || null) : null,
         product_code: head.product_code, product_name: head.product_name,
         unit_no: head.unit_no, need_date: head.need_date || null,
         item_id: r.item_id, std_code: r.std_code, item_name: r.item_name,
@@ -492,7 +506,9 @@ export default function MaterialRequest() {
         '긴급도': r.urgency || '',
         '확인부서': r.check_dept || '',
         '종류': r.req_kind || '',
-        '길이(mm)': r.cut_mm ?? '',
+        '총 절단길이(mm)': r.cut_mm ?? '',
+        '좌 탈피(mm)': r.strip_l_mm ?? '',
+        '우 탈피(mm)': r.strip_r_mm ?? '',
         '고객사': r.customer_code || '',
         '요청자': r.requester || '',
         '사용목적': r.purpose || '',
@@ -543,11 +559,14 @@ export default function MaterialRequest() {
 
       const h = data[0]
       const today = new Date().toLocaleDateString('ko-KR')
+      // 인쇄 함수는 절단 길이를 안 돌려준다 → 목록에서 고른 줄의 값을 붙인다 (요청번호+품번)
+      const cutOf = new Map(checked.map(c => [`${c.req_no}|${c.std_code}`, c]))
+      const cutTxt = (r) => cutLabel(cutOf.get(`${r.req_no}|${r.std_code}`) || r)
       const body = data.map((r, i) => `<tr>
         <td class="c">${i + 1}</td>
         <td class="c mono b">${r.location || '<span class="no">미지정</span>'}</td>
         <td class="mono">${r.std_code || '-'}</td>
-        <td>${r.item_name || ''}</td>
+        <td>${r.item_name || ''}${cutTxt(r) ? `<br><b style="color:#b45309">${cutTxt(r)}</b>` : ''}</td>
         <td>${r.maker || '-'}</td>
         <td class="mono">${r.maker_code || '-'}</td>
         <td class="c b">${Number(r.qty).toLocaleString('ko-KR')}</td>
@@ -862,7 +881,7 @@ export default function MaterialRequest() {
                 </p>
                 <p className="text-sm font-bold text-rose-700 mt-0.5 break-words">
                   {r.notice_msg || ''}
-                  {r.req_kind === '절단' && r.cut_mm ? ` (${n(r.cut_mm)}mm)` : ''}
+                  {cutLabel(r) ? ` (${cutLabel(r, { icon: false })})` : ''}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   {r.notice_by || '처리자 미상'}
@@ -941,7 +960,7 @@ export default function MaterialRequest() {
                         onClick={() => {
                           setHead(h => ({ ...h, req_kind: k }))
                           // 절단이 아니면 길이는 뜻이 없다. 남겨 두면 그대로 저장된다.
-                          if (k !== '절단') setRows(rs => rs.map(r => ({ ...r, cut_mm: '' })))
+                          if (k !== '절단') setRows(rs => rs.map(r => ({ ...r, cut_mm: '', strip_l_mm: '', strip_r_mm: '' })))
                         }}
                         title={t}
                         className={`flex-1 px-2 py-2 text-xs font-bold rounded-lg border whitespace-nowrap ${
@@ -1077,21 +1096,28 @@ export default function MaterialRequest() {
                       </button>
                     )}
                   </div>
-                  {/* 절단은 길이를 함께 적어야 한다 */}
+                  {/* 절단은 총 절단길이(필수)와 좌·우 탈피길이(선택)를 함께 적는다 */}
                   {head.check_dept === '하네스팀' && head.req_kind === '절단' && (
-                    <div className="flex items-center gap-1">
-                      <input type="number" inputMode="decimal" value={r.cut_mm || ''}
-                        onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, cut_mm: e.target.value } : x))}
-                        placeholder="길이"
-                        className="w-20 px-2 py-2 text-sm text-right font-bold border border-amber-300 bg-amber-50 rounded-lg" />
-                      <span className="text-[11px] text-slate-400">mm</span>
+                    <div className="flex items-end gap-1">
+                      {[['cut_mm', '총 절단길이 *', 'w-24 border-amber-400 bg-amber-50'],
+                        ['strip_l_mm', '좌 탈피', 'w-16 border-amber-200 bg-amber-50/40'],
+                        ['strip_r_mm', '우 탈피', 'w-16 border-amber-200 bg-amber-50/40']].map(([f, l, c]) => (
+                        <label key={f} className="flex flex-col">
+                          <span className="text-[10px] font-bold text-amber-700 leading-none mb-0.5">{l}</span>
+                          <input type="number" inputMode="decimal" min="0" value={r[f] || ''}
+                            onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, [f]: e.target.value } : x))}
+                            placeholder="mm"
+                            className={`${c} px-2 py-2 text-sm text-right font-bold border rounded-lg`} />
+                        </label>
+                      ))}
+                      <span className="text-[11px] text-slate-400 pb-2.5">mm</span>
                     </div>
                   )}
                   <input type="number" inputMode="decimal" value={r.qty}
                     onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, qty: e.target.value } : x))}
                     placeholder="수량"
-                    className="w-24 px-2 py-2 text-sm text-right font-bold border border-slate-200 rounded-lg" />
-                  <span className="text-xs text-slate-400 pt-2.5 w-8">{r.unit}</span>
+                    className={`w-24 px-2 py-2 text-sm text-right font-bold border border-slate-200 rounded-lg ${head.check_dept === '하네스팀' && head.req_kind === '절단' ? 'mt-[15px]' : ''}`} />
+                  <span className={`text-xs text-slate-400 pt-2.5 w-8 ${head.check_dept === '하네스팀' && head.req_kind === '절단' ? 'mt-[15px]' : ''}`}>{r.unit}</span>
                   {rows.length > 1 && (
                     <button onClick={() => setRows(v => v.filter((_, k) => k !== i))}
                       className="text-slate-300 hover:text-rose-500 px-1 pt-2">✕</button>
@@ -1565,7 +1591,7 @@ export default function MaterialRequest() {
                                 h.req_kind === '절단' ? 'bg-amber-100 text-amber-700'
                                 : h.req_kind === '자재' ? 'bg-teal-100 text-teal-700'
                                 : 'bg-indigo-100 text-indigo-700'}`}>
-                                {h.req_kind}{h.req_kind === '절단' && h.cut_mm ? ` ${Number(h.cut_mm).toLocaleString('ko-KR')}mm` : ''}
+                                {h.req_kind === '절단' ? '✂ 절단' : h.req_kind}{g.items.length === 1 && cutLabel(h) ? ` ${cutLabel(h, { icon: false })}` : ''}
                               </span>
                             )}
                             {d !== null && (
@@ -1653,6 +1679,12 @@ export default function MaterialRequest() {
                             </span>
                           )}
                           <span className="text-slate-600 flex-1 min-w-0 truncate">{r.item_name}</span>
+                          {cutLabel(r) && (
+                            <span className="flex-shrink-0 px-2 py-0.5 rounded-md border border-amber-300 bg-amber-50 text-[11px] font-bold text-amber-800 whitespace-nowrap"
+                              title="절단 요청 — 총 절단길이 · 좌/우 탈피길이">
+                              {cutLabel(r)}
+                            </span>
+                          )}
                           <span className="text-slate-400 w-24 flex-shrink-0 truncate text-right">{r.maker || ''}</span>
                           <span className="font-mono text-slate-400 w-28 flex-shrink-0 truncate text-right">{r.maker_code || ''}</span>
                           <span className="font-bold text-slate-700 w-16 flex-shrink-0 text-right">
@@ -1832,7 +1864,7 @@ export default function MaterialRequest() {
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">
                         {r.req_kind
-                          ? (r.req_kind === '절단' && r.cut_mm ? `절단 ${n(r.cut_mm)}mm` : r.req_kind)
+                          ? (cutLabel(r) ? `절단 ${cutLabel(r, { icon: false })}` : r.req_kind)
                           : ''}
                       </td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden uppercase text-slate-500">{r.customer_code || ''}</td>
