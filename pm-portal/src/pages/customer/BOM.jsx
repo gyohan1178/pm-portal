@@ -638,8 +638,18 @@ export default function BOM() {
         ? '먼저 pm_bom_subexpand_260930.sql 을 실행해 주세요' : '목록 만들기 실패: ' + e.message)
     } finally { setMissBusy(false) }
   }
-  const [supSel, setSupSel] = useState(() => new Set())
+  // 체크는 「줄」 기준 (예전엔 품번 기준이라 같은 품번이 여러 위치에 있으면 하나만 눌러도 전부 체크됐다)
+  //   저장할 때만 품번으로 모은다 — 구매/자작은 품번 단위라 같은 품번의 다른 위치·다른 BOM 에도 같이 적용된다
+  const [supSel, setSupSel] = useState(() => new Set())   // bom 줄 id
   useEffect(() => { setSupSel(new Set()) }, [selAssembly?.id])
+  const supSelItems = useMemo(() => {
+    const byId = new Map(bomDetail.map(b => [b.id, b.item_id]))
+    return [...new Set([...supSel].map(id => byId.get(id)).filter(Boolean))]
+  }, [supSel, bomDetail])
+  const supSelOther = useMemo(() => {   // 고른 품번이 이 BOM 의 다른 줄에도 있으면 그 줄 수
+    const pick = new Set(supSelItems)
+    return bomDetail.filter(b => pick.has(b.item_id) && !supSel.has(b.id)).length
+  }, [supSelItems, supSel, bomDetail])
   const { supParents, supCnt } = useMemo(() => {
     const ps = [...new Set(bomDetail.filter(b => supTree.get(b.id)?.parentable).map(b => b.item_id))]
     return { supParents: ps, supCnt: { buy: ps.filter(id => sup.map[id] === 'buy').length, make: ps.filter(id => sup.map[id] === 'make').length } }
@@ -1204,12 +1214,13 @@ export default function BOM() {
                   </button>
                   {canEdit && supSel.size > 0 && (
                     <span className="ml-auto flex items-center gap-1.5">
-                      <b className="text-violet-700">{supSel.size}개 선택</b>
-                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: 'buy' })}
+                      <b className="text-violet-700">{supSel.size}줄 선택</b>
+                      {supSelOther > 0 && <span className="text-[11px] text-slate-500" title="구매/자작은 품번 단위라 같은 품번이 있는 다른 줄·다른 BOM 에도 같이 적용됩니다">(같은 품번 다른 위치 {supSelOther}줄에도 같이 적용)</span>}
+                      <button onClick={() => supMut.mutate({ ids: supSelItems, mode: 'buy' })}
                         className="px-2.5 py-1 rounded-lg font-bold bg-sky-600 text-white hover:bg-sky-700">{SUPPLY_LABEL.buy} (하위 제외)</button>
-                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: 'make' })}
+                      <button onClick={() => supMut.mutate({ ids: supSelItems, mode: 'make' })}
                         className="px-2.5 py-1 rounded-lg font-bold bg-amber-500 text-white hover:bg-amber-600">{SUPPLY_LABEL.make} (상위 제외)</button>
-                      <button onClick={() => supMut.mutate({ ids: [...supSel], mode: null })}
+                      <button onClick={() => supMut.mutate({ ids: supSelItems, mode: null })}
                         className="px-2.5 py-1 rounded-lg font-bold border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">지정 해제</button>
                       <button onClick={() => setSupSel(new Set())} className="px-1.5 text-slate-400 hover:text-slate-600">✕</button>
                     </span>
@@ -1238,7 +1249,7 @@ export default function BOM() {
                         ) : detailVis.shown.map(b => { const st = supTree.get(b.id); const open = openSubs.has(b.id); return (
                           <Fragment key={b.id}>
                             <BomDetailRow b={b} st={st} dw={dwMap[b.items?.std_code]}
-                              checked={supSel.has(b.item_id)} canEdit={canEdit} supMissing={sup.missing}
+                              checked={supSel.has(b.id)} canEdit={canEdit} supMissing={sup.missing}
                               onToggle={toggleSup} onEdit={openEdit} onDelete={askDelete} open={open} onToggleSub={toggleSub} />
                             {open && st?.sub && <SubBomRows csId={cs?.id} parent={b} st={st} asm={asmByCode.get(b.items?.std_code)} supMap={sup.map}
                               onOpen={(a) => { setSelAssembly(a); setDetailSearch('') }} />}
@@ -1441,7 +1452,7 @@ const BomDetailRow = memo(function BomDetailRow({ b, st = {}, dw, checked, canEd
           <td className="px-2 py-2 text-center">
             {st.parentable && !supMissing && (canEdit
               ? <input type="checkbox" checked={checked}
-                  onChange={() => onToggle(b.item_id)} />
+                  onChange={() => onToggle(b.id)} />
               : <span className="text-slate-300">·</span>)}
           </td>
           <td className="px-3 py-2">
