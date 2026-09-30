@@ -65,7 +65,8 @@ function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
   return createPurchaseOrders(items.map(item => ({
     customer_id: csId,
     item_id: item.item_id,
-    vendor_id: vendorId || item.item_vendor_id || null,
+    // 고른 구매처가 없으면 품목 기본 구매처 (다른 발주 경로와 같은 규칙)
+    vendor_id: vendorId || item.vendor?.id || null,
     type: item.type,
     qty_ordered: item.order_qty,
     promise_date: promiseDate || null,
@@ -158,6 +159,9 @@ export default function Shortage() {
   const [selVendor, setSelVendor] = useState('')
   const [promiseDate, setPromiseDate] = useState('')
   const [poNumber, setPoNumber] = useState('')
+  // 발주 수량 — 화면 안에서만 들고 있는다 (예전엔 목록 캐시 객체에 직접 써서
+  //   0 을 넣어도 「필요량」으로 발주되고, 취소 뒤 다시 열면 숨은 값으로 발주됐다)
+  const [orderQtys, setOrderQtys] = useState({})
   const [excluded, setExcluded] = useState(() => new Set())  // 방금 제외한 항목(새로고침 전까지 표시)
   const [view, setView] = useState('monthly')  // monthly(통합) | list(발주 상세)
   const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
@@ -315,7 +319,7 @@ export default function Shortage() {
         )}
         <div className="flex-1"/>
         {checkedItems.length>0&&(
-          <button onClick={()=>setShowOrderForm(true)}
+          <button onClick={()=>{ setOrderQtys({}); setShowOrderForm(true) }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
             📋 선택 {checkedItems.length}건 구매발주
           </button>
@@ -361,7 +365,8 @@ export default function Shortage() {
                   <td className="px-3 py-2 text-slate-700">{r.name}</td>
                   <td className="px-3 py-2 text-right font-semibold text-red-600">{r.orderNeed}</td>
                   <td className="px-3 py-2 text-right">
-                    <input type="number" defaultValue={r.orderNeed} onChange={e=>{r.order_qty=Number(e.target.value)}}
+                    <input type="number" min="0" value={orderQtys[r.item_id] ?? r.orderNeed}
+                      onChange={e=>{ const v = e.target.value; setOrderQtys(q=>({ ...q, [r.item_id]: v === '' ? '' : Number(v) })) }}
                       className="w-20 px-2 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
                   </td>
                 </tr>
@@ -380,7 +385,12 @@ export default function Shortage() {
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={()=>setShowOrderForm(false)} className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
-            <button onClick={()=>orderMut.mutate(checkedItems.map(r=>({...r,order_qty:r.order_qty||r.orderNeed})))} disabled={orderMut.isPending}
+            <button onClick={()=>{
+                // 0 이나 빈칸 = 이번엔 발주 안 함 (발주 만들기가 수량 0 줄은 뺀다)
+                const items = checkedItems.map(r=>({ ...r, order_qty: Number(orderQtys[r.item_id] ?? r.orderNeed) || 0 }))
+                if (!items.some(r=>r.order_qty>0)) { toastError('발주 수량이 모두 0 입니다'); return }
+                orderMut.mutate(items)
+              }} disabled={orderMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
               {orderMut.isPending?'생성 중...':'⚡ 구매발주 생성'}
             </button>

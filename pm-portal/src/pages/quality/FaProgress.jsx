@@ -1184,10 +1184,13 @@ function PasteModal({ rows, csId, me, onClose, onDone }) {
     try {
       const base = (r, old) => ({
         customer_id: old?.customer_id || csId,
-        ccn: r.ccn, product: r.product, item_code: r.item_code, po_number: r.po_number,
+        // 목록 칸이 비었거나 날짜를 못 읽었으면 포털 값을 그대로 둔다 (안내문대로 — 빈 칸은 지우지 않는다)
+        ccn: r.ccn || old?.ccn || null, product: r.product || old?.product || null,
+        item_code: r.item_code, po_number: r.po_number,
         item_desc: r.item_desc || old?.item_desc || null,
-        srev: r.srev || old?.srev || null, brev: r.brev || old?.brev || null, buy_um: r.buy_um,
-        promise_date: r.promise_date, required_date: r.required_date,
+        srev: r.srev || old?.srev || null, brev: r.brev || old?.brev || null, buy_um: r.buy_um || old?.buy_um || null,
+        promise_date: r.promise_date || old?.promise_date || null,
+        required_date: r.required_date || old?.required_date || null,
         // 목록에 비어 있으면 포털에서 적은 값을 지우지 않는다
         fa_ready_date: (r.fa_ready_date || r.fa_ready_text) ? r.fa_ready_date : (old?.fa_ready_date ?? null),
         fa_ready_text: (r.fa_ready_date || r.fa_ready_text) ? r.fa_ready_text : (old?.fa_ready_text ?? null),

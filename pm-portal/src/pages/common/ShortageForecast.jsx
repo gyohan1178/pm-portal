@@ -141,6 +141,7 @@ export default function ShortageForecast() {
   const [selMat, setSelMat] = useState(() => new Set())  // 선발주: 선택한 자재(item_id)
   const [excluded, setExcluded] = useState(new Set())  // 방금 제외한 항목(재계산 전까지 표시)
   const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
+  const [ordered, setOrdered] = useState(() => new Set())   // 이 화면에서 방금 발주한 품목 (두 번 발주 막기)
 
   const qc = useQueryClient()
   const { data: cs } = useCustomer(csCode)
@@ -164,8 +165,14 @@ export default function ShortageForecast() {
         qty_ordered: it.shortageQty,
       })), { log: '소요예측에서 발주 생성', customerName: cs?.name })
     },
-    onSuccess: (res) => {
+    onSuccess: (res, selItems) => {
       setMade(res)
+      // 방금 발주한 품목은 목록에서 바로 빼고, 부족 계산을 다시 돌린다.
+      //   이 목록은 계산해 둔 표(forecast_shortage_cache)라 재계산 전에는 그대로 남아,
+      //   버튼을 다시 누르면 같은 발주가 또 만들어졌다.
+      //   (새 발주는 납기가 비어 있어 재계산에 안 잡힐 수 있으므로, 이 화면을 떠나기 전까지는 계속 뺀다)
+      setOrdered(prev => { const n = new Set(prev); (selItems || []).forEach(it => n.add(it.item_id)); return n })
+      refreshMut.mutate()
       qc.invalidateQueries(['purchase'])
       toastSuccess('구매발주 생성 완료 — 구매발주 화면에서 발주번호·납기·단가를 채워주세요')
     },
@@ -479,7 +486,7 @@ export default function ShortageForecast() {
           </button>
           {/* 화면에 걸린 필터 결과를 그대로 발주로 만든다 (부족자재 탭과 동일 방식) */}
           {(() => {
-            const need = filtered.filter(it => Number(it.shortageQty) > 0 && !excluded.has(it.item_id))
+            const need = filtered.filter(it => Number(it.shortageQty) > 0 && !excluded.has(it.item_id) && !ordered.has(it.item_id))
             if (!need.length) return null
             return (
               <button onClick={() => {

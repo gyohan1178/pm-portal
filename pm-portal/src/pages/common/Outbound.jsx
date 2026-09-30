@@ -7,6 +7,7 @@ import { useCanEdit } from '../../hooks/useProfile'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
@@ -26,10 +27,10 @@ async function fetchActiveCPOs(customerId, projectId) {
 }
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
-  const { data } = await supabase.from('bom')
+  // 1,000줄에서 잘리지 않게 끝까지 · 읽기 실패는 0건이 아니라 오류로
+  return fetchAll(() => supabase.from('bom')
     .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code,label_mode,pack_qty)')
-    .eq('customer_id', customerId).eq('project_id', projectId)
-  return data || []
+    .eq('customer_id', customerId).eq('project_id', projectId).order('id'))
 }
 // 출고 처리 — 고른 고객사·프로젝트도 같이 저장한다 (출고 현황에서 추적)
 //   DB 함수가 아직 옛 모양이면(SQL 적용 전) 예전 방식으로 한 번 더 — 출고 자체는 막지 않는다
@@ -261,9 +262,18 @@ export default function Outbound() {
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
       if (!guardEdit()) throw new Error('__READONLY__')
-      const lines = bomItems
-        .map(b=>({ item_id:b.item_id, name:b.items?.name||'', qty:Number(outQtys[b.item_id]||0) }))
-        .filter(l=>l.qty>0 && mtOf(l.item_id)==='normal')   // 정상만 재고 차감 (하네스·제외 제외)
+      // 품목당 한 줄 — BOM 에 같은 품목이 여러 줄이어도 한 번만 뺀다.
+      //   outQtys 는 이미 품목별 합계(BOM 여러 줄 합 × 대수)라, 예전처럼 BOM 줄마다 보내면
+      //   같은 합계가 줄 수만큼 빠졌다 (2026-06~09 에 198건 · 9,000여 개 더 빠짐).
+      const seen = new Set()
+      const lines = []
+      for (const b of bomItems) {
+        if (!b.item_id || seen.has(b.item_id)) continue
+        seen.add(b.item_id)
+        const qty = Number(outQtys[b.item_id] || 0)
+        if (qty > 0 && mtOf(b.item_id) === 'normal')   // 정상만 재고 차감 (하네스·제외 제외)
+          lines.push({ item_id: b.item_id, name: b.items?.name || '', qty })
+      }
       return callOutboundRpc(
         { p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode },
         { p_customer_id: selCustomer||null, p_project_id: selProject||null })

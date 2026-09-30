@@ -231,8 +231,9 @@ export default function WeeklyUpload() {
 
       // 입고(매입)·예정(plan) 모두 담당자별 '연 누적' 파일 → 이전 업로드분 제거 후 최신본만 유지 (중복 방지)
       const submitterName = submitter || selCustomer
-      const { data: priorReports } = await supabase.from('weekly_reports')
-        .select('id').eq('submitted_by', submitterName).neq('id', report.id)
+      const { data: priorReports, error: pErr } = await supabase.from('weekly_reports')
+        .select('id,week_from').eq('submitted_by', submitterName).neq('id', report.id)
+      if (pErr) throw pErr
       const priorIds = (priorReports || []).map(r => r.id)
       if (priorIds.length > 0) {
         // 지우기 전에 기록을 남긴다. 재업로드로 이전 회차가 사라지기 때문이다.
@@ -241,6 +242,17 @@ export default function WeeklyUpload() {
           p_cats: ['inbound', 'plan'],
         })
         if (delErr) throw delErr
+      }
+      // 납기지연은 「그 주」 목록이라 같은 주에 다시 올린 것만 지운다.
+      //   예전엔 안 지워서 같은 주에 두 번 올리면 지연 줄이 두 번씩 보였다.
+      //   지난 주 보고서의 지연 목록은 그대로 둔다.
+      const sameWeekIds = (priorReports || []).filter(r => String(r.week_from) === String(week.from)).map(r => r.id)
+      if (sameWeekIds.length > 0) {
+        const { error: dErr } = await supabase.rpc('pm_weekly_delete_safe', {
+          p_report_ids: sameWeekIds,
+          p_cats: ['delay'],
+        })
+        if (dErr) throw dErr
       }
 
       // 엑셀 파싱 결과

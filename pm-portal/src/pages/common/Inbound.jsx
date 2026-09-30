@@ -617,7 +617,17 @@ export default function Inbound() {
                         </>
                       )}
                     </p>
-                    <button onClick={()=>inboundMut.mutate()} disabled={inboundMut.isPending||!hasInput}
+                    <button onClick={()=>{
+                      // 잔량보다 많이 받으면 한 번 확인한다 — MOQ 로 일부러 더 받는 건 그대로 진행,
+                      //   부분입고 뒤 주문 수량을 통째로 다시 넣는 실수(예: 150 받은 뒤 1600 입력)를 막는다
+                      const over = checkedRows.filter(r => Number(inboundData[r.id]?.qty || 0) > Number(r.qty_remaining || 0))
+                      if (over.length && !window.confirm(
+                        `잔량보다 많이 입고합니다 (${over.length}건)\n\n` +
+                        over.slice(0, 6).map(r => `· ${r.items?.std_code || ''} 잔량 ${Number(r.qty_remaining || 0)} → 입고 ${Number(inboundData[r.id]?.qty || 0)}`).join('\n') +
+                        (over.length > 6 ? `\n… 외 ${over.length - 6}건` : '') +
+                        '\n\nMOQ 등으로 더 받은 게 맞으면 확인을 누르세요.')) return
+                      inboundMut.mutate()
+                    }} disabled={inboundMut.isPending||!hasInput}
                       className="px-6 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                       {inboundMut.isPending?'처리 중...':`✅ 선택 ${checkedRows.length}건 입고 처리`}
                     </button>

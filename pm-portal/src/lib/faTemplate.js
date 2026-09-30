@@ -184,7 +184,14 @@ export function faDate(v) {
     }
   }
   const m = t.match(/^(\d{4})[-./](\d{1,2})[-./](\d{1,2})/)
-  return m ? `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}` : null
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  // 고객사(미국) 목록은 월/일/년 — 9/15/2026 · 9/15/26
+  const u = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2}|\d{4})(?:\s|$)/)
+  if (u && +u[1] >= 1 && +u[1] <= 12 && +u[2] >= 1 && +u[2] <= 31) {
+    const y = u[3].length === 2 ? '20' + u[3] : u[3]
+    return `${y}-${u[1].padStart(2, '0')}-${u[2].padStart(2, '0')}`
+  }
+  return null
 }
 
 // Product 칸 → 체크리스트 종류. 비었거나 모르는 말이면 품번 앞자리로 짐작한다.

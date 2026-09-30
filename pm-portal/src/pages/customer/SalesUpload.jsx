@@ -13,9 +13,15 @@ const pick = (row, keys) => {
   return undefined
 }
 const s = v => (v == null ? '' : String(v).trim())
-const dnorm = v => {
+export const dnorm = v => {
   if (v == null || v === '') return null
-  if (v instanceof Date) return v.toISOString().slice(0, 10)
+  // 엑셀 날짜는 한국 시간 자정(=전날 15시 UTC)으로 읽혀 toISOString 이면 하루 앞당겨진다.
+  //   정오로 옮겨 UTC 날짜를 쓴다 (고객 PO 업로드와 같은 방식)
+  if (v instanceof Date) {
+    if (isNaN(v)) return null
+    const d = new Date(v.getTime() + 12 * 3600 * 1000)
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`
+  }
   const str = String(v)
   const m = str.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/)
   if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
