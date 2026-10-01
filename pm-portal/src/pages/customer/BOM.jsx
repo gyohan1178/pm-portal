@@ -39,6 +39,14 @@ async function fetchAssemblies(customerId) {
     id: p.id, code: p.code, name: p.name, rev: p.rev,
     created_at: p.created_at, itemCount: Number(p.item_count) || 0,
   }))
+  // 등록일 = 마지막으로 올린 날 (2026-10-01)
+  //   created_at 은 처음 만든 날이라 다시 올려도(버전 갱신) 안 바뀌었다.
+  //   BOM 을 올릴 때마다 projects.start_date 에 그날을 적으므로 그것을 보여 준다.
+  try {
+    const pj = await fetchAll(() => supabase.from('projects').select('id,start_date').eq('customer_id', customerId).order('id'))
+    const sd = Object.fromEntries(pj.map(x => [x.id, x.start_date]))
+    list.forEach(p => { p.uploaded_at = sd[p.id] || null })
+  } catch { /* 못 읽으면 처음 등록일만 */ }
   // 어셈블리명을 DB(items)에서 보충 — 코드(std_code) 기준 단일 소스
   const codes = list.map(p => p.code).filter(Boolean)
   const nameMap = {}
@@ -1151,7 +1159,9 @@ export default function BOM() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-slate-600">{a.itemCount}개</td>
-                  <td className="px-3 py-2.5 text-slate-400">{a.created_at?.split('T')[0]}</td>
+                  <td className="px-3 py-2.5 text-slate-400" title={`마지막 업로드 ${String(a.uploaded_at || a.created_at || '').slice(0, 10)} · 처음 등록 ${String(a.created_at || '').slice(0, 10)}`}>
+                    {String(a.uploaded_at || a.created_at || '').slice(0, 10)}
+                  </td>
                   <td className="px-3 py-2.5">
                     <button
                       onClick={e => {
