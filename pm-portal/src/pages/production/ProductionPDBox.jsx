@@ -10,7 +10,7 @@ import { exportPDBoxCSV, parsePDBoxCSV, SCHED_FIELDS } from '../../lib/pdboxCSV'
 import { parseEdMonthly } from '../../lib/edMonthly'
 import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
-import EdNeedMatch, { fetchEdProjects } from './EdNeedMatch'
+import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
 import { kindOf } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
 
@@ -243,6 +243,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const edRules = useMemo(() => edRulesData || mergeRules(null), [edRulesData])
   // Edwards BOM 프로젝트 — 소요량 매칭 · 불출 기준(BOM 연결)에서 쓴다
   const { data: edProj } = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, enabled: isED, staleTime: 300000 })
+  // 소요량 매칭 — 리스트 하네스 · 전장 칸에도 BOM 별 부족을 띄운다
+  const edNeed = useEdNeed(rows, edRules, isED)
+  const [needFocus, setNeedFocus] = useState(null)
   const edBomGroups = useMemo(() => {
     const seen = new Map()
     for (const r of rows) {
@@ -484,7 +487,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     if (dq.trim()) {
       const s = dq.toLowerCase()
       // 화면에 보이는 열은 모두 검색되어야 한다
-      r = r.filter(x => [x.pn, x.name, x.hogi, x.part, x.part2, x.part3, x.memo, x.manager]
+      r = r.filter(x => [x.pn, x.name, x.hogi, x.part, x.part2, x.part3, x.fc_item, x.memo, x.manager]
         .some(v => String(v || '').toLowerCase().includes(s)))
     }
     r.sort((a, b) => {
@@ -591,7 +594,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
           {isED && view === 'need' ? (
-            <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} />
+            <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} focus={needFocus} onClearFocus={() => setNeedFocus(null)} />
           ) : view === 'kanban' ? (
             <KanbanBoard rows={filtered.filter(x => !x._month)} mdMap={mdMap}
               onStatus={(id, status) => toggleMut.mutate({ id, field: 'status', value: status })}
@@ -705,6 +708,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           {isED ? (
             <EdTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel} rules={edRules}
               onField={setField} onEdit={(r) => setEdit({ ...r })} onMissing={(r) => setMissRow(r)}
+              projects={edProj?.projects || []} need={edNeed.byKey} onNeed={(k) => { setNeedFocus(k); setView('need') }}
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor} />
           ) : (
           <table className="w-full text-xs whitespace-nowrap">

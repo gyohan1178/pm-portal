@@ -11,7 +11,7 @@
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { KINDS, kindOf, dueOf, issueDueOf } from '../../lib/edForecast'
-import { guessBom, bomKey, WHICH_LABEL } from '../../lib/edNeed'
+import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -220,7 +220,7 @@ function FrameCell({ r, onField }) {
   )
 }
 
-function IssueCell({ r, rules, which, onField }) {
+function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   const field = which === 'harn' ? 'harness_recv' : 'part_issue'
   const done = truthy(r[field])
   const k = kindOf(r)
@@ -238,8 +238,19 @@ function IssueCell({ r, rules, which, onField }) {
       {done
         ? <span className={`${doneCls} font-semibold`}>✔ 불출</span>
         : due
-          ? <><span className={cls}>{md(due)}</span><span className="block text-[8px] text-slate-300 group-hover:text-teal-500">불출</span></>
+          ? <span className={cls}>{md(due)}</span>
           : <span className="text-slate-300 group-hover:text-teal-500">불출</span>}
+      {/* 이 BOM 의 소요량 매칭 결과 — 누르면 그 건의 부족 품목 */}
+      {!done && need && (
+        <button type="button" onClick={e => { e.stopPropagation(); onNeed?.(need.key) }}
+          title={need.bad
+            ? `${bom || ''} 부족 ${need.bad}품목\n` + need.parts.filter(p => p.status !== 'ok').slice(0, 8).map(p => `· ${p.pn || ''} 부족 ${p.short}`).join('\n') + '\n누르면 소요량 매칭에서 봅니다'
+            : `${bom || ''} 재고 충분 (${need.parts.length}품목)`}
+          className={`block mx-auto mt-0.5 px-1 rounded text-[9px] font-bold ${need.bad ? (need.critical ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100') : 'text-emerald-500 hover:bg-emerald-50'}`}>
+          {need.bad ? `⚠ 부족 ${need.bad}` : '✓ 재고'}
+        </button>
+      )}
+      {!done && !need && bom === null && kindOf(r) && <span className="block text-[8px] text-orange-400" title="「⚙ 불출 기준」 ③ 에서 BOM 을 연결하세요">BOM 없음</span>}
     </td>
   )
 }
@@ -269,8 +280,16 @@ function MemoCell({ r, onField }) {
 
 // ── 표 ──────────────────────────────────────────────────────────────
 export const ED_COLS = 17
-export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor }) {
+export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor, projects = [], need = {}, onNeed }) {
   const ids = list.filter(r => !r._month).map(r => r.id)
+  // 구분2 = 포캐스트 품번 · 구분3 = 이 줄이 쓰는 BOM (하네스 · 전장)
+  //   월간 실적(PO 업로드)의 구분2 · 3 은 마우스를 올리면 보인다.
+  const bomCode = (r, which) => {
+    const k = kindOf(r)
+    if (!k) return undefined
+    const p = bomProjectFor(rules, projects, k, bomGroupOf(r), which)
+    return p ? p.code : null
+  }
   return (
     <table className="w-full text-xs whitespace-nowrap">
       <thead>
@@ -280,8 +299,8 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
               onChange={e => setSel(e.target.checked ? new Set(ids) : new Set())} />
           </th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold">구분1</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">구분2</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">구분3</th>
+          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="EUV · H2D 줄은 포캐스트 품번 (Item number)">구분2<br /><span className="text-[9px] font-normal text-slate-300">품번</span></th>
+          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="EUV · H2D 줄은 쓰는 BOM — 위 하네스 · 아래 전장">구분3<br /><span className="text-[9px] font-normal text-slate-300">BOM 하네스 / 전장</span></th>
           <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">프로젝트</th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold" title="포캐스트 Remark (FCT · CO · PO) · 네모 = 발주서 접수">발주</th>
@@ -317,8 +336,24 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
             <td className="px-2 py-2">
               {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="text-slate-300">-</span>}
             </td>
-            <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part2}>{r.part2 || '-'}</td>
-            <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part3}>{r.part3 || '-'}</td>
+            {(() => {
+              const k = kindOf(r)
+              const hb = bomCode(r, 'harn'), eb = bomCode(r, 'elec')
+              const orig = `PO 업로드(월간 실적) 구분2 ${r.part2 || '-'} · 구분3 ${r.part3 || '-'}`
+              if (!k) return (<>
+                <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part2}>{r.part2 || '-'}</td>
+                <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part3}>{r.part3 || '-'}</td>
+              </>)
+              return (<>
+                <td className="px-2 py-2 text-left font-mono text-[11px] text-slate-700 max-w-[120px] overflow-hidden text-ellipsis" title={`포캐스트 품번 ${r.fc_item || '없음'}\n${orig}`}>
+                  {r.fc_item || <span className="text-slate-400 font-sans">{r.part2 || '-'}</span>}
+                </td>
+                <td className="px-2 py-2 text-left text-[10px] leading-tight max-w-[190px]" title={`하네스 BOM ${hb || '연결 안 됨'}\n전장 BOM ${eb || '연결 안 됨'}\n${orig}`}>
+                  <span className={`block truncate ${hb ? 'text-teal-700' : 'text-orange-400'}`}>{hb || '하네스 BOM 없음'}</span>
+                  <span className={`block truncate ${eb ? 'text-blue-700' : 'text-orange-400'}`}>{eb || '전장 BOM 없음'}</span>
+                </td>
+              </>)
+            })()}
             <td data-no-select className="px-2 py-2 text-slate-700 text-left max-w-[200px] overflow-hidden text-ellipsis cursor-pointer hover:text-indigo-600"
               title={`${r.pn}${r.fc_tag ? ` · 포캐스트 ${r.fc_tag}` : ''} — 누르면 편집`} onClick={() => onEdit(r)}>
               {r.pn}
@@ -335,8 +370,8 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
             </td>
             <DueCell r={r} onField={onField} />
             <FrameCell r={r} onField={onField} />
-            <IssueCell r={r} rules={rules} which="harn" onField={onField} />
-            <IssueCell r={r} rules={rules} which="elec" onField={onField} />
+            <IssueCell r={r} rules={rules} which="harn" onField={onField} need={need[`${r.id}|harn`]} bom={bomCode(r, 'harn')} onNeed={onNeed} />
+            <IssueCell r={r} rules={rules} which="elec" onField={onField} need={need[`${r.id}|elec`]} bom={bomCode(r, 'elec')} onNeed={onNeed} />
             <QualityCell r={r} onField={onField} />
             {(() => {
               const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []

@@ -65,11 +65,9 @@ async function fetchNeedData(csId, projIds, missPns) {
   return { bom, missItem, info, inv, orders }
 }
 
-export default function EdNeedMatch({ rows, rules, onOpenRules }) {
-  const [only, setOnly] = useState('bad')       // bad | all
-  const [tab, setTab] = useState('card')        // card | item
-  const [open, setOpen] = useState({})
-  const pq = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, staleTime: 300000 })
+// 소요량 매칭 계산 — 이 보기와 리스트(하네스 · 전장 칸의 부족 표시)가 같이 쓴다
+export function useEdNeed(rows, rules, enabled = true) {
+  const pq = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, staleTime: 300000, enabled })
   const projects = pq.data?.projects || []
   const events = useMemo(() => buildEvents(rows, rules, projects), [rows, rules, projects])
   const projIds = [...new Set(events.map(e => e.proj?.id).filter(Boolean))].sort()
@@ -77,10 +75,21 @@ export default function EdNeedMatch({ rows, rules, onOpenRules }) {
   const dq = useQuery({
     queryKey: ['edNeed', pq.data?.csId, projIds.join(','), missPns.join(',')],
     queryFn: () => fetchNeedData(pq.data.csId, projIds, missPns),
-    enabled: !!pq.data?.csId,
+    enabled: enabled && !!pq.data?.csId,
+    staleTime: 60000,
   })
   const today = todayISO()
   const res = useMemo(() => (dq.data ? matchNeed({ events, ...dq.data, today }) : null), [dq.data, events, today])
+  // 줄 · 불출별 결과 — `${row.id}|harn` · `${row.id}|elec` · `${row.id}|miss`
+  const byKey = useMemo(() => Object.fromEntries((res?.cards || []).map(c => [c.key, c])), [res])
+  return { pq, dq, projects, events, res, byKey, info: dq.data?.info || {} }
+}
+
+export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFocus }) {
+  const [only, setOnly] = useState('bad')       // bad | all
+  const [tab, setTab] = useState('card')        // card | item
+  const [open, setOpen] = useState({})
+  const { pq, dq, events, res } = useEdNeed(rows, rules)
 
   if (pq.isLoading || dq.isLoading) return <div className="py-12 text-center text-sm text-slate-400">소요량 계산 중…</div>
   if (pq.error || dq.error) return <div className="p-6 text-sm text-red-600">소요량을 불러오지 못했습니다: {(pq.error || dq.error).message}</div>
@@ -89,7 +98,8 @@ export default function EdNeedMatch({ rows, rules, onOpenRules }) {
   const info = dq.data?.info || {}
   const noBom = events.filter(e => e.which !== 'miss' && !e.proj)
   const cards = (res?.cards || []).filter(c => c.which === 'miss' || c.proj)
-  const shown = only === 'bad' ? cards.filter(c => c.bad) : cards
+  // 리스트의 부족 표시를 눌러 들어오면 그 건만
+  const shown = focus ? cards.filter(c => c.key === focus) : only === 'bad' ? cards.filter(c => c.bad) : cards
   const badItems = new Set(cards.flatMap(c => c.parts.filter(p => p.status !== 'ok').map(p => p.item_id || p.pn)))
   const itemLabel = (id, p) => { const it = info[id]; return it ? String(it.std_code).replace(/^(ED|AX)-/, '') : (p?.pn || '?') }
 
@@ -110,7 +120,10 @@ export default function EdNeedMatch({ rows, rules, onOpenRules }) {
             <button key={v} type="button" onClick={() => setTab(v)} className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${tab === v ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>{l}</button>
           ))}
         </span>
-        {tab === 'card' && (
+        {focus && (
+          <button type="button" onClick={onClearFocus} className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-50 text-indigo-600 hover:bg-indigo-100">한 건만 보는 중 · 전체 보기 ✕</button>
+        )}
+        {tab === 'card' && !focus && (
           <span className="inline-flex bg-slate-100 rounded-lg p-0.5">
             {[['bad', '부족만'], ['all', '전체']].map(([v, l]) => (
               <button key={v} type="button" onClick={() => setOnly(v)} className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${only === v ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500'}`}>{l}</button>
@@ -153,7 +166,7 @@ export default function EdNeedMatch({ rows, rules, onOpenRules }) {
         <div className="space-y-2">
           {shown.map(c => {
             const n = dday(c.due)
-            const isOpen = open[c.key] ?? !!c.bad
+            const isOpen = open[c.key] ?? (!!c.bad || c.key === focus)
             const sorted = [...c.parts].sort((a, b) => (a.status === 'ok') - (b.status === 'ok') || b.short - a.short)
             return (
               <div key={c.key} className="bg-white border border-slate-200 rounded-xl overflow-hidden">

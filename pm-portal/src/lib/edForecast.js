@@ -48,7 +48,15 @@ export const DEFAULT_RULES = {
     'PSEUDO_46966':    ['H2D-HPD'],
     'IEC2I1772010':    ['H2D-HPD'],
     'IEDE031102C6300': ['H2D-HPD'],
-    'NRYBVU000A': [],
+    // 2026-09-30 작업자 도구 「Item Number별 BOM 구성」 기준으로 추가
+    'IEB2I0872070':    ['H2D-HPD'],
+    'IEDI03121224000': ['H2D-HPD'],
+    'IEB2H1782010':    ['H2D-HPD'],
+    'IECL03121740000': ['H2D-LH'],
+    'IECL03111740000': ['H2D-LH'],
+    'IECG03120745001': ['H2D-LH'],
+    'IECJ03120745001': ['H2D-LH'],
+    'NRYBVU000A': [],   // 미확인 (Halo) — 자재 준비 대상 아님
   },
 }
 export function mergeRules(saved) {
