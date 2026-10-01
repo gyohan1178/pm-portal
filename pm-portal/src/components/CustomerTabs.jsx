@@ -3,8 +3,10 @@ import { orderedCustomers } from '../lib/customers'
 import { useMyProfile } from '../hooks/useProfile'
 
 // 각 customer 페이지 상단 고객사 전환 탭 + 관제탑 바로가기. 주 고객사가 맨 앞.
-export default function CustomerTabs() {
-  const { customerId } = useParams()
+//   주소에 고객사가 없는 화면(소요예측 등)은 active · onPick 으로 같은 모양을 쓴다 (2026-10-01 탭 위치 통일)
+export default function CustomerTabs({ active, onPick } = {}) {
+  const params = useParams()
+  const customerId = active || params.customerId
   const nav = useNavigate()
   const { data: profile } = useMyProfile()
   const customers = orderedCustomers(profile)
@@ -14,7 +16,7 @@ export default function CustomerTabs() {
     <div className="flex items-center gap-2 mb-4 flex-wrap">
       <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {customers.map(c => (
-          <button key={c.id} onClick={() => nav(`/customer/${c.id}/${work}`)}
+          <button key={c.id} onClick={() => (onPick ? onPick(c.id) : nav(`/customer/${c.id}/${work}`))}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${customerId === c.id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
             <span className="w-2 h-2 rounded-full" style={{ background: c.color }} />
             {c.name}

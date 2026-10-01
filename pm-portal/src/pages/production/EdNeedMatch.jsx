@@ -2,11 +2,12 @@
 //   작업자 도구 「재고 파악」 탭을 옮긴 것 (계산은 lib/edNeed.js)
 //   불출 예정 순으로 BOM 을 재고에서 차례로 빼 보고, 모자라는 품목과 들어올 발주를 보여 준다.
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, keepPreviousData } from '@tanstack/react-query'
+import { ruleKindOf } from '../../lib/edForecast'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { explodeProjects } from '../../lib/bomSupply'
-import { buildEvents, matchNeed, STATUS, WHICH_LABEL } from '../../lib/edNeed'
+import { buildEvents, matchNeed, STATUS, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import { dday } from './EdProductionTable'
 
 const md = (d) => (d ? String(d).slice(5, 10) : '')
@@ -70,13 +71,27 @@ export function useEdNeed(rows, rules, enabled = true) {
   const pq = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, staleTime: 300000, enabled })
   const projects = pq.data?.projects || []
   const events = useMemo(() => buildEvents(rows, rules, projects), [rows, rules, projects])
-  const projIds = [...new Set(events.map(e => e.proj?.id).filter(Boolean))].sort()
-  const missPns = [...new Set(events.flatMap(e => (e.missing || []).map(m => String(m.pn).trim())))].sort()
+  // ⚠ 받아 올 BOM · 미불출 품번은 「불출 여부와 상관없이」 진행 줄 전체로 정한다.
+  //   불출 건만으로 정하면 불출 완료를 누를 때마다 목록이 바뀌어 새로 받아 오는 동안
+  //   부족 표시가 전부 사라졌다가 다시 났다 (2026-10-01).
+  const { projIds, missPns } = useMemo(() => {
+    const ps = new Set(), ms = new Set()
+    for (const r of rows || []) {
+      if (r.status === '완료') continue
+      const k = ruleKindOf(r)
+      if (!k) continue
+      for (const w of ['harn', 'elec']) { const p = bomProjectFor(rules, projects, k, bomGroupOf(r), w); if (p) ps.add(p.id) }
+      for (const m of (Array.isArray(r.missing_parts) ? r.missing_parts : [])) { const pn = String(m.pn || '').trim(); if (pn) ms.add(pn) }
+    }
+    return { projIds: [...ps].sort(), missPns: [...ms].sort() }
+  }, [rows, rules, projects])
   const dq = useQuery({
     queryKey: ['edNeed', pq.data?.csId, projIds.join(','), missPns.join(',')],
     queryFn: () => fetchNeedData(pq.data.csId, projIds, missPns),
     enabled: enabled && !!pq.data?.csId,
     staleTime: 60000,
+    // 목록이 바뀌어 새로 받는 동안에도 앞 결과를 그대로 보여 준다 (깜빡임 방지)
+    placeholderData: keepPreviousData,
   })
   const today = todayISO()
   const res = useMemo(() => (dq.data ? matchNeed({ events, ...dq.data, today }) : null), [dq.data, events, today])
@@ -89,6 +104,7 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
   const [only, setOnly] = useState('bad')       // bad | all
   const [tab, setTab] = useState('card')        // card | item
   const [open, setOpen] = useState({})
+  const [showOk, setShowOk] = useState({})   // 카드마다 「충분」 품목 펼침
   const { pq, dq, events, res } = useEdNeed(rows, rules)
 
   if (pq.isLoading || dq.isLoading) return <div className="py-12 text-center text-sm text-slate-400">소요량 계산 중…</div>
@@ -167,7 +183,10 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
           {shown.map(c => {
             const n = dday(c.due)
             const isOpen = open[c.key] ?? (!!c.bad || c.key === focus)
-            const sorted = [...c.parts].sort((a, b) => (a.status === 'ok') - (b.status === 'ok') || b.short - a.short)
+            const all = [...c.parts].sort((a, b) => (a.status === 'ok') - (b.status === 'ok') || b.short - a.short)
+            // 충분한 품목은 접어 둔다 — 「충분 N품목 ▸」 을 누르면 펼침 (2026-10-01)
+            const okCnt = all.filter(p => p.status === 'ok').length
+            const sorted = showOk[c.key] ? all : all.filter(p => p.status !== 'ok')
             return (
               <div key={c.key} className="bg-white border border-slate-200 rounded-xl overflow-hidden">
                 <button type="button" onClick={() => setOpen(o => ({ ...o, [c.key]: !isOpen }))}
@@ -215,7 +234,15 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
                           </tr>
                         )
                       })}
-                      {!sorted.length && <tr><td colSpan={8} className="px-3 py-3 text-slate-400">BOM 에 품목이 없습니다 (BOM {c.proj?.code})</td></tr>}
+                      {!all.length && <tr><td colSpan={8} className="px-3 py-3 text-slate-400">BOM 에 품목이 없습니다 (BOM {c.proj?.code})</td></tr>}
+                      {okCnt > 0 && (
+                        <tr><td colSpan={8} className="px-3 py-1">
+                          <button type="button" onClick={() => setShowOk(o => ({ ...o, [c.key]: !o[c.key] }))}
+                            className="text-[11px] font-semibold text-emerald-600 hover:underline">
+                            {showOk[c.key] ? `충분 ${okCnt}품목 접기 ▴` : `✓ 충분 ${okCnt}품목 ▸`}
+                          </button>
+                        </td></tr>
+                      )}
                     </tbody>
                   </table>
                 )}

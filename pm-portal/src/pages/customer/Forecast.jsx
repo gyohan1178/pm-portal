@@ -344,7 +344,7 @@ export default function Forecast() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">{cs?.name || csCode} 포캐스트</h1>
-          <Link to="/forecast-shortage" className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-indigo-600 hover:underline">🔍 이 포캐스트로 소요 예측(쇼티지 분석) 보기 →</Link>
+          <Link to={`/forecast-shortage?cs=${String(csCode || 'ax').toLowerCase()}`} className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-indigo-600 hover:underline">🔍 이 포캐스트로 소요 예측(쇼티지 분석) 보기 →</Link>
           <p className="text-xs text-slate-400 mt-0.5">고객사 수요 예측 — 프로젝트/품번별 월별 수량 · 직전 접수 대비 변화 추적</p>
         </div>
         <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">

@@ -4,6 +4,8 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import * as XLSX from 'xlsx'
 import ShortageTabs from '../../components/ShortageTabs'
+import CustomerTabs from '../../components/CustomerTabs'
+import { saveEdDemand } from '../../lib/edDemand'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase, fetchAllRows } from '../../lib/supabase'
@@ -127,7 +129,14 @@ const monthsAhead = (n) => {
 
 export default function ShortageForecast() {
   const navigate = useNavigate()
-  const [csCode, setCsCode] = useState('ax')
+  // 부족자재 · 소요량 조회에서 넘어온 고객사(?cs=ed)를 이어 받는다
+  const [csCode, setCsCodeRaw] = useState(() => {
+    try { const c = new URLSearchParams(window.location.search).get('cs'); return CUSTOMERS.some(x => x.code === c) ? c : 'ax' } catch { return 'ax' }
+  })
+  const setCsCode = (c) => {
+    setCsCodeRaw(c)
+    try { const u = new URL(window.location.href); u.searchParams.set('cs', c); window.history.replaceState(window.history.state, '', u) } catch { /* 주소만 못 바꾼다 */ }
+  }
   const [search, setSearch] = useState('')
   // 수백 건을 한 글자마다 다시 거르고 그리면 입력이 멈춘다.
   // 입력은 즉시 반영하되(타이핑 끊김 없음) 필터는 멈춘 뒤 한 번만.
@@ -151,8 +160,17 @@ export default function ShortageForecast() {
   const rows = cache.rows
 
   const refreshMut = useMutation({
-    mutationFn: async () => { const { error } = await supabase.rpc('refresh_shortage_cache', { cs_id: cs.id }); if (error) throw error },
-    onSuccess: () => { setExcluded(new Set()); qc.invalidateQueries(['forecastShortage', cs?.id]) },
+    mutationFn: async () => {
+      // Edwards — 생산관리 불출 예정 × BOM 으로 소요를 먼저 만든다 (lib/edDemand.js)
+      let ed = null
+      if (csCode === 'ed') ed = await saveEdDemand()
+      const { error } = await supabase.rpc('refresh_shortage_cache', { cs_id: cs.id }); if (error) throw error
+      return ed
+    },
+    onSuccess: (ed) => {
+      setExcluded(new Set()); qc.invalidateQueries(['forecastShortage', cs?.id])
+      if (ed) toastSuccess(`Edwards 소요 — 불출 ${ed.used}건 → BOM 소요 ${ed.rows.length}줄${ed.noBom ? ` · BOM 연결 안 된 ${ed.noBom}건 제외` : ''}${ed.unresolved ? ` · 품번 미등록 미불출 ${ed.unresolved}건 제외` : ''}`)
+    },
     onError: (e) => toastError('재계산 오류: ' + e.message),
   })
   // 제외 처리 — 연속 클릭 지원. useCallback([])로 고정해 행 memo가 깨지지 않게 함
@@ -469,12 +487,16 @@ export default function ShortageForecast() {
 
   return (
     <div className="space-y-4">
+      {/* 부족자재 · 소요량 조회와 같은 순서: 고객사 → 소요·부족 탭 */}
+      <div className="-mb-4"><CustomerTabs active={csCode} onPick={(c) => { setCsCode(c); setExcluded(new Set()) }} /></div>
       <ShortageTabs cs={csCode} />
       {made && <PoMadeBanner made={made.made} skipped={made.skipped} csCode={csCode} onClose={()=>setMade(null)} />}
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🔮 소요 예측</h1>
-          <p className="text-xs text-slate-400 mt-0.5">포캐스트 × BOM 전개 − 재고 − 입고예정 · 약속일 1개월 전 재고 확보 기준</p>
+          <p className="text-xs text-slate-400 mt-0.5">{csCode === 'ed'
+            ? 'Edwards = 생산관리 불출 예정(포캐스트로 만든 호기 포함) × 연결된 BOM − 재고 − 입고예정 · 「↻ 재계산」 때 생산관리 기준으로 다시 만듭니다'
+            : '포캐스트 × BOM 전개 − 재고 − 입고예정 · 약속일 1개월 전 재고 확보 기준'}</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-400">
@@ -503,13 +525,7 @@ export default function ShortageForecast() {
         </div>
       </div>
 
-      {/* 고객사 탭 */}
-      <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
-        {CUSTOMERS.map(c => (
-          <button key={c.code} onClick={() => { setCsCode(c.code); setExcluded(new Set()) }}
-            className={`px-4 py-1.5 text-xs font-semibold rounded-lg ${csCode === c.code ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{c.name}</button>
-        ))}
-      </div>
+      {/* 고객사 탭은 맨 위(CustomerTabs)로 옮김 — 부족자재 · 소요량 조회와 같은 자리 */}
 
       {/* 요약 카드 */}
       <div className="grid grid-cols-3 gap-2">
