@@ -11,7 +11,7 @@ import { parseEdMonthly } from '../../lib/edMonthly'
 import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
-import { kindOf } from '../../lib/edForecast'
+import { ruleKindOf, KINDS } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
@@ -177,7 +177,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
   const dq = useDebounced(search, 250)
   const [showDone, setShowDone] = useState(false)
-  const [view, setView] = useState('list') // list | model | kanban | load
+  // 자재 상황판의 「불출순 부족」 바로가기(?view=need)로 들어오면 소요량 매칭부터
+  const [view, setView] = useState(() => {
+    try { return isED && new URLSearchParams(window.location.search).get('view') === 'need' ? 'need' : 'list' } catch { return 'list' }
+  }) // list | model | kanban | load | need
   const [mainTab, setMainTab] = useState('main') // main=주요 관리 | sub
   const [edit, setEdit] = useState(null)   // 편집 중인 레코드 or null
   const [sel, setSel] = useState(new Set()) // 일괄수정 선택
@@ -250,11 +253,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     const seen = new Map()
     for (const r of rows) {
       if (r.status === '완료') continue
-      const kind = kindOf(r); if (!kind) continue
+      const kind = ruleKindOf(r); if (!kind) continue
       const group = bomGroupOf(r)
       seen.set(kind + '|' + group, { kind, group })
     }
-    return [...seen.values()].sort((a, b) => (a.kind + a.group).localeCompare(b.kind + b.group))
+    const core = (k) => (KINDS.includes(k) ? 0 : 1)
+    return [...seen.values()].sort((a, b) => core(a.kind) - core(b.kind) || (a.kind + a.group).localeCompare(b.kind + b.group))
   }, [rows])
   const rulesMut = useMutation({
     mutationFn: async (value) => {
@@ -1031,6 +1035,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       {showRules && (
         <RulesModal rules={edRules} defaults={DEFAULT_RULES} saving={rulesMut.isPending}
           projects={edProj?.projects || []} bomGroups={edBomGroups}
+          extraKinds={[...new Set(rows.map(ruleKindOf).filter(k => k && !KINDS.includes(k)))]}
           items={[...new Set(rows.map(r => r.fc_item).filter(Boolean))]} unknown={fcUnknown}
           onClose={() => setShowRules(false)} onSave={(v) => rulesMut.mutate(v)} />
       )}

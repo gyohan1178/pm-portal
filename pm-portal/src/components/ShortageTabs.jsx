@@ -6,6 +6,8 @@ export default function ShortageTabs({ cs = 'ax' }) {
     { to: `/customer/${cs}/short`, label: '부족자재 (PO 확정)', exact: false },
     { to: '/forecast-shortage', label: '소요예측 (포캐스트)', exact: false },
     { to: `/customer/${cs}/reqbom`, label: '소요량 조회', exact: false },
+    // Edwards — 생산관리 불출 예정 순으로 차례로 빼 본 부족 (생산관리 › 📦 소요량 매칭)
+    ...(String(cs).toUpperCase() === 'ED' ? [{ to: '/production/ED?view=need', label: '📦 불출순 부족 (생산관리)', exact: false }] : []),
   ]
   return (
     <div className="inline-flex gap-1 p-1 bg-slate-100 rounded-lg">

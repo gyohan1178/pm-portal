@@ -10,7 +10,7 @@
 //     사람이 넣는 값: 확정 납기(due_fix) · Frame 확정(arrival_date) · 발주서(po_received) · 불출 · 품질 · 미불출 · 비고
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { KINDS, kindOf, dueOf, issueDueOf, issueBaseOf } from '../../lib/edForecast'
+import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf } from '../../lib/edForecast'
 import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 
 const dayMs = 86400000
@@ -163,14 +163,11 @@ function DueCell({ r, onField }) {
   const tag = live && n != null && n >= 0
     ? <span className={`ml-1 text-[10px] font-bold ${n <= 7 ? 'text-orange-600' : n <= 14 ? 'text-yellow-600' : 'text-slate-500'}`}>{n === 0 ? 'D-Day' : `D-${n}`}</span>
     : null
-  if (!k) {
-    return <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300 whitespace-nowrap"
-      title="MFM · BDM · 단품 — 자재 준비 대상이 아닙니다 (회색 = 납품요청일)">{md(r.req_date) || '—'}{tag}</td>
-  }
   const src = k === 'EUV' ? 'to 정한' : 'H2D 자재'
   return (
     <td data-no-select className="px-2 py-2 border-l border-slate-100 text-center whitespace-nowrap group"
-      title={d ? (d.fixed ? `확정 납기 · 포캐스트 ${d.fc || '없음'}` : `포캐스트 ${src} 기준 · ✎ 로 확정 납기 입력`) : '포캐스트 날짜 없음 · ✎ 로 확정 납기 입력'}>
+      title={d ? (d.fixed ? `확정 납기 · 포캐스트 ${d.fc || '없음'}` : `포캐스트 ${src} 기준 · ✎ 로 확정 납기 입력`)
+        : k ? '포캐스트 날짜 없음 (회색 = 납품요청일) · ✎ 로 확정 납기 입력' : '회색 = 납품요청일 · ✎ 로 확정 납기 입력'}>
       {d
         ? <span className={d.fixed ? 'font-semibold text-slate-800 border-b-2 border-emerald-400' : 'text-slate-500'}>{md(d.date)}</span>
         : <span className="text-slate-300">{md(r.req_date) || '—'}</span>}
@@ -223,7 +220,7 @@ function FrameCell({ r, onField }) {
 function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   const field = which === 'harn' ? 'harness_recv' : 'part_issue'
   const done = truthy(r[field])
-  const k = kindOf(r)
+  const k = ruleKindOf(r)
   const due = issueDueOf(r, rules, which)
   const n = dday(due)
   const w = k ? rules?.weeks?.[k]?.[which] : null
@@ -235,6 +232,7 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
     <td data-no-select className={`px-2 py-2 cursor-pointer text-center whitespace-nowrap group ${which === 'harn' ? 'border-l border-slate-100' : ''}`}
       title={done ? `${name} 불출 완료 · 누르면 취소`
         : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}주 (불출 기준)\n누르면 불출 완료`
+        : (w === null || w === undefined) && k ? `${k} 불출 기준(주수)이 없습니다 — 「⚙ 불출 기준」 ① 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
         : k ? `정한 납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
       onClick={() => onField(r.id, field, !done)}>
       {done
@@ -287,7 +285,7 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
   // 구분2 = 포캐스트 품번 · 구분3 = 이 줄이 쓰는 BOM (하네스 · 전장)
   //   월간 실적(PO 업로드)의 구분2 · 3 은 마우스를 올리면 보인다.
   const bomCode = (r, which) => {
-    const k = kindOf(r)
+    const k = ruleKindOf(r)
     if (!k) return undefined
     const p = bomProjectFor(rules, projects, k, bomGroupOf(r), which)
     return p ? p.code : null
@@ -465,8 +463,14 @@ export function MissingModal({ row, onClose, onSave, saving }) {
 
 // ── 불출 기준 창 ─────────────────────────────────────────────────────
 //   ① 정한 납기보다 몇 주 먼저 불출하나  ② 포캐스트 품번 → 들어가는 갈래
-export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults, projects = [], bomGroups = [] }) {
-  const [weeks, setWeeks] = useState(() => JSON.parse(JSON.stringify(rules.weeks)))
+export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults, projects = [], bomGroups = [], extraKinds = [] }) {
+  // EUV · H2D 세 갈래 + 생산관리에 있는 다른 구분(MFM · BDM · ASML …) + 예전에 정해 둔 것
+  const kindsAll = [...KINDS, ...[...new Set([...extraKinds, ...Object.keys(rules.weeks || {})])].filter(k => !KINDS.includes(k)).sort()]
+  const [weeks, setWeeks] = useState(() => {
+    const w = JSON.parse(JSON.stringify(rules.weeks || {}))
+    for (const k of kindsAll) w[k] = { harn: w[k]?.harn ?? '', elec: w[k]?.elec ?? '' }
+    return w
+  })
   const [map, setMap] = useState(() => ({ ...rules.map }))
   const [bom, setBom] = useState(() => ({ ...(rules.bom || {}) }))
   const all = [...new Set([...Object.keys(map), ...items, ...unknown].filter(Boolean))]
@@ -491,20 +495,22 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
                 <th className="px-3 py-1.5 text-left">구분</th><th className="px-3 py-1.5">하네스 (주 전)</th><th className="px-3 py-1.5">전장 (주 전)</th>
               </tr></thead>
               <tbody>
-                {KINDS.map(k => (
-                  <tr key={k} className="border-t border-slate-100">
-                    <td className="px-3 py-1.5 font-bold text-slate-700">{KIND_LABEL[k]}</td>
+                {kindsAll.map(k => (
+                  <tr key={k} className={`border-t border-slate-100 ${k === kindsAll[KINDS.length] ? 'border-t-2 border-t-slate-200' : ''}`}>
+                    <td className="px-3 py-1.5 font-bold text-slate-700">{KIND_LABEL[k] || k}</td>
                     {['harn', 'elec'].map(w => (
                       <td key={w} className="px-3 py-1.5 text-center">
-                        <input type="number" min="0" max="26" value={weeks[k][w]} onChange={e => setW(k, w, e.target.value)}
-                          className="w-16 px-2 py-1 text-center border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+                        <input type="number" min="0" max="26" value={weeks[k]?.[w] ?? ''} placeholder={KINDS.includes(k) ? '' : '미설정'}
+                          onChange={e => setW(k, w, e.target.value)}
+                          className={`w-16 px-2 py-1 text-center border rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 ${weeks[k]?.[w] === '' ? 'border-orange-300' : 'border-slate-200'}`} />
                       </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-400">정한 납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주). 확정 납기를 넣으면 그 날짜 기준.</p>
+            <p className="mt-1 text-[11px] text-slate-400">정한 납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주) · MFM · BDM 등 = 납품요청일. 확정 납기를 넣으면 그 날짜 기준.
+              <b className="text-orange-600"> 비워 둔 칸</b>은 불출 예정일을 계산하지 않습니다.</p>
           </section>
           <section>
             <p className="font-bold text-slate-700 mb-1">② 포캐스트 품번 → 들어가는 구분</p>
@@ -552,8 +558,8 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
                             <td key={w} className="px-2 py-1">
                               <select value={bom[k] === undefined ? '__auto' : bom[k]}
                                 onChange={e => setBom(b => { const n = { ...b }; if (e.target.value === '__auto') delete n[k]; else n[k] = e.target.value; return n })}
-                                className={`w-full max-w-[230px] px-1.5 py-1 text-[11px] border rounded ${bom[k] === undefined && !g ? 'border-orange-300 text-orange-600' : 'border-slate-200'}`}>
-                                <option value="__auto">자동 — {g ? g.code : '못 찾음'}</option>
+                                className={`w-full max-w-[230px] px-1.5 py-1 text-[11px] border rounded ${bom[k] === undefined && !g && KINDS.includes(kind) ? 'border-orange-300 text-orange-600' : 'border-slate-200'}`}>
+                                <option value="__auto">{g ? `자동 — ${g.code}` : KINDS.includes(kind) ? '자동 — 못 찾음' : '없음 (필요하면 고르세요)'}</option>
                                 <option value="">연결 안 함</option>
                                 {projects.map(p => <option key={p.id} value={p.code}>{p.code}{p.name && p.name !== p.code ? ` · ${p.name}` : ''}</option>)}
                               </select>
@@ -573,7 +579,12 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
           <button onClick={onClose} className="ml-auto px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
           <button disabled={saving} onClick={() => {
             const w = {}
-            for (const k of KINDS) w[k] = { harn: Number(weeks[k].harn) || 0, elec: Number(weeks[k].elec) || 0 }
+            const v = (x) => (x === '' || x === null || x === undefined ? null : Number(x) || 0)
+            for (const k of KINDS) w[k] = { harn: Number(weeks[k]?.harn) || 0, elec: Number(weeks[k]?.elec) || 0 }
+            for (const k of kindsAll.slice(KINDS.length)) {
+              const h = v(weeks[k]?.harn), e = v(weeks[k]?.elec)
+              if (h !== null || e !== null) w[k] = { harn: h, elec: e }
+            }
             onSave({ weeks: w, map, bom })
           }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? '저장 중…' : '저장'}</button>
         </div>

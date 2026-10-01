@@ -9,7 +9,7 @@
 //      그 불출일까지 들어올 발주(입고요청일 오늘~불출일)는 먼저 더한다
 //      입고요청일이 지난 미입고 발주는 더하지 않고 「입고 지연」으로 알린다 (작업자 도구와 같음)
 //   ③ 품목별로 「언제부터 얼마나 모자라고 언제 풀리는지」를 따로 모은다
-import { kindOf, issueDueOf, KINDS } from './edForecast'
+import { kindOf, ruleKindOf, issueDueOf, KINDS } from './edForecast'
 
 const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 'false')
 
@@ -17,7 +17,8 @@ const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 
 //   작업자 도구 ITEM_BOMDB 와 같은 묶음: EUV · H2D-LH 는 NKB 기종별, H2D-HPD 는 하나
 export function bomGroupOf(r) {
   const k = kindOf(r)
-  if (!k) return null
+  // MFM · BDM 등 — 구분3(HVM · BLENDER · MFM …)으로 묶는다
+  if (!k) return ruleKindOf(r) ? (String(r.part3 || r.part2 || '').trim().toUpperCase() || '*') : null
   if (k === 'H2D-HPD') return '*'
   const cands = [r.fc_item, r.part3, r.part2].map(v => String(v || '').toUpperCase())
   for (const c of cands) { const m = /^(NKB\d{3})/.exec(c); if (m) return m[1] }
@@ -31,6 +32,7 @@ export const WHICH_LABEL = { harn: '하네스', elec: '전장' }
 //   NKB973 의 EUV · EUV 하네스는 NKB943 것을 같이 쓴다 (작업자 도구 그대로).
 const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-()]/g, '')
 export function guessBom(projects, kind, group, which) {
+  if (!KINDS.includes(kind)) return null     // MFM · BDM 등은 짐작하지 않는다 — 사람이 고른다
   const has = (p, ...t) => { const s = norm(p.code) + '|' + norm(p.name); return t.every(x => s.includes(norm(x))) }
   const harn = (p) => has(p, '하네스') || has(p, 'harness') || has(p, 'hns')
   // 딱 하나만 맞을 때만 고른다. 둘 이상이면 임의로 고르지 않는다 (2026-10-01 — 사람이 「⚙ 불출 기준」 ③ 에서 고름)
@@ -63,8 +65,9 @@ export function buildEvents(rows, rules, projects) {
   const ev = []
   for (const r of rows || []) {
     if (r.status === '완료') continue
-    const kind = kindOf(r)
+    const kind = ruleKindOf(r)
     if (!kind) continue
+    const core = KINDS.includes(kind)
     const group = bomGroupOf(r)
     const mp = (Array.isArray(r.missing_parts) ? r.missing_parts : []).filter(m => String(m.pn || '').trim())
     let issuedDue = null
@@ -73,7 +76,9 @@ export function buildEvents(rows, rules, projects) {
       const due = issueDueOf(r, rules, which)
       if (done) { if (due && (!issuedDue || due < issuedDue)) issuedDue = due; continue }
       const proj = bomProjectFor(rules, projects, kind, group, which)
-      ev.push({ row: r, kind, group, which, due, proj, key: `${r.id}|${which}` })
+      // MFM · BDM 등은 BOM 을 연결한 것만 센다
+      if (!core && !proj) continue
+      ev.push({ row: r, kind, group, which, due, proj, core, key: `${r.id}|${which}` })
     }
     // 불출은 했는데 빠진 자재가 있다 → 그 자재만
     if (mp.length && (truthy(r.harness_recv) || truthy(r.part_issue))) {

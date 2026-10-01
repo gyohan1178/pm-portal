@@ -20,12 +20,17 @@ export const KINDS = ['EUV', 'H2D-LH', 'H2D-HPD']
 // 생산관리 줄의 구분1·2·3 으로 어느 갈래인지 가른다.
 //   구분1 이 MFM · BDM · 단품 이면 자재 준비 대상이 아니다 (작업자 도구에도 없었다).
 //   구분2·3 이 뒤섞여 있다 — 'EUV / H2D HP / H2D HPD' 는 실제로 H2D-HPD 다.
+//   (2026-10-01) 구분1 이 EUV · H2D 인 줄만 세 갈래로 본다 — ASML · GEN4 를 EUV 로 세던 것을 고침
 export function kindOf(r) {
   const p1 = String(r?.part || '').trim().toUpperCase()
-  if (!p1 || ['MFM', 'BDM', '단품'].includes(p1)) return null
-  const all = [r.part, r.part2, r.part3].map(v => String(v || '').toUpperCase()).join(' ')
-  if (all.includes('H2D')) return all.includes('HP') ? 'H2D-HPD' : 'H2D-LH'
-  return 'EUV'
+  const all = [r?.part, r?.part2, r?.part3].map(v => String(v || '').toUpperCase()).join(' ')
+  if (p1 === 'H2D' || (p1 === 'EUV' && all.includes('H2D'))) return all.includes('HP') ? 'H2D-HPD' : 'H2D-LH'
+  if (p1 === 'EUV') return 'EUV'
+  return null
+}
+// 불출 기준 · BOM 연결에 쓰는 구분 — EUV · H2D 세 갈래, 그 밖은 구분1 그대로 (MFM · BDM · ASML · GEN4 · 단품 …)
+export function ruleKindOf(r) {
+  return kindOf(r) || (String(r?.part || '').trim().toUpperCase() || null)
 }
 
 // ── 설정 (pm_settings 'ed_fc_rules') ────────────────────────────────
@@ -62,10 +67,15 @@ export const DEFAULT_RULES = {
 export function mergeRules(saved) {
   const s = saved && typeof saved === 'object' ? saved : {}
   const weeks = {}
+  const num = (x, dflt) => (x !== '' && x !== null && x !== undefined && Number.isFinite(Number(x)) ? Number(x) : dflt)
   for (const k of KINDS) {
     const d = DEFAULT_RULES.weeks[k], v = (s.weeks || {})[k] || {}
-    const num = (x, dflt) => (Number.isFinite(Number(x)) && x !== '' && x !== null ? Number(x) : dflt)
     weeks[k] = { elec: num(v.elec, d.elec), harn: num(v.harn, d.harn) }
+  }
+  // MFM · BDM 같은 다른 구분 — 정한 것만 (안 정한 칸은 null = 불출 예정 없음)
+  for (const [k, v] of Object.entries(s.weeks || {})) {
+    if (KINDS.includes(k) || !v) continue
+    weeks[k] = { elec: num(v.elec, null), harn: num(v.harn, null) }
   }
   const map = { ...DEFAULT_RULES.map, ...(s.map || {}) }
   // bom: '구분|NKB기종|harn·elec' → BOM 프로젝트 코드 (소요량 매칭 · lib/edNeed.js). 없으면 이름으로 짐작
@@ -183,11 +193,11 @@ export function issueBaseOf(r) {
   return r.req_date ? { date: String(r.req_date).slice(0, 10), src: '납품요청일 (포캐스트 날짜 없음)' } : null
 }
 export function issueDueOf(r, rules, which) {
-  const k = kindOf(r)
+  const k = ruleKindOf(r)
   const b = issueBaseOf(r)
-  if (!k || !b) return null
-  const w = Number(rules?.weeks?.[k]?.[which]) || 0
-  return addDays(b.date, -7 * w)
+  const w = k ? rules?.weeks?.[k]?.[which] : null
+  if (!b || w === null || w === undefined || w === '') return null     // 불출 기준을 안 정한 구분
+  return addDays(b.date, -7 * (Number(w) || 0))
 }
 
 // ── 생산관리 반영 계획 ───────────────────────────────────────────────

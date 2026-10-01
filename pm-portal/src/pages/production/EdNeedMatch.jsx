@@ -96,7 +96,7 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
   if (!pq.data?.csId) return <div className="p-6 text-sm text-slate-500">Edwards 고객사(코드 ED)를 찾을 수 없습니다.</div>
 
   const info = dq.data?.info || {}
-  const noBom = events.filter(e => e.which !== 'miss' && !e.proj)
+  const noBom = events.filter(e => e.which !== 'miss' && !e.proj && e.core)
   const cards = (res?.cards || []).filter(c => c.which === 'miss' || c.proj)
   // 리스트의 부족 표시를 눌러 들어오면 그 건만
   const shown = focus ? cards.filter(c => c.key === focus) : only === 'bad' ? cards.filter(c => c.bad) : cards
