@@ -46,6 +46,8 @@ async function copyText(t) {
   } catch { return false }
 }
 const LS_OPT = 'pm_fai_opt'
+// 뺀 하위파트 — 최상위 품번마다 따로 (같은 모델을 다시 올려도, Rev 가 바뀌어도 이어진다)
+const LS_EXCL = (pn) => 'pm_fai_excl_' + pn
 const LS_REP = 'pm_fai_rep'
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d } catch { return d } }
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); return true } catch { return false } }
@@ -182,13 +184,23 @@ export default function FaiNavigator() {
     staleTime: 5 * 60 * 1000,
   })
 
+  // ── 불필요한 하위파트 빼기 (2026-10-01) ──
+  //   BOM 전개 순서에서 줄을 골라 「빼기」 → 그 자리와 하위 전체가 목록 · 지표 · 엑셀 · PPT · 결과 반영에서 빠진다.
+  //   고유 품번 합산에도 같이 적용된다. 이 PC 에 최상위 품번별로 기억한다.
+  const exKey = rep ? LS_EXCL(normAx(rep.top.pn)) : ''
+  const [exArr, setExArr] = useState([])
+  useEffect(() => { setExArr(exKey ? lsGet(exKey, []) : []) }, [exKey])
+  const excl = useMemo(() => new Set(exArr), [exArr])
+  const saveEx = (arr) => { const u = [...new Set(arr)]; setExArr(u); if (exKey) lsSet(exKey, u) }
+  const [showExcl, setShowExcl] = useState(false)
+
   const rows = useMemo(() => {
     if (!rep) return []
     const ctx = { buyIdx: buildBuyIndex(buy?.recs || []), man: {} }
-    return buildRows(rep, opt, ctx)
-  }, [rep, buy, opt])
+    return buildRows(rep, { ...opt, excl, showExcl: opt.mode === 'tree' && showExcl }, ctx)
+  }, [rep, buy, opt, excl, showExcl])
 
-  const base = rows.filter((r) => r.e.v !== 'ASSY')
+  const base = rows.filter((r) => r.e.v !== 'ASSY' && !r.excl)
   const cnt = (g) => base.filter((r) => V[r.e.v].grp === g).length
   const linked = base.filter((r) => r.e.act.src).length
   const dwgStat = useMemo(() => {
@@ -259,11 +271,12 @@ export default function FaiNavigator() {
     return v
   }, [rows, filt, sort])
 
-  const selRows = view.filter((r) => sel[r.key])
+  const selRows = view.filter((r) => sel[r.key] && !r.excl)
+  const outRows = view.filter((r) => !r.excl)       // 엑셀 · PPT 에는 뺀 줄을 안 넣는다
   const onSort = (k) => setSort((s) => (s.k === k ? { k, d: s.d === 'asc' ? 'desc' : 'asc' } : { k, d: 'asc' }))
 
   async function exportXlsx() {
-    const out = selRows.length ? selRows : view
+    const out = selRows.length ? selRows : outRows
     try {
       await downloadSheet({
         title: `초도품 자재 확인표 — ${rep.top.pn} Rev ${rep.top.rev}`,
@@ -272,6 +285,7 @@ export default function FaiNavigator() {
         meta: [
           ['명칭', rep.top.name], ['기준 Part Report', rep.fileName || ''],
           ['보기', opt.mode === 'uniq' ? '고유 품번 합산' : 'BOM 전개 순서'],
+          ...(exArr.length ? [['제외', `불필요한 하위파트 ${exArr.length}자리 (하위 포함) 제외`]] : []),
           ['실제 사용 제조사', '발주 줄의 제조사 (비어 있으면 기준코드 DB 제조사)'],
           ['작성', `${todayISO()} · FAI Navigator ${APP_VER} © 김교한`],
         ],
@@ -364,7 +378,7 @@ export default function FaiNavigator() {
   // 품목별 PPT — 저장 위치를 먼저 고르고(버튼 누른 순간에만 창을 띄울 수 있다) 만든 뒤 그 자리에 쓴다
   async function makePpt() {
     if (ppt) return
-    const out = selRows.length ? selRows : view
+    const out = selRows.length ? selRows : outRows
     if (!out.length) { toastError('내보낼 품목이 없습니다'); return }
     if (out.length > 150 && !window.confirm(`${out.length}건을 만듭니다. 몇 분 걸릴 수 있습니다. 계속할까요?\n(일부만 필요하면 표에서 골라서 다시 누르세요)`)) return
     const name = pptName(rep)
@@ -615,6 +629,25 @@ export default function FaiNavigator() {
             {selRows.length > 0 && (
               <button onClick={() => setSel({})} className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">선택해제</button>
             )}
+            {opt.mode === 'tree' && selRows.some((r) => r.pk) && (
+              <button onClick={() => {
+                  const pks = selRows.map((r) => r.pk).filter(Boolean)
+                  saveEx([...exArr, ...pks]); setSel({})
+                  toastSuccess(`${pks.length}줄을 뺐습니다 (조립품이면 하위 포함) — 「뺀 줄 보기」에서 되살릴 수 있습니다`)
+                }}
+                title="불필요한 하위파트 — 고른 줄과 그 밑 하위 전체를 목록 · 지표 · 엑셀 · PPT 에서 뺍니다"
+                className="px-2.5 py-1 rounded-lg font-bold border border-rose-300 text-rose-700 bg-rose-50 hover:bg-rose-100">🚫 선택 {selRows.filter((r) => r.pk).length}줄 빼기 (하위 포함)</button>
+            )}
+            {exArr.length > 0 && (
+              <span className="flex items-center gap-1.5 text-slate-500">
+                · 뺀 자리 <b className="text-rose-600">{exArr.length}</b>
+                {opt.mode === 'tree'
+                  ? <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={showExcl} onChange={(e) => setShowExcl(e.target.checked)} /> 뺀 줄 보기</label>
+                  : <span className="text-[11px] text-slate-400">(합산에서도 빠짐 · 되살리기는 BOM 전개 순서에서)</span>}
+                <button onClick={() => { if (window.confirm(`뺀 ${exArr.length}자리를 모두 되살릴까요?`)) saveEx([]) }}
+                  className="px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] hover:bg-slate-50">모두 되살리기</button>
+              </span>
+            )}
             <button onClick={exportXlsx} disabled={!view.length}
               className="ml-auto px-3 py-1.5 font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
               📑 엑셀 {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
@@ -647,15 +680,22 @@ export default function FaiNavigator() {
                   const pars = parentList(r, rep.top.pn)
                   return (
                     <Fragment key={r.key}>
-                      <tr {...rowProps(r.key, on)}
-                        className={`border-t border-slate-100 align-top cursor-pointer ${on ? 'bg-indigo-50/60' : 'hover:bg-slate-50'}`}>
-                        <td className="px-3 py-2"><input type="checkbox" checked={on} onChange={() => setSel((s) => ({ ...s, [r.key]: !on }))} /></td>
+                      <tr {...(r.excl ? {} : rowProps(r.key, on))}
+                        className={`border-t border-slate-100 align-top ${r.excl ? 'bg-slate-50 text-slate-400 opacity-60' : on ? 'bg-indigo-50/60 cursor-pointer' : 'hover:bg-slate-50 cursor-pointer'}`}>
+                        <td className="px-3 py-2">
+                          {r.excl
+                            ? <button data-no-select onClick={() => saveEx(exArr.filter((k) => k !== r.pk))} title="되살리기"
+                                className="px-1 rounded border border-slate-300 bg-white text-[10px] text-slate-600 hover:bg-emerald-50 hover:text-emerald-700">↩</button>
+                            : <input type="checkbox" checked={on} onChange={() => setSel((s) => ({ ...s, [r.key]: !on }))} />}
+                        </td>
                         <td className="px-3 py-2 text-right tabular-nums text-slate-400">{r.no}</td>
                         <td className="px-3 py-2 overflow-hidden" style={opt.mode === 'tree' ? { paddingLeft: 12 + Math.max(0, r.lv - 2) * 14 } : undefined}>
                           <button data-no-select onClick={() => setOpen((o) => ({ ...o, [r.key]: !o[r.key] }))}
                             className="font-mono font-semibold text-indigo-600 hover:underline whitespace-nowrap">
-                            {isOpen ? '▾' : '▸'} {P.pn}
+                            {isOpen ? '▾' : '▸'} {opt.mode === 'tree' && <span className="mr-1 px-1 rounded bg-slate-100 text-[9px] font-bold text-slate-500 align-middle" title="BOM 레벨">L{r.lv}</span>}
+                            <span className={r.excl ? 'line-through' : ''}>{P.pn}</span>
                           </button>
+                          {r.excl && <span className="ml-1 text-[10px] font-bold text-rose-500">뺌{r.under ? ` · 하위 ${r.under}줄 포함` : ''}</span>}
                           <div className="text-[11px] text-slate-400 truncate" title={P.name}>{P.name}</div>
                         </td>
                         <td className="px-3 py-2 text-slate-500">{P.rev || '—'}</td>

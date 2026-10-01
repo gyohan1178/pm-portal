@@ -238,9 +238,23 @@ export function evaluate(P, ctx) {
 /* ================= 행 만들기 ================= */
 // opt: { mode: 'uniq' | 'tree', incAssy: true }
 //   고유 품번(uniq): 소요량 = 상위 수량 곱 누적 합산, 모품목 = 바로 위 조립품 집합
+//   opt.excl     : 뺀 자리(경로 'TOP>A>B') — 그 줄과 하위 전체를 뺀다 (2026-10-01 불필요한 하위파트 거르기)
+//   opt.showExcl : BOM 전개 순서에서 뺀 줄도 회색으로 보여 준다 (되살리기용 · 하위는 안 펼침)
+export const pathKey = (path, pn) => path.concat(pn).join('>')
 export function buildRows(rep, opt, ctx) {
   if (!rep) return []
-  const { mode = 'uniq', incAssy = true } = opt || {}
+  const { mode = 'uniq', incAssy = true, excl = null, showExcl = false } = opt || {}
+  const isEx = (pk) => !!(excl && excl.has(pk))
+  // 뺀 조립품 밑에 몇 줄이 딸려 있었는지 (화면 안내용)
+  const countUnder = (n, path) => {
+    let c = 0
+    for (const k of kidsOf(n)) {
+      if (/^REF$/i.test(k.unit) || path.includes(k.pn) || isSpec(k.P)) continue
+      c++
+      if (category(k.P) === 'assy') c += countUnder(k, path.concat(k.pn))
+    }
+    return c
+  }
   const rows = []
   const mkRow = (key, P, no, qty, unit, lv, occ) => ({ key, P, no, qty, unit, lv, occ, e: evaluate(P, ctx), ck: clsKey(P) })
   const kidsOf = (n) => (n.ref && rep.firstFull.get(n.pn)) ? rep.firstFull.get(n.pn).kids : n.kids
@@ -253,8 +267,19 @@ export function buildRows(rep, opt, ctx) {
         const ext = k.qty * mult
         const P = k.P, cat = category(P)
         if (isSpec(P)) continue
+        const pk = pathKey(path, k.pn)
+        if (isEx(pk)) {
+          if (showExcl) {
+            seq++
+            const xr = mkRow('t' + seq, P, seq, ext, k.unit, k.lv, 1)
+            xr.parents = [n.pn]; xr.pk = pk; xr.excl = true
+            xr.under = cat === 'assy' ? countUnder(k, path.concat(k.pn)) : 0
+            rows.push(xr)
+          }
+          continue
+        }
         seq++
-        const tr = mkRow('t' + seq, P, seq, ext, k.unit, k.lv, 1); tr.parents = [n.pn]; rows.push(tr)
+        const tr = mkRow('t' + seq, P, seq, ext, k.unit, k.lv, 1); tr.parents = [n.pn]; tr.pk = pk; rows.push(tr)
         if (cat === 'assy') walk(k, ext || mult, path.concat(k.pn))
       }
     }
@@ -267,6 +292,7 @@ export function buildRows(rep, opt, ctx) {
         if (path.includes(k.pn)) continue
         const ext = k.qty * mult
         const P = k.P
+        if (isEx(pathKey(path, k.pn))) continue      // BOM 전개 순서에서 뺀 자리 — 하위까지 합산에서 뺀다
         if (category(P) === 'assy') {
           if (incAssy) {
             if (!agg.has(P.pn)) agg.set(P.pn, { P, seq: ++seq, qty: 0, unit: k.unit, occ: 0, asNeeded: false, par: new Set() })
