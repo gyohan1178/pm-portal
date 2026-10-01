@@ -157,6 +157,11 @@ export function parseAxcelisReport(text) {
     })
   }
 
+  return buildParsed(header, parts)
+}
+
+// 품목 목록 → 어셈블리 묶음 · 통계 (HTM · 엑셀 공통)
+function buildParsed(header, parts, source = 'htm') {
   // ── 어셈블리 단위로 묶기 ──
   // children     : 직계 자식만
   // descendants  : 하위 전체 (relLevel = 부모 기준 상대 깊이)
@@ -188,6 +193,7 @@ export function parseAxcelisReport(text) {
 
   const codes = [...new Set(parts.map((p) => p.code).filter(Boolean))]
   return {
+    source,
     header,
     parts,
     groups,
@@ -203,4 +209,92 @@ export function parseAxcelisReport(text) {
     },
     codes,
   }
+}
+
+// ── AXCELIS BOM 엑셀 (2026-10-01) ─────────────────────────────────────
+//   고객사가 HTM 대신 주는 엑셀. 한 줄 = 품목 하나 (HTM 의 Part 행과 같은 내용).
+//     Structure Level · Number(들여쓰기) · Organization ID · Version('G.2 (Design)') · Name ·
+//     Line Number · Find Number · Quantity('1 Each' · '0 as needed' · '1.9 Foot' · '1 REF') · State · Reference Designator
+//   ⚠ 제조사(Mfr Part) 줄이 없다 — 이미 등록된 품목의 제조사는 그대로, 새 품번은 제조사 없이 등록된다.
+//   나머지(VM 품번 제외 · Foot→M 환산 · as needed = 0 · 어셈블리 묶기)는 HTM 과 똑같이 처리한다.
+const norm = (v) => String(v ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+
+// 머리줄 위치 — 없으면 -1
+export function findAxcelisBomHeader(grid) {
+  for (let i = 0; i < Math.min((grid || []).length, 20); i++) {
+    const r = (grid[i] || []).map(norm)
+    if (r.includes('structure level') && r.includes('number') && r.includes('quantity')) return i
+  }
+  return -1
+}
+export const isAxcelisBomSheet = (grid) => findAxcelisBomHeader(grid) >= 0
+
+export function parseAxcelisBomSheet(grid) {
+  const hi = findAxcelisBomHeader(grid)
+  if (hi < 0) throw new Error("AXCELIS BOM 엑셀 머리줄(Structure Level · Number · Quantity)을 찾지 못했습니다")
+  const h = grid[hi].map(norm)
+  const col = (n) => h.indexOf(n)
+  const cL = col('structure level'), cN = col('number'), cV = col('version'), cNm = col('name'),
+        cQ = col('quantity'), cS = col('state')
+  const parts = []
+  for (let i = hi + 1; i < grid.length; i++) {
+    const r = grid[i] || []
+    const pn = String(r[cN] ?? '').trim()
+    const lvRaw = String(r[cL] ?? '').trim()
+    if (!pn || !/^\d+$/.test(lvRaw)) continue
+    const level = Number(lvRaw)
+    // '1 Each' · '0 as needed' · '1.9 Foot' · '1 REF' — 숫자와 단위를 나눈다 (HTM 의 Qty · Unit 칸)
+    const q = String(r[cQ] ?? '').trim()
+    const m = /^([\d.,]+)\s*(.*)$/.exec(q)
+    const qtyRawNum = m ? parseQty(m[1]) : 0
+    const unitRaw = m ? m[2].trim() : q
+    const feet = isFeet(unitRaw)
+    const ver = String(r[cV] ?? '').replace(/\s*\(.*?\)\s*$/, '').trim()      // 'G.2 (Design)' → 'G.2'
+    const dot = ver.indexOf('.')
+    const revRaw = dot >= 0 ? ver.slice(0, dot) : ver
+    const edRaw = dot >= 0 ? ver.slice(dot + 1) : ''
+    parts.push({
+      level,
+      isVM: isVmPn(pn),
+      rawPn: pn,
+      code: AX(pn),
+      name: String(r[cNm] ?? '').trim(),
+      qty: feet ? feetToMeter(qtyRawNum) : qtyRawNum,
+      unit: feet ? 'M' : (unitRaw || 'EA'),
+      converted: feet,
+      qtyOrig: qtyRawNum,
+      unitOrig: unitRaw,
+      qtyRaw: q,
+      rev: /^[A-Z]{1,2}$/i.test(revRaw) ? revRaw.toUpperCase() : '',
+      revRaw,
+      edition: /^\d+$/.test(edRaw) ? Number(edRaw) : 0,
+      state: cS >= 0 ? String(r[cS] ?? '').trim() : '',
+      mfr: '', mfrPn: '', alternates: [],
+    })
+  }
+  const root = parts.find(p => p.level === 0) || parts[0] || {}
+  const header = {
+    title: `AXCELIS BOM ${root.rawPn || ''} ${root.revRaw || ''}.${root.edition || 0} (엑셀)`,
+    rootPn: root.rawPn || '', rootCode: root.code || '',
+    rev: root.revRaw || '', edition: root.edition || 0, state: root.state || '',
+    description: root.name || '', createdBy: '', createdAt: '',
+  }
+  return buildParsed(header, parts, 'xlsx')
+}
+
+// ── 새 BOM 과 지금 등록된 BOM 비교 (버전 갱신 확인용) ─────────────────
+//   품번별 소요 합계로 견준다 (같은 품번이 여러 자리에 있으면 더함).
+//   cur / next : [{ code, qty }]
+export function diffBom(cur, next) {
+  const sum = (list) => {
+    const m = new Map()
+    for (const r of list || []) { if (!r.code) continue; m.set(r.code, Math.round(((m.get(r.code) || 0) + (Number(r.qty) || 0)) * 1000) / 1000) }
+    return m
+  }
+  const a = sum(cur), b = sum(next)
+  const added = [], removed = [], changed = []
+  for (const [code, q] of b) { if (!a.has(code)) added.push({ code, qty: q }); else if (a.get(code) !== q) changed.push({ code, from: a.get(code), to: q }) }
+  for (const [code, q] of a) if (!b.has(code)) removed.push({ code, qty: q })
+  const by = (x, y) => x.code.localeCompare(y.code)
+  return { added: added.sort(by), removed: removed.sort(by), changed: changed.sort(by), same: [...b.keys()].filter(c => a.has(c) && a.get(c) === b.get(c)).length }
 }

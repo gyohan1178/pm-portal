@@ -7,7 +7,7 @@ import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
-import { parseAxcelisReport } from '../../lib/axcelisBomReport'
+import { parseAxcelisReport, parseAxcelisBomSheet, isAxcelisBomSheet, diffBom } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
 import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
@@ -796,29 +796,63 @@ export default function BOM() {
   const [htmInfo, setHtmInfo] = useState(null)
   const [fillMfr, setFillMfr] = useState(true)
 
-  // AXCELIS Part Report (HTM) 업로드
+  // AXCELIS 리포트를 화면에 올린다 — HTM · 엑셀 공통 (저장은 같은 길)
+  //   엑셀은 제조사 정보가 없어 새 품번 목록을 미리 보여 주고,
+  //   이미 등록된 같은 어셈블리가 있으면 지금 BOM 과 견줘 바뀐 것(추가 · 삭제 · 수량)을 보여 준다.
+  async function loadAxcelisParsed(parsed) {
+    if (!parsed.parts.length) throw new Error('품목 행을 찾지 못했습니다. AXCELIS 리포트 형식이 맞는지 확인해주세요.')
+    if (!parsed.groups.length) throw new Error('하위 품목이 없습니다. 단품 리포트는 BOM 등록 대상이 아닙니다.')
+    const rows = htmToBomRows(parsed)
+    const info = { ...parsed }
+    try {
+      // 새 품번 (품목 마스터에 없는 것)
+      const codes = parsed.codes.filter(c => !parsed.parts.find(p => p.code === c)?.isVM)
+      const have = new Set()
+      for (let i = 0; i < codes.length; i += 200) {
+        const { data } = await supabase.from('items').select('std_code').in('std_code', codes.slice(i, i + 200))
+        ;(data || []).forEach(x => have.add(x.std_code))
+      }
+      info.newCodes = codes.filter(c => !have.has(c))
+      // 지금 등록된 같은 어셈블리 BOM 과 비교
+      const root = parsed.groups.find(g => g.isRoot) || parsed.groups[0]
+      if (cs?.id && root) {
+        const { data: pj } = await supabase.from('projects').select('id,code,rev').eq('customer_id', cs.id).eq('code', root.parentCode).maybeSingle()
+        if (pj) {
+          const cur = await fetchBOMDetail(cs.id, pj.id)
+          info.diff = {
+            fromRev: pj.rev || '', toRev: `${parsed.header.rev}${parsed.header.edition ? '.' + parsed.header.edition : ''}`,
+            ...diffBom(cur.map(b => ({ code: b.items?.std_code, qty: b.qty_per_unit })), root.descendants.map(d => ({ code: d.code, qty: d.qty }))),
+          }
+        }
+      }
+    } catch { /* 비교는 참고용 — 실패해도 등록은 할 수 있다 */ }
+    setRawRows(rows)
+    setHtmInfo(info)
+    setPreview({
+      total: rows.filter(r => r.LEVEL !== 0).length,
+      groups: parsed.groups.map(g => ({
+        code: g.parentCode, name: g.parentName,
+        rev: g.parentRev || 'A', count: g.children.length,
+      })),
+      rows,
+    })
+  }
+
+  // AXCELIS Part Report (HTM) · BOM 엑셀 업로드
   async function handleHtmFile(e) {
     const file = e.target.files[0]; if (!file) return
     setUploading(true); setResult(null); setHtmInfo(null)
     try {
       const buf = await file.arrayBuffer()
-      const parsed = parseAxcelisReport(decodeHtm(buf))
-      if (!parsed.parts.length) throw new Error('Part 행을 찾지 못했습니다. AXCELIS Part Report 형식이 맞는지 확인해주세요.')
-      if (!parsed.groups.length) throw new Error('하위 품목이 없습니다. 단품 리포트는 BOM 등록 대상이 아닙니다.')
-
-      const rows = htmToBomRows(parsed)
-      setRawRows(rows)
-      setHtmInfo(parsed)
-      setPreview({
-        total: rows.filter(r => r.LEVEL !== 0).length,
-        groups: parsed.groups.map(g => ({
-          code: g.parentCode, name: g.parentName,
-          rev: g.parentRev || 'A', count: g.children.length,
-        })),
-        rows,
-      })
+      if (/\.xlsx?$/i.test(file.name)) {
+        const wb = XLSX.read(buf, { type: 'array' })
+        const grid = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, defval: '' })
+        await loadAxcelisParsed(parseAxcelisBomSheet(grid))
+      } else {
+        await loadAxcelisParsed(parseAxcelisReport(decodeHtm(buf)))
+      }
     } catch (err) {
-      toastError('HTM 파싱 실패: ' + err.message)
+      toastError('AXCELIS 리포트 읽기 실패: ' + err.message)
     } finally {
       setUploading(false)
       e.target.value = ''
@@ -833,6 +867,16 @@ export default function BOM() {
       reader.onload = (ev) => {
         const wb = XLSX.read(ev.target.result, { type: 'binary' })
         const ws = wb.Sheets[wb.SheetNames[0]]
+        // AXCELIS BOM 엑셀(Structure Level · Number …)이면 리포트와 같은 길로 (양식 CSV 가 아니다)
+        const grid = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+        if (isAxcelisBomSheet(grid)) {
+          setHtmInfo(null)
+          loadAxcelisParsed(parseAxcelisBomSheet(grid))
+            .then(() => toast('AXCELIS BOM 엑셀로 읽었습니다'))
+            .catch(err => toastError('AXCELIS 엑셀 읽기 실패: ' + err.message))
+            .finally(() => setUploading(false))
+          return
+        }
         const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
         setRawRows(rows)
         // 상위PN별 그룹 요약 (다중 어셈블리)
@@ -887,9 +931,9 @@ export default function BOM() {
           <input type="file" accept=".xlsx,.csv,.xls" className="hidden" onChange={handleFile} disabled={uploading} />
         </label>
         <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-200 text-sky-600 bg-white hover:bg-sky-50 cursor-pointer ${uploading?'opacity-50':''}`}
-          title="고객사에서 받은 Part Report(HTM)를 그대로 올리면 BOM과 제조사 정보가 자동으로 들어갑니다">
-          📄 {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM)'}
-          <input type="file" accept=".htm,.html" className="hidden" onChange={handleHtmFile} disabled={uploading} />
+          title="고객사에서 받은 Part Report(HTM) 나 BOM 엑셀(Structure Level · Number …)을 그대로 올리면 BOM 이 들어갑니다. 제조사 정보는 HTM 에만 있습니다">
+          📄 {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM·엑셀)'}
+          <input type="file" accept=".htm,.html,.xlsx,.xls" className="hidden" onChange={handleHtmFile} disabled={uploading} />
         </label>
       </div>
 
@@ -898,16 +942,18 @@ export default function BOM() {
         <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-3 text-xs text-sky-800">
           <div className="font-bold text-sm mb-1">
             📄 {htmInfo.header.rootCode} · REV {htmInfo.header.rev}.{htmInfo.header.edition} ({htmInfo.header.state})
+            <span className="ml-2 px-1.5 py-0.5 rounded bg-white text-[10px] font-bold text-sky-600 align-middle">{htmInfo.source === 'xlsx' ? '엑셀' : 'HTM'}</span>
           </div>
           <div className="text-sky-700">{htmInfo.header.description}</div>
           <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-sky-600">
             <span>품목 <b>{htmInfo.stats.total}</b></span>
             <span>어셈블리 <b>{htmInfo.stats.assemblies}</b></span>
             <span>최대 레벨 <b>{htmInfo.stats.maxLevel}</b></span>
-            <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>
+            {htmInfo.source !== 'xlsx' && <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>}
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
             {htmInfo.stats.vmSkipped > 0 && <span className="text-rose-600">VM 품번 제외 <b>{htmInfo.stats.vmSkipped}</b></span>}
             {htmInfo.stats.converted > 0 && <span className="text-emerald-700">Foot→M 환산 <b>{htmInfo.stats.converted}</b></span>}
+            {htmInfo.source === 'xlsx' && htmInfo.newCodes && <span className={htmInfo.newCodes.length ? 'text-amber-700' : ''}>새 품번 <b>{htmInfo.newCodes.length}</b></span>}
             {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
           </div>
           {htmInfo.stats.vmSkipped > 0 && (
@@ -936,6 +982,41 @@ export default function BOM() {
             </div>
           )}
 
+          {/* 버전 갱신 — 지금 등록된 BOM 과 비교 */}
+          {htmInfo.diff && (
+            <div className="mt-2 rounded-lg bg-white border border-sky-200 px-3 py-2">
+              <div className="font-bold text-slate-700">
+                🔄 지금 등록된 BOM 과 비교 · REV {htmInfo.diff.fromRev || '-'} → {htmInfo.diff.toRev}
+                <span className="ml-2 font-semibold text-emerald-600">추가 {htmInfo.diff.added.length}</span>
+                <span className="ml-2 font-semibold text-rose-600">삭제 {htmInfo.diff.removed.length}</span>
+                <span className="ml-2 font-semibold text-amber-600">수량 변경 {htmInfo.diff.changed.length}</span>
+                <span className="ml-2 font-normal text-slate-400">그대로 {htmInfo.diff.same}</span>
+              </div>
+              {(htmInfo.diff.added.length + htmInfo.diff.removed.length + htmInfo.diff.changed.length) > 0 && (
+                <details className="mt-1">
+                  <summary className="cursor-pointer text-[11px] text-sky-700">바뀐 품번 보기 (품번별 소요 합계 기준)</summary>
+                  <div className="mt-1 grid grid-cols-1 md:grid-cols-3 gap-2 font-mono text-[11px]">
+                    <div>{htmInfo.diff.added.map(x => <div key={'a' + x.code} className="text-emerald-700">＋ {x.code} × {x.qty}</div>)}</div>
+                    <div>{htmInfo.diff.removed.map(x => <div key={'r' + x.code} className="text-rose-600">－ {x.code} × {x.qty}</div>)}</div>
+                    <div>{htmInfo.diff.changed.map(x => <div key={'c' + x.code} className="text-amber-700">± {x.code} {x.from} → {x.to}</div>)}</div>
+                  </div>
+                </details>
+              )}
+              <p className="mt-1 text-[11px] text-slate-400">저장하면 이 어셈블리 BOM 전체가 새 내용으로 바뀝니다 (BOM 화면에서 손으로 고친 대체품 등은 다시 고쳐야 함).</p>
+            </div>
+          )}
+          {htmInfo.source === 'xlsx' && (
+            <div className="mt-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-[11px] text-amber-800">
+              ⚠ 엑셀 BOM 에는 <b>제조사 정보가 없습니다</b> — 이미 등록된 품목은 제조사가 그대로 남고,
+              {htmInfo.newCodes?.length ? <> 새 품번 <b>{htmInfo.newCodes.length}개</b>는 제조사 없이 등록됩니다 (같은 리포트의 HTM 을 올리면 빈 제조사가 채워짐).</> : <> 새 품번은 없습니다.</>}
+              {htmInfo.newCodes?.length > 0 && (
+                <details className="mt-1"><summary className="cursor-pointer">새 품번 보기</summary>
+                  <div className="mt-1 font-mono flex flex-wrap gap-x-3">{htmInfo.newCodes.map(c => <span key={c}>{c}</span>)}</div>
+                </details>
+              )}
+            </div>
+          )}
+          {htmInfo.source !== 'xlsx' && (
           <label className="mt-2 flex items-start gap-2 cursor-pointer">
             <input type="checkbox" checked={fillMfr} onChange={(e) => setFillMfr(e.target.checked)} className="mt-0.5" />
             <span className="text-[11px] text-sky-700">
@@ -945,6 +1026,7 @@ export default function BOM() {
               </span>
             </span>
           </label>
+          )}
           <p className="mt-1.5 text-[11px] text-sky-500">
             아래에서 내용을 확인한 뒤 저장하세요. 등록되지 않은 품번은 제조사·품명과 함께 자동으로 품목 등록됩니다.
           </p>
