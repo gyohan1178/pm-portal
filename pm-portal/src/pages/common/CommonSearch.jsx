@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useCustomers } from '../../hooks/useCustomers'
+import { addEffQty } from '../../lib/whereUsedEff'
 import ReqBOM from '../customer/ReqBOM'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
@@ -55,7 +56,8 @@ async function whereUsedAll(q) {
   if (!q.trim()) return []
   const { data, error } = await supabase.rpc('get_where_used_all', { q })
   if (error) throw error
-  return data || []
+  // 대당 소요(참조용 0 · 구매/자작 반영)를 붙인다 — 못 구해도 원래 결과는 그대로
+  try { return await addEffQty(data || []) } catch { return data || [] }
 }
 
 export default function CommonSearch() {
@@ -215,8 +217,11 @@ export default function CommonSearch() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs whitespace-nowrap">
                           <thead><tr className="border-b border-slate-100 text-slate-400">
-                            {['고객사', '상위 어셈블리 (클릭→BOM)', '어셈블리명', '소요량', '레벨'].map(h =>
-                              <th key={h} className="px-3 py-2 text-left font-bold">{h}</th>)}
+                            {[['고객사'], ['상위 어셈블리 (클릭→BOM)'], ['어셈블리명'],
+                              ['BOM 수량', 'BOM 줄에 적힌 수량 그대로 (여러 자리에 있으면 합)'],
+                              ['대당 소요', '상위 1대에 실제로 드는 수량 — 부족자재 · 소요량 조회와 같은 계산 (위 조립품 수량 0 = 참조용 · 구매/자작 반영)'],
+                              ['단계', '직접 = 그 BOM 에 바로 들어 있음 · N단계 = 하위 조립품 BOM 을 거쳐 들어감 (BOM 화면의 L 레벨과 다름)']].map(([h, t]) =>
+                              <th key={h} title={t} className="px-3 py-2 text-left font-bold">{h}</th>)}
                           </tr></thead>
                           <tbody>
                             {g.parents.map((p, pi) => (
@@ -230,8 +235,12 @@ export default function CommonSearch() {
                                   <button onClick={() => goBOM(p.parent_code, p.customer_code)} className="font-mono text-xs font-bold text-indigo-600 hover:underline">{p.parent_code} ↗</button>
                                 </td>
                                 <td className="px-3 py-2 text-slate-600 max-w-[240px] truncate">{p.parent_name}</td>
-                                <td className="px-3 py-2 text-right font-semibold text-slate-800">{p.qty}</td>
-                                <td className="px-3 py-2 text-slate-400">L{p.level ?? '-'}</td>
+                                <td className="px-3 py-2 text-right text-slate-500">{Number(p.qty)}</td>
+                                <td className={`px-3 py-2 text-right font-semibold ${p.eff === undefined ? 'text-slate-300' : p.eff === 0 ? 'text-violet-600' : 'text-slate-800'}`}
+                                  title={p.eff === 0 && Number(p.qty) > 0 ? '위 조립품이 수량 0(참조용)이거나 구매 표시라 소요에 안 들어갑니다' : undefined}>
+                                  {p.eff === undefined ? '—' : Number(p.eff)}{p.eff === 0 && Number(p.qty) > 0 && <span className="ml-1 text-[9px]">제외</span>}
+                                </td>
+                                <td className="px-3 py-2 text-slate-400">{p.level == null ? '-' : p.level === 1 ? '직접' : `${p.level}단계`}</td>
                               </tr>
                             ))}
                           </tbody>
