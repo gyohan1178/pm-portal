@@ -44,6 +44,7 @@ const HIST_COLS = [
   { key: 'unit_no',    label: '호기',     defaultWidth: 62 },
   { key: 'std_code',   label: '기준코드', defaultWidth: 120 },
   { key: 'item_name',  label: '품명',     defaultWidth: 220 },
+  { key: 'reason',     label: '필요 사유', defaultWidth: 160 },
   { key: 'maker',      label: '제조사',   defaultWidth: 100 },
   { key: 'qty',        label: '요청',     defaultWidth: 62, align: 'right' },
   { key: 'issued_qty', label: '불출',     defaultWidth: 62, align: 'right' },
@@ -1678,7 +1679,13 @@ export default function MaterialRequest() {
                               {r.std_code || '-'}
                             </span>
                           )}
-                          <span className="text-slate-600 flex-1 min-w-0 truncate">{r.item_name}</span>
+                          {/* 품목별 필요 사유 — 요청할 때 적은 것 (2026-10-01 목록에 안 보이던 것) */}
+                          <span className="flex-1 min-w-0">
+                            <span className="block text-slate-600 truncate">{r.item_name}</span>
+                            {r.reason && (
+                              <span className="block text-[11px] text-sky-700 truncate" title={`필요 사유: ${r.reason}`}>💬 {r.reason}</span>
+                            )}
+                          </span>
                           {cutLabel(r) && (
                             <span className="flex-shrink-0 px-2 py-0.5 rounded-md border border-amber-300 bg-amber-50 text-[11px] font-bold text-amber-800 whitespace-nowrap"
                               title="절단 요청 — 총 절단길이 · 좌/우 탈피길이">
@@ -1873,6 +1880,7 @@ export default function MaterialRequest() {
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.unit_no || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-mono text-slate-700">{r.std_code || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-700">{r.item_name || ''}</td>
+                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-sky-700" title={r.reason || ''}>{r.reason || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.maker || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold text-slate-800">{n(r.qty)}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-emerald-700">{r.issued_qty == null ? '' : n(r.issued_qty)}</td>
