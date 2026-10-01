@@ -33,7 +33,8 @@ const norm = (s) => String(s || '').toLowerCase().replace(/[\s_\-()]/g, '')
 export function guessBom(projects, kind, group, which) {
   const has = (p, ...t) => { const s = norm(p.code) + '|' + norm(p.name); return t.every(x => s.includes(norm(x))) }
   const harn = (p) => has(p, '하네스') || has(p, 'harness') || has(p, 'hns')
-  const pick = (fn) => (projects || []).filter(fn).sort((a, b) => String(a.code).length - String(b.code).length)[0] || null
+  // 딱 하나만 맞을 때만 고른다. 둘 이상이면 임의로 고르지 않는다 (2026-10-01 — 사람이 「⚙ 불출 기준」 ③ 에서 고름)
+  const pick = (fn) => { const l = (projects || []).filter(fn); return l.length === 1 ? l[0] : null }
   if (kind === 'EUV') {
     const g = group === 'NKB973' ? 'NKB943' : group
     if (!/^NKB/.test(g || '')) return null
@@ -43,7 +44,11 @@ export function guessBom(projects, kind, group, which) {
   }
   const sub = kind === 'H2D-LH' ? 'lh' : 'hpd'
   if (which === 'elec') return pick(p => has(p, 'h2d', sub) && !harn(p))
-  return (/^NKB/.test(group || '') && pick(p => has(p, 'h2d', sub, group) && harn(p))) || pick(p => has(p, 'h2d', sub) && harn(p))
+  // 하네스는 기종별로 다르다 — 기종(NKB)을 모르면 짐작하지 않는다
+  //   H2D-HPD 는 하네스 BOM 이 하나뿐이라 기종과 상관없다
+  if (kind === 'H2D-LH' && !/^NKB/.test(group || '')) return null
+  if (!/^NKB/.test(group || '')) return pick(p => has(p, 'h2d', sub) && harn(p))
+  return pick(p => has(p, 'h2d', sub, group) && harn(p))
 }
 // 설정값 → 없으면 짐작
 export function bomProjectFor(rules, projects, kind, group, which) {

@@ -175,12 +175,19 @@ export function dueOf(r) {
   return fc ? { date: fc, fixed: false, fc } : null
 }
 // which: 'harn' 하네스 · 'elec' 전장
+// 불출 예정일의 기준 날짜 — 정한 납기(확정 · 포캐스트), 없으면 화면에 대신 보이는 납품요청일
+//   (2026-10-01) 불출 기준만 정해져 있으면 정한 납기 칸에 보이는 날짜로 늘 역산되게 한다.
+export function issueBaseOf(r) {
+  const d = dueOf(r)
+  if (d) return { date: d.date, src: d.fixed ? '확정 납기' : '포캐스트 정한 납기' }
+  return r.req_date ? { date: String(r.req_date).slice(0, 10), src: '납품요청일 (포캐스트 날짜 없음)' } : null
+}
 export function issueDueOf(r, rules, which) {
   const k = kindOf(r)
-  const d = dueOf(r)
-  if (!k || !d) return null
+  const b = issueBaseOf(r)
+  if (!k || !b) return null
   const w = Number(rules?.weeks?.[k]?.[which]) || 0
-  return addDays(d.date, -7 * w)
+  return addDays(b.date, -7 * w)
 }
 
 // ── 생산관리 반영 계획 ───────────────────────────────────────────────

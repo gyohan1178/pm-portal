@@ -10,7 +10,7 @@
 //     사람이 넣는 값: 확정 납기(due_fix) · Frame 확정(arrival_date) · 발주서(po_received) · 불출 · 품질 · 미불출 · 비고
 import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
-import { KINDS, kindOf, dueOf, issueDueOf } from '../../lib/edForecast'
+import { KINDS, kindOf, dueOf, issueDueOf, issueBaseOf } from '../../lib/edForecast'
 import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 
 const dayMs = 86400000
@@ -233,7 +233,9 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   const cls = !live ? 'text-slate-400' : n == null ? 'text-slate-300' : n < 0 ? 'text-red-600 font-bold' : n <= 7 ? 'text-orange-600 font-bold' : 'text-slate-500'
   return (
     <td data-no-select className={`px-2 py-2 cursor-pointer text-center whitespace-nowrap group ${which === 'harn' ? 'border-l border-slate-100' : ''}`}
-      title={done ? `${name} 불출 완료 · 누르면 취소` : due ? `${name} 불출 예정 = 정한 납기 − ${w}주 · 누르면 불출 완료` : `누르면 ${name} 불출 완료`}
+      title={done ? `${name} 불출 완료 · 누르면 취소`
+        : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}주 (불출 기준)\n누르면 불출 완료`
+        : k ? `정한 납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
       onClick={() => onField(r.id, field, !done)}>
       {done
         ? <span className={`${doneCls} font-semibold`}>✔ 불출</span>
