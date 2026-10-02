@@ -175,7 +175,7 @@ export default function CustomerPO() {
         const dw = revMap[p.items?.std_code]
         return {
           'PO번호': p.po_number || '',
-          'CCN': p.ccn || '',
+          'CCN': p.third_party || p.ccn || '',
           '오더라인': p.order_line || '',
           'DEL라인': p.del_line || '',
           '구분': p.division || '',
@@ -303,6 +303,7 @@ export default function CustomerPO() {
       rows = rows.filter(p =>
         (p.po_number||'').toLowerCase().includes(q) ||
         (p.ccn||'').toLowerCase().includes(q) ||
+        (p.third_party||'').toLowerCase().includes(q) ||
         (p.items?.std_code||'').toLowerCase().includes(q) ||
         (p.items?.name||'').toLowerCase().includes(q) ||
         (p.item_rev||'').toLowerCase().includes(q) ||
@@ -558,7 +559,9 @@ export default function CustomerPO() {
               : filtered.map(p=>(
                 <tr key={p.id} className={`border-b border-slate-100 hover:bg-slate-50 group ${p.isDelayed?'bg-red-50/30':''}`}>
                   <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{(p.item_id||p.project_id) && <input type="checkbox" checked={!!picked[p.id]} onChange={()=>setPicked(s=>({...s,[p.id]:!s[p.id]}))} onClick={e=>e.stopPropagation()} className="mr-1.5 align-middle accent-indigo-600"/>}{p.po_number||'-'}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500 overflow-hidden truncate">{p.ccn||'-'}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-500 overflow-hidden truncate">{p.third_party
+                    ? <span data-tp-badge className="px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px] font-bold font-sans" title="3rd party 발주 건">{p.third_party}</span>
+                    : (p.ccn||'-')}</td>
                   <td className="px-3 py-2 text-xs text-slate-400">{(p.order_line||'-')}/{(p.del_line||'-')}</td>
                   <td className="px-3 py-2"><span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${p.division==='하네스'?'bg-teal-50 text-teal-600':p.division==='구매품'?'bg-slate-100 text-slate-500':'bg-purple-50 text-purple-600'}`}>{p.division||'전장'}</span></td>
                   <td className="px-3 py-2 overflow-hidden">

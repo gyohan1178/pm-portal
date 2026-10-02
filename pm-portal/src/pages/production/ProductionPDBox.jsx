@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
+import { isTpRow } from '../../lib/thirdParty'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
@@ -485,7 +486,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
-    r = r.filter(x => isMainRow(x.pn, csCode) === (mainTab === 'main'))
+    // 3rd party(동신 · 동원파츠 …) 줄은 품번과 상관없이 Sub Assy
+    r = r.filter(x => (isMainRow(x.pn, csCode) && !isTpRow(x)) === (mainTab === 'main'))
     // Edwards 는 정한 납기(없으면 납품요청일) 순으로 묶는다
     if (isED) r = r.filter(x => edPass(x, edF, edRules))
     const dOf = (x) => (isED ? edDateOf(x) : x.req_date)
@@ -519,7 +521,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
     const g = {}
-    rows.filter(r => isMainRow(r.pn, csCode) && r.status !== '완료' && r.req_date).forEach(r => {
+    rows.filter(r => isMainRow(r.pn, csCode) && !isTpRow(r) && r.status !== '완료' && r.req_date).forEach(r => {
       const mdv = Number(mdMap[r.pn]) || 1
       const ew = weekKey(calcElec(r)); const qw = weekKey(calcQuality(r))
       if (ew) { g[ew] ??= { wk: ew, elecMd: 0, elecCnt: 0, qcCnt: 0 }; g[ew].elecMd += mdv; g[ew].elecCnt++ }
@@ -789,7 +791,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <tr key={r.id}
                   onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
                   onMouseEnter={e => rowSel.over(r.id, e)}
-                  className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id)?'bg-indigo-50/50':''} ${!isMainRow(r.pn, csCode)?'opacity-90':''}`}>
+                  className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id)?'bg-indigo-50/50':''} ${!(isMainRow(r.pn, csCode) && !isTpRow(r))?'opacity-90':''}`}>
                   <td className="px-1 py-2">
                     <input type="checkbox" checked={sel.has(r.id)} readOnly
                       className="pointer-events-none" />
@@ -814,7 +816,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     <>
                       <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600"
                         onClick={() => setEdit({ ...r })}>
-                        {r.pn}{!isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
+                        {r.pn}{isTpRow(r)
+                          ? <span data-tp-badge className="ml-1 px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px] font-bold align-middle font-sans" title="3rd party 발주 건 — PO 한 줄이 한 줄 (호기 칸 = 수량)">{r.company}</span>
+                          : !isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
                       </td>
                       <td className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis">{r.name}</td>
                     </>
@@ -859,7 +863,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                           {t.diff>0?`+${t.diff}일`:`${t.diff}일`}</span> })()}
                     </span>
                   </td>
-                  {isMainRow(r.pn, csCode) ? (<>
+                  {isMainRow(r.pn, csCode) && !isTpRow(r) ? (<>
                   {/* 가공물 입고예정 — 날짜없으면 입력, 있으면 완료토글 */}
                   <DateCell row={r} dateField="arrival_date" doneField="machine_recv" done={r.machine_recv} doneColor="amber"
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'arrival_date', value: v || null })}

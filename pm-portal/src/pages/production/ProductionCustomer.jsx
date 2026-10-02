@@ -7,6 +7,7 @@ import { supabase } from '../../lib/supabase'
 import ProductionCalendar from './ProductionCalendar'
 import ProductionHarness from './ProductionHarness'
 import ProductionPDBox from './ProductionPDBox'
+import { syncThirdPartyProduction } from '../../lib/thirdParty'
 
 const CUST_NAME = { AX: 'AXCELIS', ED: 'Edwards', VM: 'VM', CSK: 'CSK' }
 const STATUS_COLOR = {
@@ -85,9 +86,12 @@ export default function ProductionCustomer() {
       done = (Array.isArray(hd) ? hd[0] : hd)?.done_cnt || 0
       const { data, error } = await supabase.rpc('sync_production_from_po', { cs_code: cs, p_silent: false })
       if (error) throw error
-      return { ...(data?.[0] || {}), done }
+      // 3rd party PO(동신 · 동원파츠 …)는 PO 한 줄 = Sub Assy 한 줄 — 따로 맞춘다 (AXCELIS 만)
+      let tp = null
+      if (String(cs).toUpperCase() === 'AX') tp = await syncThirdPartyProduction(supabase, 'AX')
+      return { ...(data?.[0] || {}), done, tp }
     },
-    onSuccess: (r) => { qc.invalidateQueries(['production', cs]); toastSuccess(`PO 연동 완료 — 매칭 ${r?.matched||0}, 신규 호기 ${r?.created||0}, 갱신 ${r?.updated||0}${r?.done ? `, 납품 완료 ${r.done}` : ''}`) },
+    onSuccess: (r) => { qc.invalidateQueries(['production', cs]); toastSuccess(`PO 연동 완료 — 매칭 ${r?.matched||0}, 신규 호기 ${r?.created||0}, 갱신 ${r?.updated||0}${r?.done ? `, 납품 완료 ${r.done}` : ''}${r?.tp && (r.tp.created || r.tp.updated || r.tp.unlinked) ? ` · 3rd party 신규 ${r.tp.created}, 갱신 ${r.tp.updated}${r.tp.unlinked ? `, 해제 ${r.tp.unlinked}` : ''}` : ''}`) },
     onError: (e) => toastError('연동 오류: ' + e.message),
   })
 
