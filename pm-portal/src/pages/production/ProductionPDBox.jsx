@@ -198,6 +198,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   }, []))
   const [bulkField, setBulkField] = useState('arrival_date')
   const [bulkDate, setBulkDate] = useState('')
+  const [bulkStatus, setBulkStatus] = useState('')   // 체크한 호기의 진행 상태를 한 번에 (2026-10-02)
   // 작업지시서 인쇄 — 고른 호기를 QR 작업지시서로 (components/WorkOrderPrint.jsx, QR 공정 데모와 같은 양식)
   const [woRows, setWoRows] = useState(null)
   const printWo = () => {
@@ -699,6 +700,26 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
                 {bulkMut.isPending?'적용 중...':'일괄 적용'}
               </button>
+              {/* 진행 상태 일괄 변경 — 줄마다 상태 칸을 누르는 것과 같은 저장 */}
+              <span className="flex items-center gap-1.5 pl-2 ml-1 border-l border-indigo-200">
+                <select value={bulkStatus} onChange={e=>setBulkStatus(e.target.value)} data-bulk-status
+                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <option value="">상태 고르기…</option>
+                  {STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <button disabled={bulkMut.isPending || !bulkStatus}
+                  onClick={()=>{
+                    const list = rows.filter(r => sel.has(r.id))
+                    const change = list.filter(r => (r.status || 'PO접수') !== bulkStatus)
+                    if (!change.length) { toastError(`고른 ${list.length}건이 이미 「${bulkStatus}」입니다`); return }
+                    const from = [...new Set(change.map(r => r.status || 'PO접수'))].join(' · ')
+                    if (!window.confirm(`선택 ${sel.size}건 중 ${change.length}건의 상태를 「${bulkStatus}」(으)로 바꿀까요?\n\n지금 상태: ${from}${bulkStatus === '완료' ? '\n\n완료로 바꾸면 「완료 포함」을 켜야 목록에 보입니다.' : ''}`)) return
+                    bulkMut.mutate({ ids: change.map(r => r.id), field: 'status', value: bulkStatus }, { onSuccess: () => setBulkStatus('') })
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
+                  {bulkMut.isPending ? '적용 중...' : '상태 일괄 변경'}
+                </button>
+              </span>
               <button onClick={()=>{ if(window.confirm(`선택 ${sel.size}건의 날짜를 비울까요?`)) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null }) }}
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
               <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
