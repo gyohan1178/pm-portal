@@ -2,6 +2,14 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.25.2',
+    date: '2026-09-30',
+    changes: [
+      '★ 포캐스트 변경점 분석: 「⭐ 주요 110 품번 변동」 표 추가 — 110 품번마다 달별 최신 수량과 ▲▼ 증감 · 비교 구간 합 · 신규/빠짐 · 일정 밀림/당겨짐을 한눈에 (기본은 바뀐 것만)',
+      '★ 초도품 자재 매칭: Part Report 에 Class(Generic/Limited/Sole) 표기가 없는 품목은 Generic 으로 보지 않습니다 — 등록품과 안 맞으면 「⚠ Class 미표기 — 확인필요」로 나옵니다 (예전 「Generic 처럼 자체판단」 선택은 없앰)',
+    ],
+  },
+  {
     version: 'v4.25.1',
     date: '2026-09-30',
     changes: [

@@ -8,12 +8,16 @@ import { ymdKST } from '../lib/utils'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
+const dayBefore = (ymd) => { const [y,m,d] = ymd.split('-').map(Number); const t = new Date(y, m-1, d-1); return `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}` }
+
 function getWeekRange(offset=0) {
   const now = new Date()
   const day = now.getDay()||7
   const mon = new Date(now); mon.setDate(now.getDate()-day+1+offset*7); mon.setHours(0,0,0,0)
   const sun = new Date(mon); sun.setDate(mon.getDate()+6)
-  const fmt = d=>d.toISOString().split('T')[0]
+  // ⚠ 한국 시간 자정을 toISOString(UTC)으로 바꾸면 하루 앞 날짜가 된다 (월요일 → 일요일).
+  //   그래서 주 범위가 일~토로 나갔다 → 이 PC 날짜 그대로 적는다 (월~일). (2026-10-02)
+  const fmt = d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
   return { from:fmt(mon), to:fmt(sun), label:`${fmt(mon)} ~ ${fmt(sun)}` }
 }
 
@@ -59,7 +63,8 @@ async function fetchWeeklyReport(from, to) {
   const { data: calItems } = await supabase.from('weekly_items')
     .select('*')
     .in('category',['schedule_outbound','schedule_consignment','special_note'])
-    .gte('target_date', from)
+    // 특이사항은 주 시작일로 저장된다. 예전(일요일 시작)에 적은 것도 보이게 하루 앞부터 읽는다.
+    .gte('target_date', dayBefore(from))
     .lte('target_date', nextW.to)
 
   // 포털 자동 집계.
