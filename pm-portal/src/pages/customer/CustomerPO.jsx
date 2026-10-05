@@ -11,6 +11,7 @@ import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
 import { todayISO } from '../../lib/utils'
+import { planExcOf, isHot, dueSort } from '../../lib/planExc'
 
 // 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
 const CARD_CLS = {
@@ -131,6 +132,8 @@ export default function CustomerPO() {
   const dq = useDebounced(search, 250)
   const [picked, setPicked] = useState({})
   const [chgTab, setChgTab] = useState(false)
+  // 납기 갱신 필요 — 약속일이 지났는데 아직 진행중인 줄 (엑셀에서 새 날짜로 고쳐 다시 올려야 한다)
+  const [dueTab, setDueTab] = useState(false)
   const [revTab, setRevTab] = useState(false)
 
   const { data: cs } = useCustomer(csCode)
@@ -194,6 +197,8 @@ export default function CustomerPO() {
           '약속일': p.promise_date || '',
           '납기지연': p.isDelayed ? 'Y' : '',
           '상태': p.status || '',
+          'Plan Exc': p.plan_exc || '',
+          '납기 경과(일)': p.isDelayed ? Math.round((new Date(todayISO()) - new Date(p.promise_date)) / 86400000) : '',
           '변경건수': Array.isArray(p.changes) ? p.changes.length : 0,
           '자재불출': p.material_issued ? 'Y' : '',
           '메모': p.memo || '',
@@ -205,6 +210,7 @@ export default function CustomerPO() {
       if (chgTab) cond.push(['필터', '변경 이력만'])
       if (revTab) cond.push(['필터', '도면 요청만'])
       if (hideIssued) cond.push(['필터', '불출완료 제외'])
+      if (dueTab) cond.push(['필터', '납기 갱신 필요 (약속일 경과 · 진행중)'])
       cond.push(['건수', `${rows.length}건`])
       cond.push(['추출일시', new Date().toLocaleString('ko-KR')])
 
@@ -293,6 +299,7 @@ export default function CustomerPO() {
   }
 
   // 변경 이력 있는 PO만 (대시보드용)
+  const duePOs = useMemo(() => pos.filter(p => p.isDelayed), [pos])
   const changedPOs = useMemo(
     () => pos.filter(p => Array.isArray(p.changes) && p.changes.length > 0), [pos])
 
@@ -311,8 +318,10 @@ export default function CustomerPO() {
     }
     if (chgTab) rows = changedPOs.filter(p => divTab==='전체' || (p.division||'전장')===divTab)
     if (hideIssued) rows = rows.filter(p => !p.material_issued)
+    // HOT 먼저 · 약속일이 오래 지난 순
+    if (dueTab) rows = rows.filter(p => p.isDelayed).sort(dueSort)
     return rows
-  }, [pos, changedPOs, divTab, dq, chgTab, hideIssued])
+  }, [pos, changedPOs, divTab, dq, chgTab, hideIssued, dueTab])
 
   // 도면 REV 대조 — 대상 품번만 판정, 그 외는 null(배지 없음)
   // 팝업 내용을 엑셀에 붙여넣을 수 있게 탭 구분으로 담는다
@@ -520,6 +529,10 @@ export default function CustomerPO() {
           className={`px-3 py-2 text-xs font-bold rounded-lg border ${chgTab?'border-amber-300 bg-amber-50 text-amber-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
           ⚡ 변경 이력만 {changedPOs.length>0 && `(${changedPOs.length})`}
         </button>
+        <button data-due-tab onClick={()=>setDueTab(v=>!v)} title="약속일(Promise Date)이 지났는데 아직 진행중인 줄 — 엑셀에서 새 날짜로 고쳐 다시 올려야 합니다. HOT 이 위로 옵니다"
+          className={`px-3 py-2 text-xs font-bold rounded-lg border ${dueTab?'border-red-300 bg-red-50 text-red-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+          ⏰ 납기 갱신 필요 {duePOs.length>0 && `(${duePOs.length}${duePOs.some(isHot) ? ` · HOT ${duePOs.filter(isHot).length}` : ''})`}
+        </button>
         <button onClick={()=>setRevTab(v=>!v)} title="PO의 REV가 NAS 최신 도면보다 높음 = 신도면 미수령"
           className={`px-3 py-2 text-xs font-bold rounded-lg border ${revTab?'border-orange-300 bg-orange-50 text-orange-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
           🟠 도면 요청만 {askCount>0 && `(${askCount})`}
@@ -609,7 +622,7 @@ export default function CustomerPO() {
                           className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold hover:bg-amber-100">{p.changes.length}건</button>
                       : <span className="text-slate-200">-</span>}
                   </td>
-                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.status==='완료'?'bg-emerald-50 text-emerald-700':p.status==='취소'?'bg-slate-100 text-slate-500':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
+                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.status==='완료'?'bg-emerald-50 text-emerald-700':p.status==='취소'?'bg-slate-100 text-slate-500':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{planExcOf(p.plan_exc) && p.status!=='완료' && p.status!=='취소' && <span data-plan-exc title={planExcOf(p.plan_exc).title} className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${planExcOf(p.plan_exc).cls}`}>{planExcOf(p.plan_exc).label}</span>}{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
                   <td className="px-3 py-2">
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={()=>handleEdit(p)} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>

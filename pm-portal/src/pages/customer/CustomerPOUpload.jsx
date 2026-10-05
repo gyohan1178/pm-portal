@@ -4,6 +4,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
+import { planExcReady, planExcOf } from '../../lib/planExc'
+import { todayISO } from '../../lib/utils'
 import { parseThirdPartySheet, tpKey, thirdPartyReady, syncThirdPartyProduction } from '../../lib/thirdParty'
 
 // 헤더 유연 매칭
@@ -82,6 +84,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           order_line: s(pick(r, ['orderlines', 'order lines', '오더라인'])).replace(/\.0$/, ''),
           del_line: s(pick(r, ['delline', 'del line', '납품라인'])).replace(/\.0$/, ''),
           ccn: s(pick(r, ['ccn'])),
+          plan_exc: s(pick(r, ['planexc'])).toUpperCase(),   // HOT · RSIN · RSOU · CAN
           pn,
           item_rev:  s(pickExact(r, ['srev']) ?? pick(r, ['srev', 'rev', '리비전'])),
           item_brev: s(pickExact(r, ['brev']) ?? ''),
@@ -144,6 +147,9 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
 
       // 3rd party 칸(purchase_orders.third_party)이 있어야 3rd party 시트를 반영한다
       const tpReady = await thirdPartyReady(supabase)
+      // Plan Exc Type 칸(purchase_orders.plan_exc)이 있어야 HOT 등을 저장한다
+      const planReady = await planExcReady(supabase)
+      const planUpd = []   // 값만 맞추는 것 — 변경 이력에는 남기지 않는다
       const tpOpen = tpReady ? tp.rows.filter(r => r.state === 'open') : []
       const fileRows = [...rows, ...tpOpen]
       // DB 줄의 키 — 3rd party 는 업체 · 품번까지
@@ -155,7 +161,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const all = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
-          .select(`id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,unit_price,promise_date,division,status,changes${tpReady ? ',third_party' : ''}, items!purchase_orders_item_id_fkey(std_code)`)
+          .select(`id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,unit_price,promise_date,division,status,changes${tpReady ? ',third_party' : ''}${planReady ? ',plan_exc' : ''}, items!purchase_orders_item_id_fkey(std_code)`)
           .eq('customer_id', csId).eq('order_type', 'customer_po').order('id')
           .range(from, from + 999)
         if (error) throw error
@@ -177,6 +183,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         curKeys.add(rk)
         const ex = existMap[rk]
         if (!ex) { news.push({ ...r, code }); continue }
+        if (planReady && !r.third_party && (r.plan_exc || '') !== (ex.plan_exc || '')) planUpd.push({ id: ex.id, v: r.plan_exc || null })
         const chg = []
         if (code !== (ex.items?.std_code || '')) chg.push({ field: 'item', from: ex.items?.std_code || '-', to: code, _newCode: code })
         if (r.item_rev && r.item_rev !== (ex.item_rev || '')) chg.push({ field: 'item_rev', from: ex.item_rev || '-', to: r.item_rev })
@@ -257,7 +264,10 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const disappearWarn = all.length > 0 && disappeared.length / all.length > 0.4
 
       return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: all.length,
-               tpReady, tpOpen: tpOpen.length, tpTotal: tp.rows.length }
+               tpReady, tpOpen: tpOpen.length, tpTotal: tp.rows.length,
+               planReady, planUpd, planInFile: rows.filter(r => r.plan_exc).length,
+               // 약속일이 이미 지난 줄 — 엑셀에서 새 날짜로 고쳐 다시 올려야 한다
+               overdue: rows.filter(r => r.promise_date && r.promise_date < todayISO()) }
     },
     onSuccess: (d) => {
       setDiff(d)
@@ -328,9 +338,19 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           division: n.division || '전장',
           status: '진행중', changes: [],
           ...(n.third_party ? { third_party: n.third_party } : {}),
+          ...(diff.planReady && n.plan_exc ? { plan_exc: n.plan_exc } : {}),
         })
         if (error) throw error
         inserted++
+      }
+      // Plan Exc Type(HOT 등) 맞추기 — 값만 바꾸고 변경 이력에는 안 남긴다
+      const byV = {}
+      ;(diff.planUpd || []).forEach(u => { (byV[u.v ?? ''] ||= []).push(u.id) })
+      for (const [v, ids] of Object.entries(byV)) {
+        for (let i = 0; i < ids.length; i += 150) {
+          const { error } = await supabase.from('purchase_orders').update({ plan_exc: v || null }).in('id', ids.slice(i, i + 150))
+          if (error) throw error
+        }
       }
       // 사라진 PO 처리 (체크된 것만): 납품→완료, 취소→취소
       let done = 0, canceled = 0
@@ -485,6 +505,37 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                   <p className="text-xs font-bold text-slate-400">동일</p><p className="text-xl font-bold text-slate-600">{diff.sames.length}</p></div>
               </div>
 
+              {diff.overdue?.length > 0 && (
+                <div data-overdue className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
+                  <div className="px-3 py-2 text-xs font-bold text-red-700 border-b border-red-200">
+                    ⏰ 약속일(Promise Date)이 이미 지난 줄 {diff.overdue.length}건
+                    {diff.overdue.some(r => r.plan_exc === 'HOT') && <span> · HOT {diff.overdue.filter(r => r.plan_exc === 'HOT').length}</span>}
+                    <span className="font-normal text-red-500"> — 엑셀에서 새 날짜로 고쳐 다시 올려야 합니다 (고객사 PO 「납기 갱신 필요」에서 다시 볼 수 있음)</span>
+                  </div>
+                  <div className="max-h-40 overflow-y-auto divide-y divide-red-100">
+                    {[...diff.overdue].sort((a, b) => ((b.plan_exc === 'HOT') - (a.plan_exc === 'HOT')) || a.promise_date.localeCompare(b.promise_date)).map((r, i) => (
+                      <div key={i} className="px-3 py-1 text-xs flex items-center gap-2">
+                        {r.plan_exc && <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${planExcOf(r.plan_exc).cls}`}>{r.plan_exc}</span>}
+                        <span className="font-mono text-slate-500">{r.po_number}</span>
+                        <span className="text-slate-400">L{r.order_line}/{r.del_line}</span>
+                        <span className="font-mono text-indigo-600">AX-{r.pn}</span>
+                        <span className="ml-auto font-mono text-red-600">{r.promise_date}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {diff.planInFile > 0 && !diff.planReady && (
+                <p data-plan-note className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠ Plan Exc Type(HOT 등) {diff.planInFile}줄은 이번에 저장하지 않습니다 — SQL pm_plan_exc_261002 를 먼저 실행하세요.
+                </p>
+              )}
+              {diff.planReady && diff.planUpd?.length > 0 && (
+                <p data-plan-note className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  Plan Exc Type(HOT · RSIN · RSOU …) {diff.planUpd.length}줄을 파일 값으로 맞춥니다.
+                </p>
+              )}
+
               {diff.tpTotal > 0 && (diff.tpReady
                 ? <p data-tp-note className="text-[11px] text-fuchsia-700 bg-fuchsia-50 border border-fuchsia-200 rounded-lg px-3 py-2">
                     🤝 3rd party 진행 {diff.tpOpen}줄을 고객사 PO 에 같이 반영합니다 (신규 · 변경에 포함). 11 · 12번대는 생산관리 Sub Assy 에 PO 한 줄씩 올라갑니다 — 16번대는 PO 에만.
@@ -600,7 +651,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                 </div>
               )}
 
-              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0)}
+              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0 && (diff.planUpd?.length || 0) === 0)}
                 className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                 {applyMut.isPending ? '적용 중...' : `적용 (신규 ${diff.news.length} · 변경 ${diff.changes.length})`}
               </button>
