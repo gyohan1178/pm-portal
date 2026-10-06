@@ -1,11 +1,12 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { refreshProcurement } from '../../lib/refresh'
 import { attachStock } from '../../lib/stockLookup'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { useCanEdit, useCanRequest } from '../../hooks/useProfile'
+import { useCanEdit, useCanRequest, useMe } from '../../hooks/useProfile'
+import { buildView } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
@@ -85,6 +86,13 @@ export default function MaterialRequest() {
   const [mine, setMine] = useState(false)      // 내가 등록한 것만
   const [csFilter, setCsFilter] = useState(null)
   const [deptFilter, setDeptFilter] = useState(null)
+  // 담당자가 보기 좋게 (2026-10-06) — 처리자 · 요약 지표로 거르고, 급한 순 구간으로 끊는다
+  const [who, setWho] = useState(null)        // null 전체 · '__me' · '__none' · '__etc' · 처리자 이름
+  const [kpi, setKpi] = useState(null)        // overdue · readyLate · unassigned · urgent
+  const [secOpen, setSecOpen] = useState({ now: true, week: true, later: false, none: false })
+  const [allCards, setAllCards] = useState(false)   // 품목 여러 줄인 요청을 모두 펼칠지
+  const [cardOpen, setCardOpen] = useState({})      // 요청번호별로 따로 펼친 것
+  const me = useMe()
   const [codeForm, setCodeForm] = useState(null)   // 코드 부여 중인 항목
   // 부서 재배정 — 잘못 온 요청을 다른 팀으로 넘긴다
   const [reassign, setReassign] = useState(null)   // { dept, kind, cuts: {id: mm} }
@@ -141,6 +149,11 @@ export default function MaterialRequest() {
   })
 
   const checked = list.filter(r => sel[r.id])
+  // 진행 중 목록에서만 구간 · 지표를 쓴다 (완료 · 반려 · 전체는 예전처럼 한 줄 목록)
+  const liveTab = filter === null
+  const reqView = useMemo(
+    () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '' }),
+    [list, who, kpi, me?.name, liveTab])
 
   // ── 내가 낸 요청 중 아직 안 본 알림 ──
   //   반려하거나 부서를 넘겨도 요청자는 찾아보지 않으면 모른다.
@@ -1408,6 +1421,25 @@ export default function MaterialRequest() {
 
       {tab === 'list' && (
         <>
+          {/* 요약 지표 — 누르면 그 조건만 본다 (진행 중 목록) */}
+          {liveTab && (
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5" data-req-kpi>
+              {[
+                ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400'],
+                ['readyLate',  '📦 불출 예정일 지남', '주겠다고 한 날이 지났는데 아직 안 나감', 'border-amber-200 bg-amber-50 text-amber-800',  'ring-amber-400'],
+                ['unassigned', '🙅 미배정',           '처리자가 아직 없는 요청',                'border-sky-200 bg-sky-50 text-sky-800',        'ring-sky-400'],
+                ['urgent',     '🚨 긴급',             '요청자가 긴급으로 올린 것',              'border-slate-200 bg-white text-slate-700',     'ring-slate-400'],
+              ].map(([k, label, note, cls, ring]) => (
+                <button key={k} data-kpi={k} onClick={() => { setKpi(v => (v === k ? null : k)); setSel({}) }}
+                  className={`text-left rounded-2xl border px-4 py-3 transition-shadow ${cls} ${kpi === k ? `ring-2 ${ring} shadow-sm` : 'hover:shadow-sm'}`}>
+                  <p className="text-xs font-bold">{label}</p>
+                  <p className="text-2xl font-extrabold leading-tight">{n(reqView.counts[k])}<span className="text-xs font-bold ml-1">건</span></p>
+                  <p className="text-[11px] opacity-80">{note}{kpi === k ? ' · 보는 중' : ''}</p>
+                </button>
+              ))}
+            </div>
+          )}
+
           <div className="flex items-center gap-2 flex-wrap">
             <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
               {[[null, '진행 중'], ['완료', '완료'], ['반려', '반려'], ['전체', '전체']].map(([f, l]) => (
@@ -1446,7 +1478,7 @@ export default function MaterialRequest() {
                 cartRows.length ? 'border-indigo-400 text-indigo-700 bg-indigo-50 hover:bg-indigo-100' : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
               🛒 발주 담기함{cartRows.length ? ` ${cartRows.length}` : ''}
             </button>
-            <span className="text-xs text-slate-400">{n(list.length)}건</span>
+            <span className="text-xs text-slate-400" title="요청(요청번호) 건수 · 품목 줄 수">요청 {n(reqView.groups.length)}건 · 품목 {n(list.length)}줄</span>
 
             {checked.length > 0 && (
               <div className="flex items-center gap-1.5 ml-auto flex-wrap">
@@ -1507,6 +1539,28 @@ export default function MaterialRequest() {
             )}
           </div>
 
+          {/* 처리자별 — 내 담당 · 미배정이 따로 보인다 (진행 중 목록) */}
+          {liveTab && list.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap rounded-xl border border-slate-200 bg-white px-3 py-2" data-req-who>
+              <span className="text-[11px] font-bold text-slate-400 mr-1">처리자</span>
+              {reqView.chips.map(c => (
+                <button key={c.key ?? '_all'} data-who={c.key ?? ''} onClick={() => { setWho(c.key); setSel({}) }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-full border whitespace-nowrap ${
+                    who === c.key ? 'border-slate-800 bg-slate-800 text-white'
+                    : c.me ? 'border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100'
+                    : c.none ? 'border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  {c.me ? '🧑‍🔧 ' : ''}{c.label} {n(c.count)}
+                </button>
+              ))}
+              <button onClick={() => { setAllCards(v => !v); setCardOpen({}) }}
+                title="품목이 여러 줄인 요청의 품목 줄을 한꺼번에 펼치거나 접습니다"
+                className="ml-auto px-2 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 whitespace-nowrap">
+                {allCards ? '품목 모두 접기 ▴' : '품목 모두 펼치기 ▾'}
+              </button>
+            </div>
+          )}
+
           {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
           {!isLoading && !list.length && (
             <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
@@ -1529,20 +1583,15 @@ export default function MaterialRequest() {
 
           <div className="space-y-2">
             {(() => {
-              // 같은 요청번호끼리 묶는다. 한 번에 여러 품목을 요청하면
+              // 같은 요청번호끼리 묶는다 (lib/requestView). 한 번에 여러 품목을 요청하면
               // 낱개로 흩어져 보여 어느 요청인지 알기 어렵기 때문이다.
-              const groups = []
-              list.forEach(r => {
-                const key = r.req_no || `_${r.id}`
-                let g = groups.find(x => x.key === key)
-                if (!g) { g = { key, head: r, items: [] }; groups.push(g) }
-                g.items.push(r)
-              })
-
-              return groups.map(g => {
+              const renderGroup = (g) => {
                 const h = g.head
                 const st = ST[h.status] || ST['요청']
-                const d = dday(h.need_date)
+                const d = g.d
+                // 품목이 여러 줄이면 접어 둔다 — 한 화면에 요청이 더 많이 보이게
+                const multi = g.items.length > 1
+                const showItems = !multi || (cardOpen[g.key] ?? allCards)
                 const allOn = g.items.every(x => sel[x.id])
                 const someOn = g.items.some(x => sel[x.id])
 
@@ -1559,7 +1608,7 @@ export default function MaterialRequest() {
                         g.items.forEach(x => { next[x.id] = !allOn })
                         return next
                       })}
-                      className={`p-3.5 cursor-pointer ${g.items.length > 1 ? 'border-b border-slate-100' : ''}`}>
+                      className={`p-3.5 cursor-pointer ${multi && showItems ? 'border-b border-slate-100' : ''}`}>
                       <div className="flex items-start gap-3">
                         <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${st.dot}`} />
                         <div className="flex-1 min-w-0">
@@ -1597,7 +1646,7 @@ export default function MaterialRequest() {
                             )}
                             {d !== null && (
                               <span className={`text-[11px] font-bold ${d < 0 ? 'text-rose-600' : d <= 3 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                필요일 {h.need_date} (D{d >= 0 ? '-' : '+'}{Math.abs(d)})
+                                필요일 {h.need_date} · {d < 0 ? `${n(-d)}일 지남` : d === 0 ? '오늘' : `${n(d)}일 남음`}
                               </span>
                             )}
                           </div>
@@ -1625,7 +1674,19 @@ export default function MaterialRequest() {
                                 )}
                               </>
                             )}
+                            {g.unassigned && (
+                              <>
+                                <span className="text-slate-300">→</span>
+                                <span data-unassigned className="px-1.5 py-0.5 rounded border border-sky-200 bg-sky-50 font-bold text-sky-700">처리자 미배정</span>
+                              </>
+                            )}
                             {h.handle_memo && <span className="text-slate-400">· {h.handle_memo}</span>}
+                            {multi && (
+                              <button data-card-toggle onClick={e => { e.stopPropagation(); setCardOpen(c => ({ ...c, [g.key]: !showItems })) }}
+                                className="px-1.5 py-0.5 rounded border border-slate-200 bg-white font-bold text-slate-500 hover:text-indigo-600 hover:border-indigo-300 whitespace-nowrap">
+                                품목 {n(g.items.length)}줄 {showItems ? '▴' : '▾'}
+                              </button>
+                            )}
                           </div>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
@@ -1643,6 +1704,11 @@ export default function MaterialRequest() {
                                   {String(last).slice(5).replace('-', '/')}
                                 </p>
                                 {mixed && <p className="text-[10px] text-rose-400">품목마다 다름</p>}
+                                {g.readyLate && (
+                                  <p data-ready-late className="mt-0.5 inline-block px-1.5 py-0.5 rounded border border-amber-200 bg-amber-50 text-[10px] font-bold text-amber-800 whitespace-nowrap">
+                                    예정일 {n(g.readyLateDays)}일 지남
+                                  </p>
+                                )}
                               </div>
                             )
                           })()}
@@ -1658,9 +1724,9 @@ export default function MaterialRequest() {
                       </div>
                     </div>
 
-                    {/* 품목 — 한 줄씩 */}
-                    <div className={g.items.length > 1 ? 'divide-y divide-slate-50' : ''}>
-                      {g.items.map(r => (
+                    {/* 품목 — 한 줄씩 (여러 줄이면 「품목 N줄 ▾」로 펼친다) */}
+                    <div className={multi ? 'divide-y divide-slate-50' : ''}>
+                      {showItems && g.items.map(r => (
                         <div key={r.id}
                           onClick={() => setSel(s2 => ({ ...s2, [r.id]: !s2[r.id] }))}
                           className={`px-3.5 py-2 flex items-center gap-2 text-xs cursor-pointer ${
@@ -1728,6 +1794,51 @@ export default function MaterialRequest() {
                         🧬 ASSY 자재 일체 — BOM 을 보고 불출해 주세요
                       </p>
                     )}
+                  </div>
+                )
+              }
+
+              // 완료 · 반려 · 전체 탭은 예전처럼 받은 순서 그대로
+              if (!liveTab) return reqView.groups.map(renderGroup)
+
+              const TONE = {
+                red:   { dot: 'bg-rose-500',  tx: 'text-rose-700',  line: 'bg-rose-100' },
+                amber: { dot: 'bg-amber-500', tx: 'text-amber-800', line: 'bg-amber-100' },
+                blue:  { dot: 'bg-sky-500',   tx: 'text-slate-800', line: 'bg-slate-100' },
+                gray:  { dot: 'bg-slate-300', tx: 'text-slate-800', line: 'bg-slate-100' },
+              }
+              if (!reqView.shown.length) {
+                return list.length ? (
+                  <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+                    고른 조건에 맞는 요청이 없습니다
+                    <button onClick={() => { setWho(null); setKpi(null) }} className="ml-2 text-xs font-bold text-indigo-600 hover:underline">조건 풀기</button>
+                  </div>
+                ) : null
+              }
+              const secs = reqView.sections.filter(sec => sec.groups.length > 0)
+              // 펼쳐진 구간에 아무것도 없으면(급한 게 없는 날) 맨 위 구간은 펼쳐 둔다 — 빈 화면으로 보이지 않게
+              const noneOpen = !secs.some(sec => secOpen[sec.key] === true)
+              return secs.map((sec, si) => {
+                const t = TONE[sec.tone]
+                // 조건을 걸었으면 접힌 구간에 숨지 않게 모두 펼친다
+                const open = reqView.filtered || secOpen[sec.key] === true || (noneOpen && si === 0 && secOpen[sec.key] !== 'closed')
+                const note = sec.key === 'now'
+                  ? `필요일 지남 ${n(sec.groups.filter(g => g.overdue).length)} · 긴급 ${n(sec.groups.filter(g => g.urgent).length)} — 긴급 먼저, 오래 지난 순`
+                  : sec.key === 'week' ? '이번 주 일요일까지 필요한 것'
+                  : sec.key === 'later' ? '다음 주부터 필요한 것'
+                  : '오래된 요청 순'
+                return (
+                  <div key={sec.key} data-req-sec={sec.key} className="space-y-2">
+                    <button onClick={() => setSecOpen(o => ({ ...o, [sec.key]: open ? 'closed' : true }))} disabled={reqView.filtered}
+                      className="w-full flex items-center gap-2 pt-2 px-1 text-left">
+                      <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${t.dot}`} />
+                      <span className={`text-sm font-extrabold whitespace-nowrap ${t.tx}`}>{sec.label}</span>
+                      <span className={`text-xs font-bold whitespace-nowrap ${t.tx}`}>{n(sec.groups.length)}건</span>
+                      <span className="text-[11px] text-slate-400 truncate">{note}</span>
+                      <span className={`flex-1 h-px ${t.line}`} />
+                      {!reqView.filtered && <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">{open ? '접기 ▴' : '펼치기 ▾'}</span>}
+                    </button>
+                    {open && sec.groups.map(renderGroup)}
                   </div>
                 )
               })
