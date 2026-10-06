@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useCustomers } from '../../hooks/useCustomers'
 import { addEffQty } from '../../lib/whereUsedEff'
+import { addPoQty, partDemand, PO_SPANS } from '../../lib/whereUsedPo'
 import ReqBOM from '../customer/ReqBOM'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
@@ -57,7 +58,11 @@ async function whereUsedAll(q) {
   const { data, error } = await supabase.rpc('get_where_used_all', { q })
   if (error) throw error
   // 대당 소요(참조용 0 · 구매/자작 반영)를 붙인다 — 못 구해도 원래 결과는 그대로
-  try { return await addEffQty(data || []) } catch { return data || [] }
+  let rows = data || []
+  try { rows = await addEffQty(rows) } catch { /* 원래 결과 그대로 */ }
+  // 상위품목의 고객사 PO 수량(납기 기준 최근 3 · 6 · 12개월) — 못 구해도 나머지는 그대로
+  try { rows = await addPoQty(rows) } catch { /* PO 칸만 비운다 */ }
+  return rows
 }
 
 export default function CommonSearch() {
@@ -220,8 +225,10 @@ export default function CommonSearch() {
                             {[['고객사'], ['상위 어셈블리 (클릭→BOM)'], ['어셈블리명'],
                               ['BOM 수량', 'BOM 줄에 적힌 수량 그대로 (여러 자리에 있으면 합)'],
                               ['대당 소요', '상위 1대에 실제로 드는 수량 — 부족자재 · 소요량 조회와 같은 계산 (위 조립품 수량 0 = 참조용 · 구매/자작 반영)'],
-                              ['단계', '직접 = 그 BOM 에 바로 들어 있음 · N단계 = 하위 조립품 BOM 을 거쳐 들어감 (BOM 화면의 L 레벨과 다름)']].map(([h, t]) =>
-                              <th key={h} title={t} className="px-3 py-2 text-left font-bold">{h}</th>)}
+                              ['단계', '직접 = 그 BOM 에 바로 들어 있음 · N단계 = 하위 조립품 BOM 을 거쳐 들어감 (BOM 화면의 L 레벨과 다름)'],
+                              ...PO_SPANS.map(([, , l]) => [`PO ${l}`, `상위품목의 고객사 PO 수량 — 납기(약속일)가 오늘부터 거꾸로 ${l} 안인 것 · 납품 완료 포함 · 취소 제외 · 3rd party(동신 · 동원파츠) 포함`, true]),
+                              ...PO_SPANS.map(([, , l]) => [`소요 ${l}`, `이 부품 소요 = 대당 소요 × 상위품목 PO ${l} 수량`, true])].map(([h, t, r]) =>
+                              <th key={h} title={t} className={`px-3 py-2 font-bold ${r ? 'text-right' : 'text-left'}`}>{h}</th>)}
                           </tr></thead>
                           <tbody>
                             {g.parents.map((p, pi) => (
@@ -241,9 +248,30 @@ export default function CommonSearch() {
                                   {p.eff === undefined ? '—' : Number(p.eff)}{p.eff === 0 && Number(p.qty) > 0 && <span className="ml-1 text-[9px]">제외</span>}
                                 </td>
                                 <td className="px-3 py-2 text-slate-400">{p.level == null ? '-' : p.level === 1 ? '직접' : `${p.level}단계`}</td>
+                                {PO_SPANS.map(([k]) => (
+                                  <td key={k} data-po={k} className={`px-3 py-2 text-right font-mono ${!p.po ? 'text-slate-300' : p.po[k] ? 'text-slate-700' : 'text-slate-300'}`}
+                                    title={p.po ? undefined : '이 상위품목 품번으로 온 고객사 PO 가 없습니다 (PO 가 품번으로 오지 않는 고객사 · 하위 조립품)'}>
+                                    {p.po ? p.po[k].toLocaleString() : '—'}
+                                  </td>
+                                ))}
+                                {PO_SPANS.map(([k]) => (
+                                  <td key={'n' + k} data-po-need={k} className={`px-3 py-2 text-right font-mono font-bold ${partDemand(p, k) ? 'text-indigo-700' : 'text-slate-300'}`}>
+                                    {p.po ? partDemand(p, k).toLocaleString() : '—'}
+                                  </td>
+                                ))}
                               </tr>
                             ))}
                           </tbody>
+                          {g.parents.some(p => p.po) && (
+                            <tfoot>
+                              <tr data-po-total className="border-t-2 border-slate-200 bg-slate-50 font-bold text-slate-700">
+                                <td colSpan={9} className="px-3 py-2 text-right text-[11px] text-slate-500">이 부품 소요 합계 (대당 소요 × 상위품목 PO 수량)</td>
+                                {PO_SPANS.map(([k]) => (
+                                  <td key={k} data-po-sum={k} className="px-3 py-2 text-right font-mono text-indigo-700">{g.parents.reduce((a, p) => a + (partDemand(p, k) || 0), 0).toLocaleString()}</td>
+                                ))}
+                              </tr>
+                            </tfoot>
+                          )}
                         </table>
                       </div>
                     </div>
