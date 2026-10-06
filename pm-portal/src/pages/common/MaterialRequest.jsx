@@ -162,21 +162,24 @@ export default function MaterialRequest() {
       return data || []
     },
   })
-  async function assignHandler(ids, handlerId) {
+  // force = 이미 처리자가 있는 줄도 바꾼다 (2026-10-06 재배정)
+  async function assignHandler(ids, handlerId, force = false) {
     if (!ids.length || !handlerId) return
     try {
-      const { data, error } = await supabase.rpc('pm_request_assign', { p_ids: ids, p_handler: handlerId })
+      // 바꾸기가 아니면 예전 함수(인자 2개)로도 되게 p_force 를 안 보낸다
+      const { data, error } = await supabase.rpc('pm_request_assign',
+        force ? { p_ids: ids, p_handler: handlerId, p_force: true } : { p_ids: ids, p_handler: handlerId })
       if (error) throw error
       const r = Array.isArray(data) ? data[0] : data
       const upd = Number(r?.updated ?? 0), skip = Number(r?.skipped ?? 0)
       const nm = handlers.find(h => h.id === handlerId)?.name || ''
-      if (!upd) toastError('배정할 줄이 없습니다 — 이미 처리자가 있거나 끝난 요청입니다')
-      else toastSuccess(`${nm} 에게 ${n(upd)}줄 배정${skip ? ` · ${n(skip)}줄은 이미 처리자가 있어 그대로` : ''}`)
+      if (!upd) toastError(force ? '바꿀 줄이 없습니다 — 이미 그 사람이거나 끝난 요청입니다' : '배정할 줄이 없습니다 — 이미 처리자가 있거나 끝난 요청입니다')
+      else toastSuccess(`${nm} 에게 ${n(upd)}줄 배정${skip && !force ? ` · ${n(skip)}줄은 이미 처리자가 있어 그대로` : ''}`)
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
     } catch (e) {
       toastError(/pm_request_assign|schema cache|Could not find/i.test(e.message || '')
-        ? 'SQL pm_request_assign_261006 을 먼저 실행하세요' : '배정 실패: ' + e.message)
+        ? `SQL ${force ? 'pm_request_reassign_handler_261006' : 'pm_request_assign_261006'} 을 먼저 실행하세요` : '배정 실패: ' + e.message)
     }
   }
   // 진행 중 목록에서만 구간 · 지표를 쓴다 (완료 · 반려 · 전체는 예전처럼 한 줄 목록)
@@ -1526,8 +1529,19 @@ export default function MaterialRequest() {
                   📅 불출 가능일
                 </button>
                 {handlers.length > 0 && (
-                  <select data-assign-bulk value="" onChange={e => assignHandler(checked.filter(r => !r.handler && !['완료', '반려'].includes(r.status)).map(r => r.id), e.target.value)}
-                    title="고른 요청 중 처리자가 비어 있는 줄을 그 사람에게 배정합니다 (이미 처리자가 있는 줄은 그대로)"
+                  <select data-assign-bulk value="" onChange={e => {
+                      const to = e.target.value; if (!to) return
+                      const open = checked.filter(r => !['완료', '반려'].includes(r.status))
+                      const nm = handlers.find(h => h.id === to)?.name || ''
+                      const has = open.filter(r => r.handler && r.handler !== nm)
+                      // 처리자가 이미 있는 줄이 섞여 있으면 바꿀지 묻는다 — 아니오면 빈 줄만
+                      if (has.length && window.confirm(`고른 줄 중 ${n(has.length)}줄은 이미 처리자가 있습니다 (${[...new Set(has.map(r => r.handler))].join(' · ')}).\n\n이 줄들도 ${nm} (으)로 바꿀까요?\n(취소 = 처리자가 비어 있는 줄만 배정)`)) {
+                        assignHandler(open.map(r => r.id), to, true)
+                      } else {
+                        assignHandler(open.filter(r => !r.handler).map(r => r.id), to)
+                      }
+                    }}
+                    title="고른 요청을 그 사람에게 배정합니다 — 이미 처리자가 있는 줄은 바꿀지 물어봅니다"
                     className="px-2 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">
                     <option value="">👤 처리자 배정…</option>
                     {handlers.map(h => <option key={h.id} value={h.id}>{h.name}{h.id === me?.id ? ' (나)' : ''}</option>)}
@@ -1703,7 +1717,26 @@ export default function MaterialRequest() {
                             {h.handler && (
                               <>
                                 <span className="text-slate-300">→</span>
-                                <span className="font-semibold text-slate-500">처리 {h.handler}</span>
+                                {canEdit && handlers.length > 0 && g.live ? (
+                                  <span className="inline-flex items-center gap-1">
+                                    <span className="font-semibold text-slate-500">처리</span>
+                                    <select data-reassign value={handlers.find(hh => hh.name === h.handler)?.id || ''} onClick={e => e.stopPropagation()}
+                                      onChange={e => {
+                                        const to = e.target.value
+                                        const nm = handlers.find(hh => hh.id === to)?.name
+                                        if (!to || nm === h.handler) return
+                                        if (!window.confirm(`${h.req_no} 처리자를 ${h.handler} → ${nm} (으)로 바꿀까요?`)) return
+                                        assignHandler(g.items.filter(x => !['완료', '반려'].includes(x.status)).map(x => x.id), to, true)
+                                      }}
+                                      title="눌러서 처리자를 바꿉니다"
+                                      className="px-1 py-0.5 rounded border border-slate-200 bg-white font-semibold text-slate-600 text-[11px] cursor-pointer hover:border-indigo-300">
+                                      {!handlers.some(hh => hh.name === h.handler) && <option value="">{h.handler}</option>}
+                                      {handlers.map(hh => <option key={hh.id} value={hh.id}>{hh.name}{hh.id === me?.id ? ' (나)' : ''}</option>)}
+                                    </select>
+                                  </span>
+                                ) : (
+                                  <span className="font-semibold text-slate-500">처리 {h.handler}</span>
+                                )}
                                 {h.handle_type && (
                                   <span className={`px-1.5 py-0.5 rounded font-bold ${
                                     h.handle_type === '불출' ? 'bg-emerald-100 text-emerald-700'
