@@ -8,7 +8,9 @@ const dayMs = 86400000
 const dOf = (d) => { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
 const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '')
 
-export const CSK_COLSPAN = 23
+// 일정표 칸 중 ITEM NO. · 품번 · 품명 · 입고 요청일 · 납품 완료일 · 회계는 화면에서 뺐다 (2026-10-07 사용자 정리)
+//   값은 그대로 저장되어 있어 검색 · 다시 올리기에는 쓰인다. 다시 보이게 하려면 여기 칸만 되살리면 된다.
+export const CSK_COLSPAN = 17
 
 // 검색에 쓰는 글자 — 화면에 보이는 열은 모두 찾을 수 있게
 export const cskHay = (r) => {
@@ -62,19 +64,13 @@ export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpt
             <th className={`${th} text-left`}>관리번호</th>
             <th className={th} title="포털에서 관리하는 진행 상태 — 일정표에는 없는 칸">상태</th>
             <th className={`${th} text-left`}>발주 번호</th>
-            <th className={th}>ITEM NO.</th>
             <th className={`${th} text-left`}>규격</th>
             <th className={th}>Plnd<br />order number</th>
             <th className={th}>Prod<br />order number</th>
             <th className={th}>Q'TY</th>
             <th className={`${th} text-left`}>PRE ASSY 품번</th>
-            <th className={`${th} text-left`}>품번</th>
-            <th className={`${th} text-left`}>품명</th>
             <th className={th}>발주일자</th>
-            <th className={th}>입고 요청일</th>
             <th className={th}>납품 예정일</th>
-            <th className={th}>납품 완료일</th>
-            <th className={th}>회계</th>
             <th className={`${th} text-left`}>비고</th>
             <th className={th}>자재 반출일</th>
             <th className={`${th} text-left`}>Option</th>
@@ -119,22 +115,16 @@ export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpt
                   {!r.csk ? '—' : ordered ? <span className="text-slate-700">{c.po_no}</span>
                     : <span className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold font-sans">{c.po_no || '발주 예정'}</span>}
                 </td>
-                <td className="px-2 py-2 font-mono text-slate-500">{c.item_no || '—'}</td>
-                <td className="px-2 py-2 text-left font-mono text-slate-700">{c.spec || r.pn || '—'}</td>
+                <td className="px-2 py-2 text-left font-mono text-slate-700" title={[c.name || (r.csk ? '' : r.name), c.pn && `품번 ${c.pn}`, c.in_req && `입고 요청일 ${c.in_req}`, c.done && `납품 완료일 ${c.done}`].filter(Boolean).join(' · ') || undefined}>{c.spec || r.pn || '—'}</td>
                 <td className="px-2 py-2 font-mono text-slate-600">{c.plnd || '—'}</td>
                 <td className={`px-2 py-2 font-mono ${/^tba$/i.test(c.prod || '') ? 'text-slate-300' : 'text-slate-600'}`}>{c.prod || '—'}</td>
                 <td className="px-2 py-2 font-mono font-bold text-slate-700">{c.qty || '—'}</td>
                 <td className="px-2 py-2 text-left font-mono text-slate-600">{c.pre_assy || '—'}</td>
-                <td className="px-2 py-2 text-left font-mono text-slate-600">{c.pn || '—'}</td>
-                <td className="px-2 py-2 text-left text-slate-600 max-w-[160px] truncate" title={c.name || (r.csk ? '' : r.name)}>{c.name || (r.csk ? '—' : r.name || '—')}</td>
                 <td className="px-2 py-2 font-mono text-slate-500">{md(c.order_date) || '—'}</td>
-                <td className="px-2 py-2 font-mono text-slate-500">{md(c.in_req) || '—'}</td>
                 <td className="px-2 py-2 font-mono font-bold text-slate-800">
                   {md(due) || '—'}
                   {d !== null && <span className={`ml-1 px-1 rounded text-[10px] ${d < 0 ? 'bg-red-50 text-red-600' : d <= 7 ? 'bg-orange-50 text-orange-600' : 'text-slate-400'}`}>{d < 0 ? `${-d}일 지남` : d === 0 ? '오늘' : `D-${d}`}</span>}
                 </td>
-                <td className="px-2 py-2 font-mono text-emerald-700">{md(c.done) || '—'}</td>
-                <td className="px-2 py-2 font-mono text-slate-500">{c.acct || '—'}</td>
                 <td className="px-2 py-2 text-left text-slate-600 max-w-[200px] truncate" title={c.memo}>{c.memo || '—'}</td>
                 <td className="px-2 py-2 font-mono text-slate-500">{md(c.mat_out) || '—'}</td>
                 <td data-no-select className="px-2 py-2 text-left">

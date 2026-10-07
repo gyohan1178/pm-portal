@@ -2,6 +2,14 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.30.2',
+    date: '2026-10-01',
+    changes: [
+      '생산관리 Edwards 하네스 · 전장 칸: 불출 예정일이 늘 자동으로 역산됩니다 (정한 납기 − 불출 기준 주수). 포캐스트 날짜가 없는 줄은 정한 납기 칸에 보이는 납품요청일로 역산 · 칸을 누르면 불출 완료만 됩니다',
+      'BOM 자동 연결은 이름이 딱 하나 맞을 때만 — 기종(NKB)을 모르는 H2D-LH 하네스(Vizeon Hynix · Samsung · IMEC)는 임의로 고르지 않고 「하네스 BOM 없음」으로 두니 「⚙ 불출 기준」 ③ 에서 골라 주세요',
+    ],
+  },
+  {
     version: 'v4.30.1',
     date: '2026-09-30',
     changes: [
