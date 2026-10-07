@@ -37,8 +37,9 @@ export default function ProductionDashboard() {
   const today = todayISO()
   const in7 = ymdKST(new Date(Date.now() + 7 * 86400000))
 
-  const delayed = rows.filter(r => r.req_date && r.req_date < today)
-  const urgent = rows.filter(r => r.req_date && r.req_date >= today && r.req_date <= in7)
+  // VM 「현장작업」은 이미 납품하고 현장 설치 중인 줄이라 납기 지연 · 임박으로 세지 않는다
+  const delayed = rows.filter(r => r.req_date && r.req_date < today && r.status !== '현장작업')
+  const urgent = rows.filter(r => r.req_date && r.req_date >= today && r.req_date <= in7 && r.status !== '현장작업')
   const issueWeek = rows.filter(r => r.arrival_date && !r.machine_recv && r.arrival_date >= today && r.arrival_date <= in7)
   const byCust = {}
   rows.forEach(r => { const c = r.customer_code || 'AX'; byCust[c] = (byCust[c] || 0) + 1 })

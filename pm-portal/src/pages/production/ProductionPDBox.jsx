@@ -21,7 +21,14 @@ import { CskTable, cskHay, cskNo } from './CskProductionTable'
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
 const STATUS_OPTS = ['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기', '외주', '완료']
+// VM 은 납품한 뒤 현장 설치 작업이 따로 있다 — 납품대기 다음, 완료 전 (2026-10-07)
+const STATUS_VM = ['PO접수', '자재발주', '제작대기', '제작중', '품질검수', '납품대기', '외주', '현장작업', '완료']
+// VM 자재 상태 — 노션 PROJECT 에서 옮겨 온 칸 (production.vm jsonb)
+const VM_MAT = [['esc', 'ESC'], ['ac', 'AC'], ['ut', 'UT'], ['st', 'ST'], ['pm', 'PM'], ['etc', 'ETC']]
+const VM_MAT_OPTS = ['', '완료', '대기', '부족', '홀딩']
+const VM_MAT_CLS = { '완료': 'bg-emerald-50 text-emerald-700', '대기': 'bg-amber-50 text-amber-700', '부족': 'bg-red-50 text-red-600', '홀딩': 'bg-slate-200 text-slate-600' }
 const STATUS_COLOR = {
+  '현장작업': 'bg-orange-50 text-orange-700',
   'PO접수': 'bg-slate-100 text-slate-600', '자재발주': 'bg-cyan-50 text-cyan-600',
   '제작대기': 'bg-teal-50 text-teal-700',
   '제작중': 'bg-blue-50 text-blue-600', '품질검수': 'bg-violet-50 text-violet-600',
@@ -155,6 +162,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // CSK 는 고객사가 주는 생산 일정표 엑셀을 그대로 올려 나열한다 (머리글도 그 파일에 맞춤)
   const isCSK = String(csCode || '').toUpperCase() === 'CSK'
   const isAx = String(csCode || '').toUpperCase() === 'AX'
+  // VM 은 기존 표 그대로 쓰되 머리글 이름(구분 · 구성 · 프로젝트) · 자재 상태 6칸 · 상태 「현장작업」만 더한다
+  const isVM = String(csCode || '').toUpperCase() === 'VM'
+  const statusOpts = isVM ? STATUS_VM : STATUS_OPTS
   const [memoDraft, setMemoDraft] = useState({})
   const edFileRef = useRef(null)
 
@@ -179,6 +189,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     } catch (err) { toastError('파일을 읽지 못했습니다: ' + err.message) }
   }
   const qc = useQueryClient()
+  // production.vm 칸이 있는가 (SQL pm_vm_production_261007 실행 여부) — 없으면 자재 칸 · VM 진행 묶음을 숨긴다
+  const { data: vmReady = false } = useQuery({
+    queryKey: ['vmReady'], enabled: isVM, staleTime: 300000,
+    queryFn: async () => { const { error } = await supabase.from('production').select('vm').limit(1); return !error },
+  })
+  const vmCols = isVM && vmReady
   const [search, setSearch] = useState('')
   // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
   const dq = useDebounced(search, 250)
@@ -512,7 +528,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       g[k].total++
       if (r.status === '완료') g[k].done++
       // 제작대기는 자재만 나간 상태라 아직 만들기 전이다. 대기로 센다.
-      else if (['제작중','품질검수','납품대기'].includes(r.status)) g[k].making++
+      else if (['제작중','품질검수','납품대기','현장작업'].includes(r.status)) g[k].making++
       else g[k].waiting++
       if (r.status !== '완료' && r.req_date) {
         if (!g[k].next || r.req_date < g[k].next) g[k].next = r.req_date
@@ -574,7 +590,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     <>
       {woRows && <WorkOrderPrinter rows={woRows} onDone={() => setWoRows(null)} />}
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={isCSK ? "관리번호·규격·구분·Plnd·Prod·발주 번호 검색" : "품번·PD명·호기 검색"}
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={isCSK ? "관리번호·규격·구분·Plnd·Prod·발주 번호 검색" : isVM ? "구분·구성·프로젝트 검색" : "품번·PD명·호기 검색"}
           className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold">
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> 완료 포함
@@ -653,7 +669,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           {isED && view === 'need' ? (
             <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} focus={needFocus} onClearFocus={() => setNeedFocus(null)} />
           ) : view === 'kanban' ? (
-            <KanbanBoard rows={filtered.filter(x => !x._month)} mdMap={mdMap}
+            <KanbanBoard statusOpts={statusOpts} rows={filtered.filter(x => !x._month)} mdMap={mdMap}
               onStatus={(id, status) => toggleMut.mutate({ id, field: 'status', value: status })}
               onOpen={(r) => setEdit({ ...r })} showDone={showDone} />
           ) : view === 'load' ? (
@@ -757,7 +773,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <select value={bulkStatus} onChange={e=>setBulkStatus(e.target.value)} data-bulk-status
                   className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
                   <option value="">상태 고르기…</option>
-                  {STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}
+                  {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <button disabled={bulkMut.isPending || !bulkStatus}
                   onClick={()=>{
@@ -810,11 +826,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   </>
                 ) : (
                   <>
-                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">품번</th>
-                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">PD명</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isVM ? '구분' : '품번'}</th>
+                    <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">{isVM ? '구성' : 'PD명'}</th>
                   </>
                 )}
-                <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
+                <th rowSpan={2} className="px-2 py-1.5 font-bold">{isVM ? '프로젝트' : '호기'}</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">PO</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">REV</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
@@ -822,6 +838,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
                 <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
+                {vmCols && <th colSpan={6} className="px-2 py-1 font-bold text-emerald-600 border-l border-slate-200">📦 자재</th>}
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold border-l border-slate-200">비고</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
@@ -832,12 +849,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th className="px-2 py-1 font-semibold">전장<br />불출</th>
                 <th className="px-2 py-1 font-semibold">완료예정<br /><span className="text-slate-300">MD역산·✎수정</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">완료요청<br /><span className="text-slate-300">역산·클릭완료</span></th>
+                {vmCols && VM_MAT.map(([k, l], i) => <th key={k} className={`px-1.5 py-1 font-semibold ${i === 0 ? 'border-l border-slate-200' : ''}`}>{l}</th>)}
               </tr>
             </thead>
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={isED ? 17 : 15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={isED ? 17 : vmCols ? 22 : 15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -906,8 +924,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       )
                     })()}
                   </td>
-                  <td data-no-select className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{STATUS_OPTS.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                  <td className={`px-2 py-2 font-semibold ${r.status === '완료' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>
+                  <td data-no-select className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{statusOpts.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
+                  <td className={`px-2 py-2 font-semibold ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
                       {md(r.req_date) || '미정'}
                       {(() => { const t = r.status === '완료' ? null : delayTag(r.changes, r.req_date); if (!t) return null
@@ -948,6 +966,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}
+                  {/* VM 자재 상태 — 눌러서 바로 바꾼다 */}
+                  {vmCols && VM_MAT.map(([k], i) => { const v = r.vm?.[k] || ''; return (
+                    <td key={k} data-no-select data-vm-mat={k} className={`px-1 py-2 text-center ${i === 0 ? 'border-l border-slate-100' : ''}`}>
+                      <select value={v} onClick={e => e.stopPropagation()}
+                        onChange={e => toggleMut.mutate({ id: r.id, field: 'vm', value: { ...(r.vm || {}), [k]: e.target.value || null } })}
+                        className={`px-1 py-0.5 rounded text-[10px] font-bold border-0 cursor-pointer appearance-none text-center focus:outline-none focus:ring-1 focus:ring-indigo-400 ${VM_MAT_CLS[v] || 'bg-transparent text-slate-300'}`}>
+                        {VM_MAT_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}
+                      </select>
+                    </td>) })}
                   {/* 비고 — 로컬 작업·외주 입고 시기 등. 눌러서 바로 적는다. */}
                   <td data-no-select className="px-2 py-2 border-l border-slate-100 text-left max-w-[150px]">
                     <input value={memoDraft[r.id] ?? r.memo ?? ''}
@@ -990,10 +1017,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             </div>
             <div className="p-5 space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-3">
-                <Field label="품번"><input value={edit.pn} onChange={e => setEdit(s => ({ ...s, pn: e.target.value }))} className="inp" /></Field>
-                <Field label="호기"><input value={edit.hogi} onChange={e => setEdit(s => ({ ...s, hogi: e.target.value }))} placeholder="#14" className="inp" /></Field>
+                <Field label={isVM ? '구분' : '품번'}><input value={edit.pn} onChange={e => setEdit(s => ({ ...s, pn: e.target.value }))} className="inp" /></Field>
+                <Field label={isVM ? '프로젝트' : '호기'}><input value={edit.hogi} onChange={e => setEdit(s => ({ ...s, hogi: e.target.value }))} placeholder={isVM ? 'EM3A70' : '#14'} className="inp" /></Field>
               </div>
-              <Field label="PD명"><input value={edit.name} onChange={e => setEdit(s => ({ ...s, name: e.target.value }))} className="inp" /></Field>
+              <Field label={isVM ? '구성' : 'PD명'}><input value={edit.name} onChange={e => setEdit(s => ({ ...s, name: e.target.value }))} className="inp" /></Field>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="CCN"><input value={edit.ccn || ''} onChange={e => setEdit(s => ({ ...s, ccn: e.target.value }))} className="inp" /></Field>
                 <Field label="REV"><input value={edit.rev || ''} onChange={e => setEdit(s => ({ ...s, rev: e.target.value }))} className="inp" /></Field>
@@ -1002,7 +1029,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 )}
                 <Field label="상태">
                   <select value={edit.status} onChange={e => setEdit(s => ({ ...s, status: e.target.value }))} className="inp">
-                    {STATUS_OPTS.map(o => <option key={o}>{o}</option>)}
+                    {statusOpts.map(o => <option key={o}>{o}</option>)}
                   </select>
                 </Field>
               </div>
@@ -1033,6 +1060,20 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <Field label="완료요청일"><input type="date" value={edit.elec_done || ''} onChange={e => setEdit(s => ({ ...s, elec_done: e.target.value }))} className="inp" /></Field>
                 </div>
               </div>
+              {vmCols && (() => { const vv = edit.vm || {}; const setV = (k, v) => setEdit(s => ({ ...s, vm: { ...(s.vm || {}), [k]: v } })); return (
+                <div data-vm-box className="rounded-lg bg-emerald-50 p-3 space-y-2">
+                  <p className="text-xs font-bold text-emerald-700">📦 VM 진행</p>
+                  <div className="flex gap-4 text-xs text-slate-600">
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={!!vv.mach_po} onChange={e => setV('mach_po', e.target.checked)} />가공물 발주</label>
+                    <label className="flex items-center gap-1.5"><input type="checkbox" checked={!!vv.elec_po} onChange={e => setV('elec_po', e.target.checked)} />전장파트 발주</label>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="자재 입고일"><input type="date" value={vv.mat_in || ''} onChange={e => setV('mat_in', e.target.value || null)} className="inp" /></Field>
+                    <Field label="하네스 요청일"><input type="date" value={vv.harness_req || ''} onChange={e => setV('harness_req', e.target.value || null)} className="inp" /></Field>
+                    <Field label="전장팀 시작일"><input type="date" value={vv.elec_start || ''} onChange={e => setV('elec_start', e.target.value || null)} className="inp" /></Field>
+                    <Field label="현장작업 완료일"><input type="date" value={vv.site_done || ''} onChange={e => setV('site_done', e.target.value || null)} className="inp" /></Field>
+                  </div>
+                </div>) })()}
               <Field label="담당자"><input value={edit.manager || ''} onChange={e => setEdit(s => ({ ...s, manager: e.target.value }))} placeholder="담당자명" className="inp" /></Field>
 
               {/* 미불출 자재 — 불출했으나 빠진 품목을 직접 적어둔다.
@@ -1130,8 +1171,8 @@ function Field({ label, children }) {
 // 하이브리드 날짜 셀: 날짜 없으면 입력기, 날짜 있으면 클릭 시 완료 토글
 // dateField: arrival_date 등 (날짜) / doneField: machine_recv 등 (완료 bool)
 // 칸반보드 — 상태 열로 드래그해서 상태 변경
-function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
-  const cols = showDone ? STATUS_OPTS : STATUS_OPTS.filter(o => o !== '완료')
+function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone, statusOpts = STATUS_OPTS }) {
+  const cols = showDone ? statusOpts : statusOpts.filter(o => o !== '완료')
   const byStatus = {}
   cols.forEach(c => byStatus[c] = [])
   rows.forEach(r => { (byStatus[r.status] || (byStatus[r.status] = [])).push(r) })
@@ -1158,7 +1199,7 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone }) {
                   </div>
                   <div className="text-[10px] text-slate-400 truncate">{r.name}</div>
                   <div className="mt-1 flex items-center gap-1 flex-wrap">
-                    <span className={`text-[10px] font-bold ${r.status === '완료' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
+                    <span className={`text-[10px] font-bold ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
                     {t && <span title={`지난주 대비 · ${t.base} → ${String(r.req_date).slice(0,10)}`}
                       className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
                       {t.diff>0?`+${t.diff}`:t.diff}일</span>}
