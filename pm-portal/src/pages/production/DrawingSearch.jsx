@@ -11,6 +11,30 @@ const AX = (s) => {
   return t ? 'AX-' + t : ''
 }
 
+// ── 고객사별 도면 (2026-10-07) ──────────────────────
+//   스캐너(도면_적재.js v4.0)가 고객사마다 다른 폴더 · 파일명 규칙으로 읽어 pm_drawings 에 싣는다.
+//     AXCELIS  AX-110029610       REV 알파벳 · 원본/컨버팅
+//     Edwards  ED-IE0441432       REV 숫자(PRE-REL) 또는 알파벳(RELEASE) · 원본/컨버팅
+//     CSK      CS-ECK114270029    REV 숫자 (품목 코드 끝의 -02 는 REV 라 도면 품번에서는 뗀다)
+//     VM       품번 체계 없음 → 모델 · 구역 폴더와 파일 이름으로 찾는다
+export const DWG_CS = [
+  { key: 'ax',  name: 'AXCELIS', prefix: 'AX-', ph: '품번 입력 (예: 110029610 또는 AX-110029610)' },
+  { key: 'ed',  name: 'Edwards', prefix: 'ED-', ph: '품번 입력 (예: IE0441432 · NKB933416) — 일부만 넣어도 찾습니다' },
+  { key: 'csk', name: 'CSK',     prefix: 'CS-', ph: '품번 입력 (예: ECK114270029) — 일부만 넣어도 찾습니다' },
+  { key: 'vm',  name: 'VM',      browse: true },
+]
+const csOf = (key) => DWG_CS.find((c) => c.key === key) || DWG_CS[0]
+// 입력한 품번 → 포털 품목 코드 모양
+export const dwgRoot = (key, raw) => {
+  if (key === 'ax') return AX(raw)
+  const t = String(raw ?? '').trim().toUpperCase().replace(/^(AX|ED|CS)-/, '')
+  return t ? csOf(key).prefix + t : ''
+}
+// 품목 코드 → 도면 품번 (CSK 만 끝의 -NN 을 뗀다)
+export const dwgCode = (key, code) => (key === 'csk' ? String(code || '').replace(/-\d{2}$/, '') : code)
+// PostgREST or() 에 넣을 글자 — 쉼표 · 괄호 · % 는 뺀다
+const safeLike = (q) => String(q || '').replace(/[,()%*\\]/g, ' ').trim()
+
 // ── 도면 조회 대상 품번: 11(조립도) 12(모듈) 16(하네스) 17(가공물), 8자리 이상 ──
 // 볼트(44*)·부품(5*)·벤더 파트번호를 걸러 "도면 없음" 노이즈를 제거한다.
 const isTarget = (code) => {
@@ -110,11 +134,12 @@ async function fetchDrawings(codes) {
 }
 
 // ── 검색 실행 ───────────────────────────────────────
-async function runSearch(customerId, rawCode) {
-  const root = AX(rawCode)
+async function runSearch(customerId, rawCode, csKey = 'ax') {
+  const root = dwgRoot(csKey, rawCode)
   if (!root) return null
 
-  const seen = await expandBOM(customerId, root)
+  // 고객사가 포털에 없으면(BOM 없음) 그 품번 하나만 본다
+  const seen = customerId ? await expandBOM(customerId, root) : new Map([[root, { level: 0, name: '', wantRev: '' }]])
   const codes = [...seen.keys()]
 
   // 품명 보강 (BOM 에서 못 얻은 것 = 최상위 자신 등)
@@ -130,14 +155,58 @@ async function runSearch(customerId, rawCode) {
     })
   }
 
-  const drawings = await fetchDrawings(codes)
+  const drawings = await fetchDrawings([...new Set(codes.map((c) => dwgCode(csKey, c)))])
 
   // 품번별 묶기
   const byCode = {}
   for (const d of drawings) (byCode[d.std_code] ||= []).push(d)
 
+  // AXCELIS 가 아니면: 딱 맞는 도면이 하나도 없을 때 품번 · 파일 이름에 그 글자가 들어간 도면을 찾는다
+  let partial = false
+  if (csKey !== 'ax' && !drawings.length) {
+    const q = safeLike(String(rawCode).replace(/^(ED|CS)-/i, ''))
+    if (q.length >= 3) {
+      const { data: hit, error: he } = await supabase
+        .from('pm_drawings')
+        .select('std_code, rev, edition, rev_order, file_name, file_path, file_mtime, is_latest, missing_since, category, naming_ok, is_conv, file_size')
+        .like('std_code', csOf(csKey).prefix + '%')
+        .or(`std_code.ilike.%${q}%,file_name.ilike.%${q}%`)
+        .order('std_code', { ascending: true }).order('id', { ascending: true })
+        .limit(600)
+      if (he) throw he
+      if ((hit || []).length) {
+        partial = true
+        seen.clear(); codes.length = 0
+        for (const d of hit) {
+          (byCode[d.std_code] ||= []).push(d)
+          if (!seen.has(d.std_code)) { seen.set(d.std_code, { level: 0, name: '', wantRev: '' }); codes.push(d.std_code) }
+        }
+        // 품명 — 포털 품목에 같은 코드가 있으면 붙인다 (Edwards)
+        for (let i = 0; i < codes.length; i += 200) {
+          const { data: its } = await supabase.from('items').select('std_code, name').in('std_code', codes.slice(i, i + 200))
+          ;(its || []).forEach((it) => { const cur = seen.get(it.std_code); if (cur) cur.name = it.name || '' })
+        }
+      }
+    }
+  }
+
+  // CSK 품목 코드는 끝에 REV 가 붙는다(CS-ECK114270029-02) — 도면 품번으로 품명을 찾는다
+  if (csKey === 'csk') {
+    const noName = codes.filter((c) => !seen.get(c).name).slice(0, 200)
+    for (let i = 0; i < noName.length; i += 40) {
+      const part = noName.slice(i, i + 40)
+      const { data: its } = await supabase.from('items').select('std_code, name')
+        .or(part.map((c) => `std_code.ilike.${dwgCode('csk', c)}-%`).join(','))
+        .order('std_code', { ascending: true }).order('id', { ascending: true }).limit(1000)
+      ;(its || []).forEach((it) => {
+        const cur = seen.get(dwgCode('csk', it.std_code))
+        if (cur && it.name) cur.name = it.name   // 뒤(REV 가 높은 코드)가 남는다
+      })
+    }
+  }
+
   const rows = codes.map((code) => {
-    const files = (byCode[code] || []).slice().sort((a, b) => b.rev_order - a.rev_order)
+    const files = (byCode[dwgCode(csKey, code)] || []).slice().sort((a, b) => b.rev_order - a.rev_order)
     const live = files.filter((f) => !f.missing_since)
 
     // ── 대표 도면 선정 ──
@@ -180,7 +249,7 @@ async function runSearch(customerId, rawCode) {
     }
   })
 
-  return { root, rows }
+  return { root, rows, partial }
 }
 
 // ── 경로 복사 ───────────────────────────────────────
@@ -203,7 +272,10 @@ async function copyText(text, onDone) {
 }
 
 export default function DrawingSearch() {
-  const { data: cs } = useCustomer('ax')
+  const [csKey, setCsKey] = useState('ax')
+  const csCfg = csOf(csKey)
+  const isAxDwg = csKey === 'ax'
+  const { data: cs, isLoading: csLoading } = useCustomer(csKey)
   const [input, setInput] = useState('')
   const [query, setQuery] = useState('')
   const [onlyTarget, setOnlyTarget] = useState(true)
@@ -246,32 +318,33 @@ export default function DrawingSearch() {
   })
 
   const { data, isFetching, error } = useQuery({
-    queryKey: ['drawingSearch', cs?.id, query],
-    enabled: !!cs?.id && !!query,
-    queryFn: () => runSearch(cs.id, query),
+    queryKey: ['drawingSearch', csKey, cs?.id, query],
+    // AXCELIS 는 예전처럼 고객사를 읽은 뒤에만. 다른 고객사는 포털에 고객사가 없어도 도면만 찾는다.
+    enabled: !!query && !csCfg.browse && (isAxDwg ? !!cs?.id : !csLoading),
+    queryFn: () => runSearch(cs?.id || null, query, csKey),
     staleTime: 60 * 1000,
   })
 
   const rows = useMemo(() => {
     let r = data?.rows || []
-    if (onlyTarget) r = r.filter((x) => x.level === 0 || isTarget(x.code))
+    if (onlyTarget && isAxDwg) r = r.filter((x) => x.level === 0 || isTarget(x.code))
     if (onlyMissingDrawing) r = r.filter((x) => !x.latest)
     if (onlyConvLag) r = r.filter((x) => x.convLag)
-    if (onlyAsk) r = r.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask')
+    if (onlyAsk && isAxDwg) r = r.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask')
     return r.slice().sort((a, b) => a.level - b.level || a.code.localeCompare(b.code))
-  }, [data, onlyTarget, onlyMissingDrawing, onlyConvLag, onlyAsk])
+  }, [data, onlyTarget, onlyMissingDrawing, onlyConvLag, onlyAsk, isAxDwg])
 
   const stat = useMemo(() => {
     const all = data?.rows || []
-    const t = all.filter((x) => x.level === 0 || isTarget(x.code))
+    const t = isAxDwg ? all.filter((x) => x.level === 0 || isTarget(x.code)) : all
     return {
       total: t.length,
       has: t.filter((x) => x.latest).length,
       none: t.filter((x) => !x.latest).length,
       lag: t.filter((x) => x.convLag).length,
-      ask: t.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask').length,
+      ask: isAxDwg ? t.filter((x) => x.wantRev && compareRev(x.wantRev, x.latest) === 'ask').length : 0,
     }
-  }, [data])
+  }, [data, isAxDwg])
 
   const submit = (e) => {
     e?.preventDefault()
@@ -317,18 +390,31 @@ export default function DrawingSearch() {
         </div>
       )}
 
+      {/* 고객사 */}
+      <div data-dwg-cs className="inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-sm">
+        {DWG_CS.map((c) => (
+          <button key={c.key} type="button" data-dwg-cs-btn={c.key}
+            onClick={() => { setCsKey(c.key); setInput(''); setQuery(''); setOpen({}) }}
+            className={`px-3 py-1.5 rounded-md font-semibold ${csKey === c.key ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>
+            {c.name}
+          </button>
+        ))}
+      </div>
+
+      {csCfg.browse && <VmBrowse onCopy={(t) => copyText(t, say)} say={say} />}
+
       {/* 검색 */}
-      <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
+      {!csCfg.browse && <form onSubmit={submit} className="flex flex-wrap items-center gap-2">
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="품번 입력 (예: 110029610 또는 AX-110029610)"
+          placeholder={csCfg.ph}
           className="flex-1 min-w-[240px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
         />
         <button
           type="submit"
           className="px-4 py-2 text-sm font-semibold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 disabled:opacity-50"
-          disabled={!cs?.id}
+          disabled={isAxDwg && !cs?.id}
         >
           조회
         </button>
@@ -341,27 +427,28 @@ export default function DrawingSearch() {
             전체 경로 복사
           </button>
         )}
-      </form>
+      </form>}
 
       {/* 필터 */}
-      {!!data && (
+      {!!data && !csCfg.browse && (
         <div className="flex flex-wrap items-center gap-4 text-xs text-slate-600">
-          <label className="flex items-center gap-1.5 cursor-pointer">
+          {isAxDwg && <label className="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={onlyTarget} onChange={(e) => setOnlyTarget(e.target.checked)} />
             도면 대상 품번만 (11·12·16·17)
-          </label>
+          </label>}
           <label className="flex items-center gap-1.5 cursor-pointer">
             <input type="checkbox" checked={onlyMissingDrawing} onChange={(e) => setOnlyMissingDrawing(e.target.checked)} />
             도면 없는 것만
           </label>
-          <label className="flex items-center gap-1.5 cursor-pointer" title="BOM이 요구하는 REV가 NAS 최신 도면보다 높음 = 신도면 미수령">
+          {isAxDwg && <label className="flex items-center gap-1.5 cursor-pointer" title="BOM이 요구하는 REV가 NAS 최신 도면보다 높음 = 신도면 미수령">
             <input type="checkbox" checked={onlyAsk} onChange={(e) => setOnlyAsk(e.target.checked)} />
             🟠 도면 요청만 {stat.ask > 0 && `(${stat.ask})`}
-          </label>
-          <label className="flex items-center gap-1.5 cursor-pointer" title="컨버팅 도면이 고객사 원본보다 REV가 낮음 = 컨버팅 갱신 필요">
+          </label>}
+          {csKey !== 'csk' && <label className="flex items-center gap-1.5 cursor-pointer" title="컨버팅 도면이 고객사 원본보다 REV가 낮음 = 컨버팅 갱신 필요">
             <input type="checkbox" checked={onlyConvLag} onChange={(e) => setOnlyConvLag(e.target.checked)} />
             ⚠ 컨버팅 갱신 필요 {stat.lag > 0 && `(${stat.lag})`}
-          </label>
+          </label>}
+          {data.partial && <span data-dwg-partial className="px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">품번 · 파일 이름에 「{query}」가 들어간 도면</span>}
           <span className="ml-auto">
             대상 <b className="text-slate-800">{stat.total}</b> · 도면있음{' '}
             <b className="text-emerald-600">{stat.has}</b> · 없음 <b className="text-rose-600">{stat.none}</b>
@@ -370,11 +457,11 @@ export default function DrawingSearch() {
         </div>
       )}
 
-      {isFetching && <p className="text-sm text-slate-500">조회 중...</p>}
-      {error && <p className="text-sm text-rose-600">조회 실패: {error.message}</p>}
+      {!csCfg.browse && isFetching && <p className="text-sm text-slate-500">조회 중...</p>}
+      {!csCfg.browse && error && <p className="text-sm text-rose-600">조회 실패: {error.message}</p>}
 
       {/* 결과 */}
-      {!!rows.length && (
+      {!csCfg.browse && !!rows.length && (
         <div className="overflow-x-auto border border-slate-200 rounded-xl">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-500 text-xs">
@@ -398,6 +485,7 @@ export default function DrawingSearch() {
                   isOpen={!!open[r.code]}
                   onToggle={() => setOpen((o) => ({ ...o, [r.code]: !o[r.code] }))}
                   onCopy={(t) => copyText(t, say)}
+                  noKind={csKey === 'csk'}
                 />
               ))}
             </tbody>
@@ -405,7 +493,7 @@ export default function DrawingSearch() {
         </div>
       )}
 
-      {!!data && !rows.length && !isFetching && (
+      {!csCfg.browse && !!data && !rows.length && !isFetching && (
         <p className="text-sm text-slate-500">해당 조건의 품번이 없습니다.</p>
       )}
 
@@ -419,7 +507,7 @@ export default function DrawingSearch() {
 }
 
 // ── 행 (본문 + 펼침 상세) ───────────────────────────
-function FragmentRow({ r, isOpen, onToggle, onCopy }) {
+function FragmentRow({ r, isOpen, onToggle, onCopy, noKind }) {
   const lv = r.level
   return (
     <>
@@ -457,7 +545,7 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
           })()}
         </td>
         <td className="px-3 py-2 text-center">
-          {r.latest ? (
+          {r.latest && !noKind ? (
             <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
               r.latest.is_conv
                 ? 'bg-sky-50 text-sky-700 border-sky-200'
@@ -522,10 +610,10 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
                   >
                     {fmtRevOf(f)}
                   </span>
-                  <span className={`px-1 py-0.5 rounded text-[10px] font-bold shrink-0 w-12 text-center ${
+                  {!noKind && <span className={`px-1 py-0.5 rounded text-[10px] font-bold shrink-0 w-12 text-center ${
                     f.is_conv ? 'bg-sky-100 text-sky-700' : 'bg-slate-200 text-slate-500'}`}>
                     {f.is_conv ? '컨버팅' : '원본'}
-                  </span>
+                  </span>}
                   <span className="text-slate-400 w-20 shrink-0">{fmtDate(f.file_mtime)}</span>
                   <span className="text-slate-400 w-16 shrink-0 text-right tabular-nums">{fmtSize(f.file_size)}</span>
                   <span className={`flex-1 truncate ${f.missing_since ? 'text-slate-400 line-through' : 'text-slate-600'}`}>
@@ -549,5 +637,121 @@ function FragmentRow({ r, isOpen, onToggle, onCopy }) {
         </tr>
       )}
     </>
+  )
+}
+
+// ── VM — 품번 체계가 없어 모델 · 구역 폴더와 파일 이름으로 찾는다 ─────────
+//   NAS: 2. VM\하네스도면\<모델>\<구역>\파일.  category = 모델 폴더.
+const VM_ROOT_MARK = '\\하네스도면\\'
+const vmClean = (t) => String(t || '').replace(/^[※★▣\s]+/, '').replace(/\s*\[전장[^\]]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim()
+export const vmParts = (f) => {
+  const p = String(f.file_path || '')
+  const i = p.indexOf(VM_ROOT_MARK)
+  const seg = (i >= 0 ? p.slice(i + VM_ROOT_MARK.length) : p).split('\\')
+  const model = seg.length > 1 ? seg[0] : '(하네스도면)'
+  const zone = seg.length > 2 ? seg[1] : '(모델 폴더 바로 아래)'
+  return { model, zone, sub: seg.slice(2, -1).join(' › ') }
+}
+const VM_CAP = 300
+function VmBrowse({ onCopy, say }) {
+  const [model, setModel] = useState('')
+  const [zone, setZone] = useState('')
+  const [text, setText] = useState('')
+  const { data: all = [], isLoading, error } = useQuery({
+    queryKey: ['drawingsVM'],
+    queryFn: () => fetchAll(() => supabase
+      .from('pm_drawings')
+      .select('id, std_code, rev, file_name, file_path, file_mtime, file_size, category, missing_since')
+      .eq('customer_code', 'VM').is('missing_since', null)
+      .order('file_path', { ascending: true }).order('id', { ascending: true })),
+    staleTime: 5 * 60 * 1000,
+  })
+  const list = useMemo(() => all.map((f) => ({ ...f, ...vmParts(f) })), [all])
+  const models = useMemo(() => {
+    const m = {}; list.forEach((f) => { m[f.model] = (m[f.model] || 0) + 1 })
+    return Object.entries(m).sort((a, b) => a[0].localeCompare(b[0]))
+  }, [list])
+  const zones = useMemo(() => {
+    const m = {}; list.filter((f) => !model || f.model === model).forEach((f) => { m[f.zone] = (m[f.zone] || 0) + 1 })
+    return Object.entries(m).sort((a, b) => vmClean(a[0]).localeCompare(vmClean(b[0])))
+  }, [list, model])
+  const shown = useMemo(() => {
+    const words = text.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    return list.filter((f) => (!model || f.model === model) && (!zone || f.zone === zone)
+      && words.every((w) => `${f.file_name} ${f.sub} ${f.std_code || ''}`.toLowerCase().includes(w)))
+  }, [list, model, zone, text])
+
+  if (isLoading) return <p className="text-sm text-slate-500">불러오는 중...</p>
+  if (error) return (
+    <p data-vm-notready className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+      VM 도면을 아직 읽을 수 없습니다 — SQL(pm_drawings_customers_261007.sql) 실행과 스캐너 교체가 필요합니다. ({error.message})
+    </p>)
+  if (!list.length) return (
+    <p data-vm-empty className="text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+      VM 도면이 아직 없습니다. 스캐너(도면_적재.js v4.0)가 한 번 돌면 채워집니다.
+    </p>)
+  return (
+    <div data-vm-browse className="space-y-3">
+      <p className="text-xs text-slate-500">VM 은 품번 체계가 없어 모델 · 구역을 고르고 파일 이름으로 찾습니다. (NAS 2. VM › 하네스도면)</p>
+      <div className="flex flex-wrap gap-1.5">
+        <button type="button" onClick={() => { setModel(''); setZone('') }}
+          className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${!model ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+          전체 <span className="opacity-70">{list.length}</span>
+        </button>
+        {models.map(([m, n]) => (
+          <button key={m} type="button" data-vm-model={m} title={m} onClick={() => { setModel(m); setZone('') }}
+            className={`px-2.5 py-1 rounded-full text-xs font-semibold border ${model === m ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+            {vmClean(m)} <span className="opacity-70">{n}</span>
+          </button>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <select data-vm-zone value={zone} onChange={(e) => setZone(e.target.value)}
+          className="px-2 py-2 text-sm border border-slate-200 rounded-lg bg-white max-w-[320px]">
+          <option value="">구역 전체</option>
+          {zones.map(([z, n]) => <option key={z} value={z}>{vmClean(z)} ({n})</option>)}
+        </select>
+        <input data-vm-text value={text} onChange={(e) => setText(e.target.value)}
+          placeholder="파일 이름 검색 (예: 통합도면 · PM-3-394 · EM3A48)"
+          className="flex-1 min-w-[240px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <button type="button"
+          onClick={() => { const l = shown.slice(0, VM_CAP).map((f) => f.file_path); if (!l.length) return say('복사할 경로가 없습니다'); onCopy(l.join('\r\n')) }}
+          className="px-3 py-2 text-sm font-semibold text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
+          보이는 경로 복사
+        </button>
+        <span className="text-xs text-slate-500">{shown.length}개{shown.length > VM_CAP && ` 중 ${VM_CAP}개 표시 — 조건을 좁혀 주세요`}</span>
+      </div>
+      <div className="overflow-x-auto border border-slate-200 rounded-xl">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-500 text-xs">
+            <tr>
+              <th className="px-3 py-2 text-left">모델</th>
+              <th className="px-3 py-2 text-left">구역</th>
+              <th className="px-3 py-2 text-left">파일 이름</th>
+              <th className="px-3 py-2 text-center w-20">REV</th>
+              <th className="px-3 py-2 text-center w-28">수정일</th>
+              <th className="px-3 py-2 text-right w-20">용량</th>
+              <th className="px-3 py-2 text-center w-24">경로</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.slice(0, VM_CAP).map((f) => (
+              <tr key={f.file_path} className="border-t border-slate-100 hover:bg-indigo-50/40">
+                <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">{vmClean(f.model)}</td>
+                <td className="px-3 py-2 text-xs text-slate-600 max-w-[220px] truncate" title={f.sub ? `${f.zone} › ${f.sub}` : f.zone}>{vmClean(f.zone)}{f.sub && <span className="text-slate-400"> › {f.sub}</span>}</td>
+                <td className="px-3 py-2 text-slate-700 max-w-[520px] truncate" title={f.file_name}>{f.file_name}</td>
+                <td className="px-3 py-2 text-center">{f.rev != null && f.rev !== '' ? <span className="px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 font-mono text-xs font-bold">{f.rev}</span> : <span className="text-slate-300">-</span>}</td>
+                <td className="px-3 py-2 text-center text-xs text-slate-500">{fmtDate(f.file_mtime)}</td>
+                <td className="px-3 py-2 text-right text-xs text-slate-500 tabular-nums">{fmtSize(f.file_size)}</td>
+                <td className="px-3 py-2 text-center">
+                  <button onClick={() => onCopy(f.file_path)} className="px-2 py-1 text-xs font-semibold text-indigo-600 border border-indigo-200 rounded hover:bg-indigo-50">복사</button>
+                </td>
+              </tr>
+            ))}
+            {!shown.length && <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-slate-400">조건에 맞는 도면이 없습니다.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
