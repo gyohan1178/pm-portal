@@ -14,6 +14,7 @@ import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import { todayISO, ymdKST } from '../../lib/utils'
 import { useSearchParams } from 'react-router-dom'
+import { pendingHay, histHay, histMemo } from '../../lib/inboundSearch'
 import LotInboundModal from '../../components/LotInboundModal'
 
 function todayStr() { return todayISO() }
@@ -47,7 +48,7 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   let data = []
   for (let off = 0; off < CAP; off += PAGE) {
     const { data: batch, error } = await supabase.from('stock_movements')
-      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, mfr, mfr_code, vendors(name), projects(code))')
+      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, vendors(name), projects(code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
@@ -284,11 +285,8 @@ export default function Inbound() {
   const rows = useMemo(() => {
     const q = dRowSearch.trim().toLowerCase()
     const vq = vendorText.trim().toLowerCase()
-    let list = !q ? pendingPOs : pendingPOs.filter(po => {
-      const it = po.items || {}
-      return [it.std_code, it.name, it.manufacturer, it.manufacturer_code]
-        .some(x => (x||'').toLowerCase().includes(q))
-    })
+    // 비고(발주 메모) · 발주번호로도 찾는다 — 세트로 묶어 낸 발주를 비고에 적은 이름으로 불러 본다
+    let list = !q ? pendingPOs : pendingPOs.filter(po => pendingHay(po).includes(q))
     if (vq) list = list.filter(po => (po.vendors?.name||'').toLowerCase().includes(vq))
     const col = PROC_COLS.find(c => c.key === sort.key)
     if (col && col.get) {
@@ -378,9 +376,8 @@ export default function Inbound() {
       const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
       if (vq && !vname.includes(vq)) return false
       if (iq) {
-        // 기준코드·품명뿐 아니라 제조사·제조사품번으로도 찾는다
-        const hay = `${r.items?.std_code || ''} ${r.items?.name || ''} ${r.items?.manufacturer || ''} ${r.items?.manufacturer_code || ''} ${r.purchase_orders?.mfr || ''} ${r.purchase_orders?.mfr_code || ''}`.toLowerCase()
-        if (!hay.includes(iq)) return false
+        // 기준코드·품명뿐 아니라 제조사·제조사품번 · 비고(입고 · 발주) · 발주번호로도 찾는다
+        if (!histHay(r).includes(iq)) return false
       }
       return true
     })
@@ -401,7 +398,7 @@ export default function Inbound() {
       '금액':(Number(r.qty)||0) * (Number(r.unit_price)||0),
       '발주번호':r.purchase_orders?.po_number||'',
       '구매처':r.purchase_orders?.vendors?.name||'', '고객사':r.customers?.name||'',
-      '비고':r.note||'',
+      '비고':histMemo(r),
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'입고현황')
@@ -525,8 +522,9 @@ export default function Inbound() {
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">미입고 발주 — 들어온 품목 체크 후 일괄 입고</p>
               <input value={rowSearch} onChange={e=>setRowSearch(e.target.value)}
-                placeholder="제조사·제조사품번·기준코드·품명 검색"
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg w-64 focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                placeholder="기준코드·품명·제조사·제조사품번·비고·발주번호 검색"
+                title="발주할 때 적은 비고(세트 이름 등)와 발주번호로도 찾습니다"
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg w-80 focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
               <span className="ml-auto text-xs text-slate-400">정렬: {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'} · {rows.length}건</span>
             </div>
 
@@ -740,7 +738,7 @@ export default function Inbound() {
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">품번 검색</label>
-              <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명·제조사·제조사품번"
+              <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명·제조사·제조사품번·비고·발주번호" title="입고 비고 · 발주 비고(세트 이름 등) · 발주번호로도 찾습니다"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer,vendorId:null})}
@@ -821,7 +819,7 @@ export default function Inbound() {
                           <td className="px-3 py-2 font-mono text-xs text-slate-400">{r.purchase_orders?.projects?.code||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.customers?.name||'-'}</td>
-                          <td className="px-3 py-2 text-slate-400">{r.memo||r.note||'-'}</td>
+                          <td className="px-3 py-2 text-slate-400 max-w-[220px] truncate" title={histMemo(r)}>{histMemo(r)||'-'}</td>
                         </tr>
                       ))
                     }
