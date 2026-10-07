@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.39.2'
+export const APP_VERSION = 'v4.40.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,15 @@ export const APP_VERSION = 'v4.39.2'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.40.0',
+    date: '2026-10-07',
+    changes: [
+      '★ CSK 생산관리 — 「📅 일정표 올리기」: CSK 가 주는 생산 Schedule 엑셀(생산_Schedule 시트)을 그대로 올리면 관리번호별로 나열됩니다. 머리글도 그 파일에 맞춤 — NO/ · 구분 · 관리번호 · 발주 번호 · ITEM NO. · 규격 · Plnd · Prod · Q\'TY · PRE ASSY 품번 · 품번 · 품명 · 발주일자 · 입고 요청일 · 납품 예정일 · 납품 완료일 · 회계 · 비고 · 자재 반출일 · Option · 비고1 · 변경 현황 (SQL pm_csk_schedule_261007 실행 후 적용)',
+      '다시 올리면 같은 관리번호는 일정표 값만 갱신(상태 · 메모는 그대로) · 새 관리번호는 새 줄 · 납품 예정일이 바뀌면 변경 기록 · 파일에서 빠진 줄은 지우지 않고 「일정표에서 빠짐」 표시 · 납품 완료일이 적히면 완료',
+      'Option 은 「N항목 ▸」을 눌러 전체 보기 · 납품 예정일 월별 묶음 · D-day · 관리번호 · 규격 · Plnd · Prod · 발주 번호로 검색',
+    ],
+  },
   {
     version: 'v4.39.2',
     date: '2026-10-07',
@@ -160,15 +169,6 @@ export const CHANGELOG = [
     changes: [
       '생산관리 Edwards 하네스 · 전장 칸: 불출 예정일이 늘 자동으로 역산됩니다 (정한 납기 − 불출 기준 주수). 포캐스트 날짜가 없는 줄은 정한 납기 칸에 보이는 납품요청일로 역산 · 칸을 누르면 불출 완료만 됩니다',
       'BOM 자동 연결은 이름이 딱 하나 맞을 때만 — 기종(NKB)을 모르는 H2D-LH 하네스(Vizeon Hynix · Samsung · IMEC)는 임의로 고르지 않고 「하네스 BOM 없음」으로 두니 「⚙ 불출 기준」 ③ 에서 골라 주세요',
-    ],
-  },
-  {
-    version: 'v4.30.1',
-    date: '2026-09-30',
-    changes: [
-      '★ 생산관리 Edwards: EUV · H2D 줄의 구분2 = 포캐스트 품번(NKB973000 등), 구분3 = 이 줄이 쓰는 BOM (위 하네스 · 아래 전장, 예: NKB943_하네스 / NKB943_NKB973_EUV) — PO 업로드의 원래 구분2 · 3 은 마우스를 올리면 보입니다',
-      '★ 하네스 · 전장 칸에 BOM 별 소요량 결과 — 「✓ 재고」 또는 「⚠ 부족 N」. 부족을 누르면 소요량 매칭에서 그 건만 보여 줍니다 (불출 체크는 안 바뀜)',
-      '포캐스트 품번별 구분을 작업자 도구 「Item Number별 BOM 구성」과 같게 — Vizeon Hynix · Samsung · IMEC(IECJ · IECG · IECL) = H2D-LH, Micron OMT · JP · Rapidus(IEB2I · IEB2H · IEDI) = H2D-HPD. 포캐스트 반영 때 이 호기들도 줄이 만들어집니다',
     ],
   },
 ]

@@ -2,6 +2,15 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.30.1',
+    date: '2026-09-30',
+    changes: [
+      '★ 생산관리 Edwards: EUV · H2D 줄의 구분2 = 포캐스트 품번(NKB973000 등), 구분3 = 이 줄이 쓰는 BOM (위 하네스 · 아래 전장, 예: NKB943_하네스 / NKB943_NKB973_EUV) — PO 업로드의 원래 구분2 · 3 은 마우스를 올리면 보입니다',
+      '★ 하네스 · 전장 칸에 BOM 별 소요량 결과 — 「✓ 재고」 또는 「⚠ 부족 N」. 부족을 누르면 소요량 매칭에서 그 건만 보여 줍니다 (불출 체크는 안 바뀜)',
+      '포캐스트 품번별 구분을 작업자 도구 「Item Number별 BOM 구성」과 같게 — Vizeon Hynix · Samsung · IMEC(IECJ · IECG · IECL) = H2D-LH, Micron OMT · JP · Rapidus(IEB2I · IEB2H · IEDI) = H2D-HPD. 포캐스트 반영 때 이 호기들도 줄이 만들어집니다',
+    ],
+  },
+  {
     version: 'v4.30.0',
     date: '2026-09-30',
     changes: [

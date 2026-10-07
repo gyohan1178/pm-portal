@@ -14,6 +14,9 @@ import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDate
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
 import { ruleKindOf, KINDS } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
+import * as XLSX from 'xlsx'
+import { parseCskSchedule, planCsk, planText, applyCsk } from '../../lib/cskSchedule'
+import { CskTable, cskHay, cskNo } from './CskProductionTable'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -149,6 +152,8 @@ const EMPTY = { name: '', pn: '', hogi: '', ccn: '', rev: '', status: 'PO접수'
 export default function ProductionPDBox({ rows, csCode, isLoading }) {
   // Edwards 는 한 호기 안에 EUV·H2D 가 섞여 부분마다 따로 관리한다
   const isED = String(csCode || '').toUpperCase() === 'ED'
+  // CSK 는 고객사가 주는 생산 일정표 엑셀을 그대로 올려 나열한다 (머리글도 그 파일에 맞춤)
+  const isCSK = String(csCode || '').toUpperCase() === 'CSK'
   const isAx = String(csCode || '').toUpperCase() === 'AX'
   const [memoDraft, setMemoDraft] = useState({})
   const edFileRef = useRef(null)
@@ -279,6 +284,39 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     },
     onError: (e) => toastError('포캐스트 반영 오류: ' + e.message),
   })
+  // ── CSK 생산 일정표 올리기 ──
+  const cskRef = useRef(null)
+  const cskMut = useMutation({
+    mutationFn: (plan) => applyCsk(supabase, plan),
+    onSuccess: (r) => {
+      toastSuccess(`CSK 일정표 반영 — 새 줄 ${r.inserted ?? 0} · 갱신 ${r.updated ?? 0}${r.gone ? ` · 빠짐 표시 ${r.gone}` : ''}`)
+      qc.invalidateQueries({ queryKey: ['production', csCode] })
+    },
+    onError: (e) => toastError('일정표 반영 오류: ' + e.message),
+  })
+  async function onCskFile(e) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    try {
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array', cellDates: true })
+      const p = parseCskSchedule(XLSX, wb)
+      if (p.error) { toastError(p.error); return }
+      if (!p.rows.length) { toastError(`[${p.sheet}] 시트에 관리번호가 있는 줄이 없습니다`); return }
+      const plan = planCsk(p.rows, rows, p.fileDate)
+      if (!plan.ins.length && !plan.upd.length && !plan.goneIds.length) {
+        toastSuccess(`일정표 ${p.rows.length}줄 — 바뀐 것이 없습니다`); return
+      }
+      const ok = window.confirm(
+        `CSK 생산 일정표${p.fileDate ? ` (${p.fileDate} 기준)` : ''} [${p.sheet}] ${p.rows.length}줄을 생산관리에 반영할까요?\n\n` +
+        planText(plan) +
+        (p.skipped?.length ? `\n\n건너뛴 줄 ${p.skipped.length}: ${p.skipped.slice(0, 3).join(' / ')}` : '') +
+        (p.missing?.length ? `\n\n파일에 없는 칸: ${p.missing.join(' · ')}` : '') +
+        `\n\n상태 · 메모 · 담당자 등 포털에서 넣은 값은 그대로 둡니다.`)
+      if (!ok) return
+      cskMut.mutate(plan)
+    } catch (err) { toastError('일정표 파일을 읽지 못했습니다: ' + err.message) }
+  }
   async function onEdFcFile(e) {
     const f = e.target.files?.[0]
     e.target.value = ''
@@ -494,12 +532,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     if (dq.trim()) {
       const s = dq.toLowerCase()
       // 화면에 보이는 열은 모두 검색되어야 한다
-      r = r.filter(x => [x.pn, x.name, x.hogi, x.part, x.part2, x.part3, x.fc_item, x.memo, x.manager]
+      r = r.filter(x => isCSK ? cskHay(x).includes(s) : [x.pn, x.name, x.hogi, x.part, x.part2, x.part3, x.fc_item, x.memo, x.manager]
         .some(v => String(v || '').toLowerCase().includes(s)))
     }
     r.sort((a, b) => {
       const d = (dOf(a) || '9999').localeCompare(dOf(b) || '9999')
       if (d !== 0) return d
+      // CSK 는 같은 납품 예정일 안에서 일정표 NO/ 순 (파일과 같은 순서)
+      if (isCSK && cskNo(a) !== cskNo(b)) return cskNo(a) - cskNo(b)
       // 납품일 같으면 품번 → 호기번호 → id 순 (안정적)
       const p = (a.pn || '').localeCompare(b.pn || '')
       if (p !== 0) return p
@@ -516,7 +556,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       out.push(x)
     }
     return out
-  }, [rows, showDone, dq, mainTab, isED, edF, edRules])
+  }, [rows, showDone, dq, mainTab, isED, isCSK, edF, edRules])
 
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
@@ -534,7 +574,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     <>
       {woRows && <WorkOrderPrinter rows={woRows} onDone={() => setWoRows(null)} />}
       <div className="flex items-center gap-2 flex-wrap mb-3">
-        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품번·PD명·호기 검색"
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder={isCSK ? "관리번호·규격·구분·Plnd·Prod·발주 번호 검색" : "품번·PD명·호기 검색"}
           className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold">
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> 완료 포함
@@ -584,6 +624,16 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <button onClick={() => setShowRules(true)}
               title="불출 예정일 = 정한 납기 − N주 · 포캐스트 품번별 구분"
               className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출 기준</button>
+          </>
+        )}
+        {isCSK && (
+          <>
+            <input ref={cskRef} data-csk-file type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={onCskFile} />
+            <button onClick={() => cskRef.current?.click()} disabled={cskMut.isPending}
+              title="CSK 가 주는 생산 Schedule 엑셀(생산_Schedule 시트)을 읽어 관리번호별로 나열합니다. 다시 올리면 바뀐 값만 갱신하고, 상태 · 메모는 그대로 둡니다."
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
+              {cskMut.isPending ? '반영 중…' : '📅 일정표 올리기'}
+            </button>
           </>
         )}
         <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? '가져오는 중...' : '📤 CSV 가져오기'}</button>
@@ -737,6 +787,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               onField={setField} onEdit={(r) => setEdit({ ...r })} onMissing={(r) => setMissRow(r)}
               projects={edProj?.projects || []} need={edNeed.byKey} onNeed={(k) => { setNeedFocus(k); setView('need') }}
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor} />
+          ) : isCSK ? (
+            <CskTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel}
+              onField={setField} onEdit={(r) => setEdit({ ...r })}
+              statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} />
           ) : (
           <table className="w-full text-xs whitespace-nowrap">
             <thead>
