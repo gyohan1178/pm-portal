@@ -35,23 +35,38 @@ const ymOf = (v) => {
 }
 
 // 고객사별 파서 → 공통 [{ std_code, item_name, year_month, qty }]
-function parseForecast(wb, csCode) {
+export function parseForecast(wb, csCode) {
   const code = csCode.toUpperCase()
   const ws = wb.Sheets[wb.SheetNames[0]]
 
   if (code === 'AX') {
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' })
-    const cols = Object.keys(rows[0] || {})
-    const monthCols = cols.filter(c => /^\d{4}-\d{2}$/.test(String(c).trim()))
-    const out = []
-    for (const r of rows) {
-      const pn = String(r['Part'] ?? '').replace(/\.0$/, '').trim()
-      if (!pn || pn === 'nan') continue
-      for (const m of monthCols) {
-        const q = parseFloat(r[m]); if (!q) continue
-        out.push({ std_code: 'AX-' + pn, item_name: String(r['DESC'] ?? ''), year_month: m.trim(), qty: q })
+    // 시트가 여러 장이다 (CCNK · CCNB …) — 「Part」 칸과 「YYYY-MM」 칸이 있는 시트를 전부 읽는다.
+    //   예전에는 첫 시트만 읽어 CCNB(하네스 위주)가 통째로 빠졌다 (2026-10-08).
+    //   같은 품번 · 달은 더한다 (CCNK 안의 K_HUB 줄 · 시트끼리 겹치는 품번).
+    const agg = new Map()
+    const sheets = []
+    for (const name of wb.SheetNames) {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' })
+      const cols = Object.keys(rows[0] || {})
+      const monthCols = cols.filter(c => /^\d{4}-\d{2}$/.test(String(c).trim()))
+      if (!cols.includes('Part') || !monthCols.length) continue
+      let n = 0
+      for (const r of rows) {
+        const pn = String(r['Part'] ?? '').replace(/\.0$/, '').trim()
+        if (!pn || pn === 'nan') continue
+        n++
+        for (const m of monthCols) {
+          const q = parseFloat(r[m]); if (!q) continue
+          const k = 'AX-' + pn + '|' + m.trim()
+          const cur = agg.get(k)
+          if (cur) cur.qty += q
+          else agg.set(k, { std_code: 'AX-' + pn, item_name: String(r['DESC'] ?? ''), year_month: m.trim(), qty: q })
+        }
       }
+      sheets.push(`${name} ${n}줄`)
     }
+    const out = [...agg.values()]
+    out.sheets = sheets
     return out
   }
 
@@ -274,7 +289,7 @@ export default function Forecast() {
         if (String(csCode).toUpperCase() === 'ED') {
           try { edDetail = parseEdForecastDetail(wb) } catch { edDetail = null }
         }
-        setPreview({ rows: parsed, months, count: parsed.length, items: new Set(parsed.map(p => p.std_code)).size, edDetail })
+        setPreview({ rows: parsed, months, count: parsed.length, items: new Set(parsed.map(p => p.std_code)).size, edDetail, sheets: parsed.sheets || null })
         setResult(null)
       } catch (err) { toastError('파싱 오류: ' + err.message) }
     }
@@ -359,7 +374,7 @@ export default function Forecast() {
       {preview && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">
-            <p className="text-xs font-bold text-indigo-700">미리보기 — 품목 {preview.items}개 · {preview.count}건 · {preview.months.length}개월 ({preview.months[0]}~{preview.months[preview.months.length-1]})</p>
+            <p className="text-xs font-bold text-indigo-700">미리보기 — 품목 {preview.items}개 · {preview.count}건 · {preview.months.length}개월 ({preview.months[0]}~{preview.months[preview.months.length-1]}){preview.sheets?.length > 0 && <span data-fc-sheets className="ml-2 font-normal text-indigo-500">· 읽은 시트: {preview.sheets.join(' · ')}</span>}</p>
             <div className="flex gap-2">
               <button onClick={() => setPreview(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">취소</button>
               <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
