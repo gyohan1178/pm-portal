@@ -37,7 +37,7 @@ export default function RackLayout() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
 
-  const [tab, setTab] = useState(code ? 'sheet' : 'map')
+  const [tab, setTab] = useState(code ? 'sheet' : '3d')
   const [sel, setSel] = useState((code || '').toUpperCase())
   const [qr, setQr] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
@@ -633,7 +633,7 @@ export default function RackLayout() {
       )}
 
       <div className="no-print flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
-        {[['map', '🗺 배치도'], ['3d', '🧊 3D 보기'], ['sheet', '📋 랙 구성표']].map(([k, l]) => (
+        {[['3d', '🧊 3D 보기'], ['map', '🗺 배치도'], ['sheet', '📋 랙 구성표']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
             {l}
