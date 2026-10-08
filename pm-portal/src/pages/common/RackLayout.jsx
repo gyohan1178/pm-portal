@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import QRCode from 'qrcode'
@@ -8,6 +8,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 import { todayISO } from '../../lib/utils'
+
+// 3D 보기 — three 라이브러리가 커서 탭을 열 때만 받는다
+const RackLayout3D = lazy(() => import('./RackLayout3D'))
 
 const GW = 80, GH = 62       // 격자 전체 크기 (랙 1칸 = 격자 1.5칸)
 // 배치도 확대 단계. 13px 이 기본(18px 대비 약 70%)이며,
@@ -630,13 +633,21 @@ export default function RackLayout() {
       )}
 
       <div className="no-print flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
-        {[['map', '🗺 배치도'], ['sheet', '📋 랙 구성표']].map(([k, l]) => (
+        {[['map', '🗺 배치도'], ['3d', '🧊 3D 보기'], ['sheet', '📋 랙 구성표']].map(([k, l]) => (
           <button key={k} onClick={() => setTab(k)}
             className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
             {l}
           </button>
         ))}
       </div>
+
+      {tab === '3d' && (
+        <Suspense fallback={<p className="no-print text-xs text-slate-500 p-4">3D 화면을 불러오는 중…</p>}>
+          <RackLayout3D racks={racks} objs={objs} gw={GW} gh={GH} sel={sel} cells={cells}
+            onSelect={setSel}
+            onOpenSheet={(c) => { setSel(c); setTab('sheet') }} />
+        </Suspense>
+      )}
 
       {tab === 'map' && (
         <div className="no-print space-y-2">
