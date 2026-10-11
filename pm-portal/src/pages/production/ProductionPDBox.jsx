@@ -256,6 +256,29 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
+  // VM 자재 칸 (2026-10-08) — 여섯 칸을 연달아 바꿔도 앞에서 바꾼 칸이 되돌아가지 않게
+  //   · 바꾸는 즉시 화면 캐시에 반영하고, 다음 칸은 그 캐시 값 위에 합친다 (같은 순간에 여러 번 바꿔도)
+  //   · 저장은 한 줄로 세워 차례대로 (scope) — 늦게 도착한 앞 저장이 뒤 저장을 덮지 않는다
+  //   · 다 끝난 뒤에 한 번만 다시 불러온다
+  const vmMut = useMutation({
+    mutationKey: ['vmMat'],
+    scope: { id: 'vmMat' },
+    mutationFn: async ({ id, vm }) => {
+      const { error } = await supabase.from('production').update({ vm, updated_at: new Date().toISOString() }).eq('id', id)
+      if (error) throw error
+    },
+    onError: (e) => { toastError('자재 상태 저장 오류: ' + e.message); qc.invalidateQueries({ queryKey: ['production', csCode] }) },
+    onSettled: () => { if (qc.isMutating({ mutationKey: ['vmMat'] }) <= 1) qc.invalidateQueries({ queryKey: ['production', csCode] }) },
+  })
+  const setVmMat = (r, k, v) => {
+    const key = ['production', csCode]
+    qc.cancelQueries({ queryKey: key })   // 다시 불러오던 옛 값이 방금 바꾼 값을 덮지 않게
+    const cur = (qc.getQueryData(key) || []).find((x) => x.id === r.id)?.vm ?? r.vm ?? {}
+    const vm = { ...cur, [k]: v || null }
+    qc.setQueryData(key, (old) => Array.isArray(old) ? old.map((x) => (x.id === r.id ? { ...x, vm } : x)) : old)
+    vmMut.mutate({ id: r.id, vm })
+  }
+
   // ── Edwards: 포캐스트 반영 · 불출 기준 · 미불출 ─────────────────────
   //   작업자가 따로 쓰던 「Forecast 자재 준비 현황」을 옮긴 것 (lib/edForecast.js)
   const edFcRef = useRef(null)
@@ -296,7 +319,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     mutationFn: (plan) => applyFcPlan(supabase, plan),
     onSuccess: (r) => {
       toastSuccess(`포캐스트 반영 — 갱신 ${r.updated ?? 0}줄 · 새 줄 ${r.inserted ?? 0}줄${r.gone ? ` · 빠짐 표시 ${r.gone}줄` : ''}`)
-      qc.invalidateQueries({ queryKey: ['production', csCode] })
+      qc.invalidateQueries({ queryKey: ['production'] })   // 생산 대시보드(['production'])도 같이
     },
     onError: (e) => toastError('포캐스트 반영 오류: ' + e.message),
   })
@@ -306,7 +329,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     mutationFn: (plan) => applyCsk(supabase, plan),
     onSuccess: (r) => {
       toastSuccess(`CSK 일정표 반영 — 새 줄 ${r.inserted ?? 0} · 갱신 ${r.updated ?? 0}${r.gone ? ` · 빠짐 표시 ${r.gone}` : ''}`)
-      qc.invalidateQueries({ queryKey: ['production', csCode] })
+      qc.invalidateQueries({ queryKey: ['production'] })   // 생산 대시보드(['production'])도 같이
     },
     onError: (e) => toastError('일정표 반영 오류: ' + e.message),
   })
@@ -396,16 +419,39 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     })
   }
 
+  // 편집 창을 연 시점의 줄 — 저장할 때 바뀐 칸만 고르려고 둔다 (2026-10-08)
+  //   예전에는 줄 전체를 저장해서, 창을 연 사이 출고가 기록한 미불출 · PO 연동의 납기변경 이력 · 상태가 되돌아갔다.
+  const editOrig = useRef(null)
+  const openEdit = (r) => { editOrig.current = r ? { ...r } : null; setEdit(r ? { ...r } : null) }
+  const same = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
   // 저장 (신규/편집) — 완료상태는 건드리지 않음
   const saveMut = useMutation({
     mutationFn: async (rec) => {
       const patch = stripDerived(rec)
       delete patch.id
-      patch.updated_at = new Date().toISOString()
       if (rec.id) {
-        const { error } = await supabase.from('production').update(patch).eq('id', rec.id)
+        const base = stripDerived(editOrig.current?.id === rec.id ? editOrig.current : {})
+        const diff = {}
+        for (const k of Object.keys(patch)) {
+          if (k === 'updated_at' || k === 'created_at') continue
+          if (!same(patch[k], base[k])) diff[k] = patch[k]
+        }
+        // vm 은 칸 하나씩 — 표에서 그사이 바꾼 자재 칸을 지우지 않게 지금 값 위에 바뀐 칸만 얹는다
+        if (diff.vm) {
+          const now = (rows.find((x) => x.id === rec.id) || {}).vm || {}
+          const ov = base.vm || {}, nv = rec.vm || {}
+          const m = { ...now }
+          for (const k of new Set([...Object.keys(ov), ...Object.keys(nv)])) if (!same(ov[k], nv[k])) m[k] = nv[k] ?? null
+          diff.vm = m
+        }
+        if (!Object.keys(diff).length) return
+        diff.updated_at = new Date().toISOString()
+        const { error } = await supabase.from('production').update(diff).eq('id', rec.id)
         if (error) throw error
       } else {
+        patch.updated_at = new Date().toISOString()
+        // 빈 날짜는 null — 빈 글자('')는 PO 연동 정렬에서 맨 앞으로 끼어든다
+        for (const k of ['req_date', 'machine_date', 'arrival_date', 'harness_done', 'elec_done']) if (patch[k] === '') patch[k] = null
         patch.id = 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
         patch.customer_code = csCode
         patch.created_at = new Date().toISOString()
@@ -523,8 +569,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const modelSummary = useMemo(() => {
     const g = {}
     rows.forEach(r => {
-      const k = r.pn || '?'
-      g[k] ??= { pn: k, name: r.name, main: isMainRow(k, csCode), total: 0, done: 0, making: 0, waiting: 0, next: null }
+      // 3rd party 줄(「95EA」 한 줄)은 호기 1대가 아니다 — 주요 품번 집계에 섞지 않고 업체 이름을 붙여 따로 (2026-10-08)
+      const tp = isTpRow(r)
+      const k = tp ? `${r.pn || '?'} (${r.company})` : (r.pn || '?')
+      g[k] ??= { pn: k, name: r.name, main: !tp && isMainRow(r.pn || '?', csCode), total: 0, done: 0, making: 0, waiting: 0, next: null }
       g[k].total++
       if (r.status === '완료') g[k].done++
       // 제작대기는 자재만 나간 상태라 아직 만들기 전이다. 대기로 센다.
@@ -595,7 +643,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold">
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> 완료 포함
         </label>
-        <button onClick={() => setEdit({ ...EMPTY, ...(isED ? { po_received: false } : {}) })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
+        <button onClick={() => openEdit(null) || setEdit({ ...EMPTY, ...(isED ? { po_received: false } : {}) })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
         <div className="flex gap-1 p-0.5 bg-indigo-100/70 rounded-lg">
           <button onClick={() => { setMainTab('main') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='main'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>⭐ 주요 관리</button>
           <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>Sub Assy</button>
@@ -671,7 +719,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           ) : view === 'kanban' ? (
             <KanbanBoard statusOpts={statusOpts} rows={filtered.filter(x => !x._month)} mdMap={mdMap}
               onStatus={(id, status) => toggleMut.mutate({ id, field: 'status', value: status })}
-              onOpen={(r) => setEdit({ ...r })} showDone={showDone} />
+              onOpen={(r) => openEdit(r)} showDone={showDone} />
           ) : view === 'load' ? (
             <div className="p-4">
               <p className="text-xs text-slate-400 mb-3">주요 품번 · 미완료 호기 기준 — <b className="text-violet-600">전장 부하</b>=완료예정 주차에 품목 MD 합산, <b className="text-rose-600">품질</b>=완료요청 주차 건수. 가공물 일정은 고정값이라 미포함.</p>
@@ -800,12 +848,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           )}
           {isED ? (
             <EdTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel} rules={edRules}
-              onField={setField} onEdit={(r) => setEdit({ ...r })} onMissing={(r) => setMissRow(r)}
+              onField={setField} onEdit={(r) => openEdit(r)} onMissing={(r) => setMissRow(r)}
               projects={edProj?.projects || []} need={edNeed.byKey} onNeed={(k) => { setNeedFocus(k); setView('need') }}
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor} />
           ) : isCSK ? (
             <CskTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel}
-              onField={setField} onEdit={(r) => setEdit({ ...r })}
+              onField={setField} onEdit={(r) => openEdit(r)}
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} />
           ) : (
           <table className="w-full text-xs whitespace-nowrap">
@@ -855,7 +903,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={isED ? 17 : vmCols ? 22 : 15} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={isED ? 17 : vmCols ? 22 : 16} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -880,14 +928,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       <td className="px-2 py-2 text-slate-600 text-left max-w-[110px] overflow-hidden text-ellipsis whitespace-nowrap" title={r.part3}>{r.part3 || '-'}</td>
                       <td data-no-select
                         className="px-2 py-2 text-slate-700 text-left max-w-[180px] overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer hover:text-indigo-600"
-                        title={r.pn} onClick={() => setEdit({ ...r })}>
+                        title={r.pn} onClick={() => openEdit(r)}>
                         {r.pn}
                       </td>
                     </>
                   ) : (
                     <>
                       <td data-no-select className="px-2 py-2 font-mono text-slate-700 text-left cursor-pointer hover:text-indigo-600"
-                        onClick={() => setEdit({ ...r })}>
+                        onClick={() => openEdit(r)}>
                         {r.pn}{isTpRow(r)
                           ? <span data-tp-badge className="ml-1 px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px] font-bold align-middle font-sans" title="3rd party 발주 건 — PO 한 줄이 한 줄 (호기 칸 = 수량)">{r.company}</span>
                           : !isMainRow(r.pn, csCode) && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle">sub</span>}
@@ -970,7 +1018,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   {vmCols && VM_MAT.map(([k], i) => { const v = r.vm?.[k] || ''; return (
                     <td key={k} data-no-select data-vm-mat={k} className={`px-1 py-2 text-center ${i === 0 ? 'border-l border-slate-100' : ''}`}>
                       <select value={v} onClick={e => e.stopPropagation()}
-                        onChange={e => toggleMut.mutate({ id: r.id, field: 'vm', value: { ...(r.vm || {}), [k]: e.target.value || null } })}
+                        onChange={e => setVmMat(r, k, e.target.value)}
                         className={`px-1 py-0.5 rounded text-[10px] font-bold border-0 cursor-pointer appearance-none text-center focus:outline-none focus:ring-1 focus:ring-indigo-400 ${VM_MAT_CLS[v] || 'bg-transparent text-slate-300'}`}>
                         {VM_MAT_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}
                       </select>

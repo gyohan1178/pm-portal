@@ -63,20 +63,27 @@ const fmtSize = (b) => {
 // projects(어셈블리) 1건 = bom 직계 자식들 구조.
 // 하위 품번이 다시 projects.code 로 존재하면 그 아래로 계속 내려간다.
 // 순환 참조·중복은 seen 으로 차단.
+// AXCELIS 가 아닌 고객사는 BOM 올릴 때 어셈블리 코드(projects.code)를 접두 없이 저장한다 (BOM.jsx)
+//   → 「ED-IE0441432」 를 「IE0441432」 로도 찾고, 찾은 것은 다시 접두 붙은 품번으로 맞춘다 (2026-10-08)
+const bare = (c) => String(c || '').replace(/^(ED|CS|VM)-/i, '')
 async function expandBOM(customerId, rootCode, maxDepth = 10) {
   const seen = new Map([[rootCode, { level: 0, name: '', wantRev: '' }]])
   let frontier = [rootCode]
 
   for (let depth = 1; depth <= maxDepth && frontier.length; depth++) {
-    // 1) 이번 단계 품번들 중 어셈블리인 것 찾기
+    // 1) 이번 단계 품번들 중 어셈블리인 것 찾기 (접두 없는 코드로도)
+    const back = new Map()
+    for (const c of frontier) { back.set(c, c); if (bare(c) !== c && !back.has(bare(c))) back.set(bare(c), c) }
+    const look = [...back.keys()]
     const projs = []
-    for (let i = 0; i < frontier.length; i += 200) {
-      const { data } = await supabase
+    for (let i = 0; i < look.length; i += 200) {
+      const { data, error } = await supabase
         .from('projects')
         .select('id, code, name, rev')
         .eq('customer_id', customerId)
-        .in('code', frontier.slice(i, i + 200))
-      projs.push(...(data || []))
+        .in('code', look.slice(i, i + 200))
+      if (error) throw error
+      projs.push(...(data || []).map((p) => ({ ...p, code: back.get(p.code) || p.code })))
     }
     if (!projs.length) break
 

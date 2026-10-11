@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 
 // 견적서_양식.xlsm 의 '견적서' 시트 레이아웃을 그대로 재현한다.
 // 받는 쪽에서 손볼 필요 없이 바로 보낼 수 있는 상태로 만드는 게 목적.
@@ -40,6 +39,8 @@ const put = (ws, addr, value, opt = {}) => {
  * extra: { detailRows, bomRows, infoRows }  — 내부 관리용 시트 (없으면 생략)
  */
 export async function downloadQuoteExcel({ head, lines, totals, extra = {}, fileName }) {
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+  const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = SUPPLIER.company
   wb.created = new Date()

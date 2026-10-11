@@ -7,6 +7,7 @@ import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { fetchAll } from '../../lib/paginate'
 import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
 import AutoInput from '../../components/AutoInput'
+import { ilikeAny } from '../../lib/pgFilter'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
 //    노출: 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM
@@ -18,7 +19,7 @@ async function searchItems(q) {
   if (!q.trim()) return []
   const { data, error } = await supabase.from('items')
     .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec')
-    .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer.ilike.%${q}%,manufacturer_code.ilike.%${q}%,spec.ilike.%${q}%`)
+    .or(ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q))
     .limit(200)
   if (error) throw error
   const ids = (data || []).map(d => d.id)
@@ -48,7 +49,7 @@ async function suggestItems(q) {
   if (!q || q.trim().length < 2) return []
   const { data } = await supabase.from('items')
     .select('id,std_code,name,type,manufacturer_code')
-    .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`)
+    .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer', 'spec'], q))
     .limit(8)
   return data || []
 }

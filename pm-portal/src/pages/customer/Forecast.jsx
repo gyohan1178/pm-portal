@@ -6,6 +6,7 @@ import { quarterOf, fmt1, todayISO } from '../../lib/utils'
 import {useParams, Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
+import { pgQuote } from '../../lib/pgFilter'
 import { supabase } from '../../lib/supabase'
 import CustomerTabs from '../../components/CustomerTabs'
 import { parseEdForecastDetail, loadRules, fetchEdProduction, planFcApply, applyFcPlan, planSummary } from '../../lib/edForecast'
@@ -112,21 +113,27 @@ export function parseForecast(wb, csCode) {
   return out
 }
 
-async function fetchForecast(csId) {
+export async function fetchForecast(csId) {
   if (!csId) return { latest: [], months: [], analysis: null, prevBatch: null, latestBatch: null }
   // 최신 2개 batch 가져오기 (변화 비교)
-  // 최신 2개 batch 찾기 — 한 회차가 수천 행이라 행 단위 limit으론 직전 회차가 잘림.
-  // distinct batch가 2개 모일 때까지 페이징.
+  //   예전엔 회차를 2개 찾을 때까지 포캐스트 행 전체(최대 5만 행)를 1000행씩 훑었다.
+  //   ① 가장 최근 행의 회차 ② 그 회차가 아닌 가장 최근 행의 회차 — 두 번만 묻는다. (결과는 같다)
+  const head = () => supabase.from('forecasts')
+    .select('batch_id, received_date, created_at')
+    .eq('customer_id', csId)
+  const newest = async (q) => {
+    const { data, error } = await q.order('created_at', { ascending: false, nullsFirst: false }).order('batch_id').limit(1)
+    if (error) throw error
+    return data?.[0]
+  }
   const seen = []
-  for (let from = 0; from < 50000 && seen.length < 2; from += 1000) {
-    const { data: page } = await supabase.from('forecasts')
-      .select('batch_id, received_date, created_at')
-      .eq('customer_id', csId)
-      .order('created_at', { ascending: false, nullsFirst: false }).order('batch_id')
-      .range(from, from + 999)
-    if (!page || !page.length) break
-    page.forEach(b => { if (!seen.find(x => x.batch_id === b.batch_id)) seen.push(b) })
-    if (page.length < 1000) break
+  const b1 = await newest(head())
+  if (b1) {
+    seen.push(b1)
+    const b2 = await newest(b1.batch_id == null
+      ? head().not('batch_id', 'is', null)
+      : head().or(`batch_id.is.null,batch_id.neq.${pgQuote(b1.batch_id)}`))
+    if (b2) seen.push(b2)
   }
   const latestBatch = seen[0], prevBatch = seen[1]
   if (!latestBatch) return { latest: [], months: [], analysis: null, prevBatch: null, latestBatch: null }
@@ -139,7 +146,8 @@ async function fetchForecast(csId) {
         .eq('customer_id', csId)
       q = (b.batch_id == null) ? q.is('batch_id', null) : q.eq('batch_id', b.batch_id)
       // 정렬이 없으면 페이지마다 순서가 달라져 같은 행이 두 번 오거나 빠진다
-      const { data } = await q.order('std_code').order('year_month').range(from, from + 999)
+      const { data, error } = await q.order('std_code').order('year_month').range(from, from + 999)
+      if (error) throw error
       all.push(...(data || [])); if (!data || data.length < 1000) break
     }
     return all
@@ -261,7 +269,7 @@ export default function Forecast() {
   const [qview, setQview] = useState(false)
 
   const { data: cs } = useCustomer(csCode)
-  const { data: fc = { latest: [], months: [] }, isLoading } = useQuery({
+  const { data: fc = { latest: [], months: [] }, isLoading, error: fcErr } = useQuery({
     queryKey: ['forecast', cs?.id], queryFn: () => fetchForecast(cs?.id), enabled: !!cs?.id,
   })
 
@@ -310,14 +318,28 @@ export default function Forecast() {
         const { data } = await supabase.from('items').select('id,std_code').in('std_code', codes.slice(i, i + 300))
         ;(data || []).forEach(x => { itemMap[x.std_code] = x.id })
       }
-      const payload = preview.rows.map(r => ({
+      // 같은 품번 · 달은 한 줄로 (고객사 파서가 합치지 않은 경우) — 줄이 겹치면 다시 읽을 때 순서가 흔들린다
+      const agg = new Map()
+      for (const r of preview.rows) {
+        const k = r.std_code + '|' + r.year_month
+        const cur = agg.get(k)
+        if (cur) cur.qty += Number(r.qty) || 0
+        else agg.set(k, { ...r, qty: Number(r.qty) || 0 })
+      }
+      const payload = [...agg.values()].map(r => ({
         customer_id: cs.id, std_code: r.std_code, item_id: itemMap[r.std_code] || null,
         item_name: r.item_name, year_month: r.year_month, qty: r.qty,
         batch_id, received_date: received,
       }))
-      for (let i = 0; i < payload.length; i += 500) {
-        const { error } = await supabase.from('forecasts').insert(payload.slice(i, i + 500))
-        if (error) throw error
+      // 500줄씩 넣다가 중간에 실패하면 넣은 만큼 지운다 — 반쪽 회차가 「최신」이 되지 않게 (2026-10-08)
+      try {
+        for (let i = 0; i < payload.length; i += 500) {
+          const { error } = await supabase.from('forecasts').insert(payload.slice(i, i + 500))
+          if (error) throw error
+        }
+      } catch (e) {
+        const { error: de } = await supabase.from('forecasts').delete().eq('batch_id', batch_id)
+        throw new Error(`${e.message} — 저장을 취소했습니다${de ? ` (⚠ 일부 줄 정리 실패: ${de.message} — 관리자에게 알려 주세요)` : ' (넣은 줄은 지웠습니다)'}`)
       }
       // Edwards — 생산관리에도 반영할지 묻는다. 여기서 실패해도 포캐스트 저장은 끝난 것이다.
       let prod = ''
@@ -371,6 +393,7 @@ export default function Forecast() {
       {result && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold">✅ {result}</div>}
 
       {/* 업로드 미리보기 */}
+      {fcErr && <p data-fc-error className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">포캐스트를 불러오지 못했습니다 — {fcErr.message} (「포캐스트 없음」이 아닙니다. 새로고침해 보세요)</p>}
       {preview && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <div className="flex items-center justify-between flex-wrap gap-2">

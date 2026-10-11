@@ -68,15 +68,18 @@ async function fetchBuyPOsFor(customerIds) {
 async function fetchProdFor(codes) {
   // production.customer_code 는 대문자 — 고객사별 병렬
   const perCode = await Promise.all(codes.map(async (code) => {
+    // 완료된 호기는 계산에 쓰지 않는다(지연 · 입고지연 · 하네스 모두 완료 제외). 받지 않으면 첫 화면이 가벼워진다.
     const { count } = await supabase.from('production')
       .select('*', { count: 'exact', head: true }).eq('customer_code', code.toUpperCase())
+      .or('status.is.null,status.neq.완료')
     if (!count) return []
     const pages = Math.ceil(count / 1000)
     const reqs = []
     for (let i = 0; i < pages; i++) {
       reqs.push(
         supabase.from('production').select('*')
-          .eq('customer_code', code.toUpperCase()).order('id').range(i * 1000, i * 1000 + 999)
+          .eq('customer_code', code.toUpperCase()).or('status.is.null,status.neq.완료')
+          .order('id').range(i * 1000, i * 1000 + 999)
           .then(r => must(r, '생산 조회') || [])
       )
     }

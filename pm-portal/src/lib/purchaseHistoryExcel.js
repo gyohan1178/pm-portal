@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 import { todayISO } from './utils'
 
 // 구매이력 (밀시트 대체) — 초도품 승인용.
@@ -74,6 +73,8 @@ function header(ws, cols, title, sub) {
  * rows : pm_purchase_history 결과
  */
 export async function downloadPurchaseHistory({ asm, rows, fileName }) {
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+  const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()

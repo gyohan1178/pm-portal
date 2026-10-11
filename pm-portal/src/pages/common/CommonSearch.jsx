@@ -6,6 +6,7 @@ import { useCustomers } from '../../hooks/useCustomers'
 import { addEffQty } from '../../lib/whereUsedEff'
 import { addPoQty, partDemand, PO_SPANS } from '../../lib/whereUsedPo'
 import ReqBOM from '../customer/ReqBOM'
+import { ilikeAny } from '../../lib/pgFilter'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -17,7 +18,7 @@ async function searchItems(q) {
     // ⚠ 구매처(vendors)는 가져오지 않는다. 화면에서 지워도 조회로 넘어오면
     //   개발자도구에서 보인다. 아예 받지 않는다.
     .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, customer_item_codes(customer_code,customers(code,name))')
-    .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer.ilike.%${q}%,manufacturer_code.ilike.%${q}%,spec.ilike.%${q}%`)
+    .or(ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q))
     .limit(200)
   if (error) throw error
   // 보관위치만 모은다. 수량은 받지 않는다 — 현장에서 물건을 찾는 화면이다.
@@ -74,10 +75,10 @@ export default function CommonSearch() {
   const { data: customers = [] } = useCustomers()
   const [reqCs, setReqCs] = useState('')
 
-  const { data: items = [], isLoading: pLoading } = useQuery({
+  const { data: items = [], isLoading: pLoading, error: pErr } = useQuery({
     queryKey: ['commonProduct', pSubmitted], queryFn: () => searchItems(pSubmitted), enabled: !!pSubmitted.trim(),
   })
-  const { data: used = [], isLoading: rLoading } = useQuery({
+  const { data: used = [], isLoading: rLoading, error: rErr } = useQuery({
     queryKey: ['commonWhereUsed', rSubmitted], queryFn: () => whereUsedAll(rSubmitted), enabled: !!rSubmitted.trim(),
   })
 
@@ -127,6 +128,8 @@ export default function CommonSearch() {
 
           {pSubmitted && (pLoading
             ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            : pErr
+              ? <div className="text-center py-10 text-rose-600 text-sm">검색 실패 — {pErr.message}</div>
             : items.length === 0
               ? <div className="text-center py-12 text-slate-300 text-sm">결과가 없습니다</div>
               : <div className="rounded-xl border border-slate-200 overflow-x-auto">
@@ -208,6 +211,8 @@ export default function CommonSearch() {
 
           {rSubmitted && (rLoading
             ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            : rErr
+              ? <div className="text-center py-10 text-rose-600 text-sm">조회 실패 — {rErr.message}</div>
             : grouped.length === 0
               ? <div className="text-center py-12 text-slate-300 text-sm">사용처가 없습니다</div>
               : <div className="space-y-3">

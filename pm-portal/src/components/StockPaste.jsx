@@ -117,18 +117,23 @@ export default function StockPaste({ onClose }) {
       const ids = target.map(r => r.item_id)
       const have = new Set()
       for (let i = 0; i < ids.length; i += 300) {
-        const { data } = await supabase.from('inventory')
+        const { data, error } = await supabase.from('inventory')
           .select('item_id').in('item_id', ids.slice(i, i + 300))
+        if (error) throw error
         ;(data || []).forEach(r => have.add(r.item_id))
       }
 
       const toUpdate = target.filter(r => have.has(r.item_id))
       const toInsert = target.filter(r => !have.has(r.item_id))
 
-      for (const r of toUpdate) {
-        const { error } = await supabase.from('inventory')
-          .update({ qty: r.qty }).eq('item_id', r.item_id)
-        if (error) throw error
+      // 한 줄씩 차례로 보내면 2,000줄에 2,000번 기다린다. 20줄씩 동시에 보낸다.
+      let done = 0
+      for (let i = 0; i < toUpdate.length; i += 20) {
+        const res = await Promise.all(toUpdate.slice(i, i + 20).map(r =>
+          supabase.from('inventory').update({ qty: r.qty }).eq('item_id', r.item_id)))
+        const bad = res.find(x => x.error)
+        done += res.filter(x => !x.error).length
+        if (bad) throw new Error(`${bad.error.message} (${done}건까지 반영됨)`)
       }
       if (toInsert.length) {
         const { error } = await supabase.from('inventory')
@@ -143,6 +148,7 @@ export default function StockPaste({ onClose }) {
       onClose?.()
     } catch (e) {
       toastError('반영 실패: ' + e.message)
+      qc.invalidateQueries({ queryKey: ['inventory'] })   // 일부 반영됐을 수 있어 화면을 다시 받는다
     } finally { setBusy(false) }
   }
 

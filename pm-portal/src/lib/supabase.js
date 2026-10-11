@@ -19,7 +19,8 @@ export async function fetchAllRows(table, { select = '*', match = {}, eq = {} } 
   // 1) 총 개수
   let countQ = base().select('*', { count: 'exact', head: true })
   for (const [k, v] of Object.entries(eq)) countQ = countQ.eq(k, v)
-  const { count } = await countQ
+  const { count, error: ce } = await countQ
+  if (ce) throw ce   // 실패를 「0건」으로 보이지 않게 (2026-10-08)
   if (!count) return []
   // 2) 페이지 병렬 요청
   const pages = Math.ceil(count / 1000)
@@ -28,7 +29,7 @@ export async function fetchAllRows(table, { select = '*', match = {}, eq = {} } 
     let q = base().select(select)
     for (const [k, v] of Object.entries(eq)) q = q.eq(k, v)
     // 정렬이 없으면 페이지마다 순서가 달라져 같은 행이 두 번 오거나 빠진다
-      reqs.push(q.order('id').range(i * 1000, i * 1000 + 999).then(r => r.data || []))
+      reqs.push(q.order('id').range(i * 1000, i * 1000 + 999).then(r => { if (r.error) throw r.error; return r.data || [] }))
   }
   return (await Promise.all(reqs)).flat()
 }

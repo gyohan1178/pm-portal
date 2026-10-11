@@ -1,13 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchVendors } from '../lib/vendorsQuery'
 
 // 공통 구매처 선택 — 페이지마다 select/검색 뒤섞인 것을 이걸로 통일.
 // props: value(vendor id), onChange(id, vendor), placeholder, allowClear
-async function fetchVendors() {
-  const { data } = await supabase.from('vendors').select('id,name,ecount_code').order('name')
-  return data || []
-}
 
 export default function VendorPicker({ value, onChange, placeholder = '구매처 검색·선택', allowClear = true }) {
   const { data: vendors = [] } = useQuery({ queryKey: ['vendors'], queryFn: fetchVendors })

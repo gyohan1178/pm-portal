@@ -261,9 +261,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const noBomAsm = asmCodes.filter(c => !bomCodes.has(c))   // ASSY인데 BOM 없는 것
 
       // 사라진 PO 과다 경고 (전체 진행중의 40% 넘으면 의심)
-      const disappearWarn = all.length > 0 && disappeared.length / all.length > 0.4
+      //   분모는 진행중 PO — 완료 · 취소 이력까지 넣으면 엉뚱한 파일을 올려도 9% 쯤으로 나와 경고가 안 떴다 (2026-10-08)
+      const liveCount = all.filter(e => e.status !== '완료' && e.status !== '취소').length
+      const disappearWarn = liveCount > 0 && disappeared.length / liveCount > 0.4
 
-      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: all.length,
+      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: liveCount,
                tpReady, tpOpen: tpOpen.length, tpTotal: tp.rows.length,
                planReady, planUpd, planInFile: rows.filter(r => r.plan_exc).length,
                // 약속일이 이미 지난 줄 — 엑셀에서 새 날짜로 고쳐 다시 올려야 한다
@@ -288,18 +290,43 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       // 여기서 뚫리면 고객사가 비어 있는 PO 가 만들어져 어디에도 안 보인다
       if (!csId) throw new Error('고객사 정보를 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.')
       const now = new Date().toISOString()
+      // ⚠ 예전엔 줄마다 품목 조회 · 저장을 차례로 기다려 수백 줄이면 1~3분 걸렸다.
+      //   품목은 한 번에 찾아 없는 것만 한 번에 만들고, 저장은 20줄씩 동시에 · 신규는 200줄씩 묶어 보낸다.
+      const pool = async (arr, fn, n = 20) => {
+        for (let i = 0; i < arr.length; i += n) {
+          const res = await Promise.all(arr.slice(i, i + n).map(fn))
+          const bad = res.find(r => r?.error)
+          if (bad) throw bad.error
+        }
+      }
+      // 필요한 품번 전부 → id
+      const need = {}   // code → 새로 만들 때 이름
+      diff.changes.forEach(c => c.chg.forEach(x => { if (x.field === 'item' && x._newCode) need[x._newCode] ??= '' }))
+      diff.news.forEach(n => { if (n.code) need[n.code] = need[n.code] || (n.third_party ? (n.name || '') : '') })
+      const itemByCode = {}
+      const needCodes = Object.keys(need)
+      for (let i = 0; i < needCodes.length; i += 300) {
+        const { data, error } = await supabase.from('items').select('id,std_code,type').in('std_code', needCodes.slice(i, i + 300))
+        if (error) throw new Error('품목 조회 실패: ' + error.message)
+        ;(data || []).forEach(it => { itemByCode[it.std_code] = it })
+      }
+      const missing = needCodes.filter(c => !itemByCode[c])
+      let created = 0
+      for (let i = 0; i < missing.length; i += 200) {
+        const { data, error } = await supabase.from('items')
+          .insert(missing.slice(i, i + 200).map(c => ({ std_code: c, name: need[c] || '', type: '자재', unit: 'EA' })))
+          .select('id,std_code,type')
+        if (error) throw new Error('신규 품번 생성 실패: ' + error.message)
+        ;(data || []).forEach(it => { itemByCode[it.std_code] = it; created++ })
+      }
+
       // 변경 적용
-      for (const c of diff.changes) {
+      await pool(diff.changes, c => {
         const patch = {}
         for (const x of c.chg) {
           if (x.field === 'item') {
-            // 품번 변경 → item_id 교체 (없으면 생성)
-            let { data: it } = await supabase.from('items').select('id').eq('std_code', x._newCode).maybeSingle()
-            if (!it) {
-              const { data: m, error: mErr } = await supabase.from('items').insert({ std_code: x._newCode, name: '', type: '자재', unit: 'EA' }).select('id').single()
-              if (mErr) throw new Error('신규 품번 생성 실패(' + x._newCode + '): ' + mErr.message)
-              it = m
-            }
+            // 품번 변경 → item_id 교체 (없던 품번은 위에서 만들었다)
+            const it = itemByCode[x._newCode]
             if (it) patch.item_id = it.id
           } else {
             patch[x.field] = x.to
@@ -311,23 +338,15 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         // 반복 변경은 별도 배지로 표시한다.
         patch.changes = [...(c.prevChanges || []),
                          ...c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now }))]
-        const { error } = await supabase.from('purchase_orders').update(patch).eq('id', c.id)
-        if (error) throw error
-      }
+        return supabase.from('purchase_orders').update(patch).eq('id', c.id)
+      })
 
-      // 신규 insert (품목 없으면 자동 생성)
-      let inserted = 0, created = 0
-      for (const n of diff.news) {
-        let { data: item } = await supabase.from('items').select('id,type').eq('std_code', n.code).maybeSingle()
-        if (!item) {
-          // 미등록 품목 자동 생성
-          const { data: made, error: ce } = await supabase.from('items')
-            .insert({ std_code: n.code, name: n.third_party ? (n.name || '') : '', type: '자재', unit: 'EA' })
-            .select('id,type').single()
-          if (ce) throw ce
-          item = made; created++
-        }
-        const { error } = await supabase.from('purchase_orders').insert({
+      // 신규 insert (품목은 위에서 확보)
+      let inserted = 0
+      const newRows = diff.news.map(n => {
+        const item = itemByCode[n.code]
+        if (!item) throw new Error('품목을 찾지 못했습니다: ' + n.code)
+        return {
           customer_id: csId, item_id: item.id, order_type: 'customer_po',
           po_number: n.po_number, ccn: n.ccn || null, order_line: n.order_line || null,
           del_line: n.del_line || null, item_rev: n.item_rev || null,
@@ -339,9 +358,13 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           status: '진행중', changes: [],
           ...(n.third_party ? { third_party: n.third_party } : {}),
           ...(diff.planReady && n.plan_exc ? { plan_exc: n.plan_exc } : {}),
-        })
-        if (error) throw error
-        inserted++
+        }
+      })
+      for (let i = 0; i < newRows.length; i += 200) {
+        const chunk = newRows.slice(i, i + 200)
+        const { error } = await supabase.from('purchase_orders').insert(chunk)
+        if (error) throw new Error(`신규 PO 등록 실패 (${inserted}건까지 등록됨): ${error.message}`)
+        inserted += chunk.length
       }
       // Plan Exc Type(HOT 등) 맞추기 — 값만 바꾸고 변경 이력에는 안 남긴다
       const byV = {}
@@ -358,7 +381,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const dis = (diff.disappeared || [])
         .map(d => d.kind === '확인' ? { ...d, kind: disPick[d.id] || null } : d)
         .filter(d => d.kind && disCheck[d.id] !== false)
-      for (const d of dis) {
+      const disJobs = dis.map(d => {
         const newStatus = d.kind === '납품' ? '완료' : '취소'
         const patch = { status: newStatus, issued: d.kind === '납품', issued_at: d.kind === '납품' ? now : null }
         // 부분납품이면 실제 납품수량으로 보정 (예: 4개 등록인데 3개만 납품 → qty=3으로 완료)
@@ -373,17 +396,14 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         }
         // 완료건 단가 채우기: DB에 단가 없으면 Received 단가로 (매출 집계용)
         if (d.kind === '납품' && d.priceFill && d.rcvPrice > 0) patch.unit_price = d.rcvPrice
-        const { error } = await supabase.from('purchase_orders').update(patch).eq('id', d.id)
-        if (error) throw error
-        if (d.kind === '납품') done++; else canceled++
-      }
+        return { d, patch }
+      })
+      await pool(disJobs, ({ d, patch }) => supabase.from('purchase_orders').update(patch).eq('id', d.id)
+        .then(r => { if (!r.error) { if (d.kind === '납품') done++; else canceled++ } return r }))
       // 이미 완료된 과거 PO 단가 백필 (매출 집계용)
       let priceFilled = 0
-      for (const p of (diff.priceBackfill || [])) {
-        const { error } = await supabase.from('purchase_orders').update({ unit_price: p.price }).eq('id', p.id)
-        if (error) throw error
-        priceFilled++
-      }
+      await pool(diff.priceBackfill || [], p => supabase.from('purchase_orders').update({ unit_price: p.price }).eq('id', p.id)
+        .then(r => { if (!r.error) priceFilled++; return r }))
       // ① 납품이 끝난 PO 에 붙어 있던 호기를 먼저 완료로 바꾼다 (상태 무관).
       //   ⚠ 순서가 중요하다. 예전엔 연동(②)을 먼저 돌렸는데, 연동은 열린 PO 만 보고
       //     「완료 안 된 호기」를 납기순으로 다시 줄 세운다. 그래서 방금 납품된 호기가

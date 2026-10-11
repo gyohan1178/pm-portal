@@ -10,6 +10,7 @@ import { buildView } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
+import { ilikeAny } from '../../lib/pgFilter'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -260,18 +261,22 @@ export default function MaterialRequest() {
   const [q, setQ] = useState('')
   const [hits, setHits] = useState([])
   const timer = useRef(null)
+  const searchSeq = useRef(0)
 
   const doSearch = useCallback((v) => {
     setQ(v)
     clearTimeout(timer.current)
     if (v.trim().length < 2) { setHits([]); return }
+    const seq = ++searchSeq.current
     timer.current = setTimeout(async () => {
       const t = v.trim()
       // 품번·품명·제조사품번 어느 쪽으로도 찾을 수 있게 한다
-      const { data } = await supabase.from('items')
+      const { data, error } = await supabase.from('items')
         .select('id,std_code,name,unit,manufacturer,manufacturer_code')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
+        .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer'], t))
         .limit(15)
+      if (seq !== searchSeq.current) return   // 늦게 온 옛 검색 결과가 최신 결과를 덮지 않게
+      if (error) { toastError('검색 실패: ' + error.message); setHits([]); return }
       setHits(data || [])
     }, 300)
   }, [])
@@ -780,7 +785,7 @@ export default function MaterialRequest() {
     try {
       const { data, error } = await supabase.from('items')
         .select('id,std_code,name,manufacturer,manufacturer_code,unit')
-        .or(`std_code.ilike.%${k}%,name.ilike.%${k}%,manufacturer_code.ilike.%${k}%`)
+        .or(ilikeAny(['std_code', 'name', 'manufacturer_code'], k))
         .limit(20)
       if (error) throw error
       setCiHits(await attachStock(data || []))
@@ -1714,28 +1719,29 @@ export default function MaterialRequest() {
                           <div className="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5 flex-wrap">
                             <span className="font-semibold text-slate-500">요청 {h.requester}</span>
                             <span>{h.req_date}</span>
-                            {h.handler && (
+                            {(() => { const liveIt = g.items.filter(x => !['완료', '반려'].includes(x.status)); const hs = [...new Set(liveIt.map(x => x.handler).filter(Boolean))]; const hd = h.handler || g.items.find(x => x.handler)?.handler; return hd && (
                               <>
                                 <span className="text-slate-300">→</span>
                                 {canEdit && handlers.length > 0 && g.live ? (
                                   <span className="inline-flex items-center gap-1">
                                     <span className="font-semibold text-slate-500">처리</span>
-                                    <select data-reassign value={handlers.find(hh => hh.name === h.handler)?.id || ''} onClick={e => e.stopPropagation()}
+                                    <select data-reassign value={handlers.find(hh => hh.name === hd)?.id || ''} onClick={e => e.stopPropagation()}
                                       onChange={e => {
                                         const to = e.target.value
                                         const nm = handlers.find(hh => hh.id === to)?.name
-                                        if (!to || nm === h.handler) return
-                                        if (!window.confirm(`${h.req_no} 처리자를 ${h.handler} → ${nm} (으)로 바꿀까요?`)) return
-                                        assignHandler(g.items.filter(x => !['완료', '반려'].includes(x.status)).map(x => x.id), to, true)
+                                        if (!to || (hs.length <= 1 && nm === hd)) return
+                                        // 품목마다 처리자가 다를 수 있다 — 지금 처리자를 모두 보여 주고 묻는다 (2026-10-08)
+                                        if (!window.confirm(`${h.req_no} 처리자를 ${hs.length ? hs.join(' · ') : hd} → ${nm} (으)로 바꿀까요?\n열린 품목 ${liveIt.length}줄이 모두 ${nm} 담당이 됩니다.`)) return
+                                        assignHandler(liveIt.map(x => x.id), to, true)
                                       }}
                                       title="눌러서 처리자를 바꿉니다"
                                       className="px-1 py-0.5 rounded border border-slate-200 bg-white font-semibold text-slate-600 text-[11px] cursor-pointer hover:border-indigo-300">
-                                      {!handlers.some(hh => hh.name === h.handler) && <option value="">{h.handler}</option>}
+                                      {!handlers.some(hh => hh.name === hd) && <option value="">{hd}</option>}
                                       {handlers.map(hh => <option key={hh.id} value={hh.id}>{hh.name}{hh.id === me?.id ? ' (나)' : ''}</option>)}
                                     </select>
                                   </span>
                                 ) : (
-                                  <span className="font-semibold text-slate-500">처리 {h.handler}</span>
+                                  <span className="font-semibold text-slate-500">처리 {hs.length > 1 ? hs.join(' · ') : hd}</span>
                                 )}
                                 {h.handle_type && (
                                   <span className={`px-1.5 py-0.5 rounded font-bold ${
@@ -1744,7 +1750,7 @@ export default function MaterialRequest() {
                                     : 'bg-slate-100 text-slate-500'}`}>{h.handle_type}</span>
                                 )}
                               </>
-                            )}
+                            ) })()}
                             {g.unassigned && (
                               <>
                                 <span className="text-slate-300">→</span>

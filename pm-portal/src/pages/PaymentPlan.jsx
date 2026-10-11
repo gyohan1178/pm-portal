@@ -34,6 +34,9 @@ export default function PaymentPlan() {
   const [year] = useState(new Date().getFullYear())
   const [openPo, setOpenPo] = useState(null)
   const [rows, setRows] = useState([])        // 편집 중인 분할 행
+  // 기존 계획 읽기 상태. 읽기에 실패한 채로 저장하면 「지우고 새로 넣기」라 기존 계획이 날아간다.
+  const [planLoad, setPlanLoad] = useState('ok')   // 'loading' | 'ok' | 'err'
+  const [planOrig, setPlanOrig] = useState([])     // 저장 실패 시 되돌릴 원래 계획
   const [search, setSearch] = useState('')
   // 목록이 커지면 한 글자마다 재계산되어 입력이 멈춘다
   const dq = useDebounced(search, 250)
@@ -74,10 +77,13 @@ export default function PaymentPlan() {
   }, [monthly])
 
   async function openPlan(g) {
-    setOpenPo(g)
-    const { data } = await supabase.from('pm_payment_plan')
+    setOpenPo(g); setRows([]); setPlanOrig([]); setPlanLoad('loading')
+    const { data, error } = await supabase.from('pm_payment_plan')
       .select('*').eq('po_number', g.po_number).order('pay_date')
+    if (error) { setPlanLoad('err'); toastError('기존 결제 계획을 못 읽었습니다: ' + error.message); return }
+    setPlanOrig(data || [])
     setRows((data || []).map((r) => ({ ...r, _saved: true })))
+    setPlanLoad('ok')
   }
 
   const addRow = () => setRows((v) => [...v, { pay_date: todayISO(), amount: '', memo: '' }])
@@ -152,12 +158,15 @@ export default function PaymentPlan() {
 
   async function save() {
     if (!openPo) return
+    if (planLoad !== 'ok') { toastError('기존 계획을 아직 못 읽었습니다. 창을 닫고 다시 열어 주세요.'); return }
     const valid = rows.filter((r) => r.pay_date && num(r.amount) > 0)
+    let deleted = false
     try {
       // 이 발주서의 기존 계획을 지우고 새로 넣는다 (부분 수정보다 단순하고 안전)
       const { error: e1 } = await supabase.from('pm_payment_plan')
         .delete().eq('po_number', openPo.po_number)
       if (e1) throw e1
+      deleted = true
 
       if (valid.length) {
         const { error: e2 } = await supabase.from('pm_payment_plan').insert(
@@ -177,7 +186,12 @@ export default function PaymentPlan() {
       qc.invalidateQueries({ queryKey: ['paymentMonthly'] })
       setOpenPo(null); setRows([])
     } catch (e) {
-      toastError('저장 실패: ' + e.message)
+      // 지운 뒤 넣기가 실패했으면 원래 계획을 되살린다
+      if (deleted && planOrig.length) {
+        const { error: e3 } = await supabase.from('pm_payment_plan').insert(
+          planOrig.map(({ id, created_at, updated_at, _saved, ...r }) => r))
+        toastError('저장 실패: ' + e.message + (e3 ? ' · 원래 계획 복구도 실패 — 관리자에게 알려 주세요' : ' · 원래 계획으로 되돌렸습니다'))
+      } else toastError('저장 실패: ' + e.message)
     }
   }
 
@@ -295,6 +309,7 @@ export default function PaymentPlan() {
               <span className="font-mono text-indigo-600">{openPo.po_number}</span> ·
               {' '}{openPo.vendor_name}
             </p>
+            {planLoad === 'err' && <p data-plan-err className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-600">⚠ 기존 결제 계획을 못 읽어 저장을 막았습니다. 창을 닫고 다시 열어 주세요.</p>}
             <div className="mt-2 rounded-xl bg-slate-50 border border-slate-200 px-3 py-2 text-xs space-y-0.5">
               <div className="flex justify-between">
                 <span className="text-slate-400">발주액</span>
@@ -382,8 +397,8 @@ export default function PaymentPlan() {
                 className="flex-1 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
                 취소
               </button>
-              <button onClick={save}
-                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+              <button onClick={save} disabled={planLoad !== 'ok'} data-plan-save
+                className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
                 저장
               </button>
             </div>

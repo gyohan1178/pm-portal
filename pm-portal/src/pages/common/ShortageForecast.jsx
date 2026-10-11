@@ -121,10 +121,13 @@ async function fetchForecastShortage(csId) {
   return { rows: all, computedAt: metaRes.data?.computed_at || null }
 }
 
-const thisMonth = () => new Date().toISOString().slice(0, 7)
+// 달 계산은 한국 날짜 · 1일 기준으로 (2026-10-08)
+//   toISOString 은 UTC 라 매월 1일 0~9시엔 지난달로 보였고, 30 · 31일에 setMonth 하면 달이 하나 더 넘어갔다.
+const ym = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+const thisMonth = () => ym(new Date())
 const monthsAhead = (n) => {
-  const d = new Date(); d.setMonth(d.getMonth() + n)
-  return d.toISOString().slice(0, 7)
+  const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() + n)
+  return ym(d)
 }
 
 export default function ShortageForecast() {
@@ -271,8 +274,8 @@ export default function ShortageForecast() {
     const urgent = within3.filter(it => {
       if (!it.firstShortage) return false
       const ltMonths = Math.ceil((it.lt_weeks || 0) / 4)
-      const d = new Date(it.firstShortage + '-01'); d.setMonth(d.getMonth() - ltMonths)
-      return d.toISOString().slice(0, 7) <= thisMonth()
+      const d = new Date(it.firstShortage + '-01T12:00:00'); d.setMonth(d.getMonth() - ltMonths)
+      return ym(d) <= thisMonth()
     })
     return { items: list, months, summary: { risk: risk.length, within3: within3.length, urgent: urgent.length } }
   }, [rows])
@@ -284,7 +287,7 @@ export default function ShortageForecast() {
     return [...set]
   }, [rows])
   const { data: parentNames = {} } = useQuery({
-    queryKey: ['parentNames', csCode, parentCodes.length],
+    queryKey: ['parentNames', csCode, parentCodes.slice().sort().join(',')],   // 개수만 키로 쓰면 구성이 바뀌어도 옛 품명이 남았다
     enabled: parentCodes.length > 0,
     queryFn: async () => {
       const map = {}

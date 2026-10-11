@@ -18,6 +18,7 @@ import CustomerTabs from '../../components/CustomerTabs'
 import { todayISO } from '../../lib/utils'
 import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
 import { refreshProcurement } from '../../lib/refresh'
+import { ilikeAny } from '../../lib/pgFilter'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -167,6 +168,7 @@ async function fillMissingMfr(parsed) {
 
   const blank = (v) => !String(v ?? '').trim()
   let filled = 0
+  const jobs = []
   for (const it of existing) {
     const s = src[it.std_code]
     if (!s) continue
@@ -174,8 +176,13 @@ async function fillMissingMfr(parsed) {
     if (blank(it.manufacturer) && s.mfr) patch.manufacturer = s.mfr
     if (blank(it.manufacturer_code) && s.mfrPn) patch.manufacturer_code = s.mfrPn
     if (!Object.keys(patch).length) continue
-    const { error } = await supabase.from('items').update(patch).eq('id', it.id)
-    if (!error) filled++
+    jobs.push({ id: it.id, patch })
+  }
+  // 한 줄씩 기다리지 않고 20줄씩 동시에 보낸다
+  for (let i = 0; i < jobs.length; i += 20) {
+    const res = await Promise.all(jobs.slice(i, i + 20).map(j =>
+      supabase.from('items').update(j.patch).eq('id', j.id)))
+    filled += res.filter(r => !r.error).length
   }
   return { filled, checked: existing.length }
 }
@@ -232,7 +239,8 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   const projMap = {}
   for (let i = 0; i < parentCodes.length; i += 500) {
     const chunk = parentCodes.slice(i, i + 500)
-    const { data } = await supabase.from('projects').select('id,code').eq('customer_id', customerId).in('code', chunk)
+    const { data, error } = await supabase.from('projects').select('id,code').eq('customer_id', customerId).in('code', chunk)
+    if (error) throw new Error('어셈블리 확인 실패: ' + error.message)
     ;(data || []).forEach(p => { projMap[p.code] = p.id })
   }
   asmCount = Object.keys(projMap).length
@@ -267,7 +275,8 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   const itemMap = {}  // std_code → id
   for (let i = 0; i < pnArr.length; i += 500) {
     const chunk = pnArr.slice(i, i + 500)
-    const { data } = await supabase.from('items').select('id,std_code').in('std_code', chunk)
+    const { data, error } = await supabase.from('items').select('id,std_code').in('std_code', chunk)
+    if (error) throw new Error('품목 확인 실패: ' + error.message)
     ;(data || []).forEach(it => { itemMap[it.std_code] = it.id })
   }
 
@@ -340,14 +349,17 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
     }
   }
   // 일괄 insert (500씩)
+  //   ⚠ 기존 BOM 은 이미 지웠다. 저장 실패를 「건너뜀」으로 세면 성공처럼 보이고 BOM 이 빈다.
+  //     실패는 따로 세고, 화면에 복구 번호와 함께 빨갛게 알린다.
+  let failed = 0, failMsg = ''
   for (let i = 0; i < bomRows.length; i += 500) {
     const chunk = bomRows.slice(i, i + 500)
     const { error } = await supabase.from('bom').insert(chunk)
-    if (error) skipped += chunk.length; else saved += chunk.length
+    if (error) { failed += chunk.length; if (!failMsg) failMsg = error.message } else saved += chunk.length
     onProgress?.(`BOM 저장 중... ${Math.min(i + 500, bomRows.length)}/${bomRows.length}`)
   }
 
-  return { asmCount, saved, skipped, newItems }
+  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId }
 }
 
 // (구) 단일 어셈블리 BOM 저장
@@ -487,7 +499,7 @@ export default function BOM() {
     if (v.trim().length < 2) { setPartHits([]); return }
     const { data } = await supabase.from('items')
       .select('id,std_code,name,unit,manufacturer,manufacturer_code')
-      .or(`std_code.ilike.%${v}%,name.ilike.%${v}%,manufacturer_code.ilike.%${v}%`)
+      .or(ilikeAny(['std_code', 'name', 'manufacturer_code'], v))
       .limit(15)
     setPartHits(data || [])
   }
@@ -1042,9 +1054,15 @@ export default function BOM() {
       )}
 
       {/* 저장 결과 */}
+      {result?.failed > 0 && (
+        <div data-bom-failed className="rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-xs text-red-700 font-semibold">
+          ⚠ BOM {result.failed.toLocaleString()}행 저장 실패 — {result.failMsg}
+          {result.snapId ? ` · 지우기 전 BOM 은 복구 #${result.snapId} 에 남아 있습니다. 파일을 다시 올리거나 관리자에게 복구를 요청하세요.` : ' · 파일을 다시 올려 주세요.'}
+        </div>
+      )}
       {result && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center gap-3">
-          ✅ 저장 완료 — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
+          {result.failed > 0 ? '⚠ 일부만 저장' : '✅ 저장 완료'} — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
         </div>
       )}

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -7,6 +7,24 @@ import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
 import { todayISO } from '../../lib/utils'
+
+// 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
+function DraftNum({ value, onCommit, ...rest }) {
+  const [draft, setDraft] = useState(null)
+  const commit = () => {
+    if (draft === null) return
+    const v = draft
+    setDraft(null)
+    if (String(v) !== String(value)) onCommit(v)
+  }
+  return (
+    <input type="number" min="0" {...rest}
+      value={draft ?? (value ?? '')}
+      onChange={e => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur(); if (e.key === 'Escape') setDraft(null) }} />
+  )
+}
 
 const today = () => todayISO()
 
@@ -33,7 +51,8 @@ async function fetchAssys(csId) {
 }
 async function fetchCart(csId) {
   if (!csId) return []
-  const { data } = await supabase.from('pm_picking').select('*').eq('customer_id', csId).order('created_at')
+  const { data, error } = await supabase.from('pm_picking').select('*').eq('customer_id', csId).order('created_at')
+  if (error) throw error
   return data || []
 }
 
@@ -76,13 +95,21 @@ export default function Issue() {
   const updMut = useMutation({
     mutationFn: async ({ id, patch }) => { const { error } = await supabase.from('pm_picking').update(patch).eq('id', id); if (error) throw error },
     onSuccess: () => qc.invalidateQueries(['picking', csId]),
+    onError: e => toastError('수량 저장 오류: ' + e.message),
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_picking').delete().eq('id', id); if (error) throw error },
     onSuccess: () => qc.invalidateQueries(['picking', csId]),
+    onError: e => toastError('삭제 오류: ' + e.message),
   })
   const clearMut = useMutation({
-    mutationFn: async () => { const { error } = await supabase.from('pm_picking').delete().eq('customer_id', csId); if (error) throw error },
+    // 담기함은 같은 고객사를 보는 사람끼리 공유된다. 고객사 전체를 지우면
+    // 그 사이 다른 사람이 담은 줄까지 날아가므로, 지금 화면에 보이는 줄만 지운다.
+    mutationFn: async (ids) => {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { error } = await supabase.from('pm_picking').delete().in('id', ids.slice(i, i + 200)); if (error) throw error
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries(['picking', csId])
       // 상위품번·제외 표시도 함께 지운다. 남아 있으면 다음 불출표에 섞인다.
@@ -94,20 +121,29 @@ export default function Issue() {
   // 품목 검색. ASSY 는 고르면 하위가 전개되므로 미리 표시한다.
   //   같은 제조사품번에 코드가 여러 개 등록돼 있고 그중 하나만 재고를 관리한다.
   //   어느 것을 골라야 하는지 보이도록 재고·위치를 함께 붙인다.
-  async function searchItem(v) {
+  //   글자마다 조회하면 느린 앞 요청이 나중에 도착해 결과를 덮는다 → 입력이 멈춘 뒤 한 번, 순번으로 옛 응답은 버린다.
+  const searchTimer = useRef(null)
+  const searchSeq = useRef(0)
+  function searchItem(v) {
     setItemSearch(v)
+    clearTimeout(searchTimer.current)
+    const seq = ++searchSeq.current
     if (v.trim().length < 2 || !csId) { setItemHits([]); return }
-    const { data, error } = await supabase.rpc('pm_issue_search',
-      { p_customer_id: csId, q: v.trim() })
-    if (error) { toastError('검색 실패: ' + error.message); setItemHits([]); return }
-    try {
-      const withStock = await attachStock(data || [])
-      // 재고가 있는 것을 위로 — 고를 것이 대개 그것이다
-      withStock.sort((a, b) => (b.stock > 0) - (a.stock > 0))
-      setItemHits(withStock)
-    } catch {
-      setItemHits(data || [])          // 재고를 못 붙여도 검색은 되게 한다
-    }
+    searchTimer.current = setTimeout(async () => {
+      const { data, error } = await supabase.rpc('pm_issue_search',
+        { p_customer_id: csId, q: v.trim() })
+      if (seq !== searchSeq.current) return
+      if (error) { toastError('검색 실패: ' + error.message); setItemHits([]); return }
+      let hits = data || []
+      try {
+        const withStock = await attachStock(hits)
+        // 재고가 있는 것을 위로 — 고를 것이 대개 그것이다
+        withStock.sort((a, b) => (b.stock > 0) - (a.stock > 0))
+        hits = withStock
+      } catch { /* 재고를 못 붙여도 검색은 되게 한다 */ }
+      if (seq !== searchSeq.current) return
+      setItemHits(hits)
+    }, 250)
   }
 
   // 담을 목록 — 여기서 수량을 정한 뒤 한 번에 전개한다
@@ -125,7 +161,7 @@ export default function Issue() {
         is_assy: it.is_assy, child_cnt: it.child_cnt, qty: 1,
       }]
     })
-    setItemSearch(''); setItemHits([])
+    setItemSearch(''); setItemHits([]); searchSeq.current++; clearTimeout(searchTimer.current)
   }
 
   // 드롭다운에서 ASSY 담기
@@ -718,7 +754,7 @@ export default function Issue() {
         <div className="px-3 py-2 bg-slate-50 flex items-center justify-between">
           <span className="text-xs font-bold text-slate-600">장바구니 {cart.length}건 · 불출 {issuedCnt} / 결품 {shortCnt}</span>
           <div className="flex gap-2">
-            <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)`)) clearMut.mutate() }}
+            <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)\n※ 담기함은 같은 고객사 사용자끼리 공유됩니다. 지금 화면에 보이는 줄만 지웁니다.`)) clearMut.mutate(cart.map(c => c.id)) }}
               disabled={!cart.length || clearMut.isPending} className="px-3 py-1 text-xs font-semibold rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 초기화</button>
             <button onClick={() => setTimeout(printIssueSheet, 100)} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>
             <button onClick={printLabels} disabled={!cart.length} title="위치값 있는 품목을 ZM400 라벨로 출력 (Zebra Browser Print 필요)" className="px-3 py-1 text-xs font-semibold rounded border border-teal-200 text-teal-600 hover:bg-teal-50 disabled:opacity-40">🏷 라벨 출력</button>
@@ -776,8 +812,8 @@ export default function Issue() {
                   <td className="px-2 py-1.5 text-right">
                     {/* 재고가 모자라면 여기서 실제로 낼 수량을 줄인다.
                         나머지는 결품으로 잡힌다. */}
-                    <input type="number" min="0" value={a.issue}
-                      onChange={e => setIssueQty(a, e.target.value)}
+                    <DraftNum data-issue-total={a.std_code} value={a.issue}
+                      onCommit={v => setIssueQty(a, v)}
                       title="실제 불출할 수량. 소요보다 적으면 결품으로 잡힙니다"
                       className={`w-16 px-1 py-0.5 text-right font-bold border rounded ${
                         a.short > 0 ? 'border-red-300 text-red-600' : 'border-slate-200 text-teal-600'}`} />
@@ -845,7 +881,7 @@ export default function Issue() {
                   <td className="px-2 py-1.5 text-slate-400">{ln.source === 'hogi' ? `${ln.pn} ${ln.hogi}` : '직접'}</td>
                   <td className="px-2 py-1.5 text-right text-slate-500">{ln.qty}</td>
                   <td className="px-2 py-1.5 text-right">
-                    <input type="number" value={ln.issue_qty ?? ln.qty} onChange={e => updMut.mutate({ id: ln.id, patch: { issue_qty: Number(e.target.value) } })}
+                    <DraftNum data-issue-line={ln.id} value={ln.issue_qty ?? ln.qty} onCommit={v => updMut.mutate({ id: ln.id, patch: { issue_qty: Math.max(0, Number(v) || 0) } })}
                       className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded" />
                   </td>
                   <td className={`px-2 py-1.5 text-right font-bold ${sh > 0 ? 'text-red-500' : 'text-slate-300'}`}>{sh || '-'}</td>

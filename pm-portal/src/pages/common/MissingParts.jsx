@@ -1,9 +1,11 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 
 const MP_COLS = [
+  { key:'cs',     label:'고객사',    defaultWidth:70  },
   { key:'pn',     label:'품번',      defaultWidth:120 },
   { key:'hogi',   label:'호기',      defaultWidth:70  },
   { key:'part',   label:'결품 품목', defaultWidth:220 },
@@ -12,28 +14,50 @@ const MP_COLS = [
   { key:'status', label:'상태',      defaultWidth:100 },
 ]
 
+// 미불출 모아보기 (2026-10-08)
+//   · 전 고객사 (예전엔 AXCELIS 만) · 완료된 호기는 뺀다 · 1,000줄에서 잘리지 않게 끝까지 읽는다
+//   · 미불출은 저장 모양이 세 가지다 — 출고 연동 {std_code,name,qty,item_id} · 호기 편집 {pn(AX- 없음),name,maker,qty}
+//     · CSV {pn,expectedDate} → 품번을 하나로 맞추고, 재고는 품번으로 찾는다 (item_id 가 없는 줄도 재고가 보이게)
+const CS_PREFIX = { AX: 'AX-' }
+const codeOf = (m, cs) => {
+  if (m.std_code) return String(m.std_code).trim()
+  const pn = String(m.pn || '').trim()
+  if (!pn) return ''
+  const pre = CS_PREFIX[String(cs || '').toUpperCase()] || ''
+  return pre && !pn.toUpperCase().startsWith(pre) ? pre + pn : pn
+}
 async function fetchMissing() {
-  const { data: prod, error } = await supabase.from('production')
-    .select('id,pn,hogi,name,missing_parts,req_date')
-    .eq('customer_code', 'AX')
-  if (error) throw error
+  const prod = await fetchAll(() => supabase.from('production')
+    .select('id,pn,hogi,name,missing_parts,req_date,status,customer_code')
+    .order('id'))
   const rows = []
   for (const p of (prod || [])) {
+    if (p.status === '완료') continue
     const mp = Array.isArray(p.missing_parts) ? p.missing_parts : []
     for (const m of mp) {
+      if (!m) continue
       rows.push({
-        prodId: p.id, pn: p.pn, hogi: p.hogi, prodName: p.name, reqDate: p.req_date,
-        item_id: m.item_id, std_code: m.std_code, name: m.name, need: Number(m.qty) || 0,
+        prodId: p.id, cs: p.customer_code || 'AX', pn: p.pn, hogi: p.hogi, prodName: p.name, reqDate: p.req_date,
+        item_id: m.item_id || null, std_code: codeOf(m, p.customer_code), name: m.name || '', need: Number(m.qty) || 0,
+        due: m.expectedDate || m.date || null,
       })
     }
   }
+  // 재고 — item_id 가 없으면 품번으로 품목을 찾아 붙인다
+  const codes = [...new Set(rows.filter(r => !r.item_id && r.std_code).map(r => r.std_code))]
+  const idOf = {}
+  for (let i = 0; i < codes.length; i += 300) {
+    const { data, error } = await supabase.from('items').select('id,std_code,name').in('std_code', codes.slice(i, i + 300))
+    if (error) throw error
+    ;(data || []).forEach(x => { idOf[x.std_code] = x })
+  }
+  rows.forEach(r => { if (!r.item_id && idOf[r.std_code]) { r.item_id = idOf[r.std_code].id; if (!r.name) r.name = idOf[r.std_code].name } })
   const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))]
-  let invMap = {}
-  if (ids.length) {
-    for (let i = 0; i < ids.length; i += 300) {
-      const { data: inv } = await supabase.from('inventory').select('item_id,qty').in('item_id', ids.slice(i, i + 300))
-      ;(inv || []).forEach(x => { invMap[x.item_id] = Number(x.qty) || 0 })
-    }
+  const invMap = {}
+  for (let i = 0; i < ids.length; i += 300) {
+    const { data: inv, error } = await supabase.from('inventory').select('item_id,qty').in('item_id', ids.slice(i, i + 300))
+    if (error) throw error
+    ;(inv || []).forEach(x => { invMap[x.item_id] = (invMap[x.item_id] || 0) + (Number(x.qty) || 0) })
   }
   return rows.map(r => {
     const stock = invMap[r.item_id] ?? 0
@@ -42,7 +66,7 @@ async function fetchMissing() {
 }
 
 export default function MissingParts() {
-  const { data: rows = [], isLoading } = useQuery({ queryKey: ['missingParts'], queryFn: fetchMissing })
+  const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['missingParts'], queryFn: fetchMissing })
 
   const sorted = useMemo(() =>
     [...rows].sort((a, b) => (b.ready - a.ready) || String(a.pn).localeCompare(String(b.pn))), [rows])
@@ -53,7 +77,7 @@ export default function MissingParts() {
     <div className="p-4 max-w-5xl mx-auto space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-800">결품 현황</h1>
-        <p className="text-xs text-slate-400 mt-0.5">불출 못 한 부품 모아보기 · 재불출은 출고 작업 화면에서</p>
+        <p className="text-xs text-slate-400 mt-0.5">불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 재불출은 출고 작업 화면에서</p>
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -62,6 +86,7 @@ export default function MissingParts() {
         <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">입고됨 · 재불출 가능 {readyCnt}건</span>
       </div>
 
+      {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">불러오지 못했습니다 — {error.message}</p>}
       {isLoading ? (
         <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">불러오는 중…</p></div>
       ) : rows.length === 0 ? (
@@ -72,6 +97,7 @@ export default function MissingParts() {
             <tbody>
               {sorted.map((r, i) => (
                 <tr key={i} className={`border-t border-slate-100 ${r.ready ? 'bg-emerald-50/40' : ''}`}>
+                  <td className="px-3 py-2 text-[11px] font-bold text-slate-500 overflow-hidden truncate">{r.cs}</td>
                   <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{r.pn}</td>
                   <td className="px-3 py-2 font-mono font-bold text-indigo-600 overflow-hidden truncate">{r.hogi}</td>
                   <td className="px-3 py-2 overflow-hidden truncate"><span className="font-mono font-semibold text-slate-700">{r.std_code}</span> <span className="text-slate-500">{r.name}</span></td>

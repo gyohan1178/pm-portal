@@ -299,7 +299,10 @@ export default function Outbound() {
   }
 
   // BOM 로드되거나 대수 바뀌면 출고수량 자동계산 (제작구분 변경 시엔 리셋 안 함 — 수동 수정 보존)
-  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomItems, outUnits])
+  //   라벨 합산/개별 토글은 캐시(bomForOut)를 고쳐 쓰므로 배열이 새로 만들어진다.
+  //   배열 자체를 보면 그때마다 손으로 고친 수량이 지워지므로, 품목·소요량이 바뀔 때만 다시 채운다.
+  const bomSig = bomItems.map(b => `${b.item_id}:${b.qty_per_unit}`).join('|')
+  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomSig, outUnits, selCustomer, selProject])
 
   // 프로젝트 검색 필터
   const projFiltered = projects.filter(p=>{

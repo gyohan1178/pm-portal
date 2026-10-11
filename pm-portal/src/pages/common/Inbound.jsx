@@ -16,16 +16,14 @@ import { todayISO, ymdKST } from '../../lib/utils'
 import { useSearchParams } from 'react-router-dom'
 import { pendingHay, histHay, histMemo } from '../../lib/inboundSearch'
 import LotInboundModal from '../../components/LotInboundModal'
+import { ilikeAny } from '../../lib/pgFilter'
+import { fetchVendors } from '../../lib/vendorsQuery'
 
 function todayStr() { return todayISO() }
 function monthAgoStr() {
   const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
-async function fetchVendors() {
-  const { data } = await supabase.from('vendors').select('id,name').order('name')
-  return data || []
-}
 async function fetchPendingPOs(customerId, vendorId) {
   const make = () => {
     let q = supabase.from('purchase_orders')
@@ -43,28 +41,44 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   // (item의 기본 vendor가 아니라, 실제 발주한 구매처를 표시하기 위함)
   // 500건에서 잘리던 것을 5,000건까지 넓혔다.
   // 그 이상은 기간을 좁히는 것이 맞고, 화면 표시는 '더 보기'로 나눈다.
+  //   고객사는 서버에서 거른다 — 예전엔 5,000건을 자른 뒤 화면에서 걸러 더 많이 빠졌다 (2026-10-08)
+  //   5,000건에 닿으면 capped 로 알려 화면에 「기간을 좁혀 주세요」를 띄운다.
   const CAP = 5000
   const PAGE = 1000
-  let data = []
+  let data = [], capped = false
   for (let off = 0; off < CAP; off += PAGE) {
-    const { data: batch, error } = await supabase.from('stock_movements')
+    let q = supabase.from('stock_movements')
       .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, vendors(name), projects(code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
+    if (customerId) q = q.eq('customer_id', customerId)
+    const { data: batch, error } = await q
       .order('movement_date', { ascending: false }).order('id', { ascending: true })
       .range(off, off + PAGE - 1)
     if (error) throw error
     data = data.concat(batch || [])
     if (!batch || batch.length < PAGE) break
+    if (off + PAGE >= CAP) capped = true
   }
-  let rows = (data||[]).map(r=>({
-    ...r,
-    movement_date: r.movement_date,
-  }))
-  if (customerId) rows = rows.filter(r=>r.customer_id===customerId)
-  return rows
+  return { rows: data || [], capped }
 }
+
+// 입고현황 정렬 — 머리글 이름 → 정렬 값
+const histMfr = r => r.purchase_orders?.mfr || r.items?.manufacturer || ''
+const histMpn = r => r.purchase_orders?.mfr_code || r.items?.manufacturer_code || ''
+const numOr = v => (v == null || v === '' ? null : Number(v))
+export const HIST_SORT = {
+  '입고일': r => r.movement_date || '', '기준코드': r => r.items?.std_code || '', '품명': r => r.items?.name || '',
+  '제조사': histMfr, '제조사품번': histMpn, '수량': r => numOr(r.qty), '단위': r => r.items?.unit || '',
+  '단가': r => numOr(r.unit_price), '금액': r => (r.unit_price ? (Number(r.qty) || 0) * Number(r.unit_price) : null),
+  '발주번호': r => r.purchase_orders?.po_number || '', '상위품목': r => r.purchase_orders?.projects?.code || '',
+  '구매처': r => r.purchase_orders?.vendors?.name || '', '고객사': r => r.customers?.name || '', '비고': r => histMemo(r),
+}
+// 입고현황 전체 검색 — 표에 보이는 칸 전부
+export const histAllHay = r => [r.movement_date, histHay(r), histMfr(r), histMpn(r), r.items?.unit, r.qty, r.unit_price,
+  r.purchase_orders?.projects?.code, r.purchase_orders?.vendors?.name, r.customers?.name, r.customers?.code, histMemo(r)]
+  .filter(v => v != null && v !== '').join(' ').toLowerCase()
 
 async function processInbound({ items, inboundData, note, inboundDate }) {
   // 입고 처리 전체를 Postgres 함수에서 트랜잭션으로 — 전부 성공 아니면 전부 취소(중복/부분반영 없음)
@@ -83,12 +97,24 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
   logActivity('create', 'stock_movements', null,
     `입고 처리 ${lines.length}건 · ${inboundDate}${note ? ` · ${note}` : ''}`)
   // 입고 시 확정/수정된 단가를 최근 매입단가로 items.purchase_price에 반영 (입고가 발주단가보다 우선)
-  const seen = {}
+  //   ⚠ 지난 날짜로 입고를 잡으면(뒤늦은 입력) 그보다 최근 입고가 이미 있을 수 있다.
+  //     그때 옛 단가로 덮으면 최근 매입가가 거꾸로 돌아가므로, 더 최근 입고가 있는 품목은 건너뛴다.
+  //   같은 품목이 여러 줄이면 마지막 줄 단가를 쓴다.
+  const latest = {}
   for (const l of lines) {
-    if (l.item_id && l.unit_price != null && l.unit_price > 0 && !seen[l.item_id]) {
-      seen[l.item_id] = true
-      await supabase.from('items').update({ purchase_price: l.unit_price }).eq('id', l.item_id)
-    }
+    if (l.item_id && l.unit_price != null && l.unit_price > 0) latest[l.item_id] = l.unit_price
+  }
+  const ids = Object.keys(latest)
+  if (!ids.length) return
+  const { data: newer, error: nErr } = await supabase.from('stock_movements')
+    .select('item_id').eq('movement_type', '입고').in('item_id', ids)
+    .gt('movement_date', inboundDate).not('unit_price', 'is', null).limit(1000)
+  if (nErr) return   // 입고는 이미 끝났다. 최근 매입가 갱신만 건너뛴다.
+  const skip = new Set((newer || []).map(r => r.item_id))
+  const upd = ids.filter(id => !skip.has(id))
+  for (let i = 0; i < upd.length; i += 20) {
+    await Promise.all(upd.slice(i, i + 20).map(id =>
+      supabase.from('items').update({ purchase_price: latest[id] }).eq('id', id)))
   }
 }
 
@@ -145,12 +171,17 @@ export default function Inbound() {
   const dHItem = useDebounced(hItem, 250)
   const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayStr(), customerId:'', vendorId:'' })
   const [selHist, setSelHist] = useState(new Set())
+  // 입고현황 전체 검색 · 헤더 정렬 (2026-10-08)
+  const [hAll, setHAll] = useState('')
+  const dHAll = useDebounced(hAll, 250)
+  const [hSort, setHSort] = useState({ key: null, dir: 'asc' })
 
   const { data: customers=[] } = useCustomers()
   // 발주외 품목 자동완성 (공용 AutoInput 사용)
   const fetchDirectSuggest = async (q) => {
-    const { data } = await supabase.from('items').select('id,std_code,name,unit,manufacturer,manufacturer_code,lot_managed')
-      .or(`std_code.ilike.%${q}%,name.ilike.%${q}%,manufacturer_code.ilike.%${q}%,manufacturer.ilike.%${q}%,spec.ilike.%${q}%`).limit(20)
+    const { data, error } = await supabase.from('items').select('id,std_code,name,unit,manufacturer,manufacturer_code,lot_managed')
+      .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer', 'spec'], q)).limit(20)
+    if (error) throw error
     return data || []
   }
   const iCanEdit = useCanEdit()
@@ -197,12 +228,14 @@ export default function Inbound() {
     const miss = poFromUrl.length - found.length
     toastSuccess(`발주 ${found.length}건을 담았습니다${miss ? ` (${miss}건은 이미 입고 완료)` : ''} — 수량·단가 확인 후 입고 처리`)
   }, [poFromUrl, poApplied, isLoading, pendingPOs])   // eslint-disable-line react-hooks/exhaustive-deps
-  const { data: history=[], isLoading: histLoading } = useQuery({
+  const { data: histData, isLoading: histLoading, error: histErr } = useQuery({
     queryKey:['inboundHistory', hQuery],
     queryFn:()=>fetchInboundHistory({ from:hQuery.from, to:hQuery.to, customerId:hQuery.customerId, vendorId:hQuery.vendorId }),
     enabled: tab==='history',
     placeholderData: (prev) => prev,
   })
+  const history = histData?.rows || []
+  const histCapped = !!histData?.capped
 
   const inboundMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
@@ -371,23 +404,47 @@ export default function Inbound() {
   const histShown = useMemo(() => {
     const vq = dHVendor.trim().toLowerCase()
     const iq = dHItem.trim().toLowerCase()
-    if (!vq && !iq) return history || []
-    return (history || []).filter(r => {
+    const words = dHAll.trim().toLowerCase().split(/\s+/).filter(Boolean)
+    let list = (!vq && !iq && !words.length) ? (history || []) : (history || []).filter(r => {
       const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
       if (vq && !vname.includes(vq)) return false
       if (iq) {
         // 기준코드·품명뿐 아니라 제조사·제조사품번 · 비고(입고 · 발주) · 발주번호로도 찾는다
         if (!histHay(r).includes(iq)) return false
       }
+      if (words.length) {
+        // 전체 검색 — 표에 보이는 칸 전부 (낱말 여러 개면 모두 들어간 줄)
+        const hay = histAllHay(r)
+        if (!words.every(w => hay.includes(w))) return false
+      }
       return true
     })
-  }, [history, dHVendor, dHItem])
+    if (hSort.key) {
+      const get = HIST_SORT[hSort.key]
+      const dir = hSort.dir === 'asc' ? 1 : -1
+      list = [...list].sort((a, b) => {
+        const x = get(a), y = get(b)
+        const xe = x == null || x === '', ye = y == null || y === ''
+        if (xe && ye) return 0
+        if (xe) return 1
+        if (ye) return -1
+        if (typeof x === 'number' && typeof y === 'number') return (x - y) * dir
+        return String(x).localeCompare(String(y), 'ko') * dir
+      })
+    }
+    return list
+  }, [history, dHVendor, dHItem, dHAll, hSort])
+  // 거르는 조건이 바뀌면 선택을 푼다 — 안 보이는 줄이 삭제 · 입고일 변경에 섞이지 않게 (2026-10-08)
+  useEffect(() => { setSelHist(new Set()) }, [hQuery, dHVendor, dHItem, dHAll])
+  // 실행은 지금 보이는 줄 중 고른 것만
+  const selShown = useMemo(() => histShown.filter(r => selHist.has(r.id)).map(r => r.id), [histShown, selHist])
+  const sortBy = (key) => setHSort(s => s.key === key ? (s.dir === 'asc' ? { key, dir: 'desc' } : { key: null, dir: 'asc' }) : { key, dir: 'asc' })
   // 제조사·제조사품번 — 발주 줄에 적힌 값이 먼저다(실제 산 것). 비어 있으면 기준코드 DB 값
   const mfrOf = r => r.purchase_orders?.mfr || r.items?.manufacturer || ''
   const mpnOf = r => r.purchase_orders?.mfr_code || r.items?.manufacturer_code || ''
   const histTotal = histShown.reduce((a,r)=>a+r.qty,0)
   // 화면에는 200건씩 그린다. 수천 건을 한 번에 그리면 검색이 밀린다.
-  const hVis = useVisibleRows(histShown, 200, [dHVendor, dHItem, hQuery])
+  const hVis = useVisibleRows(histShown, 200, [dHVendor, dHItem, dHAll, hQuery, hSort])
 
   function exportHistory() {
     const data = histShown.map(r=>({
@@ -418,7 +475,15 @@ export default function Inbound() {
 
       {tab==='process' && (
         <>
-          <CsTabs sel={selCustomer} onSel={setSelCustomer} customers={customers} />
+          <CsTabs sel={selCustomer} customers={customers} onSel={(v) => {
+            // 고객사를 바꾸면 담은 발주가 목록에서 빠져 입고 대상에서도 말없이 사라졌다 → 묻고 비운다 (2026-10-08)
+            const n = Object.values(checked).filter(Boolean).length
+            if (v !== selCustomer && n > 0) {
+              if (!window.confirm(`담은 발주 ${n}건이 있습니다.\n고객사를 바꾸면 담은 목록이 비워집니다. 바꿀까요?`)) return
+              setChecked({})
+            }
+            setSelCustomer(v)
+          }} />
           {/* 위가 길면 표가 그만큼 밀린다. 라벨을 빼고 한 줄로 눕힌다. */}
           <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
             <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 검색"
@@ -741,29 +806,37 @@ export default function Inbound() {
               <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명·제조사·제조사품번·비고·발주번호" title="입고 비고 · 발주 비고(세트 이름 등) · 발주번호로도 찾습니다"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
+            <div className="min-w-[220px] flex-1">
+              <label className="block text-xs font-bold text-slate-500 mb-1">전체 검색</label>
+              <input data-hist-all value={hAll} onChange={e=>setHAll(e.target.value)} placeholder="표의 모든 칸 — 낱말 여러 개 가능 (예: 동신 2026-10)"
+                title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 상위품목 · 구매처 · 고객사 · 비고"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer,vendorId:null})}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
             {histShown.length>0&&(
               <button onClick={exportHistory}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
             )}
-            {selHist.size>0&&(<>
-              <button onClick={()=>setDateForm({ date:'', memo:'' })}
+            {selShown.length>0&&(<>
+              <button data-hist-date onClick={()=>setDateForm({ date:'', memo:'' })}
                 title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
-                📅 입고일 변경 {selHist.size}건</button>
-              <button onClick={()=>{
-                  if(window.confirm(`선택한 입고 이력 ${selHist.size}건을 삭제할까요?\n재고와 입고수량(qty_received)도 그만큼 되돌립니다.`))
-                    delHistMut.mutate([...selHist])
+                📅 입고일 변경 {selShown.length}건</button>
+              <button data-hist-del onClick={()=>{
+                  if(window.confirm(`선택한 입고 이력 ${selShown.length}건을 삭제할까요?\n재고와 입고수량(qty_received)도 그만큼 되돌립니다.`))
+                    delHistMut.mutate([...selShown])
                 }} disabled={delHistMut.isPending}
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
-                🗑 선택 {selHist.size}건 삭제</button>
+                🗑 선택 {selShown.length}건 삭제</button>
             </>)}
             <div className="ml-auto text-xs text-slate-400 self-center">
               총 {histShown.length}건 / {histTotal.toLocaleString()} {history[0]?.items?.unit||''}
             </div>
           </div>
 
+          {histErr && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">입고 현황을 불러오지 못했습니다 — {histErr.message}</p>}
+          {histCapped && <p data-hist-capped className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">⚠ 조회 기간의 입고가 5,000건을 넘어 앞의 5,000건만 불러왔습니다 (최근 입고일 순). 합계 · 엑셀이 모자랄 수 있으니 기간을 좁혀 조회해 주세요.</p>}
           <div className="grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-slate-200 p-3">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 입고 건수</p>
@@ -786,11 +859,13 @@ export default function Inbound() {
                   <thead><tr className="bg-slate-50 border-b border-slate-200">
                     <th className="px-3 py-2.5 w-8">
                       <input type="checkbox"
-                        checked={histShown.length>0 && selHist.size===histShown.length}
+                        checked={histShown.length>0 && selShown.length===histShown.length}
                         onChange={e=>setSelHist(e.target.checked ? new Set(histShown.map(r=>r.id)) : new Set())}/>
                     </th>
                     {['입고일','기준코드','품명','제조사','제조사품번','수량','단위','단가','금액','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
-                      <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
+                      <th key={h} data-hist-sort={h} onClick={()=>sortBy(h)} title="눌러서 정렬 — 오름차순 → 내림차순 → 원래 순서"
+                        className={`px-3 py-2.5 text-left font-bold text-xs uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-indigo-600 ${hSort.key===h?'text-indigo-600':'text-slate-400'}`}>
+                        {h}{hSort.key===h ? (hSort.dir==='asc' ? ' ▲' : ' ▼') : ''}</th>
                     ))}
                   </tr></thead>
                   <tbody>
@@ -841,7 +916,7 @@ export default function Inbound() {
             <div>
               <h3 className="text-base font-bold text-slate-900">📅 입고일 변경</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                {selHist.size}건. 수량·단가·재고는 그대로 두고 날짜만 바꿉니다.
+                {selShown.length}건. 수량·단가·재고는 그대로 두고 날짜만 바꿉니다.
               </p>
             </div>
 
@@ -889,11 +964,11 @@ export default function Inbound() {
               <button
                 onClick={()=>{
                   if(!dateForm.date){ toastError('바꿀 날짜를 넣으세요'); return }
-                  dateMut.mutate({ ids:[...selHist], date:dateForm.date, memo:dateForm.memo.trim() })
+                  dateMut.mutate({ ids:[...selShown], date:dateForm.date, memo:dateForm.memo.trim() })
                 }}
                 disabled={dateMut.isPending}
                 className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {dateMut.isPending ? '처리 중…' : `${selHist.size}건 변경`}
+                {dateMut.isPending ? '처리 중…' : `${selShown.length}건 변경`}
               </button>
             </div>
           </div>

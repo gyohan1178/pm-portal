@@ -20,17 +20,14 @@ import { genPoNumber } from '../../lib/poNumber'
 import { createPurchaseOrders, assignPoNumbers, poGroupKey } from '../../lib/createPO'
 import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
+import { ilikeAny } from '../../lib/pgFilter'
+import { fetchVendors } from '../../lib/vendorsQuery'
 
 
 function monthAgoStr() {
   const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
-async function fetchVendors() {
-  const { data } = await supabase.from('vendors')
-    .select('id,name,ecount_code,is_foreign,currency,markup,tariff_rate').order('name')
-  return data || []
-}
 async function fetchPurchases(csId) {
   if (!csId) return []
   const today = todayISO()
@@ -43,24 +40,22 @@ async function fetchPurchases(csId) {
 }
 async function fetchPurchaseHistory(csId, from, to) {
   if (!csId) return []
-  const { data, error } = await supabase.from('stock_movements')
-    .select('*, items(std_code,name,unit), purchase_orders(po_number,unit_price,vendor_id,project_id,vendors(name),projects(code,name))')
+  // 예전엔 .limit(2000) 이라 실제로는 1000행에서 잘렸다 (Supabase 기본 제한).
+  //   기간 안의 입고를 끝까지 받아 오고, 발주의 고객사 · 구분으로 거른다.
+  //   (발주 id 전부를 따로 받아 오던 두 번째 조회도 없앴다)
+  const data = await fetchAll(() => supabase.from('stock_movements')
+    .select('*, items(std_code,name,unit), purchase_orders(po_number,unit_price,vendor_id,project_id,customer_id,order_type,vendors(name),projects(code,name))')
     .eq('movement_type','입고')
     .gte('movement_date', from)
     .lte('movement_date', to)
-    .order('movement_date', { ascending: false }).order('id', { ascending: true })
-    .limit(2000)   // 발주가 쌓이므로 넉넉히. 화면 표시는 더 보기로 나눈다
-  if (error) throw error
-  // customer_id 필터 (purchase_orders 통해서)
-  const poIds = (data||[]).filter(r=>r.purchase_orders).map(r=>r.purchase_orders)
-  // customer_id 직접 필터 안 되므로 별도 조회
-  const myPOs = await fetchAll(() => supabase.from('purchase_orders').select('id').eq('customer_id', csId).eq('order_type','purchase'))
-  const myPOIds = new Set((myPOs||[]).map(p=>p.id))
-  return (data||[]).filter(r=>myPOIds.has(r.po_id)).map(r=>({
-    ...r,
-    movement_date: r.movement_date,
-    supply: r.qty * (r.purchase_orders?.unit_price||0),
-  }))
+    .order('movement_date', { ascending: false }).order('id', { ascending: true }))
+  return (data||[]).filter(r => r.po_id && r.purchase_orders
+      && r.purchase_orders.customer_id === csId && r.purchase_orders.order_type === 'purchase')
+    .map(r=>({
+      ...r,
+      movement_date: r.movement_date,
+      supply: r.qty * (r.purchase_orders?.unit_price||0),
+    }))
 }
 
 
@@ -308,7 +303,13 @@ export default function PurchasePage() {
         unit_price_fx: isForeign && fxPrice ? Number(fxPrice) : null,
         fx_rate: isForeign && fxRate ? Number(fxRate) : null,
         fx_currency: isForeign ? (curVendor?.currency || 'USD') : null }
-      if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
+      if (editId) {
+        // 이미 받은 양보다 적게 고치면 남은 수량이 음수가 되고 상태가 꼬인다.
+        const cur = must(await supabase.from('purchase_orders').select('qty_received').eq('id', editId).maybeSingle(), '입고량 확인')
+        const rec = Number(cur?.qty_received) || 0
+        if (payload.qty_ordered < rec) throw new Error(`이미 ${rec.toLocaleString()}개 입고됐습니다. 발주수량을 그보다 적게 할 수 없습니다.`)
+        const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error
+      }
       else await createPurchaseOrders([{ ...payload, customer_id: cs?.id, item_id: selItem?.id }], { log: '구매발주 등록', customerName: cs?.name })
     },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setForm(freshForm()); setSelItem(null); setSelVendor(''); setVendorSearch(''); setShowForm(false); setEditId(null) },
@@ -367,11 +368,16 @@ export default function PurchasePage() {
   const deleteMut = useMutation({
     mutationFn:async(id)=>{
       const po = purchases.find(p=>p.id===id)
+      // 입고가 잡힌 발주를 지우면 재고 · 매입 이력이 주인 없이 남는다. (일괄 삭제와 같은 규칙)
+      //   화면 값이 옛것일 수 있어 DB 에서 다시 읽는다.
+      const cur = must(await supabase.from('purchase_orders').select('qty_received').eq('id', id).maybeSingle(), '입고량 확인')
+      if (Number(cur?.qty_received) > 0) throw new Error(`이미 ${Number(cur.qty_received).toLocaleString()}개 입고된 발주입니다. 먼저 입고를 취소하세요.`)
       const{error}=await supabase.from('purchase_orders').delete().eq('id',id); if(error) throw error
       logActivity('delete','purchase_orders', po?.po_number || id,
         `${po?.items?.std_code||''} ${po?.vendors?.name||''} ${(po?.qty_ordered||0).toLocaleString()}개`, null, cs?.name)
     },
     onSuccess:()=>qc.invalidateQueries(['purchase']),
+    onError:(e)=>toastError('삭제 실패: ' + e.message),
   })
   const bulkPoMut = useMutation({
     mutationFn:async({ids,poNo})=>{
@@ -623,6 +629,9 @@ export default function PurchasePage() {
     setForm({po_number:p.po_number||'',type:p.type,qty_ordered:p.qty_ordered,order_date:p.order_date||'',promise_date:p.promise_date||'',unit_price:p.unit_price||'',memo:p.memo||''})
     setSelVendor(p.vendor_id||''); setVendorSearch(vendors.find(v=>v.id===p.vendor_id)?.name||''); setSelItem(p.items?{id:p.item_id,name:p.items.name,std_code:p.items.std_code}:null)
     setItemSearch(p.items?.name||''); setEditId(p.id); setShowForm(true)
+    // 해외 업체 발주는 외화 단가 · 환율을 같이 불러온다. 안 그러면 저장할 때 비어서 지워진다.
+    setFxPrice(p.unit_price_fx != null ? String(p.unit_price_fx) : '')
+    if (p.fx_rate != null) setFxRate(String(p.fx_rate))
     setTimeout(()=>document.getElementById('po-form')?.scrollIntoView({behavior:'smooth',block:'center'}), 60)
   }
   // 품목 검색 — 한 글자마다 DB 를 때리면 타이핑이 밀린다.
@@ -639,7 +648,7 @@ export default function PurchasePage() {
       const v = val.trim()
       const { data } = await supabase.from('items')
         .select('id,std_code,name,type,lt_weeks,vendor_id,manufacturer,manufacturer_code,purchase_price,unit,vendors(name)')
-        .or(`name.ilike.%${v}%,std_code.ilike.%${v}%,manufacturer.ilike.%${v}%,manufacturer_code.ilike.%${v}%,spec.ilike.%${v}%`)
+        .or(ilikeAny(['name', 'std_code', 'manufacturer', 'manufacturer_code', 'spec'], v))
         .limit(20)
       if (seq !== itemSearchSeq.current) return   // 더 최근 입력이 있으면 버린다
       // 같은 제조사품번에 코드가 여럿이고 그중 하나만 재고를 관리한다.

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
+import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
@@ -12,8 +13,9 @@ import * as XLSX from 'xlsx'
 
 const catBadge = c => PROC_CATS.has(c) ? 'bg-violet-50 text-violet-700' : (c==='기타'||c==='-' ? 'bg-slate-100 text-slate-500' : 'bg-blue-50 text-blue-600')
 import { toast, toastError, toastSuccess } from '../../lib/toast'
+import { logActivity } from '../../lib/activityLog'
 
-async function fetchInventory(search) {
+async function fetchInventory() {
   // 전체 페이징 (1000행 제한 회피)
   const all = []
   for (let from = 0; ; from += 1000) {
@@ -26,6 +28,10 @@ async function fetchInventory(search) {
     all.push(...(data || []))
     if (!data || data.length < 1000) break
   }
+  return all
+}
+// 검색은 화면에서 거른다 — 예전엔 검색할 때마다 재고 전체(수천 행)를 다시 받아 왔다.
+function filterInventory(all, search) {
   if (!search) return all
   const s = search.toLowerCase()
   return all.filter(r=>{
@@ -118,7 +124,11 @@ export default function Inventory() {
         //   비었거나 「(미지정)」이면 건드리지 않는다 — 있던 위치를 지우면 안 된다.
         const locRaw = String(j['보관위치'] ?? j['위치'] ?? j['location'] ?? '').trim()
         const location = !locRaw || locRaw === '(미지정)' ? null : locRaw
-        return { std_code: String(code).trim(), qty: Number(raw) || 0, location }
+        // 「1,200」 처럼 쉼표가 든 값이나 글자가 섞인 값을 0 으로 덮던 문제 — 쉼표 · 공백은 걷어 내고,
+        //   그래도 숫자가 아니면 건너뛴다(미리보기에 빨갛게 표시).
+        const n = Number(String(raw).replace(/[,\s]/g, ''))
+        if (!Number.isFinite(n)) return { std_code: String(code).trim(), qty: null, raw: String(raw), bad: true, location }
+        return { std_code: String(code).trim(), qty: n, location }
       }).filter(Boolean)
       setAuditRows(rows); setShowAudit(true)
     }
@@ -126,7 +136,9 @@ export default function Inventory() {
     e.target.value = ''
   }
   const auditMut = useMutation({
-    mutationFn: async (rows) => {
+    mutationFn: async (allAudit) => {
+      const bad = allAudit.filter(r => r.bad)
+      const rows = allAudit.filter(r => !r.bad)
       const codes = [...new Set(rows.map(r => r.std_code))]
       // item id 매핑 (청크 조회)
       const idMap = {}
@@ -151,10 +163,13 @@ export default function Inventory() {
       //   (한 줄씩 update 하면 2,000 건에 2,000 번 오간다)
       const ids = payload.map(p => p.item_id)
       const locMap = new Map()
+      const qtyMap = new Map()   // 바뀌기 전 수량 — 작업 기록에 남긴다
       for (let i = 0; i < ids.length; i += 300) {
-        const { data } = await supabase.from('inventory')
-          .select('item_id,location').in('item_id', ids.slice(i, i + 300))
-        ;(data || []).forEach(r => locMap.set(r.item_id, r.location ?? null))
+        // ⚠ 읽기 실패를 넘기면 위치가 전부 비어 덮어써진다. 실패하면 멈춘다.
+        const { data, error } = await supabase.from('inventory')
+          .select('item_id,location,qty').in('item_id', ids.slice(i, i + 300))
+        if (error) throw error
+        ;(data || []).forEach(r => { locMap.set(r.item_id, r.location ?? null); qtyMap.set(r.item_id, Number(r.qty) || 0) })
       }
       //   파일에 위치가 적혀 있으면 그 값으로 바꾸고, 비어 있으면 있던 위치를 지킨다.
       let locChanged = 0
@@ -172,26 +187,37 @@ export default function Inventory() {
         if (error) throw error
         applied += chunk.length
       }
-      return { applied, skipped, locChanged }
+      // 조정 이력 — 누가 언제 얼마를 얼마로 바꿨는지 작업 기록에 남긴다
+      const codeOf = {}; Object.entries(idMap).forEach(([c, id]) => { codeOf[id] = c })
+      const changed = merged.filter(m => (qtyMap.get(m.item_id) ?? 0) !== m.qty)
+      logActivity('update', 'inventory', `실사 ${applied}건`,
+        `재고 실사 반영 ${applied}건 · 수량 변동 ${changed.length}건` +
+        (changed.length ? ': ' + changed.slice(0, 12).map(m => `${codeOf[m.item_id] || m.item_id} ${qtyMap.get(m.item_id) ?? 0}→${m.qty}`).join(', ') + (changed.length > 12 ? ' 외' : '') : ''))
+      return { applied, skipped, locChanged, bad: bad.length, changed: changed.length }
     },
-    onSuccess: ({ applied, skipped, locChanged }) => {
+    onSuccess: ({ applied, skipped, locChanged, bad, changed }) => {
       qc.invalidateQueries(['inventory'])
-      toastSuccess(`실사 반영 완료: ${applied}건`
+      toastSuccess(`실사 반영 완료: ${applied}건 (수량 변동 ${changed}건)`
         + (locChanged ? ` · 위치 ${locChanged}건 변경` : '')
-        + (skipped.length ? ` · 미매칭 ${skipped.length}건 제외` : ''))
+        + (skipped.length ? ` · 미매칭 ${skipped.length}건 제외` : '')
+        + (bad ? ` · 숫자 아님 ${bad}건 제외` : ''))
       setShowAudit(false); setAuditRows([])
     },
+    onError: (e) => toastError('실사 반영 실패: ' + e.message),
   })
 
-  const { data: allRows=[], isLoading, error } = useQuery({
-    queryKey:['inventory',appliedSearch], queryFn:()=>fetchInventory(appliedSearch),
+  const { data: invAll, isLoading, error } = useQuery({
+    queryKey:['inventory','all'], queryFn:()=>fetchInventory(),
   })
+  const allRows = useMemo(() => filterInventory(invAll || [], appliedSearch), [invAll, appliedSearch])
 
-  const baseRows = (typeFilter==='전체' ? allRows : allRows.filter(r=>r.items?.type===typeFilter))
-    .filter(r => hideExcluded ? (r.items?.stock_managed !== false) : true)
+  const baseRows = useMemo(() => (typeFilter==='전체' ? allRows : allRows.filter(r=>r.items?.type===typeFilter))
+    .filter(r => hideExcluded ? (r.items?.stock_managed !== false) : true), [allRows, typeFilter, hideExcluded])
   const brandCounts = {}; baseRows.forEach(r=>{ const b=r.items?.manufacturer; if(b) brandCounts[b]=(brandCounts[b]||0)+1 })
   const brands = Object.keys(brandCounts).sort()
-  const rows = brandFilter==='전체' ? baseRows : baseRows.filter(r => (r.items?.manufacturer||'') === brandFilter)
+  const rows = useMemo(() => brandFilter==='전체' ? baseRows : baseRows.filter(r => (r.items?.manufacturer||'') === brandFilter), [baseRows, brandFilter])
+  // 수천 줄을 한 번에 그리면 체크 · 입력이 밀린다. 300줄씩 그리고 「더 보기」로 늘린다.
+  const vis = useVisibleRows(rows, 300, [appliedSearch, typeFilter, brandFilter, hideExcluded])
   const zeroStock=rows.filter(r=>r.qty===0).length
   const belowSafety=rows.filter(r=>r.qty<(r.items?.safety_stock||0)&&r.items?.safety_stock>0).length
   const totalValue=rows.reduce((a,r)=>a+(r.qty*(r.items?.purchase_price||0)),0)
@@ -314,13 +340,13 @@ export default function Inventory() {
                 </tr></thead>
                 <tbody>
                   {auditRows.map((r, i) => {
-                    const cur = curMap[r.std_code]; const known = cur !== undefined; const diff = known ? r.qty - cur : null
+                    const cur = curMap[r.std_code]; const known = cur !== undefined; const diff = known && !r.bad ? r.qty - cur : null
                     return (
                       <tr key={i} className="border-t border-slate-50">
                         <td className="px-3 py-1.5 font-mono font-semibold text-slate-700">{r.std_code}{!known && <span className="ml-1 text-[10px] text-amber-500">신규/미매칭</span>}</td>
                         <td className="px-3 py-1.5 font-mono text-slate-500">{r.location || <span className="text-slate-300">유지</span>}</td>
                         <td className="px-3 py-1.5 text-right tabular-nums text-slate-400">{known ? cur : '-'}</td>
-                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.qty}</td>
+                        <td className="px-3 py-1.5 text-right tabular-nums font-semibold">{r.bad ? <span data-audit-bad className="text-red-500" title="숫자가 아니라 건너뜁니다">{r.raw} ✕</span> : r.qty}</td>
                         <td className={`px-3 py-1.5 text-right tabular-nums ${diff > 0 ? 'text-emerald-600' : diff < 0 ? 'text-rose-500' : 'text-slate-300'}`}>{diff === null ? '-' : (diff > 0 ? '+' + diff : diff)}</td>
                       </tr>
                     )
@@ -389,7 +415,7 @@ export default function Inventory() {
           {() => (
             <tbody>
               {rows.length===0 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">재고 데이터가 없습니다</td></tr>
-              : rows.map(r=>{
+              : vis.shown.map(r=>{
                 const safety=r.items?.safety_stock||0
                 const status=r.qty===0?'zero':r.qty<safety&&safety>0?'low':'ok'
                 const itemValue=r.qty*(r.items?.purchase_price||0)
@@ -427,6 +453,7 @@ export default function Inventory() {
           )}
         </ResizableTable>
       )}
+      {!isLoading && <MoreRows {...vis} />}
     </div>
   )
 }

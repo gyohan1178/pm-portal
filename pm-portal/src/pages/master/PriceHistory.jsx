@@ -1,15 +1,16 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { fetchAll } from '../../lib/paginate'
 import { useDebounced } from '../../hooks/useDebounced'
 
 async function fetchPriceHistory(search) {
-  let q = supabase
-    .from('price_history')
-    .select('*, items(std_code, name, type), vendors(name)')
-    .order('year', { ascending: false })
-  // 이력은 계속 쌓인다. 조회는 넉넉히 하고 화면 표시는 더 보기로 나눈다.
-  const { data } = await q.limit(2000)
+  // 이력은 계속 쌓인다. 예전 .limit(2000) 은 실제로 1000행에서 잘렸다(Supabase 기본 제한) — 끝까지 나눠 받는다.
+  const sel = '*, items(std_code, name, type), vendors(name)'
+  const data = await fetchAll(() => supabase.from('price_history').select(sel)
+      .order('year', { ascending: false }).order('id', { ascending: true }))
+    .catch(() => fetchAll(() => supabase.from('price_history').select(sel)   // id 칸이 없을 때 대비
+      .order('year', { ascending: false }).order('item_id', { ascending: true }).order('vendor_id', { ascending: true })))
   if (!search) return data || []
   return (data || []).filter(r =>
     r.items?.name?.includes(search) || r.items?.std_code?.includes(search)

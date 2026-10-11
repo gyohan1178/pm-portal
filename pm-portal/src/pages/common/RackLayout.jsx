@@ -31,6 +31,9 @@ const OBJ_STYLE = {
 
 // 창고 배치도. 기둥 때문에 랙 간격이 일정하지 않아
 // 격자 위에서 직접 끌어 옮기고 좌표를 저장하는 방식으로 만들었다.
+// 불러오는 동안의 빈 목록 — 매번 새 배열이면 3D 장면이 렌더마다 통째로 다시 만들어진다 (2026-10-08)
+const NO_ROWS = []
+
 export default function RackLayout() {
   const nav = useNavigate()
   const { code } = useParams()
@@ -170,7 +173,7 @@ export default function RackLayout() {
   const [pick, setPick] = useState(null)   // 편집 중 선택한 대상
   const boardRef = useRef(null)
 
-  const { data: racks = [], isLoading } = useQuery({
+  const { data: racks = NO_ROWS, isLoading } = useQuery({
     queryKey: ['rackUsage'],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_rack_usage')
@@ -180,7 +183,7 @@ export default function RackLayout() {
     staleTime: 60 * 1000,
   })
 
-  const { data: objs = [] } = useQuery({
+  const { data: objs = NO_ROWS } = useQuery({
     queryKey: ['floorObjects'],
     queryFn: async () => {
       const { data } = await supabase.from('pm_floor_object').select('*').order('id')

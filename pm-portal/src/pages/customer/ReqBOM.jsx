@@ -15,6 +15,7 @@ import ShortageTabs from '../../components/ShortageTabs'
 import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS, todayISO } from '../../lib/utils'
 import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
+import { fetchVendors } from '../../lib/vendorsQuery'
 
 // 입력 디바운스
 function useDebounced(val, ms=250) {
@@ -82,10 +83,6 @@ async function fetchProjects(customerId) {
     .order('code').order('id'))
 }
 
-async function fetchVendors() {
-  const { data } = await supabase.from('vendors').select('id,name').order('name')
-  return data || []
-}
 
 
 // 발주 만들기는 공용(lib/createPO)으로 — 규칙이 한 곳에 모인다

@@ -279,7 +279,10 @@ export default function RackLayout3D({ racks = [], objs = [], gw = 80, gh = 62, 
       if (edge) { edge.geometry.dispose(); edge.material.dispose() }
       disposables.forEach((x) => x.dispose())
       scene.traverse((o) => { if (o.isInstancedMesh) o.dispose() })
+      // 그림자 맵(2048²)은 renderer.dispose() 로 안 풀린다 — 장면을 다시 만들 때마다 GPU 메모리가 새지 않게 (2026-10-08)
+      sun.dispose?.()
       renderer.dispose()
+      renderer.forceContextLoss?.()
       labWrap.innerHTML = ''
       apiRef.current = null
     }

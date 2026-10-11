@@ -337,7 +337,7 @@ export default function CustomerPO() {
         d.kind === 'rev'  ? c.field === 'item_rev' : true)
       const last = chg[chg.length - 1]
       const late = p.promise_date
-        ? Math.floor((Date.now() - new Date(p.promise_date)) / 86400000) : ''
+        ? Math.round((new Date(todayISO()) - new Date(String(p.promise_date).slice(0, 10))) / 86400000) : ''
       const base = [p.po_number || '', p.order_line || '', p.del_line || '',
         p.type || '', p.items?.std_code || '', p.items?.name || '',
         p.qty_ordered ?? '', p.promise_date || '']
@@ -431,7 +431,7 @@ export default function CustomerPO() {
                       detail.kind === 'rev'  ? c.field === 'item_rev' : true)
                     const last = chg[chg.length - 1]
                     const late = p.promise_date
-                      ? Math.floor((Date.now() - new Date(p.promise_date)) / 86400000) : 0
+                      ? Math.round((new Date(todayISO()) - new Date(String(p.promise_date).slice(0, 10))) / 86400000) : 0
                     return (
                       <tr key={p.id} className="border-t border-slate-100">
                         <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{p.po_number}</td>

@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 import { todayISO } from './utils'
 
 // 로트 실사표.
@@ -48,6 +47,8 @@ const head = (ws, cols, title, sub) => {
  * outs : pm_lot_recent_out 결과
  */
 export async function downloadLotAudit({ rows, outs = [], fileName }) {
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+  const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()

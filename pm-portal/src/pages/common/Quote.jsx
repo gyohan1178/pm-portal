@@ -5,12 +5,13 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
+import { ilikeAny } from '../../lib/pgFilter'
 
 async function searchItems(keyword) {
   if (!keyword || keyword.length < 1) return []
   const { data } = await supabase.from('items')
     .select('id,std_code,name,type,unit,lt_weeks,purchase_price,manufacturer')
-    .or(`name.ilike.%${keyword}%,std_code.ilike.%${keyword}%`)
+    .or(ilikeAny(['name', 'std_code'], keyword))
     .limit(10)
   return data || []
 }

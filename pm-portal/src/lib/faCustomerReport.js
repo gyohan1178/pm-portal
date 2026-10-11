@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 import { faStage, faApproved } from './faTemplate'
 
 // 초도품 — 고객사 제출용 진행 보고 (영문 엑셀, 심플판)
@@ -82,6 +81,10 @@ export async function exportFaCustomer(list, { asOf, supplier = 'Jinsuntech Co.,
   const heads = ['No.', ...CUST_COLS]
   const W = [5, 13, 6, 6, 13, 40, 14, 12, 12, 42]
   const cols = heads.length
+
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+
+  const ExcelJS = (await import('exceljs')).default
 
   const wb = new ExcelJS.Workbook()
   wb.created = new Date()

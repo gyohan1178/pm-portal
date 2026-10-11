@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
 import { MAIN_PNS, isMainRow } from './mainPns'
+import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
 import { todayISO, ymdKST } from '../../lib/utils'
 import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow'
@@ -40,7 +41,7 @@ async function fetchBoard() {
   const today = todayISO()
   const mon = (() => { const d = new Date(today + 'T12:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return ymdKST(d) })()
   const prod = await fetchAll(() => supabase.from('production')
-    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,po_id,customer_code')
+    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,po_id,customer_code,company')
     .eq('customer_code', 'AX').neq('status', '완료').order('id'))
   const items = must(await supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%'), '품목 조회') || []
   const shipped = must(await supabase.from('production').select('id,shipped_date').eq('customer_code', 'AX').gte('shipped_date', mon), '출하 조회') || []
@@ -108,7 +109,8 @@ export default function ProductionBoard() {
 
   const view = useMemo(() => {
     const today = todayISO()
-    const cards = rows.filter((r) => isMainRow(r.pn, r.customer_code) && r.req_date).map((r) => {
+    // 3rd party(동신 · 동원 …) 「10EA」 줄은 호기가 아니라 빼고 센다 (2026-10-08)
+    const cards = rows.filter((r) => isMainRow(r.pn, r.customer_code) && !isTpRow(r) && r.req_date).map((r) => {
       const m = meta[r.pn] || {}
       const lane = laneOf(r)
       const byReq = lane === 'qc' || lane === 'ship'

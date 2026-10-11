@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 
 // 원가 총괄을 바로 제출할 수 있는 상태로 뽑는다.
 //   표지(요약) + 상위품번별 총괄 + 필요하면 세부.
@@ -80,6 +79,8 @@ const basisLines = (csName, priced, total) => ([
  * withPrice : false 면 매입단가·구매처를 빼고 만든다 (영업팀용)
  */
 export async function downloadCostExcel({ books, asOf, withPrice = true, fileName }) {
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+  const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   wb.creator = '진선테크 구매자재팀'
   wb.created = new Date()

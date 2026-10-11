@@ -27,7 +27,6 @@ export default function ScheduleChanges() {
 
   const { data: allRows = [], isLoading } = useQuery({
     queryKey: ['scheduleChanges', days],
-    staleTime: 5 * 60 * 1000,   // PO 업로드 시에만 바뀐다
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_schedule_changes', { p_days: days })
       if (error) throw error
@@ -61,7 +60,8 @@ export default function ScheduleChanges() {
         '이번주 변경횟수': Number(r.chg_count) || 0,
         
         '변동일': r.total_shift ?? '',
-        '현재 납기': r.promise_date || '',
+        // 예전엔 위 「현재 납기」(to_date)와 이름이 같아 이 값이 덮어써 엑셀에 to_date 가 안 나갔다 (2026-10-08)
+        'PO 약속일': r.promise_date || '',
         'D-day': dday(r.promise_date) ?? '',
         '기준일': r.changed_at || '',
         '고객사': r.customer || '',
@@ -241,7 +241,6 @@ export default function ScheduleChanges() {
 function HistoryRows({ po, code, order, del }) {
   const { data: rows = [], isLoading } = useQuery({
     queryKey: ['scheduleHistory', po, code, order, del],
-    staleTime: 10 * 60 * 1000,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_schedule_history',
         { p_po: po, p_code: code, p_order: order, p_del: del })

@@ -21,9 +21,14 @@ function getWeekRange(offset=0) {
   return { from:fmt(mon), to:fmt(sun), label:`${fmt(mon)} ~ ${fmt(sun)}` }
 }
 
+// 보고 있는 주(from) 기준 다음 주 — 예전엔 오늘 기준으로 고정이라 「다음 주 →」로 넘기면 캘린더가 비었다 (2026-10-08)
+const ymdLocal = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`
+const addDaysYmd = (ymd, n) => { const d = new Date(String(ymd).slice(0,10) + 'T12:00:00'); d.setDate(d.getDate() + n); return ymdLocal(d) }
+export const nextWeekOf = (from) => ({ from: addDaysYmd(from, 7), to: addDaysYmd(from, 13) })
+
 async function fetchWeeklyReport(from, to) {
   // 이번주 + 다음주 보고 가져오기
-  const nextWeek = getWeekRange(1)
+  const nextWeek = nextWeekOf(from)
   // week_from 날짜 불일치 대비 ±3일 범위로 조회
   const fromD = new Date(from); fromD.setDate(fromD.getDate()-3)
   const toD = new Date(from); toD.setDate(toD.getDate()+3)
@@ -59,7 +64,7 @@ async function fetchWeeklyReport(from, to) {
   const nextWeekReportIds = new Set((nextReports||[]).map(r=>r.id))
 
   // 캘린더 항목
-  const nextW = getWeekRange(1)
+  const nextW = nextWeek
   const { data: calItems } = await supabase.from('weekly_items')
     .select('*')
     .in('category',['schedule_outbound','schedule_consignment','special_note'])

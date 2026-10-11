@@ -3,7 +3,6 @@
 //   값만 넣으면 표도 없고 숫자가 그냥 나열되어, 받는 쪽에서 다시 손봐야 했다.
 //   테두리·천 단위 쉼표·열 너비·인쇄 설정까지 넣어 열자마자 쓸 수 있게 한다.
 
-import ExcelJS from 'exceljs'
 import { todayISO } from './utils'
 
 const F = 8                                   // 글자 크기
@@ -36,6 +35,8 @@ const TOTAL_FILL = 'FFF2F2F2'
  * @param d.grand      총합
  */
 export async function downloadProposalExcel(d) {
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+  const ExcelJS = (await import('exceljs')).default
   const wb = new ExcelJS.Workbook()
   const ws = wb.addWorksheet('품의서', {
     pageSetup: {

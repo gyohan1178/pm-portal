@@ -6,6 +6,7 @@ import { downloadLotAudit } from '../../lib/lotAuditExcel'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit } from '../../hooks/useProfile'
 import { todayISO } from '../../lib/utils'
+import { ilikeAny } from '../../lib/pgFilter'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -67,7 +68,7 @@ export default function LotManage() {
       const t = v.trim()
       const { data } = await supabase.from('items')
         .select('id,std_code,name,manufacturer,manufacturer_code,shelf_months,lot_managed')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
+        .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer'], t))
         .limit(20)
       setMHits(data || [])
     }, 250)
@@ -617,7 +618,7 @@ function LotAdd({ preset, onClose, onDone }) {
       const { data } = await supabase.from('items')
         .select('id,std_code,name,manufacturer,manufacturer_code,shelf_months,lot_managed')
         .eq('lot_managed', true)
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%`)
+        .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer'], t))
         .limit(10)
       setHits(data || [])
     }, 250)

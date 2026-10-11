@@ -6,6 +6,7 @@ import { must } from '../../lib/db'
 import { toastError } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { isMainRow } from './mainPns'
+import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
 import { QR_STEPS, doneFromRow, nextStep, parseQr, scanRevCheck, revInfo, md } from '../../lib/prodFlow'
 
@@ -27,9 +28,9 @@ const calcElec = (r, qc) => r.elec_done || bdMinus(r.req_date, Math.max(1, Math.
 // 진행 중 AXCELIS PD 호기 (생산관리 · 읽기만)
 async function fetchDemoRows() {
   const prod = await fetchAll(() => supabase.from('production')
-    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,ccn,po_id,customer_code')
+    .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,ccn,po_id,customer_code,company')
     .eq('customer_code', 'AX').neq('status', '완료').order('id'))
-  const main = prod.filter((r) => isMainRow(r.pn, r.customer_code))
+  const main = prod.filter((r) => isMainRow(r.pn, r.customer_code) && !isTpRow(r))
   const ids = [...new Set(main.map((r) => r.po_id).filter(Boolean))]
   const po = {}
   for (let i = 0; i < ids.length; i += 200) {

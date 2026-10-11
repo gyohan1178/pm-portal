@@ -1,4 +1,3 @@
-import ExcelJS from 'exceljs'
 
 // 화면 목록을 그대로 엑셀로 내보낸다.
 // 필터가 걸린 상태의 배열을 그대로 넘기면 보이는 것만 나간다.
@@ -7,6 +6,10 @@ import ExcelJS from 'exceljs'
 // meta  : [[라벨, 값], ...]      — 상단에 붙는 조회 조건 (선택)
 export async function downloadSheet({ rows, fileName, sheetName = 'Sheet1', title, meta = [] }) {
   if (!rows?.length) throw new Error('내보낼 데이터가 없습니다.')
+
+  // exceljs(약 270kB)는 내려받기를 누를 때만 불러온다 — 화면 첫 진입이 가벼워진다
+
+  const ExcelJS = (await import('exceljs')).default
 
   const wb = new ExcelJS.Workbook()
   wb.created = new Date()

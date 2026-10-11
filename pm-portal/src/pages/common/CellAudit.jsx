@@ -7,6 +7,7 @@ import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { useCanEdit } from '../../hooks/useProfile'
+import { ilikeAny } from '../../lib/pgFilter'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -85,7 +86,7 @@ export default function CellAudit() {
       const t = v.trim()
       const { data } = await supabase.from('items')
         .select('id,std_code,name,unit,manufacturer,manufacturer_code,spec, inventory(qty,location)')
-        .or(`std_code.ilike.%${t}%,name.ilike.%${t}%,manufacturer_code.ilike.%${t}%,manufacturer.ilike.%${t}%,spec.ilike.%${t}%`)
+        .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer', 'spec'], t))
         .limit(20)
       setHits(data || []); setSearching(false)
     }, 300)

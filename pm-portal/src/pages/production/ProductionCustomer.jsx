@@ -16,27 +16,39 @@ const STATUS_COLOR = {
 }
 
 async function fetchByCustomer(code) {
-  const all = []
-  for (let from = 0; ; from += 1000) {
+  // 1000행씩 차례로 기다리던 것을 건수를 먼저 세고 동시에 받는다 (AX 는 수천 행)
+  const { count, error: cErr } = await supabase.from('production')
+    .select('id', { count: 'exact', head: true }).eq('customer_code', code)
+  if (cErr) throw cErr
+  const pages = Math.max(1, Math.ceil((count || 0) / 1000))
+  const parts = await Promise.all(Array.from({ length: pages }, (_, i) => supabase.from('production')
+    .select('*').eq('customer_code', code)
+    .order('req_date', { ascending: true }).order('id')
+    .range(i * 1000, i * 1000 + 999)
+    .then(({ data, error }) => { if (error) throw error; return data || [] })))
+  // 세는 사이 줄이 늘었으면 끝 페이지가 꽉 차 있다 — 나머지를 이어 받는다
+  for (let from = pages * 1000; parts[parts.length - 1].length === 1000; from += 1000) {
     const { data, error } = await supabase.from('production')
       .select('*').eq('customer_code', code)
       .order('req_date', { ascending: true }).order('id')
       .range(from, from + 999)
     if (error) throw error
-    all.push(...(data || []))
-    if (!data || data.length < 1000) break
+    parts.push(data || [])
   }
+  const seen = new Set()
+  const all = parts.flat().filter(r => (seen.has(r.id) ? false : (seen.add(r.id), true)))
 
   // PO 번호를 붙인다.
   //   ⚠ production ↔ purchase_orders 에 외래키가 없어 조인(select 중첩)이 안 된다.
   //     따로 받아서 이어 준다.
   const poIds = [...new Set(all.map(r => r.po_id).filter(Boolean))]
   const poMap = {}
-  for (let i = 0; i < poIds.length; i += 200) {
-    const { data: po } = await supabase.from('purchase_orders')
-      .select('id,po_number').in('id', poIds.slice(i, i + 200))
-    ;(po || []).forEach(p => { poMap[p.id] = p.po_number })
-  }
+  const chunks = []
+  for (let i = 0; i < poIds.length; i += 200) chunks.push(poIds.slice(i, i + 200))
+  const poParts = await Promise.all(chunks.map(ids => supabase.from('purchase_orders')
+    .select('id,po_number').in('id', ids)
+    .then(({ data, error }) => { if (error) throw error; return data || [] })))   // 실패를 「PO 없음」으로 보이지 않게 (2026-10-08)
+  poParts.flat().forEach(p => { poMap[p.id] = p.po_number })
   return all.map(r => ({ ...r, po_number: r.po_id ? (poMap[r.po_id] || null) : null }))
 }
 
@@ -65,7 +77,15 @@ function calcElec(r) {
 const md = s => (s ? String(s).slice(5, 10) : '—')
 const truthy = v => v === true || (v != null && String(v).trim() !== '' && String(v) !== 'false')
 
+// 고객사를 바꾸면 화면을 새로 그린다 (2026-10-08)
+//   같은 화면을 다시 쓰면 AX 에서 고른 줄 · 일괄 대상 칸 · 탭이 VM 화면에 남아,
+//   보이지 않는 AX 줄에 일괄 적용되거나 VM 줄이 하네스 우선순위 탭으로 보였다.
 export default function ProductionCustomer() {
+  const { code } = useParams()
+  return <ProductionCustomerInner key={(code || 'AX').toUpperCase()} />
+}
+
+function ProductionCustomerInner() {
   const { code } = useParams()
   const cs = (code || 'AX').toUpperCase()
   const isAx = cs === 'AX'
