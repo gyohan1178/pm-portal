@@ -63,8 +63,8 @@ export default function MarginSimulator({ title, subtitle, qty = 1, unitCost, ba
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
+    // 바깥을 눌러도 닫지 않는다 — 보고 중에 잘못 눌러 꺼지지 않게. ✕ · 닫기 버튼으로만 닫는다.
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto">
       <style>{`
         @media print {
           html, body { height:auto !important; overflow:visible !important; }
