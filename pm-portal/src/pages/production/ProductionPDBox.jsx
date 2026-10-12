@@ -64,6 +64,8 @@ function lastRevChange(changes) {
 function dday(d) { if (!d) return null; const x = new Date(String(d).slice(0, 10)); if (isNaN(x)) return null; return Math.round((x.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / dayMs) }
 function ddayCls(n) { if (n == null) return 'text-slate-300'; if (n < 0) return 'text-red-600 font-bold'; if (n <= 7) return 'text-orange-600 font-bold'; if (n <= 14) return 'text-yellow-600 font-semibold'; return 'text-emerald-600' }
 function md(d) { return d ? String(d).slice(5, 10) : '' }
+// 납품일 — 해가 바뀌어도 구분되게 YY-MM-DD (2026-10-12 김교한 차장 요청)
+function ymd(d) { const t = d ? String(d).slice(0, 10) : ''; return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t.slice(2) : md(d) }
 function truthy(v) { return v === true || (typeof v === 'string' && v.trim() && v !== 'false') }
 
 // ── 역산 상수 (영업일) — 필요시 여기만 조정 ──
@@ -973,9 +975,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                     })()}
                   </td>
                   <td data-no-select className="px-2 py-2"><select value={r.status || 'PO접수'} onChange={e => toggleMut.mutate({ id: r.id, field: 'status', value: e.target.value })} onClick={e => e.stopPropagation()} className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-500'}`}>{statusOpts.map(o => <option key={o} value={o}>{o}</option>)}</select></td>
-                  <td className={`px-2 py-2 font-semibold ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>
+                  <td className={`px-2 py-2 font-semibold whitespace-nowrap ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>
                     <span className="inline-flex items-center gap-1">
-                      {md(r.req_date) || '미정'}
+                      {ymd(r.req_date) || '미정'}
                       {(() => { const t = r.status === '완료' ? null : delayTag(r.changes, r.req_date); if (!t) return null
                         return <span
                           title={`지난주 대비 ${t.diff>0?'밀림':'당겨짐'} · ${t.base} → ${String(r.req_date).slice(0,10)}${t.cnt>1?` (${t.cnt}회 변경)`:''}`}
@@ -1247,7 +1249,7 @@ function KanbanBoard({ rows, mdMap, onStatus, onOpen, showDone, statusOpts = STA
                   </div>
                   <div className="text-[10px] text-slate-400 truncate">{r.name}</div>
                   <div className="mt-1 flex items-center gap-1 flex-wrap">
-                    <span className={`text-[10px] font-bold ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>📦 {md(r.req_date) || '미정'}</span>
+                    <span className={`text-[10px] font-bold ${r.status === '완료' || r.status === '현장작업' ? 'text-slate-400' : ddayCls(dday(r.req_date))}`}>📦 {ymd(r.req_date) || '미정'}</span>
                     {t && <span title={`지난주 대비 · ${t.base} → ${String(r.req_date).slice(0,10)}`}
                       className={`px-1 rounded text-[9px] font-bold ${t.diff>0?'bg-amber-100 text-amber-700':'bg-red-100 text-red-600'}`}>
                       {t.diff>0?`+${t.diff}`:t.diff}일</span>}
