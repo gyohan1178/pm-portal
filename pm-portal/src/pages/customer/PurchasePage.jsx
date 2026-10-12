@@ -22,6 +22,7 @@ import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
 import { ilikeAny } from '../../lib/pgFilter'
 import { fetchVendors } from '../../lib/vendorsQuery'
+import { fetchProjectProcRows, procReason } from '../../lib/bomProc'
 
 
 function monthAgoStr() {
@@ -269,16 +270,13 @@ export default function PurchasePage() {
     queryFn: async () => { const { data } = await supabase.from('projects').select('id,code,name').eq('customer_id', cs?.id).order('code'); return data||[] },
     enabled: !!cs?.id,
   })
-  const { data: bomRows=[], isLoading:bomLoading } = useQuery({
+  // 제품 1대당 실제 소요 — 상위 수량을 곱해 내려간다 (부족자재와 같은 규칙, 수량 0 상위 밑은 0)
+  const { data: bomData, isLoading:bomLoading, error: bomErr } = useQuery({
     queryKey:['pp-bom', cs?.id, bomProject?.id],
-    queryFn: async () => {
-      const { data } = await supabase.from('bom')
-        .select('item_id, qty_per_unit, items!bom_item_id_fkey(std_code,name,type,js_code,unit,manufacturer,manufacturer_code,purchase_price,proc_order,vendor_id,vendors(name))')
-        .eq('customer_id', cs?.id).eq('project_id', bomProject?.id)
-      return data||[]
-    },
+    queryFn: () => fetchProjectProcRows(cs?.id, bomProject?.id),
     enabled: !!cs?.id && !!bomProject?.id,
   })
+  const bomRows = bomData?.rows || []
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
@@ -542,7 +540,8 @@ export default function PurchasePage() {
     saveMultiMut.mutate(all)
   }
   const bomShown = useMemo(() => {
-    const filtered = (bomRows||[]).filter(b => procOnly ? (catOf(b.items)==='판금' || b.items?.proc_order) : true)
+    // 판금만 = 분류 판금 · 「발주 시 판금」 표시 · 판금 업체(동신 · 정금 · 뉴엔) 품목
+    const filtered = (bomRows||[]).filter(b => procOnly ? !!procReason(b.items) : true)
     const map = {}
     for (const b of filtered) {
       const id = b.item_id; if (!id) continue
@@ -1285,18 +1284,20 @@ export default function PurchasePage() {
                       </div>
                       {!bomProject ? <p className="text-xs text-slate-400">제품을 고르면 하위 가공품이 나와요.</p>
                        : bomLoading ? <p className="text-xs text-slate-400">불러오는 중...</p>
+                       : bomErr ? <p className="text-xs text-red-500">BOM 을 못 불러왔습니다: {bomErr.message}</p>
                        : bomShown.length===0 ? <p className="text-xs text-slate-400">해당 제품에 {procOnly?'판금 품목이':'품목이'} 없어요.</p>
                        : (<>
                           <div className="flex items-center gap-2">
                             <button onClick={()=>setBomChecked(Object.fromEntries(bomShown.map(b=>[b.item_id,true])))} className="text-xs text-indigo-500 hover:underline">전체선택</button>
                             <button onClick={()=>setBomChecked({})} className="text-xs text-slate-400 hover:underline">해제</button>
-                            <span className="text-xs text-slate-400">· {bomShown.length}개</span>
+                            <span className="text-xs text-slate-400">· {bomShown.length}개 · 대당 소요는 상위 수량을 곱한 값 (상위 수량 0 이면 제외)</span>
+                            {bomData && !bomData.exploded && <span data-bom-raw className="text-xs font-semibold text-amber-600">⚠ BOM 전개 함수가 없어 줄 수량을 그대로 더했습니다</span>}
                           </div>
                           <div className="max-h-56 overflow-auto border border-slate-100 rounded">
                             <table className="w-full text-xs">
                               <thead className="bg-slate-50"><tr>
                                 <th className="px-2 py-1 w-6"></th><th className="px-2 py-1 text-left">품번</th><th className="px-2 py-1 text-left">품명</th>
-                                <th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-right">소요량</th><th className="px-2 py-1 text-right">발주수량</th>
+                                <th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-right">대당 소요</th><th className="px-2 py-1 text-right">발주수량</th>
                               </tr></thead>
                               <tbody>
                                 {bomShown.map(b=>(
@@ -1304,7 +1305,7 @@ export default function PurchasePage() {
                                     <td className="px-2 py-1"><input type="checkbox" checked={!!bomChecked[b.item_id]} onChange={e=>setBomChecked(c=>({...c,[b.item_id]:e.target.checked}))}/></td>
                                     <td className="px-2 py-1 font-mono text-indigo-600">{b.items?.std_code}</td>
                                     <td className="px-2 py-1 truncate max-w-[160px]">{b.items?.name}</td>
-                                    <td className="px-2 py-1"><span className="px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold">{catOf(b.items)}</span>{b.items?.proc_order && catOf(b.items)!=='판금' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold">🔧발주판금</span>}</td>
+                                    <td className="px-2 py-1"><span className="px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold">{catOf(b.items)}</span>{procReason(b.items)==='flag' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold">🔧발주판금</span>}{procReason(b.items)==='vendor' && <span data-proc-vendor className="ml-1 px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold" title="판금 업체 품목이라 판금으로 봅니다">🏭 {b.items?.vendors?.name}</span>}</td>
                                     <td className="px-2 py-1 text-right text-slate-500">{b.qty_per_unit}</td>
                                     <td className="px-2 py-1 text-right"><input type="number" min="0" value={bomQtys[b.item_id] ?? Math.round((b.qty_per_unit||0)*bomUnits)} onChange={e=>setBomQtys(q=>({...q,[b.item_id]:Number(e.target.value)}))} className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded"/></td>
                                   </tr>
