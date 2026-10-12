@@ -7,6 +7,7 @@ import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
 import { todayISO } from '../../lib/utils'
+import MarginSimulator from '../../components/MarginSimulator'
 
 // 견적 라인의 하위품목 — 1,000행 기본 제한에 잘리지 않게 끝까지 받는다 (fetchAll)
 //   원가분석에서 제외 지정한 부품(quote_excluded)은 견적에서도 빠진다.
@@ -130,6 +131,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [history, setHistory] = useState({})
   const [savedNo, setSavedNo] = useState('')
   const [openParts, setOpenParts] = useState({})
+  // 마진 시뮬레이션 — 줄 key 또는 'all'(견적 전체)
+  const [simFor, setSimFor] = useState(null)
 
   // 견적 담당자 — 매번 다시 치지 않도록 마지막 값을 기억한다
   const LS = 'pm_quote_contact'
@@ -749,12 +752,46 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </button>
         <button onClick={doPrint} disabled={!lines.length}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">🖨 인쇄</button>
+        {isSales && (
+          <button data-sim-all onClick={() => setSimFor('all')} disabled={!lines.length || totals.costKrw <= 0}
+            title="제출 단가 · 환율에 따라 마진이 어떻게 바뀌는지 봅니다 (네고 보고용)"
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">📊 마진 시뮬레이션</button>
+        )}
         <button onClick={doExcel} disabled={!lines.length}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 엑셀</button>
         {onClose && <button onClick={onClose} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">✕ 닫기</button>}
       </div>
 
       {err && <div className="no-print rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</div>}
+      {simFor && (() => {
+        if (simFor === 'all') {
+          const ruleAmt = lines.reduce((a2, l) => a2 + num(l.qty) * linePrice(l, currency, sellRate, mcfg), 0)
+          return (
+            <MarginSimulator title="견적 전체" subtitle={`${lines.length}줄 · 합계 기준`} qty={1}
+              unitCost={totals.costKrw} basePrice={totals.amount} rulePrice={ruleAmt}
+              currency={currency} baseRate={sellRate} onClose={() => setSimFor(null)}
+              onApply={(p) => {
+                const f = totals.amount > 0 ? p / totals.amount : 1
+                setLines((ls) => ls.map((l) => ({ ...l,
+                  unitPrice: currency === 'KRW' ? Math.round(num(l.unitPrice) * f) : Math.round(num(l.unitPrice) * f * 100) / 100 })))
+                toastSuccess(`모든 줄 단가를 ${((f - 1) * 100).toFixed(1)}% 조정했습니다 (줄마다 반올림해 합계가 조금 다를 수 있습니다)`)
+                setSimFor(null)
+              }} />
+          )
+        }
+        const l = lines.find((x) => x.key === simFor)
+        if (!l) return null
+        const h = history[l.std_code]
+        return (
+          <MarginSimulator title={l.std_code || '(품번 없음)'} subtitle={l.description}
+            qty={num(l.qty) || 1} unitCost={lineCost(l)} basePrice={num(l.unitPrice)}
+            rulePrice={linePrice(l, currency, sellRate, mcfg)}
+            lastPrice={h && h.currency === currency ? num(h.unit_price) : null}
+            lastLabel={h ? `${h.quote_date} ${h.quote_no || ''}`.trim() : ''}
+            currency={currency} baseRate={sellRate} onClose={() => setSimFor(null)}
+            onApply={(p) => { patch(l.key, { unitPrice: p }); toastSuccess(`${l.std_code} 단가를 반영했습니다`); setSimFor(null) }} />
+        )
+      })()}
       {savedNo && (
         <div className="no-print rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 font-semibold">
           ✅ 저장 완료 — {isSales ? '매출' : '매입'}견적 <b>{savedNo}</b>
@@ -986,6 +1023,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   </td>
                   <td className="py-1.5 no-print text-right text-slate-500">
                     {isSales && revKrw > 0 ? pct((revKrw - cost) / revKrw) : '-'}
+                    {isSales && cost > 0 && num(l.unitPrice) > 0 && (
+                      <button data-sim-line={l.key} onClick={() => setSimFor(l.key)} title="이 줄 마진 시뮬레이션"
+                        className="block ml-auto text-[10px] text-indigo-500 hover:text-indigo-700 underline">📊 시뮬</button>
+                    )}
                   </td>
                   <td className="py-1.5 no-print"><button onClick={() => remove(l.key)} className="text-slate-300 hover:text-rose-500">✕</button></td>
                 </tr>
