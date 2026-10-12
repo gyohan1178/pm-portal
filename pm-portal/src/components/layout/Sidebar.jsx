@@ -6,6 +6,7 @@ import { loadChangelogOld } from '../../lib/loadChangelogOld'
 import { primaryCsCode } from '../../lib/customers'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { alertCountFor } from '../../lib/todoView'
 import { toastError } from '../../lib/toast'
 
 // 즐겨찾기에 표시할 이름·아이콘
@@ -83,6 +84,17 @@ function useAlertCounts() {
         const { data: mine } = await supabase.rpc('pm_request_notice_count')
         out['/material-request'] = (out['/material-request'] || 0) + (Number(mine) || 0)
       } catch { /* 함수가 아직 없어도 메뉴는 그려야 한다 */ }
+      try {
+        // 할 일 — 내 일 중 기한 지남 · 오늘까지 · 새로 받은 일
+        const { data: { user } } = await supabase.auth.getUser()
+        if (user) {
+          const [{ data: p }, { data: todos }] = await Promise.all([
+            supabase.from('pm_profiles').select('id,name').eq('id', user.id).maybeSingle(),
+            supabase.rpc('pm_todo_items'),
+          ])
+          if (p) out['/todo'] = alertCountFor(todos || [], p)
+        }
+      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
       return out
     },
   })
@@ -434,7 +446,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
-          <MenuItem to="/todo" icon="📋" onNavigate={onNavigate}>할 일</MenuItem>
+          <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>
         </div>
         )}
