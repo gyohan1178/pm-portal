@@ -972,6 +972,7 @@ export default function BOM() {
             {htmInfo.source !== 'xlsx' && <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>}
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
             {htmInfo.stats.vmSkipped > 0 && <span className="text-rose-600">VM 품번 제외 <b>{htmInfo.stats.vmSkipped}</b></span>}
+            {htmInfo.stats.obsDropped > 0 && <span data-obs-count className="text-rose-600">단종(OBS) 제외 <b>{htmInfo.stats.obsDropped}</b></span>}
             {htmInfo.stats.converted > 0 && <span className="text-emerald-700">Foot→M 환산 <b>{htmInfo.stats.converted}</b></span>}
             {htmInfo.source === 'xlsx' && htmInfo.newCodes && <span className={htmInfo.newCodes.length ? 'text-amber-700' : ''}>새 품번 <b>{htmInfo.newCodes.length}</b></span>}
             {htmInfo.header.createdBy && <span>작성 {htmInfo.header.createdBy}</span>}
@@ -982,6 +983,18 @@ export default function BOM() {
               <div className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-500">
                 {htmInfo.parts.filter(p => p.isVM).map((p, i) => (
                   <div key={i}><span className="font-mono">{p.rawPn}</span> · {p.name}</div>
+                ))}
+              </div>
+            </details>
+          )}
+          {htmInfo.obsDropped?.length > 0 && (
+            <details data-obs-list className="mt-1" open>
+              <summary className="cursor-pointer text-rose-700">단종(State = OBS) {htmInfo.obsDropped.length}줄은 등록하지 않습니다 — 그 밑 하위도 함께 뺍니다</summary>
+              <div className="mt-1 max-h-32 overflow-auto text-[11px] text-slate-500">
+                {htmInfo.obsDropped.map((p, i) => (
+                  <div key={i} className={p.underObs ? 'pl-4 text-slate-400' : ''}>
+                    <span className="font-mono">{p.rawPn}</span> · {p.name} · {p.qtyRaw || p.qty}{p.underObs ? ' (단종 품목의 하위)' : ` · ${p.state}`}
+                  </div>
                 ))}
               </div>
             </details>

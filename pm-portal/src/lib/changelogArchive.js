@@ -2,6 +2,15 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.36.0',
+    date: '2026-10-02',
+    changes: [
+      '★ 고객사 PO — 「⏰ 납기 갱신 필요」: 약속일(Promise Date)이 지났는데 아직 진행중인 줄만 모아 봅니다 (HOT 이 위, 오래 지난 순). 엑셀에서 새 날짜로 고쳐 다시 올려야 할 건이 빠지지 않게 — 엑셀 내려받기에 Plan Exc · 납기 경과(일) 칸 추가',
+      '고객사 PO 엑셀의 Plan Exc Type(HOT · RSIN · RSOU · CAN)을 업로드 때 같이 저장하고 목록 상태 칸에 배지로 표시 (SQL pm_plan_exc_261002 실행 후 적용). 업로드할 때마다 파일 값으로 맞추고 변경 이력에는 남기지 않음',
+      'PO 업로드 분석 화면에 「약속일이 이미 지난 줄 N건 · HOT n」 목록',
+    ],
+  },
+  {
     version: 'v4.35.0',
     date: '2026-10-02',
     changes: [

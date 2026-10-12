@@ -161,7 +161,21 @@ export function parseAxcelisReport(text) {
 }
 
 // 품목 목록 → 어셈블리 묶음 · 통계 (HTM · 엑셀 공통)
-function buildParsed(header, parts, source = 'htm') {
+function buildParsed(header, allParts, source = 'htm') {
+  // ── 단종(OBS) 빼기 (2026-10-12) ──
+  //   고객사 BOM 에 State = OBS 로 남아 있는 줄은 더 이상 쓰지 않는 부품이다.
+  //   그 줄과 그 밑 하위를 통째로 뺀다 — 안 빼면 부족자재 · 소요량 · 발주에 수요로 잡힌다.
+  //   (예: 110211211 캐비닛 안 옛 ROOF 패널, 단종 케이블 160024067)
+  //   최상위(level 0) 는 빼지 않는다 — 그 BOM 자체를 올리는 것이므로.
+  const obsDropped = []
+  const parts = []
+  let obsLevel = null
+  for (const p of allParts) {
+    if (obsLevel != null && p.level > obsLevel) { obsDropped.push({ ...p, underObs: true }); continue }
+    obsLevel = null
+    if (p.level > 0 && isObsolete(p.state)) { obsDropped.push(p); obsLevel = p.level; continue }
+    parts.push(p)
+  }
   // ── 어셈블리 단위로 묶기 ──
   // children     : 직계 자식만
   // descendants  : 하위 전체 (relLevel = 부모 기준 상대 깊이)
@@ -203,13 +217,18 @@ function buildParsed(header, parts, source = 'htm') {
       withMfr: parts.filter((p) => p.mfr).length,
       zeroQty: parts.filter((p) => p.level > 0 && p.qty === 0).length,
       vmSkipped: parts.filter((p) => p.isVM).length,
+      obsDropped: obsDropped.length,
       converted: parts.filter((p) => p.converted).length,
       maxLevel: parts.reduce((a, p) => Math.max(a, p.level), 0),
       assemblies: groups.length,
     },
     codes,
+    obsDropped,
   }
 }
+
+// State 칸이 OBS / Obsolete 면 단종
+export const isObsolete = (state) => /^obs/i.test(String(state || '').trim())
 
 // ── AXCELIS BOM 엑셀 (2026-10-01) ─────────────────────────────────────
 //   고객사가 HTM 대신 주는 엑셀. 한 줄 = 품목 하나 (HTM 의 Part 행과 같은 내용).
