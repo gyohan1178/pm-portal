@@ -59,7 +59,8 @@ async function fetchItems(quoteIds) {
   return out
 }
 
-export default function QuoteHistory() {
+// onRevise: 매출견적 화면에서 넘겨주면 견적별 줄에 「✏ 수정」 버튼이 생긴다 (지난 견적 → 리비전 저장)
+export default function QuoteHistory({ onRevise } = {}) {
   const qc = useQueryClient()
   const [kind, setKind] = useState('sales')
   const [view, setView] = useState('item')   // item = 품번별, quote = 견적별
@@ -73,6 +74,8 @@ export default function QuoteHistory() {
     return Number.isFinite(v) && v > 0 ? v : 1400
   })
   const isSales = kind === 'sales'
+  // 매출견적 화면의 작성기는 매출 전용이라 매입 견적은 거기서 고칠 수 없다
+  const canRevise = !!onRevise && isSales
 
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quoteHistory', kind],
@@ -393,6 +396,7 @@ export default function QuoteHistory() {
                 <th className="px-3 py-2 text-right w-28">금액</th>
                 {isSales && <th className="px-3 py-2 text-right w-20">마진율</th>}
                 <th className="px-3 py-2 text-center w-20">상태</th>
+                {canRevise && <th className="px-3 py-2 text-center w-16">수정</th>}
                 <th className="px-3 py-2 text-center w-14">삭제</th>
               </tr>
             </thead>
@@ -414,6 +418,15 @@ export default function QuoteHistory() {
                       <td className="px-3 py-2 text-center">
                         <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${st.cls}`}>{st.label}</span>
                       </td>
+                      {canRevise && (
+                        <td className="px-3 py-2 text-center">
+                          <button data-q-revise onClick={(e) => { e.stopPropagation(); onRevise(x) }}
+                            title="이 견적을 작성 화면으로 불러와 고칩니다 — 원본은 그대로 두고 리비전 번호(-R1)로 새로 저장"
+                            className="px-1.5 py-0.5 text-[11px] rounded border border-violet-200 text-violet-600 hover:bg-violet-50">
+                            ✏ 수정
+                          </button>
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-center">
                         <button onClick={(e) => { e.stopPropagation(); deleteQuote(x) }}
                           title="견적 삭제 — 품목과 작업비 이력도 함께 삭제됩니다"
@@ -424,7 +437,7 @@ export default function QuoteHistory() {
                     </tr>
                     {open && (
                       <tr key={x.id + '-d'} className="bg-slate-50/80">
-                        <td colSpan={isSales ? 8 : 7} className="px-4 py-3">
+                        <td colSpan={(isSales ? 8 : 7) + (canRevise ? 1 : 0)} className="px-4 py-3">
                           <p className="text-[11px] font-bold text-slate-500 mb-1.5">품목 {lines.length}건</p>
                           <table className="w-full text-[11px]">
                             <thead className="text-slate-400">
@@ -463,7 +476,7 @@ export default function QuoteHistory() {
                 )
               })}
               {!quoteRows.length && (
-                <tr><td colSpan={isSales ? 8 : 7} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
+                <tr><td colSpan={(isSales ? 8 : 7) + (canRevise ? 1 : 0)} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
               )}
             </tbody>
           </table>

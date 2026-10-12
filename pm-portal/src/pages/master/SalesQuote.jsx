@@ -18,6 +18,8 @@ export default function SalesQuote() {
   const custList = orderedCustomers(profile)
   const [tab, setTab] = useState('write')   // write=견적 작성 / history=견적 이력
   const [csCode, setCsCode] = useState(null)
+  // 견적 이력 「✏ 수정」 → 작성 탭으로 넘어가 그 견적을 불러온다 (n: 같은 견적을 다시 눌러도 다시 불러오게)
+  const [reviseReq, setReviseReq] = useState(null)
   const code = csCode || primaryCsCode(profile)
   const { data: cs } = useCustomer(code)
 
@@ -53,7 +55,7 @@ export default function SalesQuote() {
         <div className="flex items-center gap-2">
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {[['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
-              <button key={k} onClick={() => setTab(k)}
+              <button key={k} onClick={() => { setTab(k); if (k === 'history') setReviseReq(null) }}
                 className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                 {l}
               </button>
@@ -74,9 +76,20 @@ export default function SalesQuote() {
         </div>
       </div>
 
-      {tab === 'history' ? <QuoteHistory /> : (
+      {tab === 'history' ? <QuoteHistory onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
       <QuoteSheet
         fixedKind="sales"
+        reviseReq={reviseReq}
+        onReviseLoaded={async (q) => {
+          setReviseReq(null)   // 탭을 오가도 다시 불러와 덮어쓰지 않게
+          // 그 견적의 고객사 · 환율로 맞춘다 (마진 표시 · 품번 추가가 같은 기준으로 돌게)
+          if (Number(q.sell_rate) > 0) setSellRate(q.sell_rate)
+          if (Number(q.buy_rate) > 0) setBuyRate(q.buy_rate)
+          if (q.customer_id) {
+            const { data } = await supabase.from('customers').select('code').eq('id', q.customer_id).maybeSingle()
+            if (data?.code) setCsCode(String(data.code).toLowerCase())
+          }
+        }}
         customerId={cs?.id}
         customerName={custList.find((c) => c.id === code)?.name || ''}
         cfg={cfg}

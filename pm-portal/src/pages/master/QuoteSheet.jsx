@@ -103,7 +103,19 @@ function linePrice(line, currency, sellRate, mcfg) {
   return currency === 'KRW' ? Math.round(krw) : ceilCent(krw / (num(sellRate) || 1))
 }
 
-export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind }) {
+// 지난 견적 리비전 번호 — S261001-001 → S261001-001-R1 → -R2 … (2026-10-12)
+//   원본은 그대로 두고 새 줄로 저장한다. pm_next_quote_no 는 split_part(번호,'-',2) 만 읽어
+//   뒤에 -R 이 붙어도 다음 채번에 영향이 없다 (함수 본문 확인함).
+export const baseQuoteNo = (no) => String(no || '').replace(/-R\d+$/i, '')
+export function nextRevNo(base, existing) {
+  const re = new RegExp('^' + base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '-R(\\d+)$', 'i')
+  const max = (existing || []).reduce((a, no) => {
+    const m = re.exec(String(no || '')); return m ? Math.max(a, Number(m[1])) : a
+  }, 0)
+  return `${base}-R${max + 1}`
+}
+
+export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind, reviseReq, onReviseLoaded }) {
   // ★ 매출견적(고객사 제출) / 매입견적(업체 수령) — 섞이면 안 되는 구분
   // fixedKind 가 주어지면 탭 자체가 한 종류 전용이므로 전환 버튼을 숨긴다.
   const [quoteKind, setQuoteKind] = useState(fixedKind || 'sales')
@@ -133,6 +145,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [openParts, setOpenParts] = useState({})
   // 마진 시뮬레이션 — 줄 key 또는 'all'(견적 전체)
   const [simFor, setSimFor] = useState(null)
+  // 지난 견적 수정 중 — { id, quote_no, base, customer_id } (저장하면 base-Rn 으로 새로 저장)
+  const [revOf, setRevOf] = useState(null)
+  const [revLoading, setRevLoading] = useState(false)
 
   // 견적 담당자 — 매번 다시 치지 않도록 마지막 값을 기억한다
   const LS = 'pm_quote_contact'
@@ -169,7 +184,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const mcfgKey = JSON.stringify(mcfg)
   useEffect(() => {
     if (!isSales) return
-    setLines((ls) => (ls.length ? ls.map((l) => ({ ...l, unitPrice: linePrice(l, currency, sellRate, mcfg) })) : ls))
+    // 지난 견적에서 불러온 줄(fromQuote)은 제출했던 단가를 지킨다
+    setLines((ls) => (ls.length ? ls.map((l) => (l.fromQuote ? l : { ...l, unitPrice: linePrice(l, currency, sellRate, mcfg) })) : ls))
   }, [mcfgKey])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 임시저장 (보관함) ────────────────────────────────────────────
@@ -406,7 +422,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   const draftPayload = () => ({
     v: 1, quoteKind, currency, quoteDate, issuedTo, vendorId, attn, projectName,
-    validityDays, leadTime, leadKind, deliveryNote, memo, lines, customerId, customerName,
+    validityDays, leadTime, leadKind, deliveryNote, memo, lines, customerId, customerName, revOf,
   })
 
   const draftMut = useMutation({
@@ -468,8 +484,68 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setDeliveryNote(d.deliveryNote || '(To be discussed later)')
     setMemo(d.memo || '')
     setLines(Array.isArray(d.lines) ? d.lines : [])
+    setRevOf(d.revOf || null)
     setDraftId(id); setSavedNo(''); setErr(''); setDraftOpen(false)
     toastSuccess('보관해 둔 견적을 불러왔습니다')
+  }
+
+  // ── 지난 견적 불러와서 수정 (리비전) ─────────────────────────────
+  //   제출했던 단가 · 표기를 그대로 가져온다. 단가는 다시 계산하지 않는다.
+  async function loadRevision(quoteId) {
+    setRevLoading(true); setErr('')
+    try {
+      const { data: q, error: qErr } = await supabase.from('pm_quotes').select('*').eq('id', quoteId).maybeSingle()
+      if (qErr) throw new Error('견적 조회 — ' + qErr.message)
+      if (!q) throw new Error('견적을 찾을 수 없습니다 (삭제됐을 수 있음)')
+      const { data: its, error: iErr } = await supabase.from('pm_quote_items')
+        .select('*').eq('quote_id', quoteId).order('line_no')
+      if (iErr) throw new Error('견적 품목 조회 — ' + iErr.message)
+      const base = baseQuoteNo(q.quote_no)
+      const { data: sib, error: sErr } = await supabase.from('pm_quotes')
+        .select('quote_no').like('quote_no', base + '-R%')
+      if (sErr) throw new Error('리비전 번호 조회 — ' + sErr.message)
+
+      setQuoteKind(q.quote_kind || fixedKind || 'sales')
+      setCurrency(q.currency || 'USD')
+      setQuoteDate(q.quote_date || todayISO())
+      setIssuedTo(q.issued_to || '')
+      setVendorId(q.vendor_id || '')
+      setAttn(q.attn || '')
+      setProjectName(q.project_name || '')
+      setValidityDays(q.validity_days ?? 15)
+      setLeadTime(q.lead_time || 'L/T 8W'); setLeadTouched(true); setLeadKindTouched(true)
+      setDeliveryNote(q.delivery_note ?? '')
+      setMemo(q.memo || '')
+      if (q.issuer_name) setContactName(q.issuer_name)
+      if (q.issuer_phone) setContactPhone(q.issuer_phone)
+      if (q.issuer_email) setContactEmail(q.issuer_email)
+      setLines((its || []).map((r) => newLine({
+        kind: r.line_kind === 'assy' ? 'assy' : 'item',
+        std_code: r.std_code || '', description: r.description || '', rev: r.rev || '',
+        unit: r.unit || 'EA', qty: num(r.qty), unitPrice: num(r.unit_price),
+        alternative: r.alternative || '', remarks: r.remarks || '',
+        materialKrw: num(r.material_krw), laborKrw: num(r.labor_krw),
+        vendor: r.vendor || '', origin: r.origin || 'dom',
+        marginPct: r.margin_pct == null ? null : num(r.margin_pct),
+        fromQuote: true,
+      })))
+      setRevOf({ id: q.id, quote_no: q.quote_no, base, customer_id: q.customer_id || null,
+        nextNo: nextRevNo(base, (sib || []).map((x) => x.quote_no)) })
+      setDraftId(null); setSavedNo(''); setOpenParts({})
+      onReviseLoaded?.(q)
+      toastSuccess(`${q.quote_no} 을(를) 불러왔습니다 — 고친 뒤 💾 저장하면 리비전 번호로 저장됩니다`)
+    } catch (e) {
+      setErr('지난 견적 불러오기 실패: ' + e.message)
+    } finally { setRevLoading(false) }
+  }
+  const reviseKey = reviseReq ? `${reviseReq.id}:${reviseReq.n}` : ''
+  useEffect(() => {
+    if (reviseReq?.id) loadRevision(reviseReq.id)
+  }, [reviseKey])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  function cancelRevision() {
+    if (!confirm('수정을 그만두고 화면을 비울까요? (원본 견적은 그대로입니다)')) return
+    setRevOf(null); setLines([]); setSavedNo(''); setErr('')
   }
 
   const cfgMut = useMutation({
@@ -501,14 +577,24 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (!lines.length) throw new Error('품목이 없습니다.')
       if (!isSales && !vendorId) throw new Error('매입견적은 업체를 선택해야 합니다.')
 
-      const { data: no, error: nErr } = await supabase.rpc('pm_next_quote_no', {
-        p_date: quoteDate, p_kind: quoteKind,
-      })
-      if (nErr) throw new Error('견적번호 채번 실패: ' + nErr.message)
+      let no
+      if (revOf) {
+        // 리비전 — 저장 직전에 다시 세어 겹치지 않게 (그사이 누가 R 을 만들었을 수 있다)
+        const { data: sib, error: sErr } = await supabase.from('pm_quotes')
+          .select('quote_no').like('quote_no', revOf.base + '-R%')
+        if (sErr) throw new Error('리비전 번호 조회 실패: ' + sErr.message)
+        no = nextRevNo(revOf.base, (sib || []).map((x) => x.quote_no))
+      } else {
+        const { data, error: nErr } = await supabase.rpc('pm_next_quote_no', {
+          p_date: quoteDate, p_kind: quoteKind,
+        })
+        if (nErr) throw new Error('견적번호 채번 실패: ' + nErr.message)
+        no = data
+      }
 
       const { data: q, error: qErr } = await supabase.from('pm_quotes').insert({
         quote_no: no, quote_kind: quoteKind, quote_date: quoteDate,
-        customer_id: isSales ? (customerId || null) : null,
+        customer_id: isSales ? ((revOf ? revOf.customer_id : customerId) || null) : null,
         vendor_id: isSales ? null : (vendorId || null),
         quote_type: lines.some((l) => l.kind === 'assy') ? 'assy' : 'single',
         currency, project_name: projectName || null,
@@ -560,6 +646,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     },
     onSuccess: (no) => {
       setSavedNo(no); setErr('')
+      // 한 번 더 저장하면 다음 리비전(R2…)으로
+      if (revOf) setRevOf((r) => (r ? { ...r, nextNo: nextRevNo(r.base, [no, r.nextNo]) } : r))
+      qc.invalidateQueries({ queryKey: ['quoteHistory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['quoteHistoryItems'], exact: false })
+      qc.invalidateQueries({ queryKey: ['recentSalesQuotes'] })
       // 확정됐으니 보관함에 남겨 둘 이유가 없다.
       if (draftId) {
         supabase.from('pm_quote_drafts').delete().eq('id', draftId).then(() => {
@@ -762,6 +853,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         {onClose && <button onClick={onClose} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">✕ 닫기</button>}
       </div>
 
+      {revLoading && <div className="no-print rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">지난 견적 불러오는 중…</div>}
+      {revOf && (
+        <div data-rev-banner className="no-print rounded-lg border-2 border-violet-300 bg-violet-50 px-3 py-2 text-xs text-violet-800 flex flex-wrap items-center gap-2">
+          <span>✏ <b className="font-mono">{revOf.quote_no}</b> 수정 중 — 💾 저장하면 원본은 그대로 두고 <b className="font-mono" data-rev-next>{revOf.nextNo}</b> 로 새로 저장됩니다.</span>
+          <span className="text-violet-500">단가는 제출했던 값 그대로입니다 (자재비·작업비를 고치면 그 줄만 다시 계산)</span>
+          <button onClick={cancelRevision} className="ml-auto px-2 py-0.5 rounded border border-violet-300 bg-white text-violet-600 hover:bg-violet-100">✕ 수정 그만두기</button>
+        </div>
+      )}
       {err && <div className="no-print rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</div>}
       {simFor && (() => {
         if (simFor === 'all') {
