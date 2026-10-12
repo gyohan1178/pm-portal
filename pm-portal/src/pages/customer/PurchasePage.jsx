@@ -1297,7 +1297,7 @@ export default function PurchasePage() {
                             <table className="w-full text-xs">
                               <thead className="bg-slate-50"><tr>
                                 <th className="px-2 py-1 w-6"></th><th className="px-2 py-1 text-left">품번</th><th className="px-2 py-1 text-left">품명</th>
-                                <th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-right">대당 소요</th><th className="px-2 py-1 text-right">발주수량</th>
+                                <th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-left">구매처</th><th className="px-2 py-1 text-right">대당 소요</th><th className="px-2 py-1 text-right">발주수량</th>
                               </tr></thead>
                               <tbody>
                                 {bomShown.map(b=>(
@@ -1305,7 +1305,9 @@ export default function PurchasePage() {
                                     <td className="px-2 py-1"><input type="checkbox" checked={!!bomChecked[b.item_id]} onChange={e=>setBomChecked(c=>({...c,[b.item_id]:e.target.checked}))}/></td>
                                     <td className="px-2 py-1 font-mono text-indigo-600">{b.items?.std_code}</td>
                                     <td className="px-2 py-1 truncate max-w-[160px]">{b.items?.name}</td>
-                                    <td className="px-2 py-1"><span className="px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold">{catOf(b.items)}</span>{procReason(b.items)==='flag' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold">🔧발주판금</span>}{procReason(b.items)==='vendor' && <span data-proc-vendor className="ml-1 px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold" title="판금 업체 품목이라 판금으로 봅니다">🏭 {b.items?.vendors?.name}</span>}</td>
+                                    <td className="px-2 py-1"><span className="px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold">{catOf(b.items)}</span>{procReason(b.items)==='flag' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold">🔧발주판금</span>}{procReason(b.items)==='vendor' && <span data-proc-vendor className="ml-1 px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold" title="판금 업체(동신 · 정금 · 뉴엔) 품목이라 판금으로 봅니다">🏭 판금업체</span>}</td>
+                                    {/* 판금만에도 서울아크릴 커버처럼 다른 업체 품목이 섞인다 — 구매처를 보고 고른다 */}
+                                    <td data-bom-vendor className={`px-2 py-1 truncate max-w-[110px] ${b.items?.vendors?.name ? 'text-slate-600' : 'text-amber-600'}`}>{b.items?.vendors?.name || '미지정'}</td>
                                     <td className="px-2 py-1 text-right text-slate-500">{b.qty_per_unit}</td>
                                     <td className="px-2 py-1 text-right"><input type="number" min="0" value={bomQtys[b.item_id] ?? Math.round((b.qty_per_unit||0)*bomUnits)} onChange={e=>setBomQtys(q=>({...q,[b.item_id]:Number(e.target.value)}))} className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded"/></td>
                                   </tr>
