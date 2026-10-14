@@ -347,6 +347,7 @@ export default function Sidebar({ onNavigate, profile }) {
         {canAccessSection(profile, 'sales') && (
         <CollapseSection mover={mv} label="🤝 영업" sKey="sales">
           <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
+          <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
         </CollapseSection>
@@ -368,7 +369,6 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
-          <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/board"    icon="🖥" onNavigate={onNavigate}>생산 전광판</MenuItem>
           <MenuItem to="/production/qr-demo" icon="🧪" onNavigate={onNavigate}>QR 공정 데모</MenuItem>
         </CollapseSection>

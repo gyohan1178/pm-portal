@@ -12,7 +12,9 @@ import { useCanEdit } from '../../hooks/useProfile'
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
 //   → 공정관리에서 출도(작업지시서 · 도면)하면 그 기록(harness_orders.qr_printed · harness_qr_history)을
-//     PO · 오더라인 · 납품라인으로 맞춰 「출도됨」으로 보여주고 → 「불출 처리」 = 고객사 PO 자재불출 체크.
+//     PO · 오더라인 · 납품라인으로 맞춰 「출력됨」으로 보여주고 → 현장에 넘기면(출도) 「불출 처리」 = 고객사 PO 자재불출 체크.
+//   v4.54.0: 출력 ≠ 출도 — 공정관리는 「출력」만 안다. 현장에 넘긴 시점은 포털 「불출 처리」로 남긴다 (표시 글자 출도 → 출력)
+//   v4.54.0: 구분이 하네스(16번대)가 아니어도 하네스 공정관리에 등록된 줄(12번대 구매품 · 11번대 전장 등)은 같이 보여준다
 //   ⚠ 공정관리 쪽 표는 읽기만 한다 (harness_* 는 하네스 공정관리 소유).
 //   ⚠ 불출 처리는 표시만 — 재고 수량은 출고 화면에서 출고할 때만 줄어든다. 쇼티지 계산에서 그 PO 줄이 빠진다.
 //   「🧺 다품목 출고로」: 고른 줄의 하네스 품번 · 잔량을 다품목 출고 「붙여넣기」 칸에 채워 넘긴다 → 담기 → 전개(BOM) → 출고.
@@ -131,12 +133,34 @@ export default function HarnessRelease() {
   const [busy, setBusy] = useState(false)
 
   // 진행 중 AXCELIS 하네스 PO 줄
+  //   = 구분이 하네스(16번대)인 줄 + 하네스 공정관리에 등록된(완료 안 된) 줄 — 12번대 구매품 · 11번대 전장도 공정관리에서 만들면 여기서 출도 · 불출한다
   const { data: pos = [], isLoading, error } = useQuery({
     queryKey: ['harnessRelease', 'pos'],
-    queryFn: () => fetchAll(() => supabase.from('purchase_orders')
-      .select('id,po_number,ccn,order_line,del_line,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name)')
-      .eq('customer_id', AX_ID).eq('order_type', 'customer_po').eq('division', '하네스')
-      .not('status', 'in', '(완료,취소)').order('promise_date', { ascending: true }).order('id')),
+    queryFn: async () => {
+      const SEL = 'id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name)'
+      const base = await fetchAll(() => supabase.from('purchase_orders').select(SEL)
+        .eq('customer_id', AX_ID).eq('order_type', 'customer_po').eq('division', '하네스')
+        .not('status', 'in', '(완료,취소)').order('promise_date', { ascending: true }).order('id'))
+      const extra = []
+      try {
+        const ho = await fetchAll(() => supabase.from('harness_orders').select('id,po,ord_ln,del_ln,dwg_no,manually_done').ilike('customer', 'axcelis%').order('id'))
+        const live = ho.filter(o => !o.manually_done && P(o.po))
+        const keys = new Set(live.map(o => N(o.ord_ln) ? `${P(o.po)}|${N(o.ord_ln)}|${N(o.del_ln)}` : `${P(o.po)}|#${P(o.dwg_no)}`))
+        const have = new Set(base.map(p => p.id))
+        const nos = [...new Set(live.map(o => String(o.po).trim()))].sort()
+        for (let i = 0; i < nos.length; i += 150) {
+          const part = nos.slice(i, i + 150)
+          const rows = await fetchAll(() => supabase.from('purchase_orders').select(SEL)
+            .eq('customer_id', AX_ID).eq('order_type', 'customer_po').in('po_number', part)
+            .not('status', 'in', '(완료,취소)').order('id'))
+          rows.forEach(p => {
+            if (have.has(p.id) || p.division === '하네스') return
+            if (keys.has(`${P(p.po_number)}|${N(p.order_line)}|${N(p.del_line)}`) || keys.has(`${P(p.po_number)}|#${P(pnOf(p.items?.std_code))}`)) { extra.push(p); have.add(p.id) }
+          })
+        }
+      } catch { /* 공정관리 표를 못 읽으면 하네스 구분 줄만 — 오류는 아래 공정관리 조회(hErr)에서 안내된다 */ }
+      return [...base, ...extra].sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
+    },
     staleTime: 30 * 1000,
   })
 
@@ -245,8 +269,8 @@ export default function HarnessRelease() {
   async function excel() {
     const XLSX = await import('xlsx')
     const ws = XLSX.utils.aoa_to_sheet([
-      ['PO', '오더라인', '납품라인', 'CCN', '품번', '품명', 'SREV', 'BREV', '잔량', '납기', '공정관리', '출도', '출도자', '불출'],
-      ...rows.map(p => { const s = st[p.id] || {}; return [p.po_number, N(p.order_line), N(p.del_line), P(p.ccn), pnOf(p.items?.std_code), p.items?.name || '', p.item_rev || '', p.item_brev || '', leftOf(p), String(p.promise_date || '').slice(0, 10), s.reg ? '등록' : '미등록', s.printed ? md(s.at) : '', s.by || '', p.material_issued ? 'Y' : ''] }),
+      ['PO', '오더라인', '납품라인', 'CCN', '구분', '품번', '품명', 'SREV', 'BREV', '잔량', '납기', '공정관리', '출력', '출력자', '불출'],
+      ...rows.map(p => { const s = st[p.id] || {}; return [p.po_number, N(p.order_line), N(p.del_line), P(p.ccn), p.division || '', pnOf(p.items?.std_code), p.items?.name || '', p.item_rev || '', p.item_brev || '', leftOf(p), String(p.promise_date || '').slice(0, 10), s.reg ? '등록' : '미등록', s.printed ? md(s.at) : '', s.by || '', p.material_issued ? 'Y' : ''] }),
     ])
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '하네스출도')
     XLSX.writeFile(wb, `하네스_출도불출_${todayKST()}.xlsx`)
@@ -256,38 +280,38 @@ export default function HarnessRelease() {
   const hsTxt = (p) => {
     const s = st[p.id]
     if (!hx) return <span className="text-slate-300">…</span>
-    if (s?.printed) return <Badge tone="teal" title={s.at ? `공정관리 출도 ${s.at}` : ''}>🖨 출도{s.at ? ` ${md(s.at)}` : ''}{s.by ? ` · ${s.by}` : ''}</Badge>
-    if (s?.reg) return <Badge tone="blue">등록됨 · 출도 전</Badge>
+    if (s?.printed) return <Badge tone="teal" title={s.at ? `공정관리 출력 ${s.at}` : ''}>🖨 출력{s.at ? ` ${md(s.at)}` : ''}{s.by ? ` · ${s.by}` : ''}</Badge>
+    if (s?.reg) return <Badge tone="blue">등록됨 · 출력 전</Badge>
     return <Badge>미등록</Badge>
   }
 
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-[11px] font-semibold text-slate-400">🏭 현장 · AXCELIS 하네스 (16번대)</p>
+        <p className="text-[11px] font-semibold text-slate-400">🤝 영업 · AXCELIS 하네스 (16번대 + 하네스 공정관리 등록분)</p>
         <h1 className="text-xl font-extrabold text-slate-900">🧵 하네스 출도 · 불출</h1>
         <p className="text-[13px] text-slate-400 mt-0.5">
-          아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출도), 공정관리에 출도 기록이 생기면 여기서 「불출 처리」합니다.
+          아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘기면(출도) 여기서 「불출 처리」합니다.
           불출 처리 = 고객사 PO 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
         </p>
       </div>
 
       {(error || hErr) && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          ⚠ {error ? '하네스 PO 를 못 불러왔습니다: ' + error.message : '하네스 공정관리 기록을 못 읽었습니다 (출도 여부가 안 보임): ' + hErr.message}
+          ⚠ {error ? '하네스 PO 를 못 불러왔습니다: ' + error.message : '하네스 공정관리 기록을 못 읽었습니다 (출력 여부가 안 보임): ' + hErr.message}
         </div>
       )}
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-hr-kpi>
-        <Kpi tone="amber" label="출도 전" value={n(cnt.todo)} note="미불출 · 공정관리 출도 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} />
-        <Kpi tone="blue" label="출도됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 뽑음 → 불출 처리만 남음" onClick={() => go('wait')} on={tab === 'wait'} />
-        <Kpi tone="red" label="2주 안 납기 · 출도 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} />
+        <Kpi tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} />
+        <Kpi tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} />
+        <Kpi tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} />
         <Kpi tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} />
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px]">
-        {[['① 고르기', '출도 전 목록에서 체크 (납기 빠른 순)'], ['② 「공정관리용 복사」', '머리글째 복사 — 불출일은 오늘로 채워짐'],
-          ['③ 하네스 공정관리 → 작업지시서 QR → AXCELIS', '붙여넣기 → 폴더 고르고 만들기 (작업지시서 · 도면 출력, 수주 등록)'], ['④ 「출도됨」 → 「불출 처리」', '공정관리 출도 기록을 PO · 라인으로 맞춰 자동으로 보여줌']]
+        {[['① 고르기', '출력 전 목록에서 체크 (납기 빠른 순)'], ['② 「공정관리용 복사」', '머리글째 복사 — 불출일은 오늘로 채워짐'],
+          ['③ 하네스 공정관리 → 작업지시서 QR → AXCELIS', '붙여넣기 → 폴더 고르고 만들기 (작업지시서 · 도면 출력, 수주 등록)'], ['④ 현장에 넘기면(출도) 「불출 처리」', '공정관리 출도 기록을 PO · 라인으로 맞춰 자동으로 보여줌']]
           .map(([a, b], i) => (
             <div key={a} className={`rounded-lg border border-dashed px-3 py-2 ${i === 2 ? 'border-teal-300 bg-teal-50/60 text-teal-800' : 'border-indigo-200 bg-indigo-50/60 text-indigo-700'}`}>
               <b className="block">{a}</b>{b}
@@ -305,7 +329,7 @@ export default function HarnessRelease() {
 
       <div className="bg-white rounded-xl border border-slate-200 p-4">
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          {[['todo', `출도 전 ${n(cnt.todo)}`], ['wait', `출도됨 · 불출 대기 ${n(cnt.wait)}`], ['urgent', `2주 안 납기 ${n(cnt.urgent)}`], ['done', `불출됨 ${n(cnt.done)}`], ['all', '전체']].map(([k, l]) => (
+          {[['todo', `출력 전 ${n(cnt.todo)}`], ['wait', `출력됨 · 불출 대기 ${n(cnt.wait)}`], ['urgent', `2주 안 납기 ${n(cnt.urgent)}`], ['done', `불출됨 ${n(cnt.done)}`], ['all', '전체']].map(([k, l]) => (
             <button key={k} data-hr-tab={k} onClick={() => go(k)} className={pill(k)}>{l}</button>
           ))}
           <input data-hr-search value={q} onChange={(e) => setQ(e.target.value)} placeholder="PO · 품번 · 품명 검색" className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
@@ -346,12 +370,12 @@ export default function HarnessRelease() {
             </thead>
             <tbody>
               {isLoading && <tr><td colSpan={9} className="py-6 text-center text-slate-400">불러오는 중…</td></tr>}
-              {!isLoading && !rows.length && <tr><td colSpan={9} className="py-6 text-center text-slate-400">{tab === 'wait' ? '공정관리에서 출도한 미불출 건이 없습니다.' : '해당하는 하네스 PO 가 없습니다.'}</td></tr>}
+              {!isLoading && !rows.length && <tr><td colSpan={9} className="py-6 text-center text-slate-400">{tab === 'wait' ? '공정관리에서 출력한 미불출 건이 없습니다.' : '해당하는 하네스 PO 가 없습니다.'}</td></tr>}
               {rows.map(p => (
                 <tr key={p.id} data-hr-row={p.id} onClick={() => toggle(p.id)} className={`border-t border-slate-100 cursor-pointer ${sel.has(p.id) ? 'bg-indigo-50/70' : 'hover:bg-slate-50'}`}>
                   <td className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="w-4 h-4" /></td>
                   <td className="px-2 py-1.5 font-mono whitespace-nowrap">{p.po_number} <span className="text-slate-400">· {N(p.order_line) || '-'} · {N(p.del_line) || '-'}</span></td>
-                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{!hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
+                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{p.division && p.division !== '하네스' && <span data-hr-div className="ml-1 px-1 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-sans font-bold" title="고객사 PO 구분이 하네스가 아니지만 하네스 공정관리에 등록된 줄">{p.division}</span>}{!hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
                   <td className="px-2 py-1.5"><div className="truncate max-w-[300px]" title={p.items?.name}>{p.items?.name || '—'}</div>{p.ccn && <div className="text-[11px] text-slate-400">CCN {P(p.ccn)}</div>}</td>
                   <td className="px-2 py-1.5 text-center font-mono">{p.item_rev || '-'} / {p.item_brev || '-'}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{n(leftOf(p))}</td>
@@ -372,7 +396,7 @@ export default function HarnessRelease() {
           </div>
         )}
         <p className="mt-2 text-[11px] text-slate-400">
-          줄을 누르면 선택됩니다 · 공정관리 기록은 출도(작업지시서 만들기) 때 켜지는 출력 표시와 출도 이력을 PO · 오더라인 · 납품라인으로 맞춰 봅니다 (라인 없는 옛 건은 PO · 도번).
+          줄을 누르면 선택됩니다 · 공정관리 기록은 출력(작업지시서 만들기) 때 켜지는 출력 표시와 QR 이력을 PO · 오더라인 · 납품라인으로 맞춰 봅니다 (라인 없는 옛 건은 PO · 도번).
           불출 취소는 「불출됨」에서 고르거나 고객사 PO 에서 체크를 풀면 됩니다.
         </p>
       </div>

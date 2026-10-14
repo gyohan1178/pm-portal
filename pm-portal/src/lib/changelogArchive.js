@@ -2,6 +2,16 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.42.0',
+    date: '2026-10-07',
+    changes: [
+      '★ 도면 조회 — 고객사 선택 추가 (AXCELIS · Edwards · CSK · VM). AXCELIS 는 그대로입니다',
+      'Edwards · CSK: 품번으로 최신 REV · 경로 조회 (예: IE0441432 · ECK114270029). 딱 맞는 품번이 없으면 그 글자가 들어간 도면을 찾아 줍니다. Edwards 는 원본 / 컨버팅 구분 · 컨버팅 갱신 경고도 됩니다',
+      'VM: 품번 체계가 없어 모델(Nardo-M · Leo WH · Leo NK I-C · Leo WS) · 구역을 고르고 파일 이름으로 찾습니다',
+      '스캐너 v4.0 — NAS 의 Edwards(1. 통합도면 · 출도 도면 제외) · CSK(1. 도면 · 「이전」 폴더 제외) · VM(하네스도면) 폴더를 같이 읽습니다. SQL: pm_drawings_customers_261007.sql 실행 필요',
+    ],
+  },
+  {
     version: 'v4.41.0',
     date: '2026-10-07',
     changes: [
