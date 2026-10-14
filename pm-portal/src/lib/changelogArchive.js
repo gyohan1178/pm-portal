@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.40.1',
+    date: '2026-10-07',
+    changes: [
+      'CSK 생산관리 머리글 정리 — ITEM NO. · 품번 · 품명 · 입고 요청일 · 납품 완료일 · 회계 칸을 뺐습니다. 남은 칸: NO/ · 구분 · 관리번호 · 상태 · 발주 번호 · 규격 · Plnd · Prod · Q\'TY · PRE ASSY 품번 · 발주일자 · 납품 예정일 · 비고 · 자재 반출일 · Option · 비고1 · 변경 현황 (뺀 값은 저장은 되어 있고 규격 칸에 마우스를 올리면 보임)',
+    ],
+  },
+  {
     version: 'v4.40.0',
     date: '2026-10-07',
     changes: [

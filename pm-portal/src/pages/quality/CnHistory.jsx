@@ -16,16 +16,31 @@ import {
 // 🔁 설계변경(CN) 이력 — 품질 (2026-10-14)
 //   Axcelis 에서 받은 CN Summary(HTML)를 올리면 분석 결과를 DB 에 남겨 누구나 다시 본다.
 //   부서 회신 · ECN 통보서는 넣지 않는다 — 부서별 확인은 생산기술팀이 따로 챙긴다.
-//   생산기술팀은 목록 · 상세에서 「생기 리뷰」를 체크한다.
+//   생산기술팀은 목록 · 상세에서 「리뷰」(완료 / 불필요)를 고르고, 품번별로 몇 호기부터 적용할지 적는다. (v4.52.0)
 
 const AX_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
-const LIST_COLS = 'id,cn_no,title,file_name,version,summary,our_parts,date_from,date_to,memo,reviewed,reviewed_name,reviewed_at,created_name,created_at,updated_name,updated_at'
+const OLD_COLS = 'id,cn_no,title,file_name,version,summary,our_parts,date_from,date_to,memo,reviewed,reviewed_name,reviewed_at,created_name,created_at,updated_name,updated_at'
+const LIST_COLS = OLD_COLS + ',review_status,apply_from'   // v4.52.0 SQL(pm_cn_docs_review_apply) 로 생기는 칸
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const yy = (d) => (d ? String(d).slice(2, 10) : '')
 const axCode = (pn) => 'AX-' + String(pn || '').replace(/^AX-/i, '')
 const isMfgPn = (pn) => /_[A-Z][A-Z0-9 .,&/-]{2,}$/.test(pn || '')
 const thisMonth = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 7)
-export const missingTable = (e) => /pm_cn_doc/.test(String(e?.message || e)) && /exist|schema cache|relation/i.test(String(e?.message || e))
+export const missingCol = (e) => /review_status|apply_from/.test(String(e?.message || e)) && /exist|schema cache|column/i.test(String(e?.message || e))
+export const missingTable = (e) => !missingCol(e) && /pm_cn_doc/.test(String(e?.message || e)) && /exist|schema cache|relation/i.test(String(e?.message || e))
+const SQL_NOTE = '리뷰 「불필요」 · 적용 호기는 pm_cn_docs_review_apply SQL 을 먼저 실행해야 저장됩니다'
+// 새 칸으로 먼저 읽고, SQL 전이라 칸이 없으면 예전 칸으로 다시 읽는다 (화면은 그대로 뜨게)
+async function withCols(run) {
+  try { return { rows: await run(LIST_COLS), needSql: false } } catch (e) {
+    if (!missingCol(e)) throw e
+    return { rows: await run(OLD_COLS), needSql: true }
+  }
+}
+// 리뷰 상태 — null = 대기 · 'done' = 완료 · 'na' = 불필요 (SQL 전 줄은 reviewed 로 판단)
+export const reviewOf = (x) => x?.review_status || (x?.reviewed ? 'done' : null)
+const REVIEW_TXT = { done: '리뷰 완료', na: '리뷰 불필요' }
+// 적용 호기 — apply_from = { 품번: { v: '47970HKF #3부터', by, at } }
+const applyList = (x) => Object.entries(x?.apply_from || {}).map(([pn, a]) => ({ pn, v: String((a && typeof a === 'object' ? a.v : a) || '').trim(), by: a?.by, at: a?.at })).filter(a => a.v)
 
 const BADGE = {
   blue: 'bg-sky-50 text-sky-700 border-sky-200', red: 'bg-rose-50 text-rose-600 border-rose-200',
@@ -124,15 +139,17 @@ function CnList({ onOpen }) {
   const [f, setF] = useState('all')
   const [busy, setBusy] = useState(false)
 
-  const { data: docs = [], isLoading, error } = useQuery({
+  const { data: res, isLoading, error } = useQuery({
     queryKey: ['cnDocs', dq],
-    queryFn: () => fetchAll(() => {
-      let x = supabase.from('pm_cn_docs').select(LIST_COLS)
+    queryFn: () => withCols((cols) => fetchAll(() => {
+      let x = supabase.from('pm_cn_docs').select(cols)
       if (dq) x = x.ilike('search_text', `%${dq}%`)
       return x.order('created_at', { ascending: false }).order('id')
-    }),
+    })),
     staleTime: 60 * 1000,
   })
+  const docs = useMemo(() => res?.rows || [], [res])
+  const needSql = !!res?.needSql
 
   // 이번 달 CN 의 신규 품번 등록 여부 · 단종 품번 재고/발주잔 — 지표 보조 숫자
   const month = thisMonth()
@@ -179,7 +196,7 @@ function CnList({ onOpen }) {
       : f === 'ours' ? (x.our_parts || []).length > 0
       : f === 'new' ? (x.summary?.newPns || []).length > 0
       : f === 'eol' ? (x.summary?.eolPns || []).length > 0
-      : f === 'review' ? !x.reviewed : true), [docs, f])
+      : f === 'review' ? !reviewOf(x) : true), [docs, f])
 
   async function upload(file) {
     if (!file) return
@@ -190,7 +207,7 @@ function CnList({ onOpen }) {
       const who = me?.name || me?.email || null
       const old = must(await supabase.from('pm_cn_docs').select('*').eq('cn_no', row.cn_no).maybeSingle(), 'CN 조회')
       if (old) {
-        if (!confirm(`${row.cn_no} 은(는) 이미 있습니다 (${yy(old.created_at)} ${old.created_name || ''} · ${old.version}판).\n\n새 판으로 덮어쓸까요? 이전 판은 이력으로 남고, 메모 · 생기 리뷰는 그대로 둡니다.`)) return
+        if (!confirm(`${row.cn_no} 은(는) 이미 있습니다 (${yy(old.created_at)} ${old.created_name || ''} · ${old.version}판).\n\n새 판으로 덮어쓸까요? 이전 판은 이력으로 남고, 메모 · 리뷰 · 적용 호기는 그대로 둡니다.`)) return
         must(await supabase.from('pm_cn_doc_versions').insert({
           doc_id: old.id, cn_no: old.cn_no, version: old.version || 1, file_name: old.file_name,
           parsed: old.parsed, raw_html: old.raw_html, created_name: old.updated_name || old.created_name,
@@ -226,7 +243,7 @@ function CnList({ onOpen }) {
           <h1 className="text-xl font-extrabold text-slate-900">🔁 설계변경(CN) 이력</h1>
           <p className="text-[13px] text-slate-400 mt-0.5">
             Axcelis 에서 받은 CN Summary(HTML)를 올려 두는 곳입니다. 올리면 리비전 · BOM 추가/변경/삭제 · 신규/단종 품번을 뽑아 저장하고, 누구나 같은 내용을 다시 볼 수 있습니다.
-            생산기술팀은 검토한 CN 에 「생기 리뷰」를 체크합니다.
+            생산기술팀은 「리뷰」(완료 / 불필요)를 고르고, 자사 품번을 몇 호기부터 적용할지 상세 화면에 적어 둡니다.
           </p>
         </div>
         {canEdit && (
@@ -243,6 +260,7 @@ function CnList({ onOpen }) {
           {missingTable(error) ? '⚠ CN 이력 테이블이 아직 없습니다 — Supabase 에서 pm_cn_docs SQL 을 먼저 실행해 주세요.' : '⚠ 목록을 못 불러왔습니다: ' + error.message}
         </div>
       )}
+      {needSql && <div data-cn-needsql className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">⚠ {SQL_NOTE}.</div>}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-cn-kpi>
         <Kpi label="등록된 CN" value={n(docs.length)} note={`${yr}년 ${n(thisYear)}건${dq ? ' · 검색 결과' : ''}`} />
@@ -254,7 +272,7 @@ function CnList({ onOpen }) {
 
       <div className="bg-white rounded-xl border border-slate-200 p-4">
         <div className="flex flex-wrap items-center gap-2 mb-3">
-          {[['all', '전체'], ['ours', '자사 품번 영향'], ['new', '신규 있음'], ['eol', '단종 있음'], ['review', '생기 리뷰 전']].map(([k, l]) => (
+          {[['all', '전체'], ['ours', '자사 품번 영향'], ['new', '신규 있음'], ['eol', '단종 있음'], ['review', '리뷰 대기']].map(([k, l]) => (
             <button key={k} data-cn-filter={k} onClick={() => setF(k)} className={pill(k)}>{l}</button>
           ))}
           <input data-cn-search value={q} onChange={(e) => setQ(e.target.value)} placeholder="CN 번호 · 제목 · 품번 · 품명 검색"
@@ -267,14 +285,14 @@ function CnList({ onOpen }) {
               <tr>
                 <th className="px-2 py-2 text-left">CN 번호 / 제목</th>
                 <th className="px-2 py-2 text-left">올린 날</th>
-                <th className="px-2 py-2 text-left">적용 시점</th>
                 <th className="px-2 py-2 text-left">자사 품번 <span className="font-normal text-slate-400">REV 이전→변경</span></th>
+                <th className="px-2 py-2 text-left">적용 호기</th>
                 <th className="px-2 py-2 text-right">변경 품목</th>
                 <th className="px-2 py-2 text-center">BOM <span className="font-normal text-slate-400">추가/변경/삭제</span></th>
                 <th className="px-2 py-2 text-center">신규</th>
                 <th className="px-2 py-2 text-center">단종</th>
                 <th className="px-2 py-2 text-left">올린 사람</th>
-                <th className="px-2 py-2 text-center">생기 리뷰</th>
+                <th className="px-2 py-2 text-center">리뷰</th>
               </tr>
             </thead>
             <tbody>
@@ -290,10 +308,15 @@ function CnList({ onOpen }) {
                       <div className="text-[11px] text-slate-400 truncate max-w-[340px]" title={x.title}>{x.title || '—'}</div>
                     </td>
                     <td className="px-2 py-2 whitespace-nowrap">{yy(x.created_at)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">{x.date_from ? `${yy(x.date_from)}${x.date_to && x.date_to !== x.date_from ? ' ~ ' + yy(x.date_to) : ''}` : '—'}</td>
                     <td className="px-2 py-2">
                       {ours.length ? <OurRevs ours={ours} revs={revOf(x)} />
                         : <span className="text-[11px] text-slate-400">자사 품번 없음</span>}
+                    </td>
+                    <td className="px-2 py-2" data-cn-apply-cell>
+                      {applyList(x).length ? applyList(x).map(a => (
+                        <div key={a.pn} className="whitespace-nowrap" title={`${a.pn} · ${a.v}${a.by ? ` (${a.by} ${yy(a.at)})` : ''}`}>
+                          <span className="font-mono text-[11px] text-slate-400">{a.pn}</span> <b className="text-[12px] text-sky-700">{a.v}</b>
+                        </div>)) : <span className="text-slate-300">—</span>}
                     </td>
                     <td className="px-2 py-2 text-right font-mono">{n(s.parts)}</td>
                     <td className="px-2 py-2 text-center font-mono whitespace-nowrap">
@@ -303,7 +326,7 @@ function CnList({ onOpen }) {
                     <td className="px-2 py-2 text-center">{(s.eolPns || []).length ? <Badge tone="red">{s.eolPns.length}</Badge> : <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{x.updated_name || x.created_name || '—'}</td>
                     <td className="px-2 py-2 text-center" onClick={(e) => e.stopPropagation()}>
-                      <ReviewBox doc={x} canEdit={canEdit} me={me} compact />
+                      <ReviewBox doc={x} canEdit={canEdit} me={me} needSql={needSql} compact />
                     </td>
                   </tr>
                 )
@@ -337,30 +360,36 @@ function OurRevs({ ours, revs }) {
   )
 }
 
-// 생기 리뷰 체크 — 목록 · 상세 공용
-function ReviewBox({ doc, canEdit, me, compact }) {
+// 리뷰 — 목록 · 상세 공용. 대기 / 완료 / 불필요 중에서 고른다 (리뷰가 필요 없는 CN 도 있다)
+function ReviewBox({ doc, canEdit, me, compact, needSql }) {
   const qc = useQueryClient()
   const [saving, setSaving] = useState(false)
-  async function toggle(v) {
-    if (!canEdit) return
-    if (!v && !confirm(`${doc.cn_no} 생기 리뷰 체크를 풀까요?`)) return
+  const cur = reviewOf(doc) || ''
+  async function pick(v) {
+    if (!canEdit || v === cur) return
+    if (needSql && v === 'na') { toastError(SQL_NOTE); return }
+    if (!v && !confirm(`${doc.cn_no} 리뷰를 「대기」로 되돌릴까요?`)) return
     setSaving(true)
     try {
-      must(await supabase.from('pm_cn_docs').update({
-        reviewed: v, reviewed_name: v ? (me?.name || me?.email || null) : null, reviewed_at: v ? new Date().toISOString() : null,
-      }).eq('id', doc.id), '생기 리뷰 저장')
+      const patch = { reviewed: v === 'done', reviewed_name: v ? (me?.name || me?.email || null) : null, reviewed_at: v ? new Date().toISOString() : null }
+      if (!needSql) patch.review_status = v || null
+      must(await supabase.from('pm_cn_docs').update(patch).eq('id', doc.id), '리뷰 저장')
       qc.invalidateQueries({ queryKey: ['cnDocs'], exact: false })
       qc.invalidateQueries({ queryKey: ['cnDoc', doc.id] })
-    } catch (e) { toastError(e.message) } finally { setSaving(false) }
+    } catch (e) { toastError(missingCol(e) ? SQL_NOTE : e.message) } finally { setSaving(false) }
   }
+  const tone = cur === 'done' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : cur === 'na' ? 'border-slate-300 bg-slate-100 text-slate-500' : 'border-amber-200 bg-white text-amber-700'
   return (
-    <label data-cn-review={doc.cn_no} className={`inline-flex items-center gap-1.5 ${canEdit ? 'cursor-pointer' : 'cursor-default'}`}
-      title={doc.reviewed ? `${doc.reviewed_name || ''} · ${yy(doc.reviewed_at)} 리뷰` : '생산기술팀이 검토하면 체크합니다'}>
-      <input type="checkbox" checked={!!doc.reviewed} disabled={!canEdit || saving} onChange={(e) => toggle(e.target.checked)} className="w-4 h-4 accent-emerald-600" />
-      {doc.reviewed
-        ? <span className="text-[11px] text-emerald-700 font-bold whitespace-nowrap">{doc.reviewed_name || '완료'}{!compact && ` · ${yy(doc.reviewed_at)}`}</span>
-        : <span className="text-[11px] text-slate-400 whitespace-nowrap">{compact ? '대기' : '생기 리뷰 전'}</span>}
-    </label>
+    <span data-cn-review={doc.cn_no} className="inline-flex items-center gap-1.5"
+      title={cur ? `${REVIEW_TXT[cur]} · ${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '생산기술팀이 검토하면 완료 · 필요 없으면 불필요를 고릅니다'}>
+      <select value={cur} disabled={!canEdit || saving} onChange={(e) => pick(e.target.value)}
+        className={`px-1.5 py-0.5 text-[11px] font-bold rounded border ${tone} ${canEdit ? 'cursor-pointer' : 'cursor-default'}`}>
+        <option value="">대기</option>
+        <option value="done">✅ 완료</option>
+        <option value="na">➖ 불필요</option>
+      </select>
+      {cur && doc.reviewed_name && <span className="text-[11px] text-slate-500 whitespace-nowrap">{doc.reviewed_name}{!compact && ` · ${yy(doc.reviewed_at)}`}</span>}
+    </span>
   )
 }
 
@@ -395,11 +424,13 @@ function CnDetail({ id, onBack }) {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
   const me = useMe()
-  const { data: doc, isLoading, error } = useQuery({
+  const { data: res, isLoading, error } = useQuery({
     queryKey: ['cnDoc', id],
-    queryFn: async () => must(await supabase.from('pm_cn_docs').select(LIST_COLS + ',parsed').eq('id', id).maybeSingle(), 'CN 조회'),
+    queryFn: () => withCols(async (cols) => must(await supabase.from('pm_cn_docs').select(cols + ',parsed').eq('id', id).maybeSingle(), 'CN 조회')),
     staleTime: 60 * 1000,
   })
+  const doc = res?.rows
+  const needSql = !!res?.needSql
   const { cn, d } = useMemo(() => {
     if (!doc?.parsed) return {}
     const c = JSON.parse(JSON.stringify(doc.parsed))
@@ -425,12 +456,20 @@ function CnDetail({ id, onBack }) {
     },
     staleTime: 60 * 1000,
   })
-  // 우리 쪽 현황 — 생산관리에서 이 품번의 진행 호기 (SREV 별)
+  // 우리 쪽 현황 — 이 품번의 진행 중 고객사 PO (BREV · 수량) + PO 에 붙은 생산관리 호기
   const { data: prod } = useQuery({
     queryKey: ['cnProd', target],
     enabled: !!target,
-    queryFn: async () => must(await supabase.from('production').select('id,pn,hogi,rev,brev,req_date,status')   // ⚠ production 에 po_number 칸은 없다 (po_id 로 따로 붙는 값)
-      .eq('customer_code', 'AX').eq('pn', target).or('status.is.null,status.neq.완료'), '생산관리 조회'),
+    queryFn: async () => {
+      const its = must(await supabase.from('items').select('id').eq('std_code', axCode(target)), '품목 조회')
+      const ids = (its || []).map(x => x.id)
+      const pos = ids.length ? must(await supabase.from('purchase_orders')
+        .select('id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status')
+        .eq('customer_id', AX_ID).eq('order_type', 'customer_po').in('item_id', ids).not('status', 'in', '(완료,취소)'), '고객사 PO 조회') : []
+      const hogi = must(await supabase.from('production').select('id,po_id,hogi,req_date,status')   // ⚠ production 에 po_number 칸은 없다 (po_id 로 붙는다)
+        .eq('customer_code', 'AX').eq('pn', target).or('status.is.null,status.neq.완료'), '생산관리 조회')
+      return { pos: pos || [], hogi: hogi || [] }
+    },
     staleTime: 60 * 1000,
   })
 
@@ -443,6 +482,22 @@ function CnDetail({ id, onBack }) {
       toastSuccess('메모를 저장했습니다')
       qc.invalidateQueries({ queryKey: ['cnDoc', id] }); qc.invalidateQueries({ queryKey: ['cnDocs'], exact: false })
     } catch (e) { toastError(e.message) }
+  }
+  // 적용 호기 — 품번별로 「몇 호기부터 적용」을 적어 둔다 (목록 · 인쇄 · 엑셀에 같이 나감)
+  async function saveApply(pn, v) {
+    const val = String(v || '').trim()
+    const cur = (doc.apply_from || {})[pn]
+    if (val === String((cur && typeof cur === 'object' ? cur.v : cur) || '').trim()) return true
+    if (needSql) { toastError(SQL_NOTE); return false }
+    try {
+      const next = { ...(doc.apply_from || {}) }
+      if (val) next[pn] = { v: val, by: me?.name || me?.email || null, at: new Date().toISOString() }
+      else delete next[pn]
+      must(await supabase.from('pm_cn_docs').update({ apply_from: next }).eq('id', id), '적용 호기 저장')
+      toastSuccess(val ? `${pn} 적용 호기: ${val}` : `${pn} 적용 호기를 지웠습니다`)
+      qc.invalidateQueries({ queryKey: ['cnDoc', id] }); qc.invalidateQueries({ queryKey: ['cnDocs'], exact: false })
+      return true
+    } catch (e) { toastError(missingCol(e) ? SQL_NOTE : e.message); return false }
   }
   async function downloadRaw() {
     try {
@@ -477,7 +532,8 @@ function CnDetail({ id, onBack }) {
     .filter(p => ours.has(p.partNo) || (p.bomCnt.ADD + p.bomCnt.CHG + p.bomCnt.DEL) > 0)
     .sort((a, b) => (ours.has(b.partNo) - ours.has(a.partNo)) || a.partNo.localeCompare(b.partNo))
   const tabs = [['part', '품번 상세'], ['bom', 'BOM 변경', d.bom.length], ['nd', '신규 · 단종', d.newParts.length + d.delParts.length], ['all', '변경 품목 전체', cn.parts.length], ['raw', '원문']]
-  const ctx = { cn, d, R, subs, target, portal, prod, ours, withSub, doc }
+  const ctx = { cn, d, R, subs, target, portal, prod, ours, withSub, doc, canEdit, saveApply }
+  const applies = applyList(doc)
 
   return (
     <div className="space-y-4">
@@ -492,9 +548,14 @@ function CnDetail({ id, onBack }) {
               {doc.file_name} · {yy(doc.created_at)} {doc.created_name || ''}{doc.version > 1 ? ` · 갱신 ${yy(doc.updated_at)} ${doc.updated_name || ''}` : ''}
               {' '}· 변경 품목 {n(cn.parts.length)} · BOM {n(cn.totalBom)}행{d.dateFrom ? ` · 적용 ${yy(d.dateFrom)} ~ ${yy(d.dateTo)}` : ''}
             </div>
+            {applies.length > 0 && (
+              <div className="mt-1 flex flex-wrap gap-1.5" data-cn-apply-head>
+                {applies.map(a => <span key={a.pn} className="px-2 py-0.5 rounded-full border border-sky-200 bg-sky-50 text-[11.5px] text-sky-800"><span className="font-mono">{a.pn}</span> · <b>{a.v}</b></span>)}
+              </div>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="px-3 py-1.5 rounded-lg border border-emerald-200 bg-emerald-50/60"><ReviewBox doc={doc} canEdit={canEdit} me={me} /></div>
+            <div className="px-3 py-1.5 rounded-lg border border-slate-200 bg-slate-50/60 flex items-center gap-1.5"><span className="text-[11px] font-bold text-slate-400">리뷰</span><ReviewBox doc={doc} canEdit={canEdit} me={me} needSql={needSql} /></div>
             <button data-cn-print onClick={() => printCn()} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">🖨 변경 상세내역</button>
             <button data-cn-excel onClick={() => excelCn(ctx).catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
             <button onClick={downloadRaw} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📄 원본 HTML</button>
@@ -536,7 +597,7 @@ function CnDetail({ id, onBack }) {
 
       <Card title="메모" sub="이력용 메모 — 확인한 내용 · 고객 회신 등을 남깁니다. 인쇄 · 엑셀에 같이 나갑니다.">
         <textarea data-cn-memo value={memo ?? ''} onChange={(e) => setMemo(e.target.value)} onBlur={saveMemo} disabled={!canEdit}
-          placeholder="예) 10/14 생기 공유 완료 · REV C 3대는 구도면으로 납품 합의"
+          placeholder="예) 10/14 생기 공유 완료 · BREV C PO 2건은 구도면으로 납품 합의"
           className="w-full min-h-[64px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:border-violet-400" />
       </Card>
 
@@ -599,16 +660,20 @@ function PartsTable({ rows, onPick }) {
 
 // ── 품번 상세 ─────────────────────────────────────────────────────────
 const DEXP = { UAI: '있는 그대로 사용', NEW: '신규 — 기존 물량 없음', NONE: '해당 물량 없음', REWORK: '신규 사양으로 재작업', SCRAP: '기존 물량 폐기', RTV: '반품' }
-function prodGroups(prod, p) {
-  const g = new Map()
-  ;(prod || []).forEach(r => { const k = String(r.rev || '').trim() || '(미기재)'; const e = g.get(k) || []; e.push(r); g.set(k, e) })
-  return [...g.entries()].sort().map(([rv, list]) => {
-    const ds = list.map(x => x.req_date).filter(Boolean).sort()
-    const U = (s) => String(s || '').trim().toUpperCase()
-    const judge = U(rv) === U(p.fromRev) ? 'old' : U(rv) === U(p.toRev) ? 'new' : 'chk'
-    return { rv, list, from: ds[0], to: ds[ds.length - 1], judge }
-  })
+const U = (s) => String(s || '').trim().toUpperCase()
+const natCmp = (a, b) => String(a || '').localeCompare(String(b || ''), 'ko', { numeric: true })
+// 진행 중 고객사 PO 한 줄 = BREV · 수량 · 납기 · 붙은 호기.  PO 에 안 붙은 호기는 맨 아래 한 줄로
+function poRows(prod) {
+  if (!prod) return null
+  const by = new Map()
+  prod.hogi.forEach(h => { const k = h.po_id || ''; const e = by.get(k) || []; e.push(h); by.set(k, e) })
+  const pos = [...prod.pos].sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || natCmp(a.po_number, b.po_number) || natCmp(a.order_line, b.order_line))
+  const ids = new Set(pos.map(x => x.id))
+  const rows = pos.map(po => ({ po, hogi: (by.get(po.id) || []).sort((a, b) => natCmp(a.hogi, b.hogi)) }))
+  const loose = prod.hogi.filter(h => !h.po_id || !ids.has(h.po_id)).sort((a, b) => natCmp(a.hogi, b.hogi))
+  return { rows, loose }
 }
+const leftOf = (po) => Number(po.qty_remaining ?? ((po.qty_ordered || 0) - (po.qty_received || 0))) || 0
 
 function PartView({ ctx, setTarget, withSub, setWithSub }) {
   const { R, subs, portal, prod, d } = ctx
@@ -617,7 +682,7 @@ function PartView({ ctx, setTarget, withSub, setWithSub }) {
   const stock = (pn, k) => { const it = portal?.im[pn]; if (!portal) return '…'; if (!it) return '—'; const v = portal[k][it.id] || 0; return v ? n(v) : '0' }
   const newCnt = R.add.filter(b => b.fromType === 'NEW' || b.fromRev === '-' || b.fromRev === '').length
   const eolCnt = R.del.filter(b => /DIS|OBS/.test(b.toType)).length
-  const pg = prodGroups(prod, p)
+  const pr = poRows(prod)
   return (
     <div className="space-y-4" data-cn-partview={p.partNo}>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
@@ -640,25 +705,10 @@ function PartView({ ctx, setTarget, withSub, setWithSub }) {
             ))}
           </div>
           {String(p.dispOo || '').toUpperCase() === 'UAI' && (
-            <p className="mt-2 text-[11.5px] text-slate-500">미착이 UAI 이므로 기준일 전에 받은 PO 는 REV {p.fromRev || '-'} 그대로 납품할 수 있습니다. 최종 판정은 PO 의 리비전(SREV)으로 합니다.</p>
+            <p className="mt-2 text-[11.5px] text-slate-500">미착이 UAI 이므로 기준일 전에 받은 PO 는 REV {p.fromRev || '-'} 그대로 납품할 수 있습니다.</p>
           )}
         </Card>
-        <Card title={<>우리 쪽 현황 <span className="ml-1 text-[10px] font-bold text-violet-600 border border-violet-200 rounded px-1">포털 자동</span></>}
-          sub="생산관리에서 이 품번의 진행 중 호기를 리비전(SREV)별로 나눴습니다">
-          {!prod ? <Empty>불러오는 중…</Empty> : !pg.length ? <Empty>생산관리에 진행 중인 호기가 없습니다.</Empty> : (
-            <table className="w-full text-xs" data-cn-prod>
-              <thead className="bg-slate-50 text-slate-500"><tr><th className="px-2 py-1.5 text-left">PO REV</th><th className="px-2 py-1.5 text-right">호기</th><th className="px-2 py-1.5 text-left">납품일</th><th className="px-2 py-1.5 text-left">판정</th></tr></thead>
-              <tbody>{pg.map(g => (
-                <tr key={g.rv} className="border-t border-slate-100" title={g.list.map(x => `${x.hogi || ''} · ${yy(x.req_date) || '납기 미정'}`).join('\n')}>
-                  <td className="px-2 py-1.5 font-mono font-extrabold">{g.rv}</td>
-                  <td className="px-2 py-1.5 text-right font-mono">{g.list.length}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{g.from ? `${yy(g.from)}${g.to !== g.from ? ' ~ ' + yy(g.to) : ''}` : '—'}</td>
-                  <td className="px-2 py-1.5">{g.judge === 'old' ? <Badge tone="green">REV {g.rv} 그대로 납품</Badge> : g.judge === 'new' ? <Badge tone="blue">REV {g.rv} 신사양</Badge> : <Badge tone="amber">확인 필요</Badge>}</td>
-                </tr>))}
-              </tbody>
-            </table>
-          )}
-        </Card>
+        <OurStatus ctx={ctx} p={p} pr={pr} />
       </div>
 
       <Card title={`추가되는 자재 (${R.add.length})`} sub="새로 들어가는 품목 — 신규 품번은 품목 등록 여부를 같이 보여줍니다">
@@ -767,6 +817,69 @@ function PartView({ ctx, setTarget, withSub, setWithSub }) {
         </div>
       </Card>
     </div>
+  )
+}
+
+// 우리 쪽 현황 — 진행 중 고객사 PO 를 BREV · 수량과 함께 나열하고, 붙은 호기를 보여준다.
+//   판정은 하지 않는다. 생산기술팀이 「적용 호기」(몇 호기부터 신사양)를 정해 적는다 — 호기를 누르면 칸에 들어간다.
+function OurStatus({ ctx, p, pr }) {
+  const { doc, canEdit, saveApply, target } = ctx
+  const saved = applyList(doc).find(a => a.pn === target)?.v || ''
+  const [val, setVal] = useState(saved)
+  useEffect(() => { setVal(saved) }, [saved, target])
+  const dirty = val.trim() !== saved
+  const revCls = (r) => !r ? 'text-slate-300' : U(r) === U(p.toRev) ? 'text-violet-700 font-extrabold' : U(r) === U(p.fromRev) ? 'text-slate-700' : 'text-amber-600'
+  const sum = pr ? [...pr.rows.reduce((m, { po }) => { const k = U(po.item_brev) || '-'; const e = m.get(k) || { n: 0, q: 0 }; e.n++; e.q += leftOf(po); m.set(k, e); return m }, new Map())].sort() : []
+  const Chip = ({ h }) => (
+    <button type="button" data-cn-hogi={h.hogi} disabled={!canEdit} onClick={() => setVal(`${h.hogi}부터`)}
+      title={`${h.hogi} · 납품일 ${yy(h.req_date) || '미정'} · ${h.status || ''}${canEdit ? ' — 누르면 「적용 호기」 칸에 들어갑니다' : ''}`}
+      className={`px-1.5 py-0.5 rounded border font-mono text-[11px] whitespace-nowrap ${saved && (saved === String(h.hogi) || saved === `${h.hogi}부터`) ? 'bg-sky-100 border-sky-300 text-sky-800 font-bold' : 'bg-white border-slate-200 text-slate-600'} ${canEdit ? 'hover:border-sky-300 hover:bg-sky-50' : ''}`}>{h.hogi || '?'}</button>
+  )
+  return (
+    <Card title={<>우리 쪽 현황 <span className="ml-1 text-[10px] font-bold text-violet-600 border border-violet-200 rounded px-1">포털 자동</span></>}
+      sub={`진행 중인 고객사 PO 와 붙어 있는 호기입니다 · BREV = PO 발행 리비전 (보라 = 변경 후 REV ${p.toRev || '-'})`}>
+      <div className="flex flex-wrap items-center gap-2 mb-2 rounded-lg border border-sky-200 bg-sky-50/60 px-3 py-2">
+        <span className="text-[12px] font-extrabold text-sky-800">적용 호기</span>
+        <input data-cn-apply value={val} onChange={(e) => setVal(e.target.value)} disabled={!canEdit}
+          onKeyDown={(e) => { if (e.key === 'Enter') saveApply(target, val) }}
+          placeholder="예) 47970HKF #3부터 · PO 170224883부터" className="flex-1 min-w-[180px] px-2 py-1 text-[12.5px] border border-sky-200 rounded bg-white focus:outline-none focus:border-sky-400" />
+        {canEdit && <button data-cn-apply-save disabled={!dirty} onClick={() => saveApply(target, val)}
+          className={`px-2.5 py-1 text-[11.5px] font-bold rounded ${dirty ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-slate-100 text-slate-400'}`}>저장</button>}
+      </div>
+      {!pr ? <Empty>불러오는 중…</Empty> : !pr.rows.length && !pr.loose.length ? <Empty>진행 중인 고객사 PO · 호기가 없습니다.</Empty> : (<>
+        {sum.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mb-2" data-cn-brev-sum>
+            {sum.map(([k, e]) => <span key={k} className="px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-[11px]">BREV <b className={`font-mono ${revCls(k === '-' ? '' : k)}`}>{k}</b> · PO {e.n}줄 · 잔량 {n(e.q)}</span>)}
+          </div>
+        )}
+        <div className="overflow-x-auto max-h-[320px] overflow-y-auto border border-slate-200 rounded-lg">
+          <table className="w-full text-xs" data-cn-prod>
+            <thead className="bg-slate-50 text-slate-500 sticky top-0"><tr>
+              <th className="px-2 py-1.5 text-left">PO / 라인</th><th className="px-2 py-1.5 text-center">BREV</th><th className="px-2 py-1.5 text-center">SREV</th>
+              <th className="px-2 py-1.5 text-right">잔량</th><th className="px-2 py-1.5 text-left">납기</th><th className="px-2 py-1.5 text-left">호기</th>
+            </tr></thead>
+            <tbody>
+              {pr.rows.map(({ po, hogi }) => (
+                <tr key={po.id} data-cn-po-row={po.id} className="border-t border-slate-100">
+                  <td className="px-2 py-1.5 font-mono whitespace-nowrap">{po.po_number}<span className="text-slate-400">{po.order_line ? `-${po.order_line}` : ''}{po.del_line ? `-${po.del_line}` : ''}</span></td>
+                  <td className={`px-2 py-1.5 text-center font-mono ${revCls(po.item_brev)}`}>{po.item_brev || '-'}</td>
+                  <td className={`px-2 py-1.5 text-center font-mono ${revCls(po.item_rev)}`}>{po.item_rev || '-'}</td>
+                  <td className="px-2 py-1.5 text-right font-mono">{n(leftOf(po))}{Number(po.qty_ordered) !== leftOf(po) && <span className="text-slate-400"> / {n(po.qty_ordered)}</span>}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{yy(po.promise_date) || '—'}</td>
+                  <td className="px-2 py-1.5"><span className="inline-flex flex-wrap gap-1">{hogi.length ? hogi.map(h => <Chip key={h.id} h={h} />) : <span className="text-slate-300">—</span>}</span></td>
+                </tr>
+              ))}
+              {pr.loose.length > 0 && (
+                <tr data-cn-po-row="loose" className="border-t border-slate-100 bg-slate-50/60">
+                  <td className="px-2 py-1.5 text-slate-500" colSpan={5}>PO 미연결 호기</td>
+                  <td className="px-2 py-1.5"><span className="inline-flex flex-wrap gap-1">{pr.loose.map(h => <Chip key={h.id} h={h} />)}</span></td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </>)}
+    </Card>
   )
 }
 
@@ -931,7 +1044,8 @@ function CnPrint({ ctx, memo }) {
         <div><b>대상</b>{target ? `${target} ${R?.p.toDesc || ''}` : 'CN 전체'}</div>
         <div><b>리비전</b>{R ? `${R.p.fromRev || '-'} → ${R.p.toRev || '-'}` : '—'}</div>
         <div><b>적용</b>{R ? `${yy(R.effFrom) || '-'} ~ ${yy(R.effTo) || '-'}` : `${yy(d.dateFrom) || '-'} ~ ${yy(d.dateTo) || '-'}`}</div>
-        <div><b>생기 리뷰</b>{doc.reviewed ? `☑ ${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '☐ 리뷰 전'}</div>
+        <div><b>리뷰</b>{reviewOf(doc) ? `☑ ${REVIEW_TXT[reviewOf(doc)]} ${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '☐ 대기'}</div>
+        <div><b>적용 호기</b>{(target ? applyList(doc).filter(a => a.pn === target) : applyList(doc)).map(a => target ? a.v : `${a.pn} ${a.v}`).join(' · ') || '—'}</div>
       </div>
       {R ? (<>
         <div className="cnp-s">처분 지침</div>
@@ -960,7 +1074,8 @@ async function excelCn({ cn, d, R, subs, target, doc, withSub, portal }) {
   const wb = XLSX.utils.book_new()
   const add = (name, rows) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name)
   add('개요', [['CN', doc.cn_no], ['제목', doc.title || ''], ['올린 날', yy(doc.created_at)], ['올린 사람', doc.created_name || ''],
-    ['생기 리뷰', doc.reviewed ? `${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '리뷰 전'], ['적용', `${d.dateFrom || ''} ~ ${d.dateTo || ''}`],
+    ['리뷰', reviewOf(doc) ? `${REVIEW_TXT[reviewOf(doc)]} ${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '대기'], ['적용', `${d.dateFrom || ''} ~ ${d.dateTo || ''}`],
+    ...applyList(doc).map(a => ['적용 호기', `${a.pn}  ${a.v}`]),
     ['메모', doc.memo || ''], [], ['변경 사유', cn.reason || ''], ['해결 방안', cn.solution || '']])
   add('변경품목', [['품번', '품명(전)', '품명(후)', 'REV 전', 'REV 후', '재공', '미착', '재고', 'BOM 추가', 'BOM 변경', 'BOM 삭제'],
     ...cn.parts.map(p => [p.partNo, p.fromDesc, p.toDesc, p.fromRev, p.toRev, p.dispWip, p.dispOo, p.dispInv, p.bomCnt.ADD, p.bomCnt.CHG, p.bomCnt.DEL])])
