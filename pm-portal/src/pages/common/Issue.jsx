@@ -7,6 +7,7 @@ import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
 import { todayISO } from '../../lib/utils'
+import { useLocation, useNavigate } from 'react-router-dom'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -80,6 +81,17 @@ export default function Issue() {
   const [assyQty, setAssyQty] = useState(1)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
+  // 다른 화면(하네스 출도 · 불출)에서 품번 · 수량을 넘겨받으면 붙여넣기 칸에 채워 연다 — 「담기」는 사람이 누른다
+  const loc = useLocation()
+  const nav = useNavigate()
+  const [pasteFrom, setPasteFrom] = useState('')
+  useEffect(() => {
+    const st = loc.state
+    if (!st?.issuePaste) return
+    if (st.csCode) setCsCode(st.csCode)
+    setPasteText(st.issuePaste); setPasteOpen(true); setPasteFrom(st.from || '다른 화면')
+    nav(loc.pathname, { replace: true, state: null })   // 새로고침 · 뒤로가기 때 또 채우지 않게
+  }, [loc.state])
   // 불출표에 '어느 상위품번에 몇 개' 를 적으려면 전개할 때 기록해 둬야 한다.
   const [lastAssys, setLastAssys] = useState([])
   const [byAssyMap, setByAssyMap] = useState({})
@@ -230,7 +242,7 @@ export default function Issue() {
       if (miss.length) {
         toastError(`못 찾은 품번 ${miss.length}개: ${miss.slice(0, 3).join(', ')}${miss.length > 3 ? ' 외' : ''}`)
       }
-      setPasteText(''); setPasteOpen(false)
+      setPasteText(''); setPasteOpen(false); setPasteFrom('')
     } catch (e) { toastError('실패: ' + e.message) }
     finally { setBusy(false) }
   }
@@ -655,6 +667,7 @@ export default function Issue() {
 
           {pasteOpen && (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-2 space-y-1.5">
+              {pasteFrom && <p data-issue-from className="text-[11.5px] font-bold text-violet-700">🧵 {pasteFrom} 에서 넘어온 목록 — 「담기」 → 「전개」 → 출고</p>}
               <textarea value={pasteText} onChange={e => setPasteText(e.target.value)}
                 rows={5} placeholder={'품번\t수량\nCS-ECK00011-00\t5\nIA1SOI74D311\t2'}
                 className="w-full px-2 py-1.5 text-xs font-mono border border-indigo-200 rounded" />
@@ -662,7 +675,7 @@ export default function Issue() {
                 <p className="text-[11px] text-slate-500 flex-1">
                   엑셀에서 품번·수량 두 칸을 복사해 붙여넣으세요 · 수량이 없으면 1
                 </p>
-                <button onClick={() => { setPasteText(''); setPasteOpen(false) }}
+                <button onClick={() => { setPasteText(''); setPasteOpen(false); setPasteFrom('') }}
                   className="px-2 py-1 text-[11px] text-slate-400">닫기</button>
                 <button onClick={addPaste} disabled={busy || !pasteText.trim()}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
