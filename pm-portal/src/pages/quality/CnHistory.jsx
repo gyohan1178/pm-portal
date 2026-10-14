@@ -10,7 +10,7 @@ import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useDebounced } from '../../hooks/useDebounced'
 import {
   parseCN, derive, decodeCN, summarize, searchText, repData, subTree,
-  usDate, toKo, koName, DISP, TYPE_KO,
+  usDate, toKo, koName, DISP, TYPE_KO, revsOf,
 } from '../../lib/cnParse'
 
 // 🔁 설계변경(CN) 이력 — 품질 (2026-10-14)
@@ -153,6 +153,27 @@ function CnList({ onOpen }) {
     staleTime: 60 * 1000,
   })
 
+  // v4.49.2 전에 올린 CN 은 목록 요약에 품번별 리비전이 없다 → 분석 결과에서 뽑아 채워 둔다 (한 번만)
+  const needRev = docs.filter(x => x.summary && !x.summary.revs).map(x => x.id)
+  const { data: revFill = {} } = useQuery({
+    queryKey: ['cnRevFill', needRev.join(',')],
+    enabled: needRev.length > 0,
+    queryFn: async () => {
+      const out = {}
+      for (let i = 0; i < needRev.length; i += 20) {
+        const part = must(await supabase.from('pm_cn_docs').select('id,summary,parsed').in('id', needRev.slice(i, i + 20)), 'CN 리비전 조회')
+        for (const r of part || []) {
+          out[r.id] = revsOf(r.parsed)
+          // 다음부터는 목록만으로 보이게 저장 (권한이 없으면 화면에만)
+          if (canEdit) await supabase.from('pm_cn_docs').update({ summary: { ...(r.summary || {}), revs: out[r.id] } }).eq('id', r.id)
+        }
+      }
+      return out
+    },
+    staleTime: 10 * 60 * 1000,
+  })
+  const revOf = (x) => x.summary?.revs || revFill[x.id] || {}
+
   const rows = useMemo(() => docs.filter(x =>
     f === 'all' ? true
       : f === 'ours' ? (x.our_parts || []).length > 0
@@ -247,7 +268,7 @@ function CnList({ onOpen }) {
                 <th className="px-2 py-2 text-left">CN 번호 / 제목</th>
                 <th className="px-2 py-2 text-left">올린 날</th>
                 <th className="px-2 py-2 text-left">적용 시점</th>
-                <th className="px-2 py-2 text-left">자사 품번</th>
+                <th className="px-2 py-2 text-left">자사 품번 <span className="font-normal text-slate-400">REV 이전→변경</span></th>
                 <th className="px-2 py-2 text-right">변경 품목</th>
                 <th className="px-2 py-2 text-center">BOM <span className="font-normal text-slate-400">추가/변경/삭제</span></th>
                 <th className="px-2 py-2 text-center">신규</th>
@@ -271,7 +292,7 @@ function CnList({ onOpen }) {
                     <td className="px-2 py-2 whitespace-nowrap">{yy(x.created_at)}</td>
                     <td className="px-2 py-2 whitespace-nowrap">{x.date_from ? `${yy(x.date_from)}${x.date_to && x.date_to !== x.date_from ? ' ~ ' + yy(x.date_to) : ''}` : '—'}</td>
                     <td className="px-2 py-2">
-                      {ours.length ? <span className="inline-flex flex-wrap gap-1">{ours.slice(0, 2).map(p => <Badge key={p} tone="pr">{p}</Badge>)}{ours.length > 2 && <Badge>외 {ours.length - 2}</Badge>}</span>
+                      {ours.length ? <OurRevs ours={ours} revs={revOf(x)} />
                         : <span className="text-[11px] text-slate-400">자사 품번 없음</span>}
                     </td>
                     <td className="px-2 py-2 text-right font-mono">{n(s.parts)}</td>
@@ -293,6 +314,26 @@ function CnList({ onOpen }) {
         <p className="mt-2 text-[11px] text-slate-400">줄을 누르면 상세가 열립니다 · 같은 CN 번호를 다시 올리면 확인 후 새 판으로 바꾸고, 이전 판은 이력으로 남깁니다.</p>
       </div>
     </div>
+  )
+}
+
+// 목록 「자사 품번」 칸 — 품번 옆에 이전 REV → 바뀐 REV
+//   리비전이 바뀐 품번을 앞에, 그대로인 품번은 회색으로 뒤에. 4개까지 보이고 나머지는 「외 N」(마우스를 올리면 전부)
+function OurRevs({ ours, revs }) {
+  const L = ours.map(pn => { const [f, t] = revs[pn] || []; return { pn, f: f || '', t: t || '', chg: !!(f || t) && f !== t } })
+    .sort((a, b) => (b.chg - a.chg))
+  const all = L.map(x => `${x.pn}  ${x.f || '-'} → ${x.t || '-'}`).join('\n')
+  return (
+    <span className="inline-flex flex-wrap gap-1" title={all}>
+      {L.slice(0, 4).map(x => (
+        <span key={x.pn} data-cn-rev={x.pn}
+          className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[11px] font-bold whitespace-nowrap ${x.chg ? 'bg-violet-50 text-violet-700 border-violet-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+          <span className="font-mono">{x.pn}</span>
+          {(x.f || x.t) && <span className="font-mono">{x.chg ? <>REV {x.f || '-'}<span className="mx-0.5 text-violet-400 font-sans">→</span><span className="text-violet-900">{x.t || '-'}</span></> : `REV ${x.t || x.f}`}</span>}
+        </span>
+      ))}
+      {L.length > 4 && <Badge>외 {L.length - 4}</Badge>}
+    </span>
   )
 }
 

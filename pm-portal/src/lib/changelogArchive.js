@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.39.1',
+    date: '2026-10-06',
+    changes: [
+      '자재 요청 — 이미 배정된 처리자도 바꿀 수 있습니다: 카드의 「처리 ○○○」 칸을 눌러 다른 사람을 고르면 확인 뒤 변경. 여러 건은 체크한 뒤 「👤 처리자 배정…」 — 처리자가 있는 줄이 섞여 있으면 바꿀지 묻고, 취소하면 빈 줄만 배정 (SQL pm_request_reassign_handler_261006 실행 후 적용 · 완료 · 반려된 줄은 안 바뀜)',
+    ],
+  },
+  {
     version: 'v4.39.0',
     date: '2026-10-06',
     changes: [

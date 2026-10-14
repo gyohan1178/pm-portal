@@ -482,6 +482,8 @@ export function summarize(cn, d) {
     parts: cn.parts.length, bom: cn.totalBom ?? d.bom.length, add: c.ADD, chg: c.CHG, del: c.DEL,
     newPns: d.newParts.map(x => x.pn), eolPns: d.eol.map(x => x.pn),
     partNos: cn.parts.map(p => p.partNo),
+    // 품번별 리비전 — 목록에서 「110214084 C→D」 로 보여준다
+    revs: Object.fromEntries(cn.parts.map(p => [p.partNo, [p.fromRev || '', p.toRev || '']])),
   };
 }
 
@@ -492,6 +494,9 @@ export function searchText(cn) {
   (cn.bomAll || []).forEach(b => { s.add(b.pn); s.add(b.name); });
   return [...s].filter(Boolean).join(' | ').slice(0, 60000);
 }
+
+// 예전에 올려 summary 에 revs 가 없는 CN — 분석 결과에서 다시 뽑는다
+export const revsOf = (parsed) => Object.fromEntries((parsed?.parts || []).map(p => [p.partNo, [p.fromRev || '', p.toRev || '']]));
 
 // 날짜 칸 (yyyy-mm-dd) — 적용 시점 최소 · 최대
 export function cnDates(d) { return { from: d.dateFrom || null, to: d.dateTo || null }; }
