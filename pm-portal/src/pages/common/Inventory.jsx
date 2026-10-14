@@ -14,6 +14,7 @@ import * as XLSX from 'xlsx'
 const catBadge = c => PROC_CATS.has(c) ? 'bg-violet-50 text-violet-700' : (c==='기타'||c==='-' ? 'bg-slate-100 text-slate-500' : 'bg-blue-50 text-blue-600')
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
+import { useCanEdit } from '../../hooks/useProfile'
 
 async function fetchInventory() {
   // 전체 페이징 (1000행 제한 회피)
@@ -97,6 +98,30 @@ export default function Inventory() {
     },
     onSuccess: () => { setChecked({}); qc.invalidateQueries(['inventory']) },
     onError: (e) => toastError('변경 오류: ' + e.message),
+  })
+
+  // 재고현황에서 바로 재고 수정 (2026-10-14) — 칸을 눌러 숫자를 고치고 Enter
+  //   실사와 같은 방식: inventory 수량을 덮어쓰고, 누가 얼마를 얼마로 바꿨는지 작업 기록에 남긴다.
+  //   ⚠ 화면을 연 사이 입고 · 출고로 DB 수량이 바뀌었으면 덮어쓰기 전에 한 번 묻는다.
+  const canEdit = useCanEdit()
+  const qtyMut = useMutation({
+    mutationFn: async ({ row, qty }) => {
+      const { data: cur, error: e1 } = await supabase.from('inventory').select('qty').eq('id', row.id).maybeSingle()
+      if (e1) throw e1
+      const dbQty = Number(cur?.qty) || 0
+      if (dbQty !== (Number(row.qty) || 0) &&
+          !window.confirm(`${row.items?.std_code} 재고가 화면을 연 뒤 ${row.qty} → ${dbQty} 로 바뀌었습니다 (입고·출고).\n\n그래도 ${qty} 로 덮어쓸까요?`)) return null
+      const { error } = await supabase.from('inventory').update({ qty, updated_at: new Date().toISOString() }).eq('id', row.id)
+      if (error) throw error
+      logActivity('update', 'inventory', row.items?.std_code || row.item_id, `재고 수정 (재고현황) ${dbQty} → ${qty}`)
+      return { code: row.items?.std_code, from: dbQty, to: qty }
+    },
+    onSuccess: (r) => {
+      if (!r) return
+      toastSuccess(`${r.code} 재고 ${r.from} → ${r.to}`)
+      qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
+    },
+    onError: (e) => toastError('재고 수정 실패: ' + e.message),
   })
 
   const stockMgmtMut = useMutation({
@@ -427,7 +452,8 @@ export default function Inventory() {
                     <td className="px-3 py-2 font-mono text-xs text-slate-400 overflow-hidden truncate">{r.items?.manufacturer_code||'-'}</td>
                     <td className="px-3 py-2"><span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${catBadge(catOf(r.items))}`}>{catOf(r.items)}</span></td>
                     <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
-                    <td className={`px-3 py-2 text-right font-bold text-lg ${status==='zero'?'text-red-600':status==='low'?'text-amber-700':'text-slate-900'}`}>{r.qty}</td>
+                    <QtyCell row={r} canEdit={canEdit} onSave={(qty)=>qtyMut.mutateAsync({ row:r, qty })}
+                      cls={status==='zero'?'text-red-600':status==='low'?'text-amber-700':'text-slate-900'} />
                     <td className="px-3 py-2 text-right text-slate-500">{r.items?.purchase_price?Number(r.items.purchase_price).toLocaleString():'-'}</td>
                     <td className="px-3 py-2 text-right font-semibold text-slate-700">{itemValue>0?itemValue.toLocaleString():'-'}</td>
                     <td className="px-3 py-2 text-right text-slate-400">{safety||'-'}</td>
@@ -457,3 +483,36 @@ export default function Inventory() {
     </div>
   )
 }
+
+// 현재고 칸 — 누르면 숫자 입력, Enter 저장 · Esc 취소 (수정 권한이 있을 때만)
+function QtyCell({ row, canEdit, onSave, cls }) {
+  const [edit, setEdit] = useState(null)   // null = 보기
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    const v = String(edit ?? '').replace(/,/g, '').trim()
+    if (v === '' || v === String(row.qty)) { setEdit(null); return }
+    const n = Number(v)
+    if (!Number.isFinite(n)) { toastError('숫자를 넣어 주세요'); return }
+    setBusy(true)
+    try { await onSave(n); setEdit(null) } catch { /* 알림은 onError */ } finally { setBusy(false) }
+  }
+  if (edit === null) {
+    return (
+      <td data-inv-qty={row.items?.std_code}
+        onClick={() => canEdit && setEdit(String(row.qty ?? 0))}
+        title={canEdit ? '눌러서 재고 수정 (Enter 저장 · Esc 취소)' : ''}
+        className={`px-3 py-2 text-right font-bold text-lg ${cls} ${canEdit ? 'cursor-pointer hover:bg-indigo-50 hover:underline decoration-dotted' : ''}`}>{row.qty}</td>
+    )
+  }
+  return (
+    <td className="px-1 py-1 text-right">
+      <input autoFocus value={edit} disabled={busy} data-inv-qty-input
+        onChange={(e) => setEdit(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEdit(null) }}
+        onBlur={() => { if (!busy) setEdit(null) }}
+        inputMode="decimal"
+        className="w-20 px-1.5 py-1 text-right font-bold border-2 border-indigo-400 rounded focus:outline-none" />
+    </td>
+  )
+}
+
