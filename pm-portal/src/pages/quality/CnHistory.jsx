@@ -388,7 +388,7 @@ function CnDetail({ id, onBack }) {
   const { data: prod } = useQuery({
     queryKey: ['cnProd', target],
     enabled: !!target,
-    queryFn: async () => must(await supabase.from('production').select('id,pn,hogi,rev,brev,req_date,status,po_number')
+    queryFn: async () => must(await supabase.from('production').select('id,pn,hogi,rev,brev,req_date,status')   // ⚠ production 에 po_number 칸은 없다 (po_id 로 따로 붙는 값)
       .eq('customer_code', 'AX').eq('pn', target).or('status.is.null,status.neq.완료'), '생산관리 조회'),
     staleTime: 60 * 1000,
   })
@@ -608,7 +608,7 @@ function PartView({ ctx, setTarget, withSub, setWithSub }) {
             <table className="w-full text-xs" data-cn-prod>
               <thead className="bg-slate-50 text-slate-500"><tr><th className="px-2 py-1.5 text-left">PO REV</th><th className="px-2 py-1.5 text-right">호기</th><th className="px-2 py-1.5 text-left">납품일</th><th className="px-2 py-1.5 text-left">판정</th></tr></thead>
               <tbody>{pg.map(g => (
-                <tr key={g.rv} className="border-t border-slate-100" title={g.list.map(x => `${x.hogi || ''} ${x.po_number || ''}`).join('\n')}>
+                <tr key={g.rv} className="border-t border-slate-100" title={g.list.map(x => `${x.hogi || ''} · ${yy(x.req_date) || '납기 미정'}`).join('\n')}>
                   <td className="px-2 py-1.5 font-mono font-extrabold">{g.rv}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{g.list.length}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap">{g.from ? `${yy(g.from)}${g.to !== g.from ? ' ~ ' + yy(g.to) : ''}` : '—'}</td>
