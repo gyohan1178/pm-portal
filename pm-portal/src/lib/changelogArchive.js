@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.43.1',
+    date: '2026-10-08',
+    changes: [
+      '창고 배치도 — 들어가면 「🧊 3D 보기」가 먼저 열립니다. 배치 편집 · 인쇄는 「🗺 배치도」 탭에서 그대로 합니다',
+    ],
+  },
+  {
     version: 'v4.43.0',
     date: '2026-10-08',
     changes: [

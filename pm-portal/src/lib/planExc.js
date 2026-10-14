@@ -19,6 +19,27 @@ export const isHot = (p) => String(p?.plan_exc || '').trim().toUpperCase() === '
 export const dueSort = (a, b) =>
   (isHot(b) - isHot(a)) || String(a.promise_date || '').localeCompare(String(b.promise_date || '')) || String(a.po_number || '').localeCompare(String(b.po_number || ''))
 
+// v4.56.0 부터 PO 업로드 때 Plan Exc 가 바뀌면 그 줄 변경 이력(changes)에 field 'plan_exc' 로 남긴다.
+//   → 지금 값(HOT 등)이 언제 붙었는지: 마지막 plan_exc 이력의 to 가 지금 값이면 그 날짜.
+//     이력이 없으면 기록을 시작하기 전(PLAN_LOG_START 이전)부터 붙어 있던 것 — 처음 붙은 날은 모른다.
+export const PLAN_LOG_START = '2026-10-14'
+export function planSince(p) {
+  const k = String(p?.plan_exc || '').trim().toUpperCase()
+  if (!k) return null
+  const hist = (Array.isArray(p?.changes) ? p.changes : []).filter(c => c && c.field === 'plan_exc')
+  const last = hist[hist.length - 1]
+  if (last && String(last.to || '').trim().toUpperCase() === k) {
+    return { known: true, at: String(last.at || '').slice(0, 10), from: last.from && last.from !== '-' ? last.from : '', times: hist.length }
+  }
+  return { known: false, at: null, from: '', times: hist.length }
+}
+export const planSinceText = (s) => !s ? '' : s.known
+  ? `${s.at.slice(5).replace('-', '/')}~`
+  : '기록 전'
+export const planSinceTitle = (p, s) => !s ? '' : s.known
+  ? `${s.at} PO 업로드 때 ${s.from ? s.from + ' → ' : '빈칸 → '}${String(p.plan_exc).toUpperCase()}`
+  : `${PLAN_LOG_START} 기록 시작 전부터 ${String(p.plan_exc).toUpperCase()} — 처음 붙은 날짜는 모릅니다 (이후 바뀌면 날짜가 남습니다)`
+
 export async function planExcReady(supabase) {
   const { error } = await supabase.from('purchase_orders').select('plan_exc').limit(1)
   return !error

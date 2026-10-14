@@ -149,7 +149,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const tpReady = await thirdPartyReady(supabase)
       // Plan Exc Type 칸(purchase_orders.plan_exc)이 있어야 HOT 등을 저장한다
       const planReady = await planExcReady(supabase)
-      const planUpd = []   // 값만 맞추는 것 — 변경 이력에는 남기지 않는다
+      const planUpd = []   // Plan Exc(HOT 등) 맞추기 — v4.56.0 부터 그 줄 변경 이력에도 남긴다 (언제 HOT 이 붙었는지 보려고)
       const tpOpen = tpReady ? tp.rows.filter(r => r.state === 'open') : []
       const fileRows = [...rows, ...tpOpen]
       // DB 줄의 키 — 3rd party 는 업체 · 품번까지
@@ -183,7 +183,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         curKeys.add(rk)
         const ex = existMap[rk]
         if (!ex) { news.push({ ...r, code }); continue }
-        if (planReady && !r.third_party && (r.plan_exc || '') !== (ex.plan_exc || '')) planUpd.push({ id: ex.id, v: r.plan_exc || null })
+        const planHist = (planReady && !r.third_party && (r.plan_exc || '') !== (ex.plan_exc || ''))
+          ? { field: 'plan_exc', from: ex.plan_exc || '-', to: r.plan_exc || '-' } : null
         const chg = []
         if (code !== (ex.items?.std_code || '')) chg.push({ field: 'item', from: ex.items?.std_code || '-', to: code, _newCode: code })
         if (r.item_rev && r.item_rev !== (ex.item_rev || '')) chg.push({ field: 'item_rev', from: ex.item_rev || '-', to: r.item_rev })
@@ -192,8 +193,10 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (r.qty && r.qty !== ex.qty_ordered) chg.push({ field: 'qty_ordered', from: ex.qty_ordered, to: r.qty })
         if (r.unit_price && r.unit_price !== (Number(ex.unit_price) || 0)) chg.push({ field: 'unit_price', from: ex.unit_price || 0, to: r.unit_price })
         if (r.division && r.division !== (ex.division || '')) chg.push({ field: 'division', from: ex.division || '-', to: r.division })
-        if (chg.length) changes.push({ ...r, code, id: ex.id, prevChanges: ex.changes || [], chg })
+        if (chg.length) changes.push({ ...r, code, id: ex.id, prevChanges: ex.changes || [], chg, planHist })
         else sames.push({ ...r, id: ex.id, hadChanges: (ex.changes || []).length > 0 })
+        // 이력: 다른 변경과 같이 바뀌면 그 줄 이력에 함께 넣고(inChg), Plan Exc 만 바뀐 줄은 아래 적용 때 따로 넣는다
+        if (planHist) planUpd.push({ id: ex.id, v: r.plan_exc || null, hist: planHist, prev: ex.changes || [], inChg: chg.length > 0 })
       }
 
       // 사라진 PO: 기존 진행중인데 이번 Current Data에 없는 것 → Received면 납품, 아니면 취소
@@ -337,7 +340,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         // 화면에서는 기본적으로 최근 변경만 보여주고,
         // 반복 변경은 별도 배지로 표시한다.
         patch.changes = [...(c.prevChanges || []),
-                         ...c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now }))]
+                         ...c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now })),
+                         ...(c.planHist ? [{ ...c.planHist, at: now }] : [])]
         return supabase.from('purchase_orders').update(patch).eq('id', c.id)
       })
 
@@ -366,15 +370,19 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (error) throw new Error(`신규 PO 등록 실패 (${inserted}건까지 등록됨): ${error.message}`)
         inserted += chunk.length
       }
-      // Plan Exc Type(HOT 등) 맞추기 — 값만 바꾸고 변경 이력에는 안 남긴다
+      // Plan Exc Type(HOT 등) 맞추기
+      //   ① 다른 변경과 같이 바뀐 줄 — 이력은 위 변경 적용 때 이미 넣었다 → 값만 묶어서
+      //   ② Plan Exc 만 바뀐 줄 — 값 + 이력 한 줄을 그 줄마다 (이력이 줄마다 달라 묶을 수 없다)
       const byV = {}
-      ;(diff.planUpd || []).forEach(u => { (byV[u.v ?? ''] ||= []).push(u.id) })
+      ;(diff.planUpd || []).filter(u => u.inChg).forEach(u => { (byV[u.v ?? ''] ||= []).push(u.id) })
       for (const [v, ids] of Object.entries(byV)) {
         for (let i = 0; i < ids.length; i += 150) {
           const { error } = await supabase.from('purchase_orders').update({ plan_exc: v || null }).in('id', ids.slice(i, i + 150))
           if (error) throw error
         }
       }
+      await pool((diff.planUpd || []).filter(u => !u.inChg), u =>
+        supabase.from('purchase_orders').update({ plan_exc: u.v || null, changes: [...(u.prev || []), { ...u.hist, at: now }] }).eq('id', u.id))
       // 사라진 PO 처리 (체크된 것만): 납품→완료, 취소→취소
       let done = 0, canceled = 0
       //   「확인 필요」 줄은 사람이 납품 / 취소를 고른 것만 처리한다 (안 고르면 그대로 둔다)
@@ -552,7 +560,9 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
               )}
               {diff.planReady && diff.planUpd?.length > 0 && (
                 <p data-plan-note className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
-                  Plan Exc Type(HOT · RSIN · RSOU …) {diff.planUpd.length}줄을 파일 값으로 맞춥니다.
+                  Plan Exc Type(HOT · RSIN · RSOU …) {diff.planUpd.length}줄을 파일 값으로 맞추고 그 줄 변경 이력에 남깁니다
+                  {(() => { const on = diff.planUpd.filter(u => String(u.v || '').toUpperCase() === 'HOT').length, off = diff.planUpd.filter(u => String(u.hist?.from || '').toUpperCase() === 'HOT' && String(u.v || '').toUpperCase() !== 'HOT').length
+                    return (on || off) ? <b className="ml-1 text-red-600">— HOT 새로 {on} · HOT 풀림 {off}</b> : null })()}
                 </p>
               )}
 
@@ -659,7 +669,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                         <div className="font-mono text-slate-500 mb-1">{c.third_party && <span className="mr-1 px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px] font-bold font-sans">{c.third_party}</span>}{c.po_number} · {c.code} {c.order_line && `· L${c.order_line}`}</div>
                         {c.chg.map((x, j) => (
                           <div key={j} className="flex items-center gap-2 ml-2">
-                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'SREV' : x.field === 'item_brev' ? 'BREV' : x.field === 'division' ? '구분' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
+                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'SREV' : x.field === 'item_brev' ? 'BREV' : x.field === 'division' ? '구분' : x.field === 'plan_exc' ? 'Plan Exc' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
                             <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 line-through">{x.from}</span>
                             <span className="text-slate-300">→</span>
                             <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-semibold">{x.to}</span>

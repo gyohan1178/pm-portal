@@ -11,7 +11,7 @@ import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
 import { todayISO } from '../../lib/utils'
-import { planExcOf, isHot, dueSort } from '../../lib/planExc'
+import { planExcOf, isHot, dueSort, planSince, planSinceText, planSinceTitle } from '../../lib/planExc'
 
 // 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
 const CARD_CLS = {
@@ -622,7 +622,7 @@ export default function CustomerPO() {
                           className="px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 text-[10px] font-bold hover:bg-amber-100">{p.changes.length}건</button>
                       : <span className="text-slate-200">-</span>}
                   </td>
-                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.status==='완료'?'bg-emerald-50 text-emerald-700':p.status==='취소'?'bg-slate-100 text-slate-500':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{planExcOf(p.plan_exc) && p.status!=='완료' && p.status!=='취소' && <span data-plan-exc title={planExcOf(p.plan_exc).title} className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${planExcOf(p.plan_exc).cls}`}>{planExcOf(p.plan_exc).label}</span>}{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
+                  <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.status==='완료'?'bg-emerald-50 text-emerald-700':p.status==='취소'?'bg-slate-100 text-slate-500':'bg-blue-50 text-blue-600'}`}>{p.isDelayed?'지연':p.status}</span>{planExcOf(p.plan_exc) && p.status!=='완료' && p.status!=='취소' && (() => { const ps = planSince(p); return <><span data-plan-exc title={planExcOf(p.plan_exc).title + '\n' + planSinceTitle(p, ps)} className={`ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold ${planExcOf(p.plan_exc).cls}`}>{planExcOf(p.plan_exc).label}</span><span data-plan-since title={planSinceTitle(p, ps)} className={`ml-0.5 text-[10px] whitespace-nowrap ${ps?.known ? 'text-red-500 font-bold' : 'text-slate-400'}`}>{planSinceText(ps)}</span></> })()}{p.material_issued&&<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-teal-50 text-teal-600" title="자재불출됨 · 부족계산 제외">불출</span>}</td>
                   <td className="px-3 py-2">
                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                       <button onClick={()=>handleEdit(p)} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
@@ -659,7 +659,7 @@ export default function CustomerPO() {
               {(chgModal.changes||[]).slice().reverse().map((c,i)=>(
                 <div key={i} className="rounded-lg border border-slate-200 p-3 text-xs">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-slate-700">{c.field==='promise_date'?'납기 변경':c.field==='item_rev'?'REV 변경':c.field==='qty_ordered'?'수량 변경':c.field==='division'?'구분 변경':c.field}</span>
+                    <span className="font-bold text-slate-700">{c.field==='promise_date'?'납기 변경':c.field==='item_rev'?'REV 변경':c.field==='qty_ordered'?'수량 변경':c.field==='division'?'구분 변경':c.field==='plan_exc'?'Plan Exc (HOT 등) 변경':c.field}</span>
                     <span className="text-slate-400">{c.at?.slice(0,10)||''}</span>
                   </div>
                   <div className="flex items-center gap-2">
