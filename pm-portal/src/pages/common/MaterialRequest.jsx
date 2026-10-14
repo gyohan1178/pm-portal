@@ -1131,6 +1131,15 @@ export default function MaterialRequest() {
                         </p>
 
                       </>
+                    ) : !r.std_code && r.item_name ? (
+                      // 「그대로 요청하기」로 넣은 미등록 품목 — 예전에는 기준코드가 없다고 다시 「품목 찾기」 버튼이 떠서 안 들어간 것처럼 보였다 (v4.54.1)
+                      <div data-req-free>
+                        <p className="text-sm font-bold text-slate-800 break-all">{r.item_name}</p>
+                        <p className="text-[11px] text-amber-700 mt-0.5">
+                          <span className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 font-bold">미등록 품목</span>
+                          <span className="ml-1 text-slate-400">구매자재팀이 확인 후 기준코드를 붙입니다</span>
+                        </p>
+                      </div>
                     ) : r.std_code ? (
                       <>
                         <p className="font-mono text-sm font-bold text-indigo-600">{r.std_code}</p>
@@ -1180,7 +1189,7 @@ export default function MaterialRequest() {
                   placeholder="필요 사유 (선택) — 예: 기존품 단선"
                   className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
 
-                {r.std_code && (
+                {(r.std_code || r.item_name) && (
                   <button onClick={() => { setRows(v => v.map((x, k) => k === i ? { ...emptyRow(), key: x.key } : x)); if (r._assy) setAssy(null) }}
                     className="text-[11px] text-slate-400 hover:text-slate-600">
                     {r._assy ? 'ASSY 해제' : '품목 다시 고르기'}
@@ -1318,7 +1327,8 @@ export default function MaterialRequest() {
                 <div className="py-6 text-center">
                   <p className="text-xs text-slate-400 mb-2">찾는 품목이 없습니다.</p>
                   <button onClick={() => {
-                      setRows(v => v.map((x, k) => k === searchIdx ? { ...x, item_name: q.trim(), std_code: '' } : x))
+                      // 미등록 품목 — 기준코드 없이 품명만 남긴다 (구매자재팀이 「코드 부여」 탭에서 코드를 붙인다)
+                      setRows(v => v.map((x, k) => k === searchIdx ? { ...x, item_id: null, std_code: '', item_name: q.trim() } : x))
                       setSearchIdx(null); setQ(''); setHits([])
                     }}
                     className="px-3 py-2 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50">

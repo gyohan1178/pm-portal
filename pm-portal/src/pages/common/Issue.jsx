@@ -71,14 +71,14 @@ export default function Issue() {
   const { data: customers = [] } = useQuery({ queryKey: ['customers'], queryFn: fetchCustomers })
   const csId = customers.find(c => c.code === csCode)?.id
   const { data: cart = [] } = useQuery({ queryKey: ['picking', csId], queryFn: () => fetchCart(csId), enabled: !!csId })
-  // AXCELIS 는 상위품목이 780 종이라 목록이 너무 길다. 검색으로만 찾는다.
+  // AXCELIS 는 서버 검색(pm_issue_search)이 ASSY 까지 찾아 준다.
+  //   다른 고객사는 BOM 상위품목 목록(수십 종)을 받아 두고 검색어로 걸러 ASSY 로 보여준다 — 예전 드롭다운 대신 (v4.55.0)
   const useDropdown = csCode !== 'ax'
   const { data: assys = [] } = useQuery({
     queryKey: ['pickAssys', csId], queryFn: () => fetchAssys(csId),
     enabled: !!csId && useDropdown,
   })
-  const [assySel, setAssySel] = useState('')
-  const [assyQty, setAssyQty] = useState(1)
+  const [hitSel, setHitSel] = useState(() => new Set())   // 검색 결과에서 여러 개 골라 한 번에 담기 (std_code)
   const [pasteOpen, setPasteOpen] = useState(false)
   const [pasteText, setPasteText] = useState('')
   // 다른 화면(하네스 출도 · 불출)에서 품번 · 수량을 넘겨받으면 붙여넣기 칸에 채워 연다 — 「담기」는 사람이 누른다
@@ -136,17 +136,25 @@ export default function Issue() {
   //   글자마다 조회하면 느린 앞 요청이 나중에 도착해 결과를 덮는다 → 입력이 멈춘 뒤 한 번, 순번으로 옛 응답은 버린다.
   const searchTimer = useRef(null)
   const searchSeq = useRef(0)
+  // 고객사 BOM 상위품목(ASSY) 중 검색어에 맞는 것 — AXCELIS 밖 고객사용
+  function localAssyHits(t) {
+    if (!useDropdown) return []
+    const k = t.toLowerCase()
+    return assys.filter(a => `${a.code} ${a.name || ''}`.toLowerCase().includes(k)).slice(0, 30)
+      .map(a => ({ id: 'assy:' + a.code, std_code: a.code, name: a.name, unit: 'EA', is_assy: true, child_cnt: a.cnt, _local: true }))
+  }
   function searchItem(v) {
     setItemSearch(v)
     clearTimeout(searchTimer.current)
     const seq = ++searchSeq.current
-    if (v.trim().length < 2 || !csId) { setItemHits([]); return }
+    if (v.trim().length < 2 || !csId) { setItemHits([]); setHitSel(new Set()); return }
     searchTimer.current = setTimeout(async () => {
+      const local = localAssyHits(v.trim())
       const { data, error } = await supabase.rpc('pm_issue_search',
         { p_customer_id: csId, q: v.trim() })
       if (seq !== searchSeq.current) return
-      if (error) { toastError('검색 실패: ' + error.message); setItemHits([]); return }
-      let hits = data || []
+      if (error && !local.length) { toastError('검색 실패: ' + error.message); setItemHits([]); return }
+      let hits = error ? [] : (data || [])
       try {
         const withStock = await attachStock(hits)
         // 재고가 있는 것을 위로 — 고를 것이 대개 그것이다
@@ -154,7 +162,14 @@ export default function Issue() {
         hits = withStock
       } catch { /* 재고를 못 붙여도 검색은 되게 한다 */ }
       if (seq !== searchSeq.current) return
-      setItemHits(hits)
+      // ASSY 를 맨 위에. 같은 코드가 서버 결과에도 있으면 그 줄(재고 붙은 것)에 ASSY 표시만 얹는다
+      if (local.length) {
+        const byCode = new Map(local.map(a => [a.std_code, a]))
+        hits = hits.map(h => byCode.has(h.std_code) ? { ...h, is_assy: true, child_cnt: byCode.get(h.std_code).child_cnt } : h)
+        const have = new Set(hits.map(h => h.std_code))
+        hits = [...local.filter(a => !have.has(a.std_code)), ...hits].sort((a, b) => (b.is_assy ? 1 : 0) - (a.is_assy ? 1 : 0))
+      }
+      setItemHits(hits); setHitSel(new Set())
     }, 250)
   }
 
@@ -176,24 +191,21 @@ export default function Issue() {
     setItemSearch(''); setItemHits([]); searchSeq.current++; clearTimeout(searchTimer.current)
   }
 
-  // 드롭다운에서 ASSY 담기
-  function addAssy() {
-    const a = assys.find(x => x.code === assySel)
-    if (!a) { toastError('품목을 고르세요'); return }
-    const q = Number(assyQty) || 1
+  // 검색 결과에서 체크한 것 한 번에 담기 (각 1개 — 담은 목록에서 수량을 고친다)
+  function pickMany() {
+    const list = itemHits.filter(h => hitSel.has(h.std_code))
+    if (!list.length) return
     setPicked(prev => {
-      const i = prev.findIndex(x => x.std_code === a.code)
-      if (i >= 0) {
-        const next = [...prev]
-        next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + q }
-        return next
-      }
-      return [...prev, {
-        std_code: a.code, name: a.name, unit: 'EA',
-        is_assy: true, child_cnt: a.cnt, qty: q,
-      }]
+      const next = [...prev]
+      list.forEach(it => {
+        const i = next.findIndex(x => x.std_code === it.std_code)
+        if (i >= 0) next[i] = { ...next[i], qty: (Number(next[i].qty) || 0) + 1 }
+        else next.push({ std_code: it.std_code, name: it.name, unit: it.unit, maker: it.maker, maker_code: it.maker_code, is_assy: it.is_assy, child_cnt: it.child_cnt, qty: 1 })
+      })
+      return next
     })
-    setAssySel(''); setAssyQty(1)
+    toastSuccess(`${list.length}품목 담김 — 아래 목록에서 수량을 고치세요`)
+    setItemSearch(''); setItemHits([]); setHitSel(new Set()); searchSeq.current++; clearTimeout(searchTimer.current)
   }
 
   // 엑셀 붙여넣기 — 품번과 수량을 탭·쉼표·공백으로 나눈다
@@ -212,9 +224,17 @@ export default function Issue() {
     try {
       // 있는 품번인지 확인한다. 없는 것은 알려 준다.
       const codes = [...new Set(want.map(w => w.code))]
-      const { data: found } = await supabase.rpc('pm_issue_check_codes',
-        { p_customer_id: csId, p_codes: codes })
-      const map = Object.fromEntries((found || []).map(f => [f.code, f]))
+      // AXCELIS 밖 고객사: BOM 상위품목(ASSY) 코드는 받아 둔 목록에서 바로 찾는다 (대소문자 무시)
+      const assyBy = new Map(useDropdown ? assys.map(a => [String(a.code).toUpperCase(), a]) : [])
+      const map = {}
+      codes.forEach(c => { const a = assyBy.get(String(c).toUpperCase()); if (a) map[c] = { code: c, std_code: a.code, name: a.name, unit: 'EA', is_assy: true, child_cnt: a.cnt } })
+      const rest = codes.filter(c => !map[c])
+      if (rest.length) {
+        const { data: found, error: fe } = await supabase.rpc('pm_issue_check_codes',
+          { p_customer_id: csId, p_codes: rest })
+        if (fe) throw fe
+        ;(found || []).forEach(f => { map[f.code] = f })
+      }
       const miss = codes.filter(c => !map[c])
 
       const ok = []
@@ -614,7 +634,7 @@ export default function Issue() {
       {/* 고객사 — 담은 것이 섞이지 않도록 고객사마다 따로 담긴다 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {customers.map(c => (
-          <button key={c.code} onClick={() => { setCsCode(c.code); setPicked([]); setLastAssys([]); setByAssyMap({}); setExcluded(new Set()) }}
+          <button key={c.code} onClick={() => { setCsCode(c.code); setPicked([]); setLastAssys([]); setByAssyMap({}); setExcluded(new Set()); setItemSearch(''); setItemHits([]); setHitSel(new Set()) }}
             className={`px-3.5 py-1.5 text-xs font-bold rounded-md ${
               csCode === c.code ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>
             {c.name}
@@ -631,37 +651,16 @@ export default function Issue() {
               ASSY 를 고르면 하위가 수량에 맞춰 전개됩니다
             </span>
           </p>
-          {/* ASSY 는 목록으로 고른다. 고객사마다 열 종에서 쉰 종 남짓이다. */}
-          {useDropdown && assys.length > 0 && (
-            <div className="flex gap-1.5">
-              <select value={assySel} onChange={e => setAssySel(e.target.value)}
-                className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-slate-200 rounded-lg">
-                <option value="">ASSY 선택 ({assys.length}종)</option>
-                {assys.map(a => (
-                  <option key={a.code} value={a.code}>
-                    {a.code} · {a.name?.slice(0, 30)} ({a.cnt})
-                  </option>
-                ))}
-              </select>
-              <input type="number" min="1" value={assyQty}
-                onChange={e => setAssyQty(e.target.value)}
-                className="w-16 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
-              <button onClick={addAssy} disabled={!assySel}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                담기
-              </button>
-            </div>
-          )}
-
           <div className="flex gap-1.5">
             <input value={itemSearch} onChange={e => searchItem(e.target.value)}
-              placeholder={useDropdown ? '단품 검색 (기준코드·품명·제조사품번)' : '기준코드·품명·제조사품번 검색'}
+              data-issue-search
+              placeholder={useDropdown ? `ASSY 번호 · 기준코드 · 품명 · 제조사품번 검색${assys.length ? ` (ASSY ${assys.length}종)` : ''}` : 'ASSY 번호 · 기준코드 · 품명 · 제조사품번 검색'}
               className="flex-1 min-w-0 px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
             <button onClick={() => setPasteOpen(v => !v)}
               title="엑셀에서 품번과 수량을 복사해 붙여넣기"
               className={`px-2.5 py-1.5 text-xs font-bold rounded-lg border ${
                 pasteOpen ? 'border-indigo-300 bg-indigo-50 text-indigo-700' : 'border-slate-200 text-slate-500'}`}>
-              📋 붙여넣기
+              📋 여러 품목 붙여넣기
             </button>
           </div>
 
@@ -685,11 +684,23 @@ export default function Issue() {
             </div>
           )}
           {itemHits.length > 0 && (
-            <div className="border border-slate-100 rounded-lg divide-y max-h-40 overflow-auto">
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+              <span>누르면 1개 담기 · 왼쪽 네모로 여러 개 골라 한 번에</span>
+              {hitSel.size > 0 && (
+                <button data-issue-pickmany onClick={pickMany} className="ml-auto px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-600 text-white">선택 {hitSel.size}개 담기</button>
+              )}
+            </div>
+          )}
+          {itemHits.length > 0 && (
+            <div className="border border-slate-100 rounded-lg divide-y max-h-56 overflow-auto">
               {itemHits.map(it => (
-                <button key={it.id} onClick={() => pickItem(it)}
-                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-indigo-50">
+                <div key={it.id} role="button" tabIndex={0} data-issue-hit={it.std_code} onClick={() => pickItem(it)}
+                  onKeyDown={e => { if (e.key === 'Enter') pickItem(it) }}
+                  className={`w-full text-left px-2 py-1.5 text-xs cursor-pointer hover:bg-indigo-50 ${hitSel.has(it.std_code) ? 'bg-indigo-50' : ''}`}>
                   <div className="flex items-center gap-1.5">
+                    <input type="checkbox" data-issue-hitcb checked={hitSel.has(it.std_code)} onClick={e => e.stopPropagation()}
+                      onChange={() => setHitSel(s0 => { const x = new Set(s0); x.has(it.std_code) ? x.delete(it.std_code) : x.add(it.std_code); return x })}
+                      className="w-3.5 h-3.5 shrink-0" />
                     <span className="font-mono font-semibold text-indigo-600">{it.std_code}</span>
                     {it.is_assy && (
                       <span className="px-1 py-0.5 rounded bg-violet-100 text-violet-700 text-[9px] font-bold">
@@ -707,7 +718,7 @@ export default function Issue() {
                       <span className="shrink-0 px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 text-[10px] font-bold whitespace-nowrap">
                         재고 0{it.location ? ` · ${it.location}` : ''}
                       </span>
-                    ) : (
+                    ) : it._local ? null : (
                       <span className="shrink-0 text-[10px] text-slate-300 whitespace-nowrap">재고 미등록</span>
                     )}
                   </div>
@@ -719,7 +730,7 @@ export default function Issue() {
                       {it.spec && <span className="ml-1.5">{it.spec}</span>}
                     </div>
                   )}
-                </button>
+                </div>
               ))}
             </div>
           )}
