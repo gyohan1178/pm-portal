@@ -15,6 +15,10 @@ function buildCommands() {
   push('일일 업무', '출고 현황', '/outbound-history', 'outbound history chulgo hyeonhwang 이력')
   push('일일 업무', '재고현황', '/inventory', 'inventory jaego stock')
   push('일일 업무', '통합 검색', '/search', 'search tonghap')
+  push('일일 업무', '자재 요청', '/material-request', 'material request jajae yocheong')
+  push('일일 업무', '할 일', '/todo', 'todo hal il')
+  push('일일 업무', '현장 검색', '/field-search', 'field search hyeonjang')
+  push('일일 업무', '창고 배치도', '/rack-layout', 'rack layout changgo baechido')
   // 소요·부족
   push('소요·부족', '소요예측 (포캐스트)', '/forecast-shortage', 'forecast shortage soyo 포캐스트')
   push('소요·부족', '결품 현황', '/missing', 'missing gyeolpum')
@@ -32,6 +36,8 @@ function buildCommands() {
   push('기초자료', '협력사', '/master/vendors', 'vendors hyeopryeoksa')
   push('기초자료', '단가변동이력', '/master/price', 'price danga')
   push('기초자료', '견적입력', '/quote', 'quote gyeonjeok')
+  push('기초자료', '매출견적', '/sales-quote', 'sales quote maechul gyeonjeok')
+  push('기초자료', '결제 계획', '/payment-plan', 'payment plan gyeolje')
   push('기초자료', 'ERP 연동', '/erp', 'erp')
   // 주간 / 분석
   push('주간 / 분석', '주간업무보고', '/weekly', 'weekly jugan')
@@ -41,6 +47,15 @@ function buildCommands() {
   // 생산
   push('생산', '생산 대시보드', '/production', 'production saengsan')
   push('생산', '생산 전광판', '/board', 'board jeongwangpan display')
+  push('생산', '생산 관리', '/production/AX', 'production gwanri pdbox')
+  push('생산', '도면 조회', '/drawings', 'drawing domyeon')
+  push('생산', '하네스 출도 · 불출', '/production/harness-release', 'harness chuldo bulchul')
+  // 품질
+  push('품질', '초도품 진행관리', '/quality/fa-progress', 'fa first article chodopum')
+  push('품질', '초도품 자재 매칭', '/quality/fai', 'fai matching')
+  push('품질', '설계변경(CN) 이력', '/quality/cn', 'cn ecn seolgye byeongyeong')
+  push('품질', '도면 배포이력', '/quality/drawing-dist', 'drawing dist baepo')
+  push('품질', '로트 관리', '/quality/lot', 'lot')
   // 전체
   push('전체', '관제탑 (홈)', '/', 'dashboard home control tower gwanjetop')
   return cmds

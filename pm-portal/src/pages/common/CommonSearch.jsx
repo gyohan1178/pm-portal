@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useCustomers } from '../../hooks/useCustomers'
@@ -71,6 +71,15 @@ export default function CommonSearch() {
   const [tab, setTab] = useState('product')
   const [pq, setPq] = useState(''); const [pSubmitted, setPSubmitted] = useState('')
   const [rq, setRq] = useState(''); const [rSubmitted, setRSubmitted] = useState('')
+  // 다른 화면에서 품번을 누르면 /search?q=품번 으로 온다 → 그 품번으로 바로 검색 (v4.57.0)
+  //   ?tab=used 면 역전개(사용처)로
+  const [sp] = useSearchParams()
+  const urlQ = sp.get('q') || '', urlTab = sp.get('tab') || ''
+  useEffect(() => {
+    if (!urlQ) return
+    if (urlTab === 'used') { setTab('where'); setRq(urlQ); setRSubmitted(urlQ) }
+    else { setTab('product'); setPq(urlQ); setPSubmitted(urlQ) }
+  }, [urlQ, urlTab])
   // 소요량 조회는 BOM 이 고객사별로 있어 어느 고객사인지 정해야 한다
   const { data: customers = [] } = useCustomers()
   const [reqCs, setReqCs] = useState('')

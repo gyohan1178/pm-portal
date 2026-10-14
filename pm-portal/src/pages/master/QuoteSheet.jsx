@@ -1,3 +1,4 @@
+import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
@@ -246,16 +247,27 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   // ── 라인 추가: 어셈블리면 BOM 전개 원가 + 최신 작업비, 아니면 단품 매입가 ──
   async function addByCode() {
-    const code = AX(addCode)
-    if (!code) return
+    const raw = String(addCode || '').trim()
+    if (!raw) return
     setAdding(true); setErr('')
     try {
+      // 고객사 접두로 찾는다 — 예전엔 AX- 로 고정돼 Edwards 품번(ASML 9B)이 AX-ASML 9B 가 되어 못 찾았다 (v4.57.0)
+      //   후보 = [고객사 접두+품번, 품번 그대로]. 고객사를 모르면 AXCELIS 로 본다 (예전 동작)
+      let csCode = 'ax'
+      if (customerId) {
+        const { data: cs0 } = await supabase.from('customers').select('code').eq('id', customerId).maybeSingle()
+        if (cs0?.code) csCode = cs0.code
+      }
+      const cands = codeCandidates(raw, csCode)
+      const pickFirst = (list, key) => cands.map(c => (list || []).find(x => x[key] === c)).find(Boolean) || null
+      const code = cands[0]
       // ⚠ 조회 오류를 반드시 드러낸다. 삼키면 「하위품목이 없는 것」처럼 보인다.
       //   (v4.8.3 배포 중에 lt_days 칸이 지워져 부품이 0건으로 보였던 사례)
-      const { data: proj, error: pErr } = await supabase
+      const { data: projs, error: pErr } = await supabase
         .from('projects').select('id, code, name, rev')
-        .eq('customer_id', customerId).eq('code', code).maybeSingle()
+        .eq('customer_id', customerId).in('code', cands)
       if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
+      const proj = pickFirst(projs, 'code')
 
       if (proj) {
         let rows
@@ -318,12 +330,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         return
       }
 
-      const { data, error: iErr } = await supabase
+      const { data: its, error: iErr } = await supabase
         .from('items').select('std_code, name, unit, purchase_price, lt_weeks, moq, is_prototype, vendors(name)')
-        .eq('std_code', code).maybeSingle()
+        .in('std_code', cands)
       // 조회가 실패한 것과 정말 없는 것을 구분한다. 전에는 둘 다 「어디에도 없습니다」였다.
       if (iErr) throw new Error('품목 조회 — ' + iErr.message)
-      if (!data) { setErr(`${code} 는 어셈블리·품목 어디에도 없습니다.`); return }
+      const data = pickFirst(its, 'std_code')
+      if (!data) { setErr(`${cands.join(' / ')} 는 어셈블리·품목 어디에도 없습니다.`); return }
       const mat = num(data.purchase_price)
       const nl = newLine({
         kind: 'item',

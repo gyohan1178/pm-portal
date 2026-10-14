@@ -1,3 +1,5 @@
+import ItemLink from '../../components/ItemLink'
+import { codeCandidates } from '../../lib/custPrefix'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -18,14 +20,8 @@ const MP_COLS = [
 //   · 전 고객사 (예전엔 AXCELIS 만) · 완료된 호기는 뺀다 · 1,000줄에서 잘리지 않게 끝까지 읽는다
 //   · 미불출은 저장 모양이 세 가지다 — 출고 연동 {std_code,name,qty,item_id} · 호기 편집 {pn(AX- 없음),name,maker,qty}
 //     · CSV {pn,expectedDate} → 품번을 하나로 맞추고, 재고는 품번으로 찾는다 (item_id 가 없는 줄도 재고가 보이게)
-const CS_PREFIX = { AX: 'AX-' }
-const codeOf = (m, cs) => {
-  if (m.std_code) return String(m.std_code).trim()
-  const pn = String(m.pn || '').trim()
-  if (!pn) return ''
-  const pre = CS_PREFIX[String(cs || '').toUpperCase()] || ''
-  return pre && !pn.toUpperCase().startsWith(pre) ? pre + pn : pn
-}
+//   v4.57.0: 호기 편집으로 넣은 품번은 접두 없이 저장된다 → [고객사 접두+품번, 품번] 둘 다 찾아 있는 쪽으로 (예전엔 AX 만 접두를 붙여 Edwards · VM · CSK 재고가 0 으로 보였다)
+const candsOf = (m, cs) => m.std_code ? [String(m.std_code).trim()] : codeCandidates(m.pn, cs)
 async function fetchMissing() {
   const prod = await fetchAll(() => supabase.from('production')
     .select('id,pn,hogi,name,missing_parts,req_date,status,customer_code')
@@ -38,20 +34,25 @@ async function fetchMissing() {
       if (!m) continue
       rows.push({
         prodId: p.id, cs: p.customer_code || 'AX', pn: p.pn, hogi: p.hogi, prodName: p.name, reqDate: p.req_date,
-        item_id: m.item_id || null, std_code: codeOf(m, p.customer_code), name: m.name || '', need: Number(m.qty) || 0,
+        item_id: m.item_id || null, _cands: candsOf(m, p.customer_code), name: m.name || '', need: Number(m.qty) || 0,
         due: m.expectedDate || m.date || null,
       })
     }
   }
   // 재고 — item_id 가 없으면 품번으로 품목을 찾아 붙인다
-  const codes = [...new Set(rows.filter(r => !r.item_id && r.std_code).map(r => r.std_code))]
+  const codes = [...new Set(rows.filter(r => !r.item_id).flatMap(r => r._cands))]
   const idOf = {}
   for (let i = 0; i < codes.length; i += 300) {
     const { data, error } = await supabase.from('items').select('id,std_code,name').in('std_code', codes.slice(i, i + 300))
     if (error) throw error
     ;(data || []).forEach(x => { idOf[x.std_code] = x })
   }
-  rows.forEach(r => { if (!r.item_id && idOf[r.std_code]) { r.item_id = idOf[r.std_code].id; if (!r.name) r.name = idOf[r.std_code].name } })
+  rows.forEach(r => {
+    const hit = r._cands.find(c => idOf[c])
+    r.std_code = hit || r._cands[0] || ''
+    if (!r.item_id && hit) { r.item_id = idOf[hit].id; if (!r.name) r.name = idOf[hit].name }
+    delete r._cands
+  })
   const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))]
   const invMap = {}
   for (let i = 0; i < ids.length; i += 300) {
@@ -100,7 +101,7 @@ export default function MissingParts() {
                   <td className="px-3 py-2 text-[11px] font-bold text-slate-500 overflow-hidden truncate">{r.cs}</td>
                   <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{r.pn}</td>
                   <td className="px-3 py-2 font-mono font-bold text-indigo-600 overflow-hidden truncate">{r.hogi}</td>
-                  <td className="px-3 py-2 overflow-hidden truncate"><span className="font-mono font-semibold text-slate-700">{r.std_code}</span> <span className="text-slate-500">{r.name}</span></td>
+                  <td className="px-3 py-2 overflow-hidden truncate"><ItemLink code={r.std_code} className="font-mono font-semibold text-slate-700" /> <span className="text-slate-500">{r.name}</span></td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold">{r.need}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${r.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`}>{r.stock}</td>
                   <td className="px-3 py-2">

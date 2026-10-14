@@ -39,12 +39,26 @@ const EMPTY = {
 // 새로 등록할 때는 도면을 여러 장 — 한 협력사에 여러 도면을 한 번에 보내는 일이 많다
 const EMPTY_DWG = () => ({ drawing_no: '', item_name: '', issue_no: '' })
 
-// 엑셀에서 복사한 줄 → 도면 줄 (도면번호 · 품명 · Rev 순서, 탭으로 나뉨)
-//   머리줄(도면번호…)은 건너뛴다. 한 칸만 있으면 도면번호만.
+// 엑셀에서 복사한 줄 → 도면 줄
+//   머리줄이 있으면 그 이름으로 칸을 찾는다 (도면번호/품번/Drawing/Item · 품명/Description · Rev/Issue — 순서 상관없음)
+//   머리줄이 없으면 도면번호 · 품명 · Rev 순서. 한 칸만 있으면 도면번호만. 탭이 없으면 두 칸 이상 띄어쓰기로 나눈다 (v4.57.0)
+const HDR = {
+  drawing_no: /^(도면\s*번호|도번|품번|drawing(\s*no)?|dwg|item|part\s*(no|#)?|p\/?n)$/i,
+  item_name: /^(품명|품목명|description|desc|item\s*desc|name)$/i,
+  issue_no: /^(rev(ision)?|issue(\s*no)?|srev|brev|리비전)$/i,
+}
 export function parseDrawingPaste(text) {
-  return String(text || '').split(/\r?\n/).map(l => l.split('\t').map(x => x.trim()))
-    .filter(c => c[0] && !/도면\s*번호|drawing/i.test(c[0]))
-    .map(c => ({ drawing_no: c[0], item_name: c[1] || '', issue_no: c[2] || '' }))
+  const lines = String(text || '').split(/\r?\n/).filter(l => l.trim())
+  if (!lines.length) return []
+  const cut = (l) => (l.includes('\t') ? l.split('\t') : l.trim().split(/\s{2,}/)).map(x => x.trim())
+  const first = cut(lines[0])
+  const idx = {}
+  first.forEach((h, i) => { for (const [k, re] of Object.entries(HDR)) if (idx[k] == null && re.test(h)) idx[k] = i })
+  const hasHdr = idx.drawing_no != null
+  const at = hasHdr ? idx : { drawing_no: 0, item_name: 1, issue_no: 2 }
+  return (hasHdr ? lines.slice(1) : lines).map(cut)
+    .map(c => ({ drawing_no: c[at.drawing_no] || '', item_name: at.item_name != null ? c[at.item_name] || '' : '', issue_no: at.issue_no != null ? c[at.issue_no] || '' : '' }))
+    .filter(d => d.drawing_no && !/도면\s*번호|drawing/i.test(d.drawing_no))
 }
 // 같은 도면·같은 Rev 가 두 번 들어가면 하나로
 export function uniqDrawings(list) {
@@ -121,6 +135,9 @@ export default function DrawingDist() {
   const [newVendor, setNewVendor] = useState('')       // 즉석 거래처 등록 — 이름
   const [newVendorCat, setNewVendorCat] = useState('가공')  // 판금·가공 견적처가 대부분이다
   const [newContact, setNewContact] = useState(null) // 즉석 담당자 등록
+  // 방금 한 작업 되돌리기 (v4.57.0) — { label, run } 하나만 기억한다. 다른 작업을 하면 그것으로 바뀐다
+  const [undo, setUndo] = useState(null)
+  const [undoBusy, setUndoBusy] = useState(false)
 
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['drawDist'], queryFn: fetchDist })
   const { data: vendors = [] } = useQuery({ queryKey: ['vendorsAll'], queryFn: fetchVendors, staleTime: 5 * 60 * 1000 })
@@ -130,6 +147,20 @@ export default function DrawingDist() {
     qc.invalidateQueries({ queryKey: ['drawDist'] })
     qc.invalidateQueries({ queryKey: ['vendorContacts'] })
     qc.invalidateQueries({ queryKey: ['vendorsAll'] })
+  }
+  // 줄들의 지금 값(바꾸기 전)을 떠 둔다 → 되돌릴 때 같은 값끼리 묶어 다시 쓴다
+  const snapOf = (ids, fields) => ids.map((id) => { const r = rows.find((x) => x.id === id) || {}; return { id, v: Object.fromEntries(fields.map((f) => [f, r[f] ?? null])) } })
+  async function restore(snaps) {
+    const groups = new Map()
+    snaps.forEach((s) => { const k = JSON.stringify(s.v); const g = groups.get(k) || { v: s.v, ids: [] }; g.ids.push(s.id); groups.set(k, g) })
+    for (const g of groups.values()) must(await supabase.from('pm_drawing_dist').update(g.v).in('id', g.ids), '되돌리기')
+  }
+  async function runUndo() {
+    if (!undo || undoBusy) return
+    setUndoBusy(true)
+    try { await undo.run(); toastSuccess(`되돌렸습니다 — ${undo.label}`); setUndo(null); reload() }
+    catch (e) { toastError('되돌리기 실패: ' + e.message) }
+    finally { setUndoBusy(false) }
   }
 
   const view = useMemo(() => {
@@ -178,15 +209,18 @@ export default function DrawingDist() {
     }
     try {
       if (f.id) {
+        const old = snapOf([f.id], Object.keys(payload))
         must(await supabase.from('pm_drawing_dist').update(payload).eq('id', f.id), '배포이력 수정')
-      } else if (many) {
+        setUndo({ label: `${payload.drawing_no} 수정`, run: () => restore(old) })
+      } else {
         // 도면마다 한 줄 — 날짜·협력사·수신자·사유·형식·승인·비고는 같이 쓴다
-        must(await supabase.from('pm_drawing_dist').insert(dwgs.map((d) => ({
+        const list = many ? dwgs.map((d) => ({
           ...payload, drawing_no: d.drawing_no, item_name: d.item_name?.trim() || null,
           issue_no: d.issue_no?.trim() || null, created_name: me?.name || null,
-        }))), '배포이력 등록')
-      } else {
-        must(await supabase.from('pm_drawing_dist').insert({ ...payload, created_name: me?.name || null }), '배포이력 등록')
+        })) : [{ ...payload, created_name: me?.name || null }]
+        const made = must(await supabase.from('pm_drawing_dist').insert(list).select('id'), '배포이력 등록') || []
+        const ids = made.map((x) => x.id)
+        setUndo({ label: `${payload.vendor_name} · 도면 ${list.length}장 등록`, run: async () => { must(await supabase.from('pm_drawing_dist').delete().in('id', ids), '등록 되돌리기') } })
       }
       reload(); setForm(null)
       toastSuccess(f.id ? '고쳤습니다' : many ? `도면 ${dwgs.length}장을 대장에 남겼습니다` : '대장에 남겼습니다')
@@ -194,10 +228,13 @@ export default function DrawingDist() {
   }
 
   async function del(id) {
-    if (!window.confirm('이 줄을 지울까요? 대장은 증적이라 지우면 되돌릴 수 없습니다.')) return
+    if (!window.confirm('이 줄을 지울까요? 대장은 증적입니다 — 바로 위 「↩ 되돌리기」로만 살릴 수 있습니다.')) return
     try {
+      const old = rows.find((x) => x.id === id)
       must(await supabase.from('pm_drawing_dist').delete().eq('id', id), '배포이력 삭제')
-      reload(); toastSuccess('지웠습니다')
+      // 되살릴 때 연번(seq)은 DB 가 새로 매긴다 (generated always) — 나머지 값은 그대로
+      if (old) { const { seq, ...back } = old; setUndo({ label: `${old.drawing_no} · ${old.vendor_name} 삭제`, run: async () => { must(await supabase.from('pm_drawing_dist').insert(back), '삭제 되돌리기') } }) }
+      reload(); toastSuccess('지웠습니다 — 위 「↩ 되돌리기」로 살릴 수 있습니다')
     } catch (e) { toastError(e.message) }
   }
 
@@ -205,6 +242,8 @@ export default function DrawingDist() {
   async function approve(ids, ok = true) {
     if (!ids.length) return
     try {
+      const old = snapOf(ids, ['status', 'approved_by', 'approved_name', 'approved_at'])
+      setUndo({ label: `${n(ids.length)}건 ${ok ? '승인' : '반려'}`, run: () => restore(old) })
       must(await supabase.from('pm_drawing_dist').update({
         status: ok ? '승인' : '반려',
         approved_by: me?.id || null, approved_name: me?.name || null,
@@ -218,6 +257,8 @@ export default function DrawingDist() {
   async function notifyScrap(ids) {
     if (!ids.length) return
     try {
+      const old = snapOf(ids, ['scrap_notified_at', 'scrap_memo'])
+      setUndo({ label: `${n(ids.length)}건 폐기통보 기재`, run: () => restore(old) })
       must(await supabase.from('pm_drawing_dist').update({
         scrap_notified_at: todayISO(),
         scrap_memo: `${todayISO()} 구버전 폐기 통보 (${me?.name || ''})`,
@@ -302,6 +343,13 @@ export default function DrawingDist() {
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">대장을 못 불러왔습니다 — {error.message}</div>}
+      {undo && canEdit && (
+        <div data-dd-undo className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
+          <span>방금 한 작업: <b>{undo.label}</b></span>
+          <button data-dd-undo-run disabled={undoBusy} onClick={runUndo} className="ml-auto px-3 py-1 text-xs font-bold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40">{undoBusy ? '되돌리는 중…' : '↩ 되돌리기'}</button>
+          <button onClick={() => setUndo(null)} className="px-2 py-1 text-[11px] text-amber-500">닫기</button>
+        </div>
+      )}
 
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
@@ -599,6 +647,16 @@ const L = ({ t, children }) => (
 
 // 도면 여러 장 입력 — 줄 추가·삭제, 엑셀에서 여러 줄 붙여넣기
 function DrawingRows({ list, onChange }) {
+  const [pasteOpen, setPasteOpen] = useState(false)
+  const [pasteTxt, setPasteTxt] = useState('')
+  const pasted = useMemo(() => parseDrawingPaste(pasteTxt), [pasteTxt])
+  // 「📋 여러 줄 붙여넣기」 — 빈 줄은 버리고 뒤에 붙인다
+  function addPasted() {
+    if (!pasted.length) return
+    const kept = list.filter((d) => d.drawing_no?.trim() || d.item_name?.trim() || d.issue_no?.trim())
+    onChange([...kept, ...pasted])
+    setPasteTxt(''); setPasteOpen(false)
+  }
   const set = (i, k, v) => onChange(list.map((d, j) => (j === i ? { ...d, [k]: v } : d)))
   // 도면번호 칸에 여러 줄(또는 탭)을 붙이면 줄로 나눠 채운다
   function onPaste(i, e) {
@@ -620,8 +678,23 @@ function DrawingRows({ list, onChange }) {
     <div>
       <div className="flex items-baseline justify-between mb-1">
         <label className="block text-[11px] font-bold text-slate-400">도면 <span className="font-normal">— 엑셀에서 도면번호·품명·Rev 여러 줄을 복사해 도면번호 칸에 붙여도 됩니다</span></label>
-        <span className="text-[11px] text-slate-400">{list.filter((d) => d.drawing_no?.trim()).length}장</span>
+        <span className="flex items-center gap-2">
+          <button type="button" data-dd-paste onClick={() => setPasteOpen((v) => !v)} className="px-2 py-0.5 text-[11px] font-bold rounded border border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100">📋 여러 줄 붙여넣기</button>
+          <span className="text-[11px] text-slate-400">{list.filter((d) => d.drawing_no?.trim()).length}장</span>
+        </span>
       </div>
+      {pasteOpen && (
+        <div className="mb-2 rounded-lg border border-indigo-200 bg-indigo-50/40 p-2 space-y-1.5">
+          <textarea data-dd-paste-text value={pasteTxt} onChange={(e) => setPasteTxt(e.target.value)} rows={5}
+            placeholder={'엑셀에서 그대로 복사해 붙여넣으세요 (머리줄 있어도 됨 — 도면번호/품번 · 품명 · Rev)\n110214084\tASSY PWR DISTR LEB\tD\n110231610\tASSY FLYBACK DIODE\tA'}
+            className="w-full px-2 py-1.5 text-xs font-mono border border-indigo-200 rounded bg-white" />
+          <div className="flex items-center gap-2 text-[11px] text-slate-500">
+            <span>{pasted.length ? `읽은 도면 ${pasted.length}장 — 예: ${pasted.slice(0, 2).map((d) => `${d.drawing_no}${d.issue_no ? ' Rev ' + d.issue_no : ''}`).join(', ')}${pasted.length > 2 ? ' …' : ''}` : '도면번호를 못 읽었습니다'}</span>
+            <button type="button" onClick={() => { setPasteTxt(''); setPasteOpen(false) }} className="ml-auto px-2 py-1 text-slate-400">닫기</button>
+            <button type="button" data-dd-paste-add disabled={!pasted.length} onClick={addPasted} className="px-3 py-1 font-bold rounded bg-indigo-600 text-white disabled:opacity-40">{pasted.length ? `${pasted.length}장 넣기` : '넣기'}</button>
+          </div>
+        </div>
+      )}
       <div className="space-y-1.5">
         {list.map((d, i) => {
           const k = `${String(d.drawing_no || '').trim().toUpperCase()}|${String(d.issue_no || '').trim().toUpperCase()}`

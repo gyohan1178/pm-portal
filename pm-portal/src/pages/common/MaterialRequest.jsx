@@ -377,7 +377,7 @@ export default function MaterialRequest() {
       setHead({ urgency: '보통', purpose: '', product_code: '', product_name: '', unit_no: '', need_date: '', requester_name: '', check_dept: '', customer_code: '' })
       setTab('list')
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
     } catch (e) {
       toastError('등록 실패: ' + e.message)
     } finally { setBusy(false) }
@@ -393,7 +393,7 @@ export default function MaterialRequest() {
     qc.invalidateQueries({ queryKey: ['materialRequests'] })
     qc.invalidateQueries({ queryKey: ['requestNotice'] })
     qc.invalidateQueries({ queryKey: ['menuAlerts'] })
-    qc.invalidateQueries({ queryKey: ['todoList'] })
+    qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
   }
 
   // 불출 — 재고에서 실제로 빼고 출고 이력을 남긴다.
@@ -535,7 +535,7 @@ export default function MaterialRequest() {
       qc.invalidateQueries({ queryKey: ['requestHistory'], exact: false })
       qc.invalidateQueries({ queryKey: ['requestNotice'] })
       qc.invalidateQueries({ queryKey: ['menuAlerts'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
     } catch (e) {
       toastError('부서 변경 실패: ' + e.message)
     } finally { setBusy(false) }
@@ -709,7 +709,7 @@ export default function MaterialRequest() {
       setCodeForm(null)
       qc.invalidateQueries({ queryKey: ['pendingCodes'] })
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
     } catch (e) { toastError('실패: ' + e.message) }
   }
 
@@ -730,7 +730,7 @@ export default function MaterialRequest() {
       else toastSuccess(`${n(done)}건 코드 부여 요청`)
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
       qc.invalidateQueries({ queryKey: ['pendingCodes'] })
     } catch (e) { toastError('실패: ' + e.message) }
   }
@@ -756,7 +756,7 @@ export default function MaterialRequest() {
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['requestNotice'] })
       qc.invalidateQueries({ queryKey: ['menuAlerts'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
     } catch (e) { toastError('되돌리기 실패: ' + e.message) }
   }
 
@@ -833,7 +833,7 @@ export default function MaterialRequest() {
       if (r?.note) toastError(r.note)
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
       refreshProcurement(qc)
     } catch (e) { toastError('되돌리기 실패: ' + e.message) }
   }
@@ -847,7 +847,7 @@ export default function MaterialRequest() {
       if (data === 'ok') {
         toastSuccess('요청이 취소되었습니다')
         qc.invalidateQueries({ queryKey: ['materialRequests'] })
-        qc.invalidateQueries({ queryKey: ['todoList'] })
+        qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
       } else toastError(data)
     } catch (e) { toastError('취소 실패: ' + e.message) }
   }
@@ -876,7 +876,7 @@ export default function MaterialRequest() {
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['requestNotice'] })
       qc.invalidateQueries({ queryKey: ['menuAlerts'] })
-      qc.invalidateQueries({ queryKey: ['todoList'] })   // 관제탑 건수도 함께 갱신
+      qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })   // 관제탑 건수도 함께 갱신
     } catch (e) {
       toastError('실패: ' + e.message)
     }

@@ -1,3 +1,4 @@
+import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
@@ -232,19 +233,35 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   }
 
   // 품목별 기초 공수 MD (items.md_days)
-  const { data: mdMap = {} } = useQuery({
-    queryKey: ['pdboxMd'],
+  //   예전엔 AX-11… 품목만 읽고 AX- 로만 저장해 Edwards · VM · CSK 는 전부 1 MD 였다 (v4.57.0)
+  //   → 이 화면 호기들의 품번마다 [고객사 접두+품번, 품번] 후보로 찾는다
+  const mdPns = useMemo(() => [...new Set((rows || []).map(r => String(r.pn || '').trim()).filter(Boolean))].sort(), [rows])
+  const { data: mdData } = useQuery({
+    queryKey: ['pdboxMd', csCode, mdPns.join('|')],
+    enabled: mdPns.length > 0,
     queryFn: async () => {
-      const { data } = await supabase.from('items').select('std_code,md_days').like('std_code', 'AX-11%')
-      return Object.fromEntries((data || []).map(i => [String(i.std_code).replace('AX-', ''), i.md_days]))
+      const cand = Object.fromEntries(mdPns.map(pn => [pn, codeCandidates(pn, csCode)]))
+      const all = [...new Set(Object.values(cand).flat())]
+      const found = {}
+      for (let i = 0; i < all.length; i += 300) {
+        const { data, error } = await supabase.from('items').select('std_code,md_days').in('std_code', all.slice(i, i + 300))
+        if (error) throw error
+        ;(data || []).forEach(x => { found[x.std_code] = x })
+      }
+      const md = {}, code = {}
+      mdPns.forEach(pn => { const hit = cand[pn].find(c => found[c]); if (hit) { code[pn] = hit; md[pn] = found[hit].md_days } })
+      return { md, code }
     },
   })
+  const mdMap = mdData?.md || {}
   const mdSaveMut = useMutation({
     mutationFn: async ({ pn, val }) => {
-      const { error } = await supabase.from('items').update({ md_days: val === '' ? null : Number(val) }).eq('std_code', 'AX-' + pn)
+      const code = mdData?.code?.[pn]
+      if (!code) throw new Error(`${pn} 품목(기준코드)이 없어 MD 를 저장할 수 없습니다 — 기준코드 DB 에 먼저 등록하세요`)
+      const { error } = await supabase.from('items').update({ md_days: val === '' ? null : Number(val) }).eq('std_code', code)
       if (error) throw error
     },
-    onSuccess: () => { qc.invalidateQueries(['pdboxMd']); toastSuccess('MD 저장됨') },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['pdboxMd'] }); toastSuccess('MD 저장됨') },
     onError: (e) => toastError('MD 저장 오류: ' + e.message),
   })
 
@@ -406,15 +423,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   async function lookupPart(i, pn) {
     const v = String(pn || '').trim()
     if (!v) return
-    const pfx = isED ? 'ED-' : 'AX-'
-    const codes = /^(AX|ED)-/i.test(v) ? [v] : [`${pfx}${v}`, v]
+    // 고객사 접두로 찾는다 — 예전엔 VM · CSK 도 AX- 로 찾았다 (v4.57.0)
+    const codes = codeCandidates(v, csCode)
     const { data } = await supabase.from('items')
       .select('std_code,name,manufacturer,manufacturer_code')
-      .in('std_code', codes).limit(1)
-    const it = data?.[0]
+      .in('std_code', codes)
+    const it = codes.map(c => (data || []).find(x => x.std_code === c)).find(Boolean)
     if (!it) return
     setMP(i, {
-      pn: it.std_code.replace(/^(AX|ED)-/, ''),
+      pn: stripPrefix(it.std_code),
       name: it.name || '',
       maker: it.manufacturer || '',
       makerPn: it.manufacturer_code || '',

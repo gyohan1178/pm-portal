@@ -2,6 +2,14 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.43.2',
+    date: '2026-10-08',
+    changes: [
+      'AXCELIS 포캐스트 올리기: 시트를 전부 읽습니다 (CCNK · CCNB …). 예전에는 첫 시트만 읽어 CCNB(하네스 위주, 2026-10 파일 기준 89품번 · 약 19,000개)가 빠졌습니다',
+      '같은 품번 · 달은 한 줄로 더합니다 (K_HUB 줄 포함). 미리보기에 읽은 시트와 줄 수가 나옵니다',
+    ],
+  },
+  {
     version: 'v4.43.1',
     date: '2026-10-08',
     changes: [

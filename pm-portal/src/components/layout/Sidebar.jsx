@@ -17,6 +17,7 @@ const MENU_META = {
   '/finder': ['🔎','통합 검색'],          // 예전 즐겨찾기 — 통합 검색으로 이어진다
   '/outbound-history': ['📋','출고 현황'],
   '/material-request': ['🙋','자재 요청'],
+  '/missing': ['🧩','결품 현황'],
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
@@ -339,6 +340,7 @@ export default function Sidebar({ onNavigate, profile }) {
           <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
           <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
           <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
+          <MenuItem to="/missing" icon="🧩" onNavigate={onNavigate}>결품 현황</MenuItem>
         </CollapseSection>
         )}
     </>),

@@ -1,3 +1,4 @@
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
@@ -437,7 +438,7 @@ export default function CustomerPO() {
                         <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{p.po_number}</td>
                         <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{p.order_line}/{p.del_line}</td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{p.type || ''}</td>
-                        <td className="px-3 py-2 font-mono text-indigo-600 whitespace-nowrap">{p.items?.std_code}</td>
+                        <td className="px-3 py-2 font-mono text-indigo-600 whitespace-nowrap"><ItemLink code={p.items?.std_code} /></td>
                         <td className="px-3 py-2 text-slate-600 max-w-[240px] truncate" title={p.items?.name}>
                           {p.items?.name}
                         </td>
@@ -578,7 +579,7 @@ export default function CustomerPO() {
                   <td className="px-3 py-2 text-xs text-slate-400">{(p.order_line||'-')}/{(p.del_line||'-')}</td>
                   <td className="px-3 py-2"><span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${p.division==='하네스'?'bg-teal-50 text-teal-600':p.division==='구매품'?'bg-slate-100 text-slate-500':'bg-purple-50 text-purple-600'}`}>{p.division||'전장'}</span></td>
                   <td className="px-3 py-2 overflow-hidden">
-                    <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code||'-'}</div>
+                    <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code ? <ItemLink code={p.items.std_code} /> : '-'}</div>
                     <div className="text-[11px] text-slate-500 truncate">{p.items?.name||''}</div>
                   </td>
                   <td className="px-3 py-2 text-center">

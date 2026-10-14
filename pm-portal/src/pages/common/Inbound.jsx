@@ -1,3 +1,4 @@
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
@@ -878,7 +879,7 @@ export default function Inbound() {
                               onChange={e=>{ const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n) }}/>
                           </td>
                           <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
+                          <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                           <td className="px-3 py-2 text-slate-600 max-w-[140px] truncate" title={mfrOf(r)}>{mfrOf(r)||'-'}</td>
                           <td className="px-3 py-2 font-mono text-[11px] text-slate-500 max-w-[150px] truncate" title={mpnOf(r)}>{mpnOf(r)||'-'}</td>

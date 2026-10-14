@@ -1,3 +1,4 @@
+import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -231,20 +232,24 @@ export default function CostSaving() {
       const pick = (r, keys) => { for (const k of Object.keys(r)) if (keys.some((x) => String(k).replace(/\s/g, '').includes(x))) return r[k]; return '' }
       const payload = []
       for (const r of rows) {
-        const code = String(pick(r, ['품목코드', '기준코드', '품번', 'PN'])).trim().replace(/^AX-/i, '')
+        const code = String(pick(r, ['품목코드', '기준코드', '품번', 'PN'])).trim()
         const price = Number(String(pick(r, ['DB단가', '표준단가', '단가', 'PRICE'])).replace(/[,₩\s]/g, ''))
         if (!code || !(price > 0)) continue
-        payload.push({ std_code: 'AX-' + code, price, base_date: todayISO(), source: '엑셀 업로드' })
+        // 접두(ED- · CS- · VM- · AX-)가 있으면 그대로, 없으면 AX- 를 먼저 보고 없으면 그대로 (예전: 항상 AX- → ED-123 이 AX-ED-123) (v4.57.0)
+        payload.push({ _cands: codeCandidates(code, 'AX'), price, base_date: todayISO(), source: '엑셀 업로드' })
       }
       if (!payload.length) { toastError('품목코드·단가 칸을 찾지 못했습니다'); return }
-      // 기준코드 DB 와 연결
-      const codes = payload.map((p) => p.std_code)
+      // 기준코드 DB 와 연결 — 후보 중 실제 품목이 있는 코드로
+      const codes = [...new Set(payload.flatMap((p) => p._cands))]
       const items = []
       for (let i = 0; i < codes.length; i += 200) {
         items.push(...(must(await supabase.from('items').select('id,std_code').in('std_code', codes.slice(i, i + 200)), '품목 조회') || []))
       }
       const idOf = new Map(items.map((i) => [i.std_code, i.id]))
-      payload.forEach((p) => { p.item_id = idOf.get(p.std_code) || null })
+      payload.forEach((p) => {
+        const hit = p._cands.find((c) => idOf.has(c))
+        p.std_code = hit || p._cands[0]; p.item_id = hit ? idOf.get(hit) : null; delete p._cands
+      })
       for (let i = 0; i < payload.length; i += 200) {
         must(await supabase.from('pm_std_price').upsert(payload.slice(i, i + 200), { onConflict: 'std_code' }), '표준단가 저장')
       }

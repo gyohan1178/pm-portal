@@ -8,6 +8,8 @@ import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
 import { todayISO } from '../../lib/utils'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { markPoIssued } from '../../lib/poIssue'
+import { refreshProcurement } from '../../lib/refresh'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -85,11 +87,14 @@ export default function Issue() {
   const loc = useLocation()
   const nav = useNavigate()
   const [pasteFrom, setPasteFrom] = useState('')
+  // 넘겨받은 고객사 PO 줄 — 출고가 끝나면 「불출 처리할까요?」를 묻는다 (하네스 출도 · 불출, v4.57.0)
+  const [handoff, setHandoff] = useState(null)   // { from, rows: [{id, po_number, …}] }
   useEffect(() => {
     const st = loc.state
     if (!st?.issuePaste) return
     if (st.csCode) setCsCode(st.csCode)
     setPasteText(st.issuePaste); setPasteOpen(true); setPasteFrom(st.from || '다른 화면')
+    setHandoff(st.poIssue?.length ? { from: st.from || '다른 화면', rows: st.poIssue } : null)
     nav(loc.pathname, { replace: true, state: null })   // 새로고침 · 뒤로가기 때 또 채우지 않게
   }, [loc.state])
   // 불출표에 '어느 상위품번에 몇 개' 를 적으려면 전개할 때 기록해 둬야 한다.
@@ -101,17 +106,17 @@ export default function Issue() {
       const payload = rows.map(r => ({ ...r, customer_id: csId }))
       const { error } = await supabase.from('pm_picking').insert(payload); if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries(['picking', csId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['picking', csId] }),
     onError: e => toastError('담기 오류: ' + e.message),
   })
   const updMut = useMutation({
     mutationFn: async ({ id, patch }) => { const { error } = await supabase.from('pm_picking').update(patch).eq('id', id); if (error) throw error },
-    onSuccess: () => qc.invalidateQueries(['picking', csId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['picking', csId] }),
     onError: e => toastError('수량 저장 오류: ' + e.message),
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_picking').delete().eq('id', id); if (error) throw error },
-    onSuccess: () => qc.invalidateQueries(['picking', csId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['picking', csId] }),
     onError: e => toastError('삭제 오류: ' + e.message),
   })
   const clearMut = useMutation({
@@ -123,7 +128,7 @@ export default function Issue() {
       }
     },
     onSuccess: () => {
-      qc.invalidateQueries(['picking', csId])
+      qc.invalidateQueries({ queryKey: ['picking', csId] })
       // 상위품번·제외 표시도 함께 지운다. 남아 있으면 다음 불출표에 섞인다.
       setLastAssys([]); setByAssyMap({}); setExcluded(new Set())
     },
@@ -341,7 +346,7 @@ export default function Issue() {
 
   const processMut = useMutation({
     mutationFn: async () => {
-      if (!cart.length) return []
+      if (!cart.length) return null   // 담은 게 없으면 아무것도 안 함 (넘겨받은 줄 불출도 묻지 않는다)
       const snapshot = cart.map(l => ({ ...l })) // 처리 후 비워지므로 스냅샷
       // 출고 처리 전체를 Postgres 함수에서 트랜잭션으로 — 전부 성공 아니면 전부 취소(부분 실패 없음)
       const { data, error } = await supabase.rpc('pm_process_issue', { p_customer_id: csId })
@@ -349,12 +354,25 @@ export default function Issue() {
       await syncMissingToProduction(snapshot) // 결품 ↔ 생산관리 동기화 (실패해도 출고는 유지)
       return (data && data.warnings) || []
     },
-    onSuccess: (warnings) => {
-      qc.invalidateQueries(['picking', csId])
-      qc.invalidateQueries(['inventory']); qc.invalidateQueries(['shortage']); qc.invalidateQueries(['cpo'])
-      qc.invalidateQueries(['production']); qc.invalidateQueries(['prodBoard'])
+    onSuccess: async (warnings) => {
+      if (warnings == null) return
+      // 예전엔 배열 형식(['x'])이라 앱의 모든 쿼리를 다시 받았다 → 필요한 것만 (v4.57.0)
+      qc.invalidateQueries({ queryKey: ['picking', csId] })
+      refreshProcurement(qc)
+      qc.invalidateQueries({ queryKey: ['production'] }); qc.invalidateQueries({ queryKey: ['prodBoard'] }); qc.invalidateQueries({ queryKey: ['missingParts'] })
       setMsg(warnings.length ? `출고 완료 (재고부족 경고 ${warnings.length}건):\n` + warnings.join('\n') : '출고 처리 완료')
       setLastAssys([]); setByAssyMap({}); setExcluded(new Set())
+      // 넘겨받은 줄 — 출고가 끝났으니 불출 표시를 묻는다
+      if (handoff?.rows?.length) {
+        const h = handoff; setHandoff(null)
+        if (confirm(`출고 완료.\n\n${h.from}에서 넘겨받은 고객사 PO ${h.rows.length}줄을 「불출」로 표시할까요?\n· 고객사 PO 자재불출 체크 → 쇼티지 계산에서 빠집니다\n· 「취소」하면 표시하지 않습니다 (하네스 출도 · 불출 화면에서 나중에 할 수 있음)`)) {
+          try {
+            const n = await markPoIssued(h.rows, true, '하네스 출도 → 다품목 출고 후 불출 처리')
+            toastSuccess(`${n}줄 불출 처리했습니다`)
+            qc.invalidateQueries({ queryKey: ['harnessRelease'] })
+          } catch (e) { toastError('불출 표시 실패 (출고는 완료됨): ' + e.message) }
+        }
+      }
     },
     onError: e => toastError('출고 오류: ' + e.message),
   })
@@ -666,7 +684,7 @@ export default function Issue() {
 
           {pasteOpen && (
             <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-2 space-y-1.5">
-              {pasteFrom && <p data-issue-from className="text-[11.5px] font-bold text-violet-700">🧵 {pasteFrom} 에서 넘어온 목록 — 「담기」 → 「전개」 → 출고</p>}
+              {pasteFrom && <p data-issue-from className="text-[11.5px] font-bold text-violet-700">🧵 {pasteFrom} 에서 넘어온 목록 — 「담기」 → 「전개」 → 출고{handoff ? ` · 출고가 끝나면 고객사 PO ${handoff.rows.length}줄 불출 처리를 묻습니다` : ''}</p>}
               <textarea value={pasteText} onChange={e => setPasteText(e.target.value)}
                 rows={5} placeholder={'품번\t수량\nCS-ECK00011-00\t5\nIA1SOI74D311\t2'}
                 className="w-full px-2 py-1.5 text-xs font-mono border border-indigo-200 rounded" />

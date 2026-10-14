@@ -1,3 +1,4 @@
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useCallback, useRef, memo } from 'react'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -90,7 +91,7 @@ const ShortageRow = memo(function ShortageRow({ r, isExcluded, isChecked, onExcl
         {r.orderNeed>0&&<input type="checkbox" checked={isChecked} onChange={e=>onToggleCheck(r.item_id,e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600"/>}
       </td>
       <td className="px-2 py-2 overflow-hidden">
-        <div className="font-mono text-xs text-indigo-600 truncate">{r.std_code}</div>
+        <div className="font-mono text-xs text-indigo-600 truncate"><ItemLink code={r.std_code} /></div>
         <div className="text-[11px] text-slate-500 truncate">{r.name||''}</div>
         <div className="mt-0.5">
           {isExcluded ? (
@@ -361,7 +362,7 @@ export default function Shortage() {
                   onMouseDown={e => rowSel.start(r.item_id, e, !!checked[r.item_id])}
                   onMouseEnter={e => rowSel.over(r.item_id, e)}
                   className={`border-b border-slate-100 select-none cursor-pointer ${checked[r.item_id]?'bg-indigo-50/50':''}`}>
-                  <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.std_code}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.std_code} /></td>
                   <td className="px-3 py-2 text-slate-700">{r.name}</td>
                   <td className="px-3 py-2 text-right font-semibold text-red-600">{r.orderNeed}</td>
                   <td className="px-3 py-2 text-right">

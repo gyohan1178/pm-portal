@@ -1,3 +1,5 @@
+import { refreshProcurement } from '../../lib/refresh'
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
@@ -106,6 +108,8 @@ export default function Inventory() {
   const canEdit = useCanEdit()
   const qtyMut = useMutation({
     mutationFn: async ({ row, qty }) => {
+      // 음수 재고는 받지 않는다 (v4.57.0) — 출고 기록이 빠졌으면 출고 화면에서 바로잡는다
+      if (!(Number(qty) >= 0)) throw new Error('재고는 0 이상으로 적어 주세요')
       const { data: cur, error: e1 } = await supabase.from('inventory').select('qty').eq('id', row.id).maybeSingle()
       if (e1) throw e1
       const dbQty = Number(cur?.qty) || 0
@@ -119,7 +123,8 @@ export default function Inventory() {
     onSuccess: (r) => {
       if (!r) return
       toastSuccess(`${r.code} 재고 ${r.from} → ${r.to}`)
-      qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
+      // 재고가 바뀌면 부족자재 · 소요량도 다시 계산되게 (예전엔 재고현황만 갱신했다) (v4.57.0)
+      refreshProcurement(qc)
     },
     onError: (e) => toastError('재고 수정 실패: ' + e.message),
   })
@@ -423,7 +428,7 @@ export default function Inventory() {
                     <td className="px-3 py-2 text-center">
                       <input type="checkbox" checked={!!checked[r.id]} onChange={e=>setChecked(c=>({...c,[r.id]:e.target.checked}))}/>
                     </td>
-                    <td className="px-3 py-2 font-mono text-indigo-600">{r.items?.std_code}</td>
+                    <td className="px-3 py-2 font-mono text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                     <td className="px-3 py-2 text-slate-700 max-w-[280px] truncate">{r.items?.name}</td>
                     <td className="px-3 py-2 text-slate-400">{r.location||'-'}</td>
                     <td className="px-3 py-2 text-right font-bold text-rose-600">{r.qty}</td>
@@ -446,7 +451,7 @@ export default function Inventory() {
                 const itemValue=r.qty*(r.items?.purchase_price||0)
                 return (
                   <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${status==='zero'?'bg-red-50/20':status==='low'?'bg-amber-50/20':''}`}>
-                    <td className="px-3 py-2 font-mono text-xs text-indigo-600 overflow-hidden truncate">{r.items?.std_code}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-indigo-600 overflow-hidden truncate"><ItemLink code={r.items?.std_code} /></td>
                     <td className="px-3 py-2 font-semibold text-slate-800 overflow-hidden truncate">{r.items?.name}</td>
                     <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">{r.items?.manufacturer||'-'}</td>
                     <td className="px-3 py-2 font-mono text-xs text-slate-400 overflow-hidden truncate">{r.items?.manufacturer_code||'-'}</td>

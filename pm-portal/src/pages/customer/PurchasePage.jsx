@@ -1,3 +1,4 @@
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { useCustomer } from '../../hooks/useCustomers'
@@ -1548,7 +1549,7 @@ export default function PurchasePage() {
                     : histShown.map(r=>(
                       <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                         <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                         <td className="px-3 py-2 text-right font-bold text-emerald-700">{r.qty}</td>
                         <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>

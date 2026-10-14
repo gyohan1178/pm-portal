@@ -1,3 +1,4 @@
+import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, Fragment } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -229,7 +230,7 @@ export default function OutboundHistory() {
                       <tr key={r.id} className={`border-b border-slate-100 ${sub ? 'bg-sky-50/40' : 'hover:bg-slate-50'}`}>
                         <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{sub ? <span className="text-slate-300 pl-3">└</span> : <>{r.movement_date}<span className="ml-1 font-normal text-slate-400">{timeOf(r.processed_at)}</span></>}</td>
                         <td className="px-3 py-2 whitespace-nowrap">{!sub && <span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${KIND_TONE[r._kind] || ''}`}>{r._kind}</span>}</td>
-                        <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.items?.std_code}</td>
+                        <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                         <td className="px-3 py-2 font-semibold text-slate-800">
                           {r.items?.name}
                           {head && (

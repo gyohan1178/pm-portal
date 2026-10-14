@@ -7,6 +7,7 @@ import { must } from '../../lib/db'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { refreshProcurement } from '../../lib/refresh'
+import { markPoIssued } from '../../lib/poIssue'
 import { useCanEdit } from '../../hooks/useProfile'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
@@ -205,7 +206,10 @@ export default function HarnessRelease() {
     const noBom = list.filter(p => !hasBom(p))
     if (!ok.length) { toastError(noBom.length ? 'BOM 이 등록된 하네스가 없습니다 — 고객사 BOM 을 먼저 올려 주세요' : '잔량이 있는 줄이 없습니다'); return }
     if (noBom.length && !confirm(`BOM 이 없는 ${noBom.length}줄은 빼고 보냅니다 (${[...new Set(noBom.map(p => pnOf(p.items?.std_code)))].slice(0, 5).join(', ')}${noBom.length > 5 ? ' …' : ''}).\n계속할까요?`)) return
-    nav('/issue', { state: { issuePaste: issueText(ok), csCode: 'ax', from: `하네스 출도 · 불출 ${ok.length}줄` } })
+    // v4.57.0: 출고가 끝난 뒤 다품목 출고 화면이 「넘겨받은 줄 불출 처리할까요?」를 묻는다 (아직 불출 안 된 줄만)
+    //   → 출고 없이 불출만 먼저 찍혀 쇼티지에서 빠지는데 재고는 그대로인 일을 막는다
+    const poIssue = ok.filter(p => !p.material_issued).map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) }))
+    nav('/issue', { state: { issuePaste: issueText(ok), csCode: 'ax', from: `하네스 출도 · 불출 ${ok.length}줄`, poIssue } })
   }
 
   const stage = (p) => p.material_issued ? 'done' : st[p.id]?.printed ? 'wait' : 'todo'
@@ -247,16 +251,8 @@ export default function HarnessRelease() {
     if (!confirm(msg)) return
     setBusy(true)
     try {
-      const ids = list.map(p => p.id)
-      for (let i = 0; i < ids.length; i += 200) {
-        const part = ids.slice(i, i + 200)
-        must(await supabase.from('purchase_orders').update({ material_issued: val }).in('id', part), '고객사 PO 불출 표시')
-        // 고객사 PO 화면 토글과 같게 — 연결된 생산 호기(po_id) 불출 체크도 맞춘다
-        must(await supabase.from('production').update({ part_issue: val }).in('po_id', part), '생산 호기 불출 표시')
-      }
-      await logActivity('update', 'purchase_orders', null,
-        `${val ? '하네스 출도 → 불출 처리' : '하네스 불출 취소'} ${list.length}줄`,
-        { rows: list.map(p => ({ id: p.id, po: p.po_number, ol: p.order_line, dl: p.del_line, pn: pnOf(p.items?.std_code) })) }, 'AXCELIS')
+      await markPoIssued(list.map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) })),
+        val, val ? '하네스 출도 → 불출 처리' : '하네스 불출 취소')
       toastSuccess(val ? `${list.length}줄 불출 처리했습니다` : `${list.length}줄 불출 표시를 풀었습니다`)
       setSel(new Set())
       setJustIssued(val ? list : null)
@@ -291,7 +287,7 @@ export default function HarnessRelease() {
         <p className="text-[11px] font-semibold text-slate-400">🤝 영업 · AXCELIS 하네스 (16번대 + 하네스 공정관리 등록분)</p>
         <h1 className="text-xl font-extrabold text-slate-900">🧵 하네스 출도 · 불출</h1>
         <p className="text-[13px] text-slate-400 mt-0.5">
-          아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘기면(출도) 여기서 「불출 처리」합니다.
+          아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다.
           불출 처리 = 고객사 PO 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
         </p>
       </div>
@@ -311,7 +307,7 @@ export default function HarnessRelease() {
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px]">
         {[['① 고르기', '출력 전 목록에서 체크 (납기 빠른 순)'], ['② 「공정관리용 복사」', '머리글째 복사 — 불출일은 오늘로 채워짐'],
-          ['③ 하네스 공정관리 → 작업지시서 QR → AXCELIS', '붙여넣기 → 폴더 고르고 만들기 (작업지시서 · 도면 출력, 수주 등록)'], ['④ 현장에 넘기면(출도) 「불출 처리」', '공정관리 출도 기록을 PO · 라인으로 맞춰 자동으로 보여줌']]
+          ['③ 하네스 공정관리 → 작업지시서 QR → AXCELIS', '붙여넣기 → 폴더 고르고 만들기 (작업지시서 · 도면 출력, 수주 등록)'], ['④ 현장에 넘기면(출도) 「🧺 다품목 출고 → 불출」', '자재를 출고하고, 출고가 끝나면 그 줄을 불출 처리 (출고가 따로 없으면 「✅ 불출만 표시」)']]
           .map(([a, b], i) => (
             <div key={a} className={`rounded-lg border border-dashed px-3 py-2 ${i === 2 ? 'border-teal-300 bg-teal-50/60 text-teal-800' : 'border-indigo-200 bg-indigo-50/60 text-indigo-700'}`}>
               <b className="block">{a}</b>{b}
@@ -322,7 +318,7 @@ export default function HarnessRelease() {
         <div data-hr-just className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-800">
           <b>✅ {justIssued.length}줄 불출 처리했습니다.</b>
           <span>자재도 바로 빼려면 → 다품목 출고에서 하네스 BOM 을 전개해 한 번에 출고합니다.</span>
-          <button data-hr-just-send onClick={() => sendIssue(justIssued)} className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700">🧺 이 {justIssued.length}줄 다품목 출고로</button>
+          <button data-hr-just-send onClick={() => sendIssue(justIssued.map(p => ({ ...p, material_issued: true })))} className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700">🧺 이 {justIssued.length}줄 다품목 출고로</button>
           <button onClick={() => setJustIssued(null)} className="px-2 py-1 text-[11px] text-violet-400">닫기</button>
         </div>
       )}
@@ -339,16 +335,17 @@ export default function HarnessRelease() {
               className={`px-3 py-1.5 text-xs font-bold rounded-lg ${selRows.length ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-100 text-slate-400'}`}>📋 공정관리용 복사{selRows.length ? ` (${selRows.length})` : ''}</button>
           )}
           {canEdit && tab !== 'done' && (
+            <button data-hr-toissue disabled={!selRows.length} onClick={() => sendIssue(selRows)} title="고른 줄의 하네스 품번 · 잔량을 다품목 출고 붙여넣기 칸에 채워 엽니다 → 담기 · 전개 · 출고 → 출고가 끝나면 이 줄들을 불출 처리할지 묻습니다"
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg ${selRows.length ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-100 text-slate-400'}`}>🧺 다품목 출고 → 불출{selRows.length ? ` (${selRows.length})` : ''}</button>
+          )}
+          {canEdit && tab !== 'done' && (
             <button data-hr-issue disabled={!selRows.length || busy} onClick={() => setIssued(true)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg ${selRows.length && !busy ? 'bg-teal-600 text-white hover:bg-teal-700' : 'bg-slate-100 text-slate-400'}`}>✅ 불출 처리{selRows.length ? ` (${selRows.length})` : ''}</button>
+              title="자재 출고 없이 불출 표시만 (이미 출고했거나 출고가 따로 필요 없을 때)"
+              className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100' : 'border-slate-200 text-slate-300'}`}>✅ 불출만 표시{selRows.length ? ` (${selRows.length})` : ''}</button>
           )}
           {canEdit && tab === 'done' && (
             <button data-hr-unissue disabled={!selRows.length || busy} onClick={() => setIssued(false)}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-rose-300 text-rose-600 hover:bg-rose-50' : 'border-slate-200 text-slate-300'}`}>불출 취소{selRows.length ? ` (${selRows.length})` : ''}</button>
-          )}
-          {canEdit && (
-            <button data-hr-toissue disabled={!selRows.length} onClick={() => sendIssue(selRows)} title="고른 줄의 하네스 품번 · 잔량을 다품목 출고 붙여넣기 칸에 채워 엽니다 (담기 → 전개 → 출고)"
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length ? 'border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100' : 'border-slate-200 text-slate-300'}`}>🧺 다품목 출고로{selRows.length ? ` (${selRows.length})` : ''}</button>
           )}
           <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
         </div>
