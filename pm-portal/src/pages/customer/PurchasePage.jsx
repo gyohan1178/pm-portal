@@ -22,7 +22,7 @@ import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
 import { ilikeAny } from '../../lib/pgFilter'
 import { fetchVendors } from '../../lib/vendorsQuery'
-import { fetchProjectProcRows, procReason } from '../../lib/bomProc'
+import { fetchProjectProcRows, procReason, fetchBomRevs, ecountSpec } from '../../lib/bomProc'
 
 
 function monthAgoStr() {
@@ -68,7 +68,7 @@ const ECOUNT_STAFF = {
 }
 const ECOUNT_STAFF_DEFAULT = '00022'
 
-function exportEcount(items, vendors, staffCode) {
+function exportEcount(items, vendors, staffCode, revOf = {}) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))
   const today = new Date()
   const yyyymmdd = `${today.getFullYear()}${String(today.getMonth()+1).padStart(2,'0')}${String(today.getDate()).padStart(2,'0')}`
@@ -96,7 +96,8 @@ function exportEcount(items, vendors, staffCode) {
     if (!(gkey in seqMap)) { seq += 1; seqMap[gkey] = seq }
     const qty = po.qty_ordered||0, price = po.unit_price||0
     const supply = Math.round(qty*price), vat = Math.round(supply*0.1)
-    const spec = [po.items?.manufacturer, po.items?.manufacturer_code].filter(Boolean).join(' ')  // 규격 = 제조사 제조사품번
+    // 규격 = 제조사 제조사품번 (+ 가공물은 도면 REV — 발주 때 BOM 에서 따라온 값, 없으면 지금 BOM 값)
+    const spec = ecountSpec(po, po.item_rev || revOf[po.id] || '')
     //          일자          순번          납기일자                        거래처코드              거래처명 담당자   거래유형 입고창고 통화 환율  프로젝트  배송지 메모        품목코드              품목명              규격  수량 단가  외화 공급가  부가세 적요
     return [orderYmd || yyyymmdd, String(seqMap[gkey]), dueYmd, vendor?.ecount_code||'', '', '', staffCode || ECOUNT_STAFF_DEFAULT, '', '00009', '', '', '00012', '', po.memo||'', po.items?.std_code||'', po.items?.name||'', spec, qty, price, '', supply, vat, '']
     //                                                                                          거래처명↑ 담당자↑00022      입고창고↑00009        프로젝트↑00012
@@ -321,6 +322,8 @@ export default function PurchasePage() {
     unit_price_fx: ln.unit_price_fx ?? null,
     fx_rate: ln.fx_rate ?? null,
     fx_currency: ln.fx_currency ?? null,
+    // 가공물 도면 REV — 「제품 BOM 에서 불러오기」로 담은 줄만 있다 (이카운트 규격에 「REV C」)
+    ...(ln.item_rev ? { item_rev: ln.item_rev } : {}),
   })   // order_type·status·qty_received 는 createPurchaseOrders 가 채운다
   const saveMultiMut = useMutation({
     mutationFn: async (rows) => createPurchaseOrders((await assignPoNumbers(rows)).map(buildInsert), { log: '구매발주 다품목 등록', customerName: cs?.name }),
@@ -545,7 +548,7 @@ export default function PurchasePage() {
     const map = {}
     for (const b of filtered) {
       const id = b.item_id; if (!id) continue
-      if (!map[id]) map[id] = { item_id:id, items:b.items, qty_per_unit:0 }
+      if (!map[id]) map[id] = { item_id:id, items:b.items, qty_per_unit:0, rev:b.rev||'' }
       map[id].qty_per_unit += Number(b.qty_per_unit)||0
     }
     return Object.values(map)
@@ -567,7 +570,7 @@ export default function PurchasePage() {
           next.push({
             item_id:b.item_id, name:b.items?.name, std_code:b.items?.std_code,
             maker: b.items?.manufacturer || '', makerPn: b.items?.manufacturer_code || '',
-            vendor_id:vId, vendorName:vName, type:'가공',
+            vendor_id:vId, vendorName:vName, type:'가공', item_rev: b.rev || null,
             qty_ordered:qty, unit_price: b.items?.purchase_price ?? '',
             order_date:form.order_date, promise_date:form.promise_date, po_number:form.po_number,
             memo: bomProject?.code?`[${bomProject.code}]`:'',
@@ -989,7 +992,18 @@ export default function PurchasePage() {
             </button>
           </div>
 
-          <button onClick={()=>exportEcount(checkedPOs, vendors, ecountStaff)}
+          <button onClick={async ()=>{
+            // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
+            const need = checkedPOs.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
+            let revOf = {}
+            try {
+              for (const cid of [...new Set(need.map(p => p.customer_id))]) {
+                const m = await fetchBomRevs(cid, need.filter(p => p.customer_id === cid).map(p => p.item_id))
+                need.filter(p => p.customer_id === cid).forEach(p => { if (m[p.item_id]) revOf[p.id] = m[p.item_id] })
+              }
+            } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 내려받습니다 (' + e.message + ')') }
+            exportEcount(checkedPOs, vendors, ecountStaff, revOf)
+          }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
             📑 이카운트 발주서
           </button>
@@ -1297,7 +1311,7 @@ export default function PurchasePage() {
                             <table className="w-full text-xs">
                               <thead className="bg-slate-50"><tr>
                                 <th className="px-2 py-1 w-6"></th><th className="px-2 py-1 text-left">품번</th><th className="px-2 py-1 text-left">품명</th>
-                                <th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-left">구매처</th><th className="px-2 py-1 text-right">대당 소요</th><th className="px-2 py-1 text-right">발주수량</th>
+                                <th className="px-2 py-1 text-left">REV</th><th className="px-2 py-1 text-left">분류</th><th className="px-2 py-1 text-left">구매처</th><th className="px-2 py-1 text-right">대당 소요</th><th className="px-2 py-1 text-right">발주수량</th>
                               </tr></thead>
                               <tbody>
                                 {bomShown.map(b=>(
@@ -1305,6 +1319,7 @@ export default function PurchasePage() {
                                     <td className="px-2 py-1"><input type="checkbox" checked={!!bomChecked[b.item_id]} onChange={e=>setBomChecked(c=>({...c,[b.item_id]:e.target.checked}))}/></td>
                                     <td className="px-2 py-1 font-mono text-indigo-600">{b.items?.std_code}</td>
                                     <td className="px-2 py-1 truncate max-w-[160px]">{b.items?.name}</td>
+                                    <td data-bom-rev className="px-2 py-1 font-mono font-bold text-violet-700">{b.rev || <span className="text-slate-300 font-normal">-</span>}</td>
                                     <td className="px-2 py-1"><span className="px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold">{catOf(b.items)}</span>{procReason(b.items)==='flag' && <span className="ml-1 px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold">🔧발주판금</span>}{procReason(b.items)==='vendor' && <span data-proc-vendor className="ml-1 px-1.5 py-0.5 rounded-full bg-sky-50 text-sky-700 text-[10px] font-bold" title="판금 업체(동신 · 정금 · 뉴엔) 품목이라 판금으로 봅니다">🏭 판금업체</span>}</td>
                                     {/* 판금만에도 서울아크릴 커버처럼 다른 업체 품목이 섞인다 — 구매처를 보고 고른다 */}
                                     <td data-bom-vendor className={`px-2 py-1 truncate max-w-[110px] ${b.items?.vendors?.name ? 'text-slate-600' : 'text-amber-600'}`}>{b.items?.vendors?.name || '미지정'}</td>
@@ -1366,7 +1381,7 @@ export default function PurchasePage() {
                   })()}
                   {lines.map((ln,i)=>(
                     <div key={i} className="flex items-center gap-2 text-xs border-b border-slate-50 last:border-0 py-1">
-                      <span className="font-mono text-indigo-600 w-24 shrink-0 truncate">{ln.std_code||'-'}</span>
+                      <span className="font-mono text-indigo-600 w-24 shrink-0 truncate">{ln.std_code||'-'}{ln.item_rev && <span data-line-rev className="block text-[10px] font-bold text-violet-600">REV {ln.item_rev}</span>}</span>
                       <span className="flex-1 min-w-0">
                         <span className="text-slate-700 block truncate">{ln.name}</span>
                         {(ln.maker || ln.makerPn) && (
@@ -1444,7 +1459,7 @@ export default function PurchasePage() {
                           <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{p.po_number||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{p.order_date||'-'}</td>
                           <td className="px-3 py-2 overflow-hidden">
-                            <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code||'-'}</div>
+                            <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code||'-'}{p.item_rev && <span className="ml-1 text-[10px] font-bold text-violet-600" title="발주할 때 BOM 에서 따라온 도면 REV">REV {p.item_rev}</span>}</div>
                             <div className="text-[11px] text-slate-500 truncate">{p.items?.name||''}</div>
                           </td>
                           <td className="px-3 py-2 overflow-hidden">
