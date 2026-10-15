@@ -19,6 +19,7 @@ import { bomGroupOf } from '../../lib/edNeed'
 import * as XLSX from 'xlsx'
 import { parseCskSchedule, planCsk, planText, applyCsk } from '../../lib/cskSchedule'
 import { CskTable, cskHay, cskNo } from './CskProductionTable'
+import { parseVmHtml, parseVmCsv, planVm, planVmText, applyVm } from '../../lib/vmNotion'
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -376,6 +377,37 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       cskMut.mutate(plan)
     } catch (err) { toastError('일정표 파일을 읽지 못했습니다: ' + err.message) }
   }
+  // ── VM 노션 PROJECT 올리기 (v4.60.0) — 노션에서 내보낸 HTML · CSV 에서 생산관리에 없는 프로젝트만 새 줄로 ──
+  const vmRef = useRef(null)
+  const vmNotionMut = useMutation({
+    mutationFn: ({ plan, dates }) => applyVm(supabase, plan, { dates, vmReady: !!vmReady }),
+    onSuccess: (r) => {
+      toastSuccess(`노션 PROJECT 반영 — 새 프로젝트 ${r.inserted}건${r.dated ? ` · 납품일 맞춤 ${r.dated}건` : ''}`)
+      qc.invalidateQueries({ queryKey: ['production'] })
+    },
+    onError: (e) => toastError('노션 PROJECT 반영 오류: ' + e.message),
+  })
+  async function onVmFile(e) {
+    const f = e.target.files?.[0]
+    e.target.value = ''
+    if (!f) return
+    try {
+      const text = await f.text()
+      const isHtml = /\.html?$/i.test(f.name) || /^\s*<(!doctype|html)/i.test(text)
+      const p = isHtml ? parseVmHtml(text) : parseVmCsv(XLSX, text)
+      if (p.error) { toastError(p.error); return }
+      if (!p.rows.length) { toastError('파일에 프로젝트 줄이 없습니다'); return }
+      const plan = planVm(p.rows, rows)
+      if (!plan.ins.length && !plan.dateDiff.length) { toastSuccess(`노션 PROJECT ${p.rows.length}건 — 새로 넣을 프로젝트가 없습니다 (모두 등록됨)`); return }
+      if (plan.ins.length && !window.confirm(`노션 PROJECT ${p.rows.length}건을 읽었습니다.\n\n${planVmText(plan)}\n\n새 프로젝트 ${plan.ins.length}건을 생산관리 VM 에 넣을까요?\n(구분 → 품번 · 구성 → PD명 · 프로젝트 → 호기 · 납품일자 · 상태 · ESC~ETC 자재 칸 · 노션 링크)`)) return
+      let dates = false
+      if (plan.dateDiff.length) {
+        dates = window.confirm(`이미 있는 프로젝트 중 납품일이 노션과 다른 것 ${plan.dateDiff.length}건:\n\n${plan.dateDiff.slice(0, 15).map(d => `  · ${d.hogi}  포털 ${d.from || '미정'} → 노션 ${d.to}`).join('\n')}${plan.dateDiff.length > 15 ? `\n  … 외 ${plan.dateDiff.length - 15}건` : ''}\n\n이 납품일도 노션 날짜로 맞출까요? (생산관리 변경 이력에 남습니다)\n「취소」하면 납품일은 그대로 둡니다.`)
+        if (!plan.ins.length && !dates) return
+      }
+      vmNotionMut.mutate({ plan, dates })
+    } catch (err) { toastError('노션 파일을 읽지 못했습니다: ' + err.message) }
+  }
   async function onEdFcFile(e) {
     const f = e.target.files?.[0]
     e.target.value = ''
@@ -717,6 +749,16 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               title="CSK 가 주는 생산 Schedule 엑셀(생산_Schedule 시트)을 읽어 관리번호별로 나열합니다. 다시 올리면 바뀐 값만 갱신하고, 상태 · 메모는 그대로 둡니다."
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
               {cskMut.isPending ? '반영 중…' : '📅 일정표 올리기'}
+            </button>
+          </>
+        )}
+        {isVM && (
+          <>
+            <input ref={vmRef} data-vm-file type="file" accept=".html,.htm,.csv" className="hidden" onChange={onVmFile} />
+            <button data-vm-notion onClick={() => vmRef.current?.click()} disabled={vmNotionMut.isPending}
+              title="노션 🎯 PROJECT 표를 내보낸 파일(HTML 또는 CSV)을 올리면, 생산관리에 없는 프로젝트만 새 줄로 넣습니다. 이미 있는 줄은 그대로 두고, 납품일이 다르면 맞출지 묻습니다."
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
+              {vmNotionMut.isPending ? '반영 중…' : '📥 노션 PROJECT 올리기'}
             </button>
           </>
         )}
