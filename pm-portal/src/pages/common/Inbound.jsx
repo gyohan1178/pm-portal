@@ -1,4 +1,6 @@
 import { useUndo } from '../../components/UndoBar'
+import { useFillHeight } from '../../hooks/useFillHeight'
+import { useCompact } from '../../hooks/useCompact'
 import { moveRows, pickNew, undoMoves } from '../../lib/undoMove'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useEffect, useCallback } from 'react'
@@ -199,7 +201,12 @@ export default function Inbound() {
     return data || []
   }
   const iCanEdit = useCanEdit()
-  const { remember, bar: undoBar } = useUndo()
+  const { remember, bar: undoBar, undo, run: runUndo, busy: undoBusy, clear: clearUndo } = useUndo()
+  // 입고 처리 칸 높이 = 화면에 남은 높이 (노트북에서도 표가 넉넉하게, 페이지 스크롤 없이) (v4.62.0)
+  const [procRef, procH] = useFillHeight(tab === 'process', 420)
+  const compact = useCompact()
+  const LBL = compact ? 'hidden' : 'block text-xs font-bold text-slate-500 mb-1'   // 노트북에선 칸 이름 줄을 빼고 한 줄로
+  const [histRef, histH] = useFillHeight(tab === 'history', 360)
   const UNDO_NOTE = '방금 넣은 입고 줄을 지웁니다 — 재고 · 발주 입고수량 · 완료 상태가 입고 전으로 돌아갑니다.\n지운 줄은 복구 기록으로 남습니다. (최근 매입가 · 단가 이력은 그대로 · 로트를 등록했다면 로트 관리에서 따로 지워 주세요)'
   const afterUndo = () => { refreshProcurement(qc); qc.invalidateQueries({ queryKey: ['inboundHistory'], exact: false }); qc.invalidateQueries({ queryKey: ['pendingPOs'], exact: false }) }
   const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
@@ -493,63 +500,46 @@ export default function Inbound() {
       </div>
 
       {tab==='process' && (
-        <>
-          <CsTabs sel={selCustomer} customers={customers} onSel={(v) => {
-            // 고객사를 바꾸면 담은 발주가 목록에서 빠져 입고 대상에서도 말없이 사라졌다 → 묻고 비운다 (2026-10-08)
-            const n = Object.values(checked).filter(Boolean).length
-            if (v !== selCustomer && n > 0) {
-              if (!window.confirm(`담은 발주 ${n}건이 있습니다.\n고객사를 바꾸면 담은 목록이 비워집니다. 바꿀까요?`)) return
-              setChecked({})
-            }
-            setSelCustomer(v)
-          }} />
-          {/* 위가 길면 표가 그만큼 밀린다. 라벨을 빼고 한 줄로 눕힌다. */}
-          <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
+        // 노트북 화면에서도 표가 넉넉히 보이게 (v4.62.0) — 위 칸은 한 줄로 줄이고, 표가 남은 높이를 다 쓰고, 담은 품목 · 입고 처리는 맨 아래
+        <div ref={procRef} data-inb-process className="flex flex-col gap-2" style={{ height: procH ? procH + 'px' : undefined }}>
+          <div className="flex items-center gap-2 flex-wrap shrink-0">
+            <CsTabs className="" sel={selCustomer} customers={customers} onSel={(v) => {
+              // 고객사를 바꾸면 담은 발주가 목록에서 빠져 입고 대상에서도 말없이 사라졌다 → 묻고 비운다 (2026-10-08)
+              const n = Object.values(checked).filter(Boolean).length
+              if (v !== selCustomer && n > 0) {
+                if (!window.confirm(`담은 발주 ${n}건이 있습니다.\n고객사를 바꾸면 담은 목록이 비워집니다. 바꿀까요?`)) return
+                setChecked({})
+              }
+              setSelCustomer(v)
+            }} />
             <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 검색"
-              className="w-44 px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+              className="w-36 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            <input value={rowSearch} onChange={e=>setRowSearch(e.target.value)}
+              placeholder="품번·품명·제조사·비고·발주번호 검색"
+              title="기준코드 · 품명 · 제조사 · 제조사품번 · 발주할 때 적은 비고(세트 이름 등) · 발주번호로 찾습니다"
+              className="w-60 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             <span className="text-xs text-slate-400">입고일</span>
             <input type="date" value={inboundDate} onChange={e=>setInboundDate(e.target.value)}
-              className={`px-2.5 py-1.5 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+              className={`px-2 py-1 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
                 inboundDate !== todayStr() ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white'}`}/>
             {inboundDate !== todayStr() && (
               <button onClick={()=>setInboundDate(todayStr())}
                 className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">오늘로</button>
             )}
-            <div className="ml-auto text-xs text-slate-400 self-center whitespace-nowrap">
-              미입고 {rows.length}건
-              {checkedRows.length > 0 && ` · 선택 ${checkedRows.length}`}
-              {checkedAmt > 0 && (
-                <> · <b className="text-slate-600">{checkedAmt.toLocaleString('ko-KR')}</b>원</>
-              )}
-            </div>
+            <span className="ml-auto text-xs text-slate-400 whitespace-nowrap">
+              미입고 {rows.length}건 · 정렬 {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'}
+            </span>
           </div>
 
-          {undoBar}
-          {result && (
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center">
-              ✅ {result}
-              <button onClick={()=>setResult(null)} className="ml-auto text-emerald-400">✕</button>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">미입고 발주 — 들어온 품목 체크 후 일괄 입고</p>
-              <input value={rowSearch} onChange={e=>setRowSearch(e.target.value)}
-                placeholder="기준코드·품명·제조사·제조사품번·비고·발주번호 검색"
-                title="발주할 때 적은 비고(세트 이름 등)와 발주번호로도 찾습니다"
-                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg w-80 focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-              <span className="ml-auto text-xs text-slate-400">정렬: {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'} · {rows.length}건</span>
-            </div>
-
+          <div className="flex-1 min-h-0 flex flex-col">
             {isLoading && !pendingPOs.length ? <div className="text-center py-8 text-slate-400 text-xs">불러오는 중...</div>
             : rows.length === 0
               ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400 text-xs">
                   미입고 발주가 없습니다
                 </div>
               : (
-                <div className="rounded-xl border border-slate-200 overflow-x-auto">
-                  <div className="overflow-x-auto max-h-[58vh] overflow-y-auto">
+                <div className="flex-1 min-h-0 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
+                  <div data-inb-table className="flex-1 min-h-0 overflow-auto">
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="sticky top-0 z-10">
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">
@@ -577,14 +567,13 @@ export default function Inbound() {
                               </td>
                               <td className="px-3 py-2 text-slate-500">{po.order_date||'-'}</td>
                               <td className="px-3 py-2 text-slate-500">{po.promise_date||'-'}{delayed && <span className="ml-1 text-red-500 font-bold">지연</span>}</td>
-                              <td className="px-3 py-2">
-                                <div className="font-mono text-indigo-600 truncate max-w-[160px]">{po.items?.std_code}</div>
-                                <div className="text-[11px] text-slate-500 truncate max-w-[160px]">{po.items?.name||''}</div>
-                                {/* 발주할 때 적어 둔 메모. 입고 때도 봐야 한다. */}
-                                {po.memo && (
-                                  <div className="text-[11px] text-amber-700 bg-amber-50 rounded px-1 mt-0.5 truncate max-w-[160px]"
-                                    title={po.memo}>{po.memo}</div>
-                                )}
+                              <td className="px-3 py-1.5">
+                                <div className="flex items-center gap-1.5 max-w-[260px]">
+                                  <span className="font-mono text-indigo-600 shrink-0">{po.items?.std_code}</span>
+                                  {/* 발주할 때 적어 둔 메모. 입고 때도 봐야 한다 — 줄이 높아지지 않게 품번 옆에 (v4.62.0) */}
+                                  {po.memo && <span className="text-[10.5px] text-amber-700 bg-amber-50 rounded px-1 truncate" title={po.memo}>{po.memo}</span>}
+                                </div>
+                                <div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={po.items?.name||''}>{po.items?.name||''}</div>
                               </td>
                               <td className="px-3 py-2">
                                 <div className="text-slate-700 truncate max-w-[130px]">{po.items?.manufacturer||'-'}</div>
@@ -623,10 +612,22 @@ export default function Inbound() {
           {/* 담은 품목 + 입고 처리 — 화면 아래에 붙여 둔다 (v4.61.0)
               예전엔 표 위에 있어서, 담는 순간 칸이 바뀌며 표가 밀려 누르던 자리 아래 다른 줄이 눌렸다.
               아래에 붙어 있으면 담아도 표 위쪽은 그대로다. */}
-          {(pendingPOs.length > 0 || checkedRows.length > 0) && (
-            <div data-inb-dock className={`sticky bottom-0 z-20 rounded-xl border-2 bg-white overflow-hidden shadow-[0_-8px_20px_-10px_rgba(15,23,42,0.25)] ${
+          {(pendingPOs.length > 0 || checkedRows.length > 0 || result || undo) && (
+            <div data-inb-dock className={`shrink-0 rounded-xl border-2 bg-white overflow-hidden shadow-[0_-8px_20px_-10px_rgba(15,23,42,0.25)] ${
               checkedRows.length > 0 ? 'border-indigo-300' : 'border-slate-200'}`}>
-              <div className={`px-3.5 py-2 flex items-center gap-2 flex-wrap ${checkedRows.length > 0 ? 'bg-indigo-50/70 border-b border-indigo-100' : 'bg-slate-50'}`}>
+              {/* 방금 한 일 — 위에 띄우면 표가 밀려서, 누른 단추 바로 위 한 줄로 */}
+              {(result || undo) && (
+                <div data-inb-notice className="px-3.5 py-1.5 flex items-center gap-2 text-xs border-b border-slate-100 bg-emerald-50/70">
+                  {result && <span className="font-semibold text-emerald-700 truncate">✅ {result}</span>}
+                  {undo && (<>
+                    <span data-undo className="text-amber-700 truncate">{result ? '·' : ''} 방금 한 작업: <b>{undo.label}</b></span>
+                    <button data-undo-run disabled={undoBusy} onClick={runUndo}
+                      className="px-2.5 py-0.5 text-[11px] font-bold rounded-md bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40 shrink-0">{undoBusy ? '되돌리는 중…' : '↩ 되돌리기'}</button>
+                  </>)}
+                  <button onClick={() => { setResult(null); clearUndo() }} title="닫기" className="ml-auto text-slate-400 hover:text-slate-600 shrink-0">✕</button>
+                </div>
+              )}
+              <div className={`px-3.5 py-1.5 flex items-center gap-2 flex-wrap ${checkedRows.length > 0 ? 'bg-indigo-50/70 border-b border-indigo-100' : 'bg-slate-50'}`}>
                 <span className={`text-xs font-bold ${checkedRows.length > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>
                   {checkedRows.length > 0 ? `담은 품목 ${checkedRows.length}건` : '담은 품목 없음 — 위 표에서 체크하세요'}
                 </span>
@@ -639,7 +640,7 @@ export default function Inbound() {
                 </>)}
               </div>
               {cartOpen && checkedRows.length > 0 && (
-                <div data-inb-cart className="max-h-[148px] overflow-y-auto divide-y divide-indigo-100 border-b border-indigo-100">
+                <div data-inb-cart className="max-h-[min(132px,16vh)] overflow-y-auto divide-y divide-indigo-100 border-b border-indigo-100">
                   {checkedRows.map(r => {
                     const d = inboundData[r.id] || {}
                     const qty = Number(d.qty) || 0
@@ -647,7 +648,7 @@ export default function Inbound() {
                       d.unit_price !== '' && d.unit_price != null ? d.unit_price : r.unit_price
                     ) || 0
                     return (
-                      <div key={r.id} className="px-3.5 py-2 flex items-center gap-2 text-xs bg-white/60">
+                      <div key={r.id} className="px-3.5 py-1 flex items-center gap-2 text-xs bg-white/60">
                         <span className="font-mono text-indigo-600 w-28 flex-shrink-0 truncate">
                           {r.items?.std_code || '-'}
                         </span>
@@ -680,9 +681,9 @@ export default function Inbound() {
                   })}
                 </div>
               )}
-              <div className="px-3 py-2 flex items-center gap-3 flex-wrap">
+              <div className="px-3 py-1.5 flex items-center gap-3 flex-wrap">
                     <input value={note} onChange={e=>setNote(e.target.value)} placeholder="입고 비고 (선택)"
-                      className="flex-1 min-w-[200px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                      className="flex-1 min-w-[200px] px-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                     <p className="text-xs text-slate-400 whitespace-nowrap">
                       입고일 <span className="font-semibold text-indigo-600">{inboundDate}</span>
                     </p>
@@ -697,13 +698,13 @@ export default function Inbound() {
                         '\n\nMOQ 등으로 더 받은 게 맞으면 확인을 누르세요.')) return
                       inboundMut.mutate()
                     }} disabled={inboundMut.isPending||!hasInput}
-                      className="px-6 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                      className="px-6 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                       {inboundMut.isPending?'처리 중...':`✅ 선택 ${checkedRows.length}건 입고 처리`}
                     </button>
               </div>
             </div>
           )}
-        </>
+        </div>
       )}
 
       {tab==='direct' && (
@@ -790,29 +791,30 @@ export default function Inbound() {
       {tab==='history' && (
         <div className="space-y-4">
           <CsTabs sel={hCustomer} onSel={setHCustomer} customers={customers} />
-          <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
+          <div className={`flex ${compact ? 'items-center gap-2 p-2' : 'items-end gap-3 p-4'} rounded-xl border border-slate-200 bg-slate-50 flex-wrap`}>
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">시작일</label>
+              <label className={LBL}>시작일</label>
               <input type="date" value={hFrom} onChange={e=>setHFrom(e.target.value)}
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
             </div>
+            {compact && <span className="text-slate-400">~</span>}
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">종료일</label>
+              <label className={LBL}>종료일</label>
               <input type="date" value={hTo} onChange={e=>setHTo(e.target.value)}
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">구매처 검색</label>
+              <label className={LBL}>구매처 검색</label>
               <input value={hVendorText} onChange={e=>setHVendorText(e.target.value)} placeholder="구매처명 입력"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <div>
-              <label className="block text-xs font-bold text-slate-500 mb-1">품번 검색</label>
+              <label className={LBL}>품번 검색</label>
               <input value={hItem} onChange={e=>setHItem(e.target.value)} placeholder="기준코드·품명·제조사·제조사품번·비고·발주번호" title="입고 비고 · 발주 비고(세트 이름 등) · 발주번호로도 찾습니다"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <div className="min-w-[220px] flex-1">
-              <label className="block text-xs font-bold text-slate-500 mb-1">전체 검색</label>
+              <label className={LBL}>전체 검색</label>
               <input data-hist-all value={hAll} onChange={e=>setHAll(e.target.value)} placeholder="표의 모든 칸 — 낱말 여러 개 가능 (예: 동신 2026-10)"
                 title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 상위품목 · 구매처 · 고객사 · 비고"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
@@ -842,7 +844,7 @@ export default function Inbound() {
 
           {histErr && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">입고 현황을 불러오지 못했습니다 — {histErr.message}</p>}
           {histCapped && <p data-hist-capped className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">⚠ 조회 기간의 입고가 5,000건을 넘어 앞의 5,000건만 불러왔습니다 (최근 입고일 순). 합계 · 엑셀이 모자랄 수 있으니 기간을 좁혀 조회해 주세요.</p>}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="kpi-grid grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-slate-200 p-3">
               <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 입고 건수</p>
               <p className="text-xl font-bold text-slate-900">{histShown.length}</p>
@@ -858,10 +860,10 @@ export default function Inbound() {
           </div>
 
           {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
-            <div className="rounded-xl border border-slate-200 overflow-x-auto">
-              <div className="overflow-x-auto">
+            <div ref={histRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={histH ? { height: histH + 'px' } : undefined}>
+              <div className={histH ? 'flex-1 min-h-0 overflow-auto' : 'overflow-x-auto'}>
                 <table className="w-full text-xs">
-                  <thead><tr className="bg-slate-50 border-b border-slate-200">
+                  <thead className="sticky top-0 z-10"><tr className="bg-slate-50 border-b border-slate-200">
                     <th className="px-3 py-2.5 w-8">
                       <input type="checkbox"
                         checked={histShown.length>0 && selShown.length===histShown.length}
@@ -987,9 +989,9 @@ export default function Inbound() {
 //   드롭다운은 지금 뭘 보고 있는지 한눈에 안 들어온다.
 const CS_COLOR = { ax: '#8b5cf6', ed: '#3b82f6', vm: '#10b981', csk: '#f59e0b' }
 
-function CsTabs({ sel, onSel, customers }) {
+function CsTabs({ sel, onSel, customers, className = 'mb-3' }) {
   return (
-    <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit mb-3">
+    <div className={`flex items-center gap-1 bg-slate-100 rounded-lg p-1 w-fit ${className}`}>
       <button onClick={() => onSel('')}
         className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-all ${
           !sel ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>

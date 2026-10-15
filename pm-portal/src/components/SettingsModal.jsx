@@ -3,10 +3,12 @@ import { toast, toastError, toastSuccess } from '../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { CUSTOMERS, orderedCustomers } from '../lib/customers'
+import { SCALE_OPTS, getScalePref, setScalePref, scalePct } from '../lib/viewPrefs'
 
 // 우측 상단 ⚙️에서 열리는 개인 설정. profile = 현재 사용자 pm_profiles row.
 export default function SettingsModal({ profile, onClose }) {
   const qc = useQueryClient()
+  const [scale, setScale] = useState(getScalePref)
   const [order, setOrder] = useState(() => orderedCustomers(profile).map(c => c.id))
   useEffect(() => { setOrder(orderedCustomers(profile).map(c => c.id)) }, [profile])
 
@@ -58,6 +60,21 @@ export default function SettingsModal({ profile, onClose }) {
                 <button onClick={() => move(i, 1)} disabled={i === order.length - 1}
                   className="w-7 h-7 rounded border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-25">▼</button>
               </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 화면 크기 — 이 컴퓨터에만, 누르는 즉시 바뀐다 (v4.63.0) */}
+        <div className="space-y-2" data-scale-box>
+          <label className="text-sm font-semibold text-slate-700">화면 크기 <span className="text-xs font-normal text-slate-400">— 이 컴퓨터에만 · 지금 {scalePct(scale)}%</span></label>
+          <p className="text-xs text-slate-400">노트북처럼 화면이 낮으면 글자 · 여백을 조금 줄여 표가 더 많이 보이게 합니다. 누르면 바로 바뀝니다.</p>
+          <div className="grid grid-cols-2 gap-1.5">
+            {SCALE_OPTS.map(([v, l, d]) => (
+              <button key={v} data-scale={v} onClick={() => { setScalePref(v); setScale(v) }}
+                className={`text-left px-3 py-2 rounded-lg border ${scale === v ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                <span className={`block text-sm font-semibold ${scale === v ? 'text-indigo-700' : 'text-slate-700'}`}>{l}</span>
+                <span className="block text-[11px] text-slate-400">{d}</span>
+              </button>
             ))}
           </div>
         </div>

@@ -50,7 +50,7 @@ export default function ProductionDashboard() {
     <div className="space-y-4 max-w-4xl">
       <div>
         <h1 className="text-lg font-bold text-slate-900">생산 대시보드</h1>
-        <p className="text-xs text-slate-400 mt-0.5">전 고객사 호기 현황 — 납기·자재불출 중심</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">전 고객사 호기 현황 — 납기·자재불출 중심</p>
       </div>
 
       {/* 요약 카드 (모바일 2열) */}

@@ -140,7 +140,7 @@ export default function UnifiedUpload() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">📥 파일 올리기</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           어느 화면에 올려야 할지 고르지 않아도 됩니다. 파일을 놓으면 종류를 판별해 안내합니다.
         </p>
       </div>

@@ -13,6 +13,7 @@ import { logActivity } from '../../lib/activityLog'
 import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
 import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
+import { useFillHeight } from '../../hooks/useFillHeight'
 
 const CUSTOMERS = [
   { code: 'ax', name: 'AXCELIS' }, { code: 'ed', name: 'Edwards' },
@@ -131,6 +132,7 @@ const monthsAhead = (n) => {
 }
 
 export default function ShortageForecast() {
+  const [fillRef, fillH] = useFillHeight(true, 360)
   const navigate = useNavigate()
   // 부족자재 · 소요량 조회에서 넘어온 고객사(?cs=ed)를 이어 받는다
   const [csCode, setCsCodeRaw] = useState(() => {
@@ -497,7 +499,7 @@ export default function ShortageForecast() {
       <div className="flex items-start justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🔮 소요 예측</h1>
-          <p className="text-xs text-slate-400 mt-0.5">{csCode === 'ed'
+          <p className="page-desc text-xs text-slate-400 mt-0.5">{csCode === 'ed'
             ? 'Edwards = 생산관리 불출 예정(포캐스트로 만든 호기 포함) × 연결된 BOM − 재고 − 입고예정 · 「↻ 재계산」 때 생산관리 기준으로 다시 만듭니다'
             : '포캐스트 × BOM 전개 − 재고 − 입고예정 · 약속일 1개월 전 재고 확보 기준'}</p>
         </div>
@@ -531,7 +533,7 @@ export default function ShortageForecast() {
       {/* 고객사 탭은 맨 위(CustomerTabs)로 옮김 — 부족자재 · 소요량 조회와 같은 자리 */}
 
       {/* 요약 카드 */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="kpi-grid grid grid-cols-3 gap-2">
         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
           <p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">🚨 지금 발주 필요</p>
           <p className="text-2xl font-bold text-red-600">{summary.urgent}</p>
@@ -661,8 +663,9 @@ export default function ShortageForecast() {
           ? <div className="text-center py-16 text-slate-300 text-sm">
               {items.length === 0 ? '포캐스트가 없습니다. 먼저 포캐스트를 접수해주세요.' : '쇼티지 예상 품목이 없습니다 👍'}
             </div>
-          : <div className="rounded-xl border border-slate-200 overflow-x-auto">
-              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+          : <div ref={fillRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={fillH ? { height: fillH + 'px' } : undefined}>
+              {/* 표가 화면에 남은 높이를 다 쓴다 (노트북, v4.65.0) */}
+              <div className={`overflow-auto ${fillH ? 'flex-1 min-h-0' : 'max-h-[65vh]'}`}>
                 <table className="text-xs whitespace-nowrap">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">

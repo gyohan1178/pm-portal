@@ -1,5 +1,6 @@
 import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import PlanBadge from '../../components/PlanBadge'
+import { useFillHeight } from '../../hooks/useFillHeight'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
@@ -255,6 +256,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       return { md, code }
     },
   })
+  const [listRef, listH] = useFillHeight(view === 'list' && !isLoading, 380)   // 리스트가 화면 아래를 채우게 (v4.64.0)
   const mdMap = mdData?.md || {}
   const mdSaveMut = useMutation({
     mutationFn: async ({ pn, val }) => {
@@ -775,7 +777,58 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       )}
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
-          <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          {/* 고른 호기 일괄 작업 — 표 위 (표 안에 두면 스크롤할 때 머리글을 가린다, v4.64.0) */}
+          {view === 'list' && sel.size > 0 && (
+            <div className="flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl border border-indigo-200 bg-indigo-50/60">
+              <span className="text-xs font-bold text-indigo-700">✓ {sel.size}건 선택</span>
+              <select value={bulkField} onChange={e=>setBulkField(e.target.value)}
+                className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                <option value="arrival_date">{isED ? '⚙ Frame 입고 (확정)' : '⚙ 가공물 입고예정'}</option>
+                {isED && <option value="due_fix">📅 확정 납기</option>}
+                <option value="machine_date">⚙ 가공물 발주일</option>
+                <option value="elec_done">⚡ 전장 완료요청</option>
+                <option value="req_date">📦 납품요청일</option>
+              </select>
+              <input type="date" value={bulkDate} onChange={e=>setBulkDate(e.target.value)}
+                className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400" />
+              <button onClick={()=>{ if(!bulkDate){ toastError('날짜를 선택하세요'); return } bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
+                disabled={bulkMut.isPending}
+                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {bulkMut.isPending?'적용 중...':'일괄 적용'}
+              </button>
+              {/* 진행 상태 일괄 변경 — 줄마다 상태 칸을 누르는 것과 같은 저장 */}
+              <span className="flex items-center gap-1.5 pl-2 ml-1 border-l border-indigo-200">
+                <select value={bulkStatus} onChange={e=>setBulkStatus(e.target.value)} data-bulk-status
+                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
+                  <option value="">상태 고르기…</option>
+                  {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+                <button disabled={bulkMut.isPending || !bulkStatus}
+                  onClick={()=>{
+                    const list = rows.filter(r => sel.has(r.id))
+                    const change = list.filter(r => (r.status || 'PO접수') !== bulkStatus)
+                    if (!change.length) { toastError(`고른 ${list.length}건이 이미 「${bulkStatus}」입니다`); return }
+                    const from = [...new Set(change.map(r => r.status || 'PO접수'))].join(' · ')
+                    if (!window.confirm(`선택 ${sel.size}건 중 ${change.length}건의 상태를 「${bulkStatus}」(으)로 바꿀까요?\n\n지금 상태: ${from}${bulkStatus === '완료' ? '\n\n완료로 바꾸면 「완료 포함」을 켜야 목록에 보입니다.' : ''}`)) return
+                    bulkMut.mutate({ ids: change.map(r => r.id), field: 'status', value: bulkStatus }, { onSuccess: () => setBulkStatus('') })
+                  }}
+                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
+                  {bulkMut.isPending ? '적용 중...' : '상태 일괄 변경'}
+                </button>
+              </span>
+              <button onClick={()=>{ if(window.confirm(`선택 ${sel.size}건의 날짜를 비울까요?`)) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null }) }}
+                className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
+              <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
+                {woRows ? 'QR 만드는 중…' : `🖨 작업지시서 (${sel.size})`}
+              </button>
+              <button onClick={()=>setSel(new Set())}
+                className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
+            </div>
+          )}
+          {/* 리스트는 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 — 머리글 고정 (노트북, v4.64.0) */}
+          <div ref={listRef} data-pd-list className={`${view === 'list' && listH ? 'overflow-auto' : 'overflow-x-auto'} rounded-xl border border-slate-200 bg-white`}
+            style={view === 'list' && listH ? { height: listH + 'px' } : undefined}>
           {isED && view === 'need' ? (
             <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} focus={needFocus} onClearFocus={() => setNeedFocus(null)} />
           ) : view === 'kanban' ? (
@@ -860,54 +913,6 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 </tbody>
               </table>
           ) : (<>
-          {sel.size > 0 && (
-            <div className="flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl border border-indigo-200 bg-indigo-50/60 sticky top-0 z-20">
-              <span className="text-xs font-bold text-indigo-700">✓ {sel.size}건 선택</span>
-              <select value={bulkField} onChange={e=>setBulkField(e.target.value)}
-                className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
-                <option value="arrival_date">{isED ? '⚙ Frame 입고 (확정)' : '⚙ 가공물 입고예정'}</option>
-                {isED && <option value="due_fix">📅 확정 납기</option>}
-                <option value="machine_date">⚙ 가공물 발주일</option>
-                <option value="elec_done">⚡ 전장 완료요청</option>
-                <option value="req_date">📦 납품요청일</option>
-              </select>
-              <input type="date" value={bulkDate} onChange={e=>setBulkDate(e.target.value)}
-                className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-              <button onClick={()=>{ if(!bulkDate){ toastError('날짜를 선택하세요'); return } bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
-                disabled={bulkMut.isPending}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {bulkMut.isPending?'적용 중...':'일괄 적용'}
-              </button>
-              {/* 진행 상태 일괄 변경 — 줄마다 상태 칸을 누르는 것과 같은 저장 */}
-              <span className="flex items-center gap-1.5 pl-2 ml-1 border-l border-indigo-200">
-                <select value={bulkStatus} onChange={e=>setBulkStatus(e.target.value)} data-bulk-status
-                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
-                  <option value="">상태 고르기…</option>
-                  {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
-                </select>
-                <button disabled={bulkMut.isPending || !bulkStatus}
-                  onClick={()=>{
-                    const list = rows.filter(r => sel.has(r.id))
-                    const change = list.filter(r => (r.status || 'PO접수') !== bulkStatus)
-                    if (!change.length) { toastError(`고른 ${list.length}건이 이미 「${bulkStatus}」입니다`); return }
-                    const from = [...new Set(change.map(r => r.status || 'PO접수'))].join(' · ')
-                    if (!window.confirm(`선택 ${sel.size}건 중 ${change.length}건의 상태를 「${bulkStatus}」(으)로 바꿀까요?\n\n지금 상태: ${from}${bulkStatus === '완료' ? '\n\n완료로 바꾸면 「완료 포함」을 켜야 목록에 보입니다.' : ''}`)) return
-                    bulkMut.mutate({ ids: change.map(r => r.id), field: 'status', value: bulkStatus }, { onSuccess: () => setBulkStatus('') })
-                  }}
-                  className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
-                  {bulkMut.isPending ? '적용 중...' : '상태 일괄 변경'}
-                </button>
-              </span>
-              <button onClick={()=>{ if(window.confirm(`선택 ${sel.size}건의 날짜를 비울까요?`)) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null }) }}
-                className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
-              <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
-                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
-                {woRows ? 'QR 만드는 중…' : `🖨 작업지시서 (${sel.size})`}
-              </button>
-              <button onClick={()=>setSel(new Set())}
-                className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
-            </div>
-          )}
           {isED ? (
             <EdTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel} rules={edRules}
               onField={setField} onEdit={(r) => openEdit(r)} onMissing={(r) => setMissRow(r)}
@@ -919,7 +924,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} />
           ) : (
           <table className="w-full text-xs whitespace-nowrap">
-            <thead>
+            <thead className="sticky top-0 z-10">
               <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 text-center">
                 <th rowSpan={2} className="px-1 py-1.5 w-7">
                   <input type="checkbox"
@@ -953,7 +958,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
               </tr>
-              <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] text-slate-400 text-center">
+              <tr className="border-b border-slate-200 bg-slate-50 text-[10px] text-slate-400 text-center">
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">입고예정<br /><span className="text-slate-300">클릭시완료</span></th>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">하네스<br />불출</th>
                 <th className="px-2 py-1 font-semibold">전장<br />불출</th>

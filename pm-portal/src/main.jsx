@@ -6,6 +6,10 @@ import App from './App'
 import Toaster from './components/Toaster'
 import { toast } from './lib/toast'
 import './index.css'
+import { initScale } from './lib/viewPrefs'
+
+// 화면 크기 (노트북이면 조금 작게) — 첫 화면부터 맞춘다 (v4.63.0)
+initScale()
 
 // 배포 직후 옛 캐시가 새 조각을 못 찾을 때(404) 자동 새로고침 — 사용자는 에러 대신 최신 화면을 봄
 window.addEventListener('vite:preloadError', () => {

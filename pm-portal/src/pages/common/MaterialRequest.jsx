@@ -887,7 +887,7 @@ export default function MaterialRequest() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🙋 자재 요청</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
             {canEdit
               ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
               : '필요한 자재를 요청하면 구매자재팀에 전달됩니다. 처리 상황은 이 목록에서 확인할 수 있습니다.'}
@@ -1471,7 +1471,7 @@ export default function MaterialRequest() {
         <>
           {/* 요약 지표 — 누르면 그 조건만 본다 (진행 중 목록) */}
           {liveTab && (
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5" data-req-kpi>
+            <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-2.5" data-req-kpi>
               {[
                 ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400'],
                 ['readyLate',  '📦 불출 예정일 지남', '주겠다고 한 날이 지났는데 아직 안 나감', 'border-amber-200 bg-amber-50 text-amber-800',  'ring-amber-400'],
@@ -2056,7 +2056,7 @@ export default function MaterialRequest() {
             </div>
           )}
           {!hBusy && histRows.length > 0 && (
-            <ResizableTable cols={HIST_COLS} storageKey="mreq_hist_cols">
+            <ResizableTable cols={HIST_COLS} storageKey="mreq_hist_cols" fill fillMin={360}>
               {() => (
                 <tbody>
                   {histRows.map((r, i) => (

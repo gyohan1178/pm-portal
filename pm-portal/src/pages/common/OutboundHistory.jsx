@@ -8,6 +8,8 @@ import { fetchAll } from '../../lib/paginate'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { todayISO, ymdKST } from '../../lib/utils'
+import { useFillHeight } from '../../hooks/useFillHeight'
+import { useCompact } from '../../hooks/useCompact'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -124,6 +126,9 @@ const KIND_TONE = {
 }
 
 export default function OutboundHistory() {
+  const compact = useCompact()
+  const LBL = compact ? 'hidden' : 'block text-xs font-bold text-slate-500 mb-1'   // 노트북에선 칸 이름 줄을 빼고 한 줄로 (v4.64.0)
+  const [tblRef, tblH] = useFillHeight(true, 360)
   const [hFrom, setHFrom] = useState(monthAgoStr())
   const [hTo, setHTo] = useState(todayISO())
   const [hCustomer, setHCustomer] = useState('')
@@ -162,7 +167,7 @@ export default function OutboundHistory() {
       <div className="flex items-start justify-between gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 출고 현황</h1>
-          <p className="text-xs text-slate-400 mt-0.5">ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 — 어느 고객사·프로젝트로, 누가 뺐는지</p>
+          {!compact && <p className="text-xs text-slate-400 mt-0.5">ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 — 어느 고객사·프로젝트로, 누가 뺐는지</p>}
         </div>
         <div className="flex gap-1.5">
           <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📤 ASSY 출고</Link>
@@ -170,19 +175,20 @@ export default function OutboundHistory() {
         </div>
       </div>
     <div className="space-y-4">
-      <div className="flex items-end gap-3 p-4 rounded-xl border border-slate-200 bg-slate-50 flex-wrap">
+      <div className={`flex ${compact ? 'items-center gap-2 p-2' : 'items-end gap-3 p-4'} rounded-xl border border-slate-200 bg-slate-50 flex-wrap`}>
         <div>
-          <label className="block text-xs font-bold text-slate-500 mb-1">시작일</label>
+          <label className={LBL}>시작일</label>
           <input type="date" value={hFrom} onChange={e=>setHFrom(e.target.value)}
             className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
         </div>
+        {compact && <span className="text-slate-400">~</span>}
         <div>
-          <label className="block text-xs font-bold text-slate-500 mb-1">종료일</label>
+          <label className={LBL}>종료일</label>
           <input type="date" value={hTo} onChange={e=>setHTo(e.target.value)}
             className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"/>
         </div>
         <div>
-          <label className="block text-xs font-bold text-slate-500 mb-1">고객사</label>
+          <label className={LBL}>고객사</label>
           <select value={hCustomer} onChange={e=>setHCustomer(e.target.value)}
             className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
             <option value="">전체</option>
@@ -190,7 +196,7 @@ export default function OutboundHistory() {
           </select>
         </div>
         <div>
-          <label className="block text-xs font-bold text-slate-500 mb-1">구분</label>
+          <label className={LBL}>구분</label>
           <select value={hKind} onChange={e=>setHKind(e.target.value)}
             className="px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
             <option value="">전체</option>
@@ -206,17 +212,17 @@ export default function OutboundHistory() {
         <div className="ml-auto text-xs text-slate-400 self-center">총 {histRows.length}건</div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="kpi-grid grid grid-cols-3 gap-3">
         <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{histRows.length}</p></div>
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-bold text-rose-400 uppercase tracking-wide mb-1">총 출고 수량</p><p className="text-xl font-bold text-rose-700">{histTotal.toLocaleString()}</p></div>
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size}</p></div>
       </div>
 
       {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
-        <div className="rounded-xl border border-slate-200 overflow-x-auto">
-          <div className="overflow-x-auto">
+        <div ref={tblRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={tblH ? { height: tblH + 'px' } : undefined}>
+          <div className={tblH ? 'flex-1 min-h-0 overflow-auto' : 'overflow-x-auto'}>
             <table className="w-full text-xs">
-              <thead><tr className="bg-slate-50 border-b border-slate-200">
+              <thead className="sticky top-0 z-10"><tr className="bg-slate-50 border-b border-slate-200">
                 {['출고일','구분','기준코드','품명','수량','단위','고객사 PO','고객사','프로젝트','처리자','비고'].map(h=>(
                   <th key={h} className="px-3 py-2.5 text-left font-bold text-slate-400 text-xs uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}

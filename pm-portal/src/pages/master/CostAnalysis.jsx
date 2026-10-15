@@ -147,7 +147,7 @@ export default function CostAnalysis() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💵 원가분석</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
             {tab === 'summary'
               ? '고객사의 상위품번을 한 줄씩 놓고 분류별 원자재 원가를 봅니다. 상위품번을 누르면 세부 내역이 열립니다.'
               : 'BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.'}

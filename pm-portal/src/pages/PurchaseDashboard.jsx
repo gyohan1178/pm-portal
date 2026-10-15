@@ -144,7 +144,7 @@ export default function PurchaseDashboard({ embed = false }) {
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
         <div className="flex items-center gap-2">
-          <p className="text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
+          <p className="page-desc text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
           {!embed && (
             <button
               onClick={async () => {

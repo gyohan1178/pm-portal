@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { useDebounced } from '../../hooks/useDebounced'
+import FillBox from '../../components/FillBox'
 
 async function fetchPriceHistory(search) {
   // 이력은 계속 쌓인다. 예전 .limit(2000) 은 실제로 1000행에서 잘렸다(Supabase 기본 제한) — 끝까지 나눠 받는다.
@@ -46,9 +47,9 @@ export default function PriceHistory() {
         <p className="text-xs text-slate-400">견적 입력 시 자동 누적됩니다</p>
       </div>
 
-      <div className="rounded-xl border border-slate-200 overflow-x-auto">
+      <FillBox className="rounded-xl border border-slate-200">
         <table className="w-full text-xs">
-          <thead>
+          <thead className="sticky top-0 z-10">
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="px-3 py-2.5 text-left font-700 text-slate-400 text-[10px] uppercase tracking-wide">기준코드</th>
               <th className="px-3 py-2.5 text-left font-700 text-slate-400 text-[10px] uppercase tracking-wide">품명</th>
@@ -100,7 +101,7 @@ export default function PriceHistory() {
             })}
           </tbody>
         </table>
-      </div>
+      </FillBox>
     </div>
   )
 }

@@ -305,7 +305,7 @@ export default function QuoteHistory({ onRevise } = {}) {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 견적 이력</h1>
-          <p className="text-xs text-slate-400">저장된 견적을 품번별·견적별로 조회합니다. 매출과 매입은 절대 섞이지 않습니다.</p>
+          <p className="page-desc text-xs text-slate-400">저장된 견적을 품번별·견적별로 조회합니다. 매출과 매입은 절대 섞이지 않습니다.</p>
         </div>
         <div className="flex gap-2">
           <button onClick={exportCsv} disabled={!items.length}
@@ -367,7 +367,7 @@ export default function QuoteHistory({ onRevise } = {}) {
       {/* 품번별 */}
       {!isLoading && view === 'item' && (
         <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
-          <ResizableTable cols={ITEM_COLS} storageKey="quote_hist_cols">
+          <ResizableTable cols={ITEM_COLS} storageKey="quote_hist_cols" fill fillMin={360}>
             {() => (
             <tbody>
               {codeRows.map((r) => (

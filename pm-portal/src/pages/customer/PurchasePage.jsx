@@ -1436,7 +1436,7 @@ export default function PurchasePage() {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="kpi-grid grid grid-cols-4 gap-3">
             <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">발주 건수</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
             <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">납기 지연</p><p className="text-xl font-bold text-red-600">{filtered.filter(p=>p.isDelayed).length}</p></div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">D-7 임박</p><p className="text-xl font-bold text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length}</p></div>
@@ -1444,7 +1444,22 @@ export default function PurchasePage() {
           </div>
 
           {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
-            <ResizableTable cols={PO_COLS} storageKey="purchase_cols" sortKey={sort.key} sortDir={sort.dir} onSort={onSort}>
+            <ResizableTable cols={PO_COLS} storageKey="purchase_cols" sortKey={sort.key} sortDir={sort.dir} onSort={onSort} fill fillMin={360}
+              after={sorted.length > visibleCount && (
+            <div className="flex items-center justify-center gap-3 py-3">
+              <span className="text-xs text-slate-400">
+                {visibleCount.toLocaleString()} / {sorted.length.toLocaleString()}건 표시
+              </span>
+              <button onClick={()=>setVisibleCount(v=>v+200)}
+                className="px-4 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
+                더 보기 (+200)
+              </button>
+              <button onClick={()=>setVisibleCount(sorted.length)}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">
+                전체 보기
+              </button>
+            </div>
+          )}>
               {()=>(
                 <tbody>
                   {filtered.length===0
@@ -1497,21 +1512,6 @@ export default function PurchasePage() {
               )}
             </ResizableTable>
           )}
-          {sorted.length > visibleCount && (
-            <div className="flex items-center justify-center gap-3 py-3">
-              <span className="text-xs text-slate-400">
-                {visibleCount.toLocaleString()} / {sorted.length.toLocaleString()}건 표시
-              </span>
-              <button onClick={()=>setVisibleCount(v=>v+200)}
-                className="px-4 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
-                더 보기 (+200)
-              </button>
-              <button onClick={()=>setVisibleCount(sorted.length)}
-                className="px-3 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">
-                전체 보기
-              </button>
-            </div>
-          )}
         </>
       )}
 
@@ -1534,14 +1534,14 @@ export default function PurchasePage() {
             <div className="ml-auto text-xs text-slate-400 self-center">총 {histShown.length}건</div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3">
+          <div className="kpi-grid grid grid-cols-3 gap-3">
             <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">입고 건수</p><p className="text-xl font-bold text-slate-900">{histShown.length}</p></div>
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1">총 입고 수량</p><p className="text-xl font-bold text-emerald-700">{histShown.reduce((a,r)=>a+r.qty,0).toLocaleString()}</p></div>
             <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">총 공급가</p><p className="text-xl font-bold text-indigo-700">{Math.round(histShown.reduce((a,r)=>a+(r.supply||0),0)/10000).toLocaleString()}만원</p></div>
           </div>
 
           {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
-            <ResizableTable cols={HIST_COLS} storageKey="purchase_hist_cols">
+            <ResizableTable cols={HIST_COLS} storageKey="purchase_hist_cols" fill fillMin={360}>
               {()=>(
                 <tbody>
                   {histShown.length===0

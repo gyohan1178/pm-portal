@@ -96,7 +96,7 @@ export default function ActivityLog() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">🗂 활동 이력 · 용량</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           주요 작업 기록과 데이터베이스 사용량입니다. 조회·검색은 기록하지 않습니다. (관리자 전용)
         </p>
       </div>
@@ -135,7 +135,7 @@ export default function ActivityLog() {
 
       {/* 사용자별 요약 */}
       {!!summary.length && (
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-2">
           {summary.slice(0, 4).map((s) => (
             <div key={s.user_name} className="bg-white rounded-xl border border-slate-200 p-3">
               <p className="text-xs font-bold text-slate-700 truncate">{s.user_name}</p>

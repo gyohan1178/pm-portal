@@ -66,7 +66,7 @@ export default function Backup() {
     <div className="space-y-4 max-w-3xl">
       <div>
         <h1 className="text-lg font-bold text-slate-900">🗄 데이터 백업</h1>
-        <p className="text-xs text-slate-400 mt-0.5">주요 테이블 전체를 엑셀 파일(시트별)로 다운로드합니다. <b className="text-slate-600">주 1회</b> 받아서 회사 드라이브/NAS에 보관하세요.</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">주요 테이블 전체를 엑셀 파일(시트별)로 다운로드합니다. <b className="text-slate-600">주 1회</b> 받아서 회사 드라이브/NAS에 보관하세요.</p>
       </div>
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-700">

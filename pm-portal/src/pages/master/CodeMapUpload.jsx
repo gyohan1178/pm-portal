@@ -130,7 +130,7 @@ export default function CodeMapUpload() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">🔢 기준코드 매핑</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           ecount <b>품목관계리스트</b>를 올려 기준코드(JS) ↔ 고객사코드 매핑을 갱신합니다.
           <b>품목등록</b> 파일을 함께 올리면 품명·규격이 보강됩니다.
         </p>

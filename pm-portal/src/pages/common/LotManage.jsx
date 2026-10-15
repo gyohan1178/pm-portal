@@ -259,7 +259,7 @@ export default function LotManage() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🏷 로트 관리</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
             보증기간이 있는 품목입니다. 오래 있은 것부터 내보내세요. 급한 것이 맨 위에 옵니다.
           </p>
         </div>

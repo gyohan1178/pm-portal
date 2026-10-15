@@ -95,7 +95,7 @@ export default function RequestLoad() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🗂 자재요청 업무량</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
             요청을 받아 확인·회신·불출·배달하기까지 얼마나 손이 가는지 봅니다.
             품목 단위로 세되, 절차는 요청서마다 한 번씩 도므로 장수도 함께 냅니다.
           </p>

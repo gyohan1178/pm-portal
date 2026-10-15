@@ -427,7 +427,7 @@ export default function FaiNavigator() {
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🔬 품질</p>
           <h1 className="text-xl font-extrabold text-slate-900">초도품 자재 매칭 <span className="text-sm font-bold text-slate-400">FAI Navigator</span></h1>
-          <p className="text-[13px] text-slate-400 mt-0.5">
+          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
             Axcelis Part Report 를 올리면 품목마다 <b className="text-slate-500">등록된 제조사</b>와 <b className="text-slate-500">실제로 구매한 제조사</b>를 맞대어 판정합니다.
             초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.
           </p>
@@ -672,7 +672,7 @@ export default function FaiNavigator() {
           )}
 
           {/* 표 */}
-          <ResizableTable cols={COLS} storageKey="fai-navigator-cols" sortKey={sort.k} sortDir={sort.d} onSort={onSort}>
+          <ResizableTable cols={COLS} storageKey="fai-navigator-cols" sortKey={sort.k} sortDir={sort.d} onSort={onSort} fill fillMin={360}>
             {() => (
               <tbody>
                 {view.map((r) => {

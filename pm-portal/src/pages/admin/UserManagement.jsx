@@ -57,7 +57,7 @@ export default function UserManagement() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">👥 회원 관리</h1>
-        <p className="text-xs text-slate-400 mt-0.5">가입 신청 승인 · 권한 설정 (관리자 / 편집 / 조회)</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">가입 신청 승인 · 권한 설정 (관리자 / 편집 / 조회)</p>
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">

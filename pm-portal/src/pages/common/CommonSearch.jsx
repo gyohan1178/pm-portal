@@ -114,7 +114,7 @@ export default function CommonSearch() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">통합 검색</h1>
-        <p className="text-xs text-slate-400 mt-0.5">전 고객사 품목·BOM 통합 조회 — 기준코드 기준으로 고객사코드·사용처를 함께 확인</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">전 고객사 품목·BOM 통합 조회 — 기준코드 기준으로 고객사코드·사용처를 함께 확인</p>
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">

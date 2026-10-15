@@ -243,7 +243,7 @@ function ChangelogModal({ onClose }) {
   )
 }
 
-export default function Sidebar({ onNavigate, profile }) {
+export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) {
   const alerts = useAlertCounts()
   const isAdmin = profile?.role === 'admin'
   const fieldOnly = isFieldOnly(profile)
@@ -437,6 +437,11 @@ export default function Sidebar({ onNavigate, profile }) {
             <img src="/logo.png" alt="진선테크" className="h-7 object-contain" />
             <p className="text-xs text-slate-400 mt-0.5">구매/자재 포털</p>
           </div>
+          {/* PC 메뉴 접기 — 접으면 위 ☰ 로 다시 연다 (v4.63.0) */}
+          {onCollapse && (
+            <button data-menu-collapse onClick={onCollapse} title={collapsed ? '메뉴 고정 (항상 펼침)' : '메뉴 접기 — 표를 넓게 (위 ☰ 로 다시 열기)'}
+              className="hidden lg:block p-1 rounded text-slate-400 hover:text-slate-700 hover:bg-slate-200 text-sm leading-none">{collapsed ? '📌' : '«'}</button>
+          )}
           {/* 모바일 닫기 버튼 */}
           {onNavigate && (
             <button onClick={onNavigate} className="lg:hidden p-1 text-slate-400 hover:text-slate-600">

@@ -7,6 +7,7 @@ import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
+import FillBox from '../../components/FillBox'
 
 // 도면 배포이력대장 — 「외주품 도면 배포 관리 지침」(에드워드 오디트 6.1.2 대응)
 //
@@ -325,7 +326,7 @@ export default function DrawingDist() {
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🧾 품질</p>
           <h1 className="text-xl font-extrabold text-slate-900">도면 배포이력대장</h1>
-          <p className="text-[13px] text-slate-400 mt-0.5">
+          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
             외주 가공처·협력사에 도면을 보낼 때마다 한 줄 남깁니다. 누가 적었는지는 로그인 계정으로 자동 기록됩니다.
             설계변경 때는 도면번호로 기존 배포처를 뽑아 폐기통보를 남기세요.
           </p>
@@ -388,9 +389,9 @@ export default function DrawingDist() {
       </div>
 
       {/* 대장 */}
-      <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto">
+      <FillBox className="rounded-xl border border-slate-200 bg-white">
         <table className="w-full text-xs">
-          <thead className="bg-slate-50 text-slate-400">
+          <thead className="bg-slate-50 text-slate-400 sticky top-0 z-10">
             <tr className="text-left">
               {canEdit && (
                 <th className="px-2 py-2 w-8">
@@ -453,7 +454,7 @@ export default function DrawingDist() {
             ))}
           </tbody>
         </table>
-      </div>
+      </FillBox>
 
       {/* 도면별 배포처 — 설계변경 폐기통보 (지침 5항) */}
       {scrapFor && (

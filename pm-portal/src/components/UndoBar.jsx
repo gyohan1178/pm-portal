@@ -29,5 +29,6 @@ export function useUndo() {
       <button onClick={clear} className="px-2 py-1 text-[11px] text-amber-500">닫기</button>
     </div>
   ) : null
-  return { remember, clear, bar, undo }
+  // run · busy — 화면이 자기 모양으로 「되돌리기」 단추를 그릴 때 (입고 처리 아래 칸 등, v4.62.0)
+  return { remember, clear, bar, undo, run: runIt, busy }
 }

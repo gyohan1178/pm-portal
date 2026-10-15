@@ -38,7 +38,7 @@ export default function Insights() {
       <AnalysisTabs />
       <div>
         <h1 className="text-lg font-bold text-slate-900">📊 인사이트 (관리자)</h1>
-        <p className="text-xs text-slate-400 mt-0.5">North Star · 단가 이상 · 공급처 평가 · 시스템 활동 — 데이터로 증명하는 구매자재</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">North Star · 단가 이상 · 공급처 평가 · 시스템 활동 — 데이터로 증명하는 구매자재</p>
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">

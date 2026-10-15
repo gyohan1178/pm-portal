@@ -84,7 +84,7 @@ export default function ScheduleChanges() {
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📅 납품 일정 변경</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
             전주 월요일 시점과 비교해 납기가 바뀐 건입니다. 매주 월요일에 기준이 갱신됩니다.{pdOnly && ' (PD BOX 만)'}
           </p>
         </div>
@@ -112,7 +112,7 @@ export default function ScheduleChanges() {
       </div>
 
       {/* 요약 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-[11px] font-bold text-slate-400">전체</p>
           <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>

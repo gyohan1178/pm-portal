@@ -8,6 +8,8 @@ import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO 
 import { logActivity } from '../../lib/activityLog'
 import { createPurchaseOrders } from '../../lib/createPO'
 import * as XLSX from 'xlsx'
+import { useFillHeight } from '../../hooks/useFillHeight'
+import { useCompact } from '../../hooks/useCompact'
 
 // 확정 고객사 PO 기준 월별 소요/부족 (RPC: get_shortage_monthly) — range 페이징
 export async function fetchMonthly(csId) {
@@ -44,6 +46,8 @@ const TIER_META = {
 
 export default function ShortageMonthly({ csId, csName = null, onMade = null }) {
   const [tierFilter, setTierFilter] = useState(null)
+  const compact = useCompact()
+  const [tblRef, tblH] = useFillHeight(true, 360)
   const [search, setSearch] = useState('')
   // 수백 건을 한 글자마다 다시 거르고 그리면 입력이 멈춘다.
   // 입력은 즉시 반영하되(타이핑 끊김 없음) 필터는 멈춘 뒤 한 번만.
@@ -260,7 +264,7 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
   return (
     <div className="space-y-3">
       {/* 긴급도 요약 카드 (클릭 필터) */}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="kpi-grid grid grid-cols-3 gap-2">
         {['긴급', '임박', '여유'].map(t => {
           const m = TIER_META[t], on = tierFilter === t
           return (
@@ -333,13 +337,14 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
         </div>
       )}
 
-      <div className="text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
+      {!compact && <div className="text-[11px] text-slate-400 bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5">
         긴급도 = <b>첫 부족월 − LT</b> 기준 · 셀 = 그 달 <b className="text-red-600">부족수량</b>(현재고·입고예정 차감 누적) / 회색 = 충족 소요
-      </div>
+      </div>}
 
       {/* 통합 표 */}
-      <div className="rounded-xl border border-slate-200 overflow-x-auto">
-        <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+      {/* 표가 화면에 남은 높이를 다 쓴다 (노트북에서도 넉넉하게, v4.64.0) */}
+      <div ref={tblRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={tblH ? { height: tblH + 'px' } : undefined}>
+        <div className={`overflow-auto ${tblH ? 'flex-1 min-h-0' : 'max-h-[65vh]'}`}>
           <table className="text-xs whitespace-nowrap">
             <thead className="sticky top-0 z-10">
               <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">

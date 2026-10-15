@@ -78,7 +78,7 @@ export default function MissingParts() {
     <div className="p-4 max-w-5xl mx-auto space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-800">결품 현황</h1>
-        <p className="text-xs text-slate-400 mt-0.5">불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 재불출은 출고 작업 화면에서</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 재불출은 출고 작업 화면에서</p>
       </div>
 
       <div className="flex gap-2 flex-wrap">
@@ -93,7 +93,7 @@ export default function MissingParts() {
       ) : rows.length === 0 ? (
         <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">결품이 없습니다 👍</p></div>
       ) : (
-        <ResizableTable cols={MP_COLS} storageKey="missing_cols">
+        <ResizableTable cols={MP_COLS} storageKey="missing_cols" fill fillMin={360}>
           {() => (
             <tbody>
               {sorted.map((r, i) => (

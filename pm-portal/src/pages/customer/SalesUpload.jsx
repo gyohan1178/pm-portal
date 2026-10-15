@@ -125,7 +125,7 @@ export default function SalesUpload() {
     <div className="p-4 max-w-3xl mx-auto space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">📥 매출 실적 업로드 (Received)</h1>
-        <p className="text-xs text-slate-400 mt-0.5">AXCELIS PO 관리 엑셀의 Received 시트 → 납품 완료 매출로 반영 · Promise Date 기준월</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">AXCELIS PO 관리 엑셀의 Received 시트 → 납품 완료 매출로 반영 · Promise Date 기준월</p>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">

@@ -38,7 +38,7 @@ export default function QrDemo() {
       <div>
         <p className="text-[11px] font-semibold text-slate-400">🏭 현장</p>
         <h1 className="text-xl font-extrabold text-slate-900">QR 공정 데모</h1>
-        <p className="text-[13px] text-slate-400 mt-0.5 break-keep">
+        <p className="page-desc text-[13px] text-slate-400 mt-0.5 break-keep">
           작업지시서의 QR 을 폰으로 찍으면 그 호기의 다음 공정이 떠서, 한 번 누르면 기록됩니다.
           셀 방식 — 한 사람이 한 호기를 맡고, 전장만 시작 · 완료를 둘 다 찍습니다. 폰에서 이 메뉴를 열면 스캔 화면만 나옵니다.
         </p>

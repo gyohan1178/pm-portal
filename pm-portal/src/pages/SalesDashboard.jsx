@@ -126,7 +126,7 @@ export default function SalesDashboard() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
-          <p className="text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</p>
+          <p className="page-desc text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</p>
         </div>
         <div className="flex items-center gap-2">
         <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
@@ -144,7 +144,7 @@ export default function SalesDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-3">
+      <div className="kpi-grid grid grid-cols-3 gap-3">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold text-slate-500">예상 매출 (전체)</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{fmtEok(d.total)}<span className="text-sm text-slate-400 ml-1">억</span></p>
@@ -184,7 +184,7 @@ export default function SalesDashboard() {
         </ResponsiveContainer>
       </div>
 
-      <ResizableTable cols={COLS} storageKey="sales_cols" sortKey={sortKey} sortDir={sortDir} onSort={onSort}>
+      <ResizableTable cols={COLS} storageKey="sales_cols" sortKey={sortKey} sortDir={sortDir} onSort={onSort} fill fillMin={360}>
         {() => (
           <tbody className="divide-y divide-slate-100">
             {sorted.map(r=>(

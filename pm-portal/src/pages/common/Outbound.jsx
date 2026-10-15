@@ -7,6 +7,7 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
+import { useCompact } from '../../hooks/useCompact'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
@@ -48,6 +49,7 @@ export async function callOutboundRpc(base, extra) {
 
 export default function Outbound() {
   const qc = useQueryClient()
+  const compact = useCompact()
   const tab = 'process'   // 출고 현황은 별도 화면(/outbound-history)으로 옮겼다
   // 제작구분: item_id → { make_type:'normal'|'harness'|'exclude', note:'' }
   const [makeTypes, setMakeTypes] = useState({})
@@ -502,9 +504,9 @@ export default function Outbound() {
 
       {tab==='process' && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-slate-200 p-4 space-y-3">
-            <p className="text-xs font-bold text-slate-700">출고 설정</p>
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className={`rounded-xl border border-slate-200 ${compact ? 'p-2.5 space-y-1' : 'p-4 space-y-3'}`}>
+            {!compact && <p className="text-xs font-bold text-slate-700">출고 설정</p>}
+            <div className={`grid grid-cols-2 lg:grid-cols-4 ${compact ? 'gap-2' : 'gap-3'}`}>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">고객사</label>
                 <select value={selCustomer} onChange={e=>{ setSelCustomer(e.target.value); setSelProject(''); setSelCPO(null); setOutQtys({}); setProjSearch('') }}
@@ -616,7 +618,19 @@ export default function Outbound() {
                   <button onClick={()=>setSelectedIds(new Set())} className="text-slate-400 hover:text-slate-600">선택해제</button>
                 </div>
               )}
-              <ResizableTable cols={OUT_COLS} storageKey="outbound_bom_cols">
+              <ResizableTable cols={OUT_COLS} storageKey="outbound_bom_cols" fill={outItems.length > 0} fillMin={300}
+                footer={outItems.length > 0 && (
+                  // 비고 · 출고 처리 — 표 바로 아래 한 줄 (노트북에서도 화면 안에, v4.64.0)
+                  <div className="flex items-center gap-2">
+                    <input value={note} onChange={e=>setNote(e.target.value)} placeholder="출고 비고 (선택)"
+                      className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                    <button onClick={()=>outMut.mutate({mode:'strict'})}
+                      disabled={outMut.isPending||Object.values(outQtys).every(q=>!q||Number(q)<=0)}
+                      className="w-56 py-2 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
+                      {outMut.isPending?'처리 중...':'📤 출고 처리'}
+                    </button>
+                  </div>
+                )}>
                 {() => (
                   <tbody>
                     {outItems.length===0
@@ -732,17 +746,6 @@ export default function Outbound() {
                   </tbody>
                 )}
               </ResizableTable>
-              {outItems.length>0&&(
-                <div className="space-y-2">
-                  <input value={note} onChange={e=>setNote(e.target.value)} placeholder="출고 비고 (선택)"
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-                  <button onClick={()=>outMut.mutate({mode:'strict'})}
-                    disabled={outMut.isPending||Object.values(outQtys).every(q=>!q||Number(q)<=0)}
-                    className="w-full py-2 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
-                    {outMut.isPending?'처리 중...':'📤 출고 처리'}
-                  </button>
-                </div>
-              )}
             </div>
           )}
           {!selCustomer&&(

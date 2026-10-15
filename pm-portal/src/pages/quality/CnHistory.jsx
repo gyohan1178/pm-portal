@@ -8,6 +8,7 @@ import { must } from '../../lib/db'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useDebounced } from '../../hooks/useDebounced'
+import FillBox from '../../components/FillBox'
 import {
   parseCN, derive, decodeCN, summarize, searchText, repData, subTree,
   usDate, toKo, koName, DISP, TYPE_KO, revsOf,
@@ -241,7 +242,7 @@ function CnList({ onOpen }) {
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🔬 품질 · AXCELIS</p>
           <h1 className="text-xl font-extrabold text-slate-900">🔁 설계변경(CN) 이력</h1>
-          <p className="text-[13px] text-slate-400 mt-0.5">
+          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
             Axcelis 에서 받은 CN Summary(HTML)를 올려 두는 곳입니다. 올리면 리비전 · BOM 추가/변경/삭제 · 신규/단종 품번을 뽑아 저장하고, 누구나 같은 내용을 다시 볼 수 있습니다.
             생산기술팀은 「리뷰」(완료 / 불필요)를 고르고, 자사 품번을 몇 호기부터 적용할지 상세 화면에 적어 둡니다.
           </p>
@@ -279,9 +280,9 @@ function CnList({ onOpen }) {
             className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-72" />
           <span className="ml-auto text-xs text-slate-400">{n(rows.length)}건</span>
         </div>
-        <div className="overflow-x-auto border border-slate-200 rounded-xl">
+        <FillBox className="border border-slate-200 rounded-xl">
           <table className="w-full text-xs">
-            <thead className="bg-slate-50 text-slate-500">
+            <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10">
               <tr>
                 <th className="px-2 py-2 text-left">CN 번호 / 제목</th>
                 <th className="px-2 py-2 text-left">올린 날</th>
@@ -333,7 +334,7 @@ function CnList({ onOpen }) {
               })}
             </tbody>
           </table>
-        </div>
+        </FillBox>
         <p className="mt-2 text-[11px] text-slate-400">줄을 누르면 상세가 열립니다 · 같은 CN 번호를 다시 올리면 확인 후 새 판으로 바꾸고, 이전 판은 이력으로 남깁니다.</p>
       </div>
     </div>

@@ -10,6 +10,7 @@ import { pgQuote } from '../../lib/pgFilter'
 import { supabase } from '../../lib/supabase'
 import CustomerTabs from '../../components/CustomerTabs'
 import { parseEdForecastDetail, loadRules, fetchEdProduction, planFcApply, applyFcPlan, planSummary } from '../../lib/edForecast'
+import { useFillHeight } from '../../hooks/useFillHeight'
 
 const AX = (pn, prefix) => {
   const t = String(pn || '').replace(/\.0$/, '').trim()
@@ -261,6 +262,7 @@ export function buildForecast(cur, prev) {
 }
 
 export default function Forecast() {
+  const [fillRef, fillH] = useFillHeight(true, 360)
   const { customerId: csCode } = useParams()
   const qc = useQueryClient()
   const [preview, setPreview] = useState(null)
@@ -382,7 +384,7 @@ export default function Forecast() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">{cs?.name || csCode} 포캐스트</h1>
           <Link to={`/forecast-shortage?cs=${String(csCode || 'ax').toLowerCase()}`} className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-indigo-600 hover:underline">🔍 이 포캐스트로 소요 예측(쇼티지 분석) 보기 →</Link>
-          <p className="text-xs text-slate-400 mt-0.5">고객사 수요 예측 — 프로젝트/품번별 월별 수량 · 직전 접수 대비 변화 추적</p>
+          <p className="page-desc text-xs text-slate-400 mt-0.5">고객사 수요 예측 — 프로젝트/품번별 월별 수량 · 직전 접수 대비 변화 추적</p>
         </div>
         <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">
           📤 포캐스트 업로드
@@ -442,8 +444,9 @@ export default function Forecast() {
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
         : fc.latest.length === 0
           ? <div className="text-center py-16 text-slate-300 text-sm">접수된 포캐스트가 없습니다. 엑셀을 업로드해주세요.</div>
-          : <div className="rounded-xl border border-slate-200 overflow-x-auto">
-              <div className="overflow-x-auto max-h-[65vh] overflow-y-auto">
+          : <div ref={fillRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={fillH ? { height: fillH + 'px' } : undefined}>
+              {/* 표가 화면에 남은 높이를 다 쓴다 (노트북, v4.65.0) */}
+              <div className={`overflow-auto ${fillH ? 'flex-1 min-h-0' : 'max-h-[65vh]'}`}>
                 <table className="text-xs whitespace-nowrap">
                   <thead className="sticky top-0 z-10">
                     <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">

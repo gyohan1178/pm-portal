@@ -48,7 +48,7 @@ export default function SalesQuote() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
-          <p className="text-xs text-slate-400">
+          <p className="page-desc text-xs text-slate-400">
 고객사에 제출할 견적서를 작성하고 지난 견적을 조회합니다. 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
           </p>
         </div>

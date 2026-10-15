@@ -549,7 +549,7 @@ export default function CustomerPO() {
       </div>
 
       {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
-      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-5 gap-2">
         {cardData.map(c => {
           const st = CARD_CLS[c.color]
           return (
@@ -566,7 +566,7 @@ export default function CustomerPO() {
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
-        <ResizableTable cols={COLS} storageKey="cpo_cols">
+        <ResizableTable cols={COLS} storageKey="cpo_cols" fill fillMin={360}>
           {()=>(
             <tbody>
               {filtered.length===0 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">고객사 PO가 없습니다</td></tr>

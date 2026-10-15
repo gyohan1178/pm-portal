@@ -472,7 +472,7 @@ export default function RackLayout() {
       <div className="no-print flex items-start justify-between gap-2 flex-wrap">
         <div className="min-w-0">
           <h1 className="text-base sm:text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
-          <p className="text-[11px] sm:text-xs text-slate-400">
+          <p className="page-desc text-[11px] sm:text-xs text-slate-400">
             랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 ({total ? Math.round(used / total * 100) : 0}%)
           </p>
         </div>

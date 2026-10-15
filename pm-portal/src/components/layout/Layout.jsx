@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import Sidebar from './Sidebar'
 import SettingsModal from '../SettingsModal'
 import CommandPalette from '../CommandPalette'
+import { getSidebarCollapsed, setSidebarCollapsed } from '../../lib/viewPrefs'
 
 const CUSTOMER_NAMES = { ax:'AXCELIS', ed:'Edwards', vm:'VM', csk:'CSK' }
 const PAGE_LABELS = {
@@ -46,6 +47,9 @@ const PAGE_LABELS = {
 export default function Layout({ profile }) {
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  // PC 에서 메뉴 접기 (노트북에서 표를 넓게) — 접으면 모바일처럼 ☰ 로 열고 닫는다 (v4.63.0)
+  const [collapsed, setCollapsed] = useState(getSidebarCollapsed)
+  const toggleCollapsed = (v) => { setCollapsed(v); setSidebarCollapsed(v); setSidebarOpen(false) }
   const [settingsOpen, setSettingsOpen] = useState(false)
   const segments = location.pathname.split('/').filter(Boolean)
   let section = '', title = '전체 현황'
@@ -70,25 +74,26 @@ export default function Layout({ profile }) {
     <div className="flex h-screen overflow-hidden bg-white">
       {/* 모바일 오버레이 */}
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 bg-black/50 lg:hidden"
+        <div className={`fixed inset-0 z-40 bg-black/50 ${collapsed ? '' : 'lg:hidden'}`}
           onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* 사이드바 - 모바일: fixed overlay, 데스크탑: static */}
-      <div className={`no-print 
+      {/* 사이드바 - 모바일 · 메뉴 접기: fixed overlay, 데스크탑: static */}
+      <div data-sidebar-wrap className={`no-print 
         fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 ease-in-out
-        lg:relative lg:transform-none lg:z-auto
-        ${sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+        ${collapsed ? '' : 'lg:relative lg:transform-none lg:z-auto'}
+        ${sidebarOpen ? 'translate-x-0' : collapsed ? '-translate-x-full' : '-translate-x-full lg:translate-x-0'}
       `}>
-        <Sidebar onNavigate={() => setSidebarOpen(false)} profile={profile} />
+        <Sidebar onNavigate={() => setSidebarOpen(false)} profile={profile}
+          collapsed={collapsed} onCollapse={() => toggleCollapsed(!collapsed)} />
       </div>
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* 헤더 */}
         <header className="border-b border-slate-200 px-4 flex items-center gap-3 flex-shrink-0 bg-white" style={{height:'52px'}}>
           {/* 햄버거 버튼 - 모바일만 */}
-          <button onClick={() => setSidebarOpen(true)}
-            className="lg:hidden p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 flex-shrink-0">
+          <button data-menu-open onClick={() => setSidebarOpen(true)} title="메뉴 열기"
+            className={`${collapsed ? '' : 'lg:hidden'} p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 flex-shrink-0`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
@@ -141,7 +146,7 @@ export default function Layout({ profile }) {
             </div>
           )
         })()}
-        <main className="flex-1 overflow-y-auto p-4 lg:p-5">
+        <main className="pm-main flex-1 overflow-y-auto p-4 lg:p-5">
           <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">불러오는 중...</div>}>
             <Outlet />
           </Suspense>

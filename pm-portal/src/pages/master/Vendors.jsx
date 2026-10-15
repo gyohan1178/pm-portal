@@ -329,7 +329,7 @@ export default function Vendors() {
         </div>
       )}
 
-      <ResizableTable cols={COLS} storageKey="vendors-cols">
+      <ResizableTable cols={COLS} storageKey="vendors-cols" fill fillMin={360}>
         {() => (
           <tbody>
             {isLoading ? (

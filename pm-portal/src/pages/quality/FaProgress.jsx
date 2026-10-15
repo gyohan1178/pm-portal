@@ -314,7 +314,7 @@ export default function FaProgress() {
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🔬 품질</p>
           <h1 className="text-xl font-extrabold text-slate-900">초도품(FA) 진행관리</h1>
-          <p className="text-[13px] text-slate-400 mt-0.5">
+          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
             초도품 PO 를 받은 뒤 PO 접수 → 자재 → 제작 → 품질 인계 · 성적서 → 고객사 제출 · 승인까지, 단계마다 예정일과 실적일로 봅니다.
             카드를 누르면 그 건의 단계 · 세부 항목 · 이슈 기록이 열립니다.
           </p>

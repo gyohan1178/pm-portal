@@ -121,7 +121,7 @@ export default function AdminDashboard() {
       <div className="flex items-center gap-2 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
-          <p className="text-xs text-slate-400">주간회의에서 다룰 내용과 처리할 항목</p>
+          <p className="page-desc text-xs text-slate-400">주간회의에서 다룰 내용과 처리할 항목</p>
         </div>
         <button onClick={() => setDraft({ status: '대기', priority: '보통', due_date: '' })}
           className="ml-auto px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
@@ -129,7 +129,7 @@ export default function AdminDashboard() {
         </button>
       </div>
 
-      <div className="grid grid-cols-3 gap-2">
+      <div className="kpi-grid grid grid-cols-3 gap-2">
         <div className="rounded-xl border border-slate-200 p-3">
           <p className="text-xs font-bold text-slate-400 mb-1">남은 일</p>
           <p className="text-xl font-bold text-slate-900">{open.length}</p>

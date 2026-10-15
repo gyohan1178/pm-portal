@@ -96,7 +96,7 @@ export default function EcountUpload() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">💳 확정매입 (ecount)</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           ecount 매입 내역을 그대로 보관합니다. 주간보고의 <b>확정매입</b>이 이 값이 되고,
           담당자 엑셀은 <b>예상매입</b>으로 쓰입니다. 연간 통합 파일·주간 다운로드 둘 다 됩니다.
         </p>

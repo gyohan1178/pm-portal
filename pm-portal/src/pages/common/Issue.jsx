@@ -11,6 +11,8 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
 import { refreshProcurement } from '../../lib/refresh'
 import { useUndo } from '../../components/UndoBar'
+import { useCompact } from '../../hooks/useCompact'
+import { useFillHeight } from '../../hooks/useFillHeight'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { must } from '../../lib/db'
 
@@ -76,6 +78,7 @@ export default function Issue() {
   const { data: customers = [] } = useQuery({ queryKey: ['customers'], queryFn: fetchCustomers })
   const csId = customers.find(c => c.code === csCode)?.id
   const { data: cart = [] } = useQuery({ queryKey: ['picking', csId], queryFn: () => fetchCart(csId), enabled: !!csId })
+  const [cartRef, cartH] = useFillHeight(cart.length > 0, 360)   // 장바구니가 화면 아래를 채우게 (v4.64.0)
   // AXCELIS 는 서버 검색(pm_issue_search)이 ASSY 까지 찾아 준다.
   //   다른 고객사는 BOM 상위품목 목록(수십 종)을 받아 두고 검색어로 걸러 ASSY 로 보여준다 — 예전 드롭다운 대신 (v4.55.0)
   const useDropdown = csCode !== 'ax'
@@ -349,6 +352,7 @@ export default function Issue() {
 
   // 되돌리기 (v4.58.0) — 출고 전 상태(담기함 · 호기 결품 · 불출 표시)를 떠 두었다가 그대로 돌려놓는다
   const { remember, bar: undoBar } = useUndo()
+  const compact = useCompact()
   async function snapForUndo(snapshot, handoffIds) {
     const poIds = [...new Set([...snapshot.map(l => l.po_id), ...handoffIds].filter(Boolean))]
     const prodIds = [...new Set(snapshot.map(l => l.production_id).filter(Boolean))]
@@ -703,7 +707,7 @@ export default function Issue() {
   const shortCnt = cart.filter(c => shortQ(c) > 0).length
 
   return (
-    <div className="p-4 max-w-5xl mx-auto space-y-4">
+    <div className={compact ? 'space-y-2.5' : 'p-4 max-w-5xl mx-auto space-y-4'}>
       {labelConfirm && (
         <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendLabels(labelConfirm.labels)} />
       )}
@@ -847,13 +851,18 @@ export default function Issue() {
               </div>
             </div>
           )}
-          <p className="text-[11px] text-slate-400">고객사 PO에서 체크 → 담기로도 들어옵니다</p>
+          {!compact && <p className="text-[11px] text-slate-400">고객사 PO에서 체크 → 담기로도 들어옵니다</p>}
         </div>
       </div>
 
-      {/* 장바구니 */}
-      <div className="border border-slate-200 rounded-xl overflow-hidden">
-        <div className="px-3 py-2 bg-slate-50 flex items-center justify-between">
+      {/* 방금 한 일 · 출고 결과 — 장바구니 위 (표가 화면 아래로 밀려 안 보이지 않게, v4.64.0) */}
+      {undoBar}
+      {msg && <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap text-slate-600 max-h-28 overflow-auto">{msg}</pre>}
+
+      {/* 장바구니 — 담긴 게 있으면 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 (머리글 · 출고 처리 단추가 늘 보이게) */}
+      <div ref={cartRef} data-issue-cart className={`border border-slate-200 rounded-xl overflow-hidden ${cart.length ? 'flex flex-col' : ''}`}
+        style={cart.length && cartH ? { height: cartH + 'px' } : undefined}>
+        <div className="px-3 py-2 bg-slate-50 flex items-center justify-between shrink-0">
           <span className="text-xs font-bold text-slate-600">장바구니 {cart.length}건 · 불출 {issuedCnt} / 결품 {shortCnt}</span>
           <div className="flex gap-2">
             <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)\n※ 담기함은 같은 고객사 사용자끼리 공유됩니다. 지금 화면에 보이는 줄만 지웁니다.`)) clearMut.mutate(cart.map(c => c.id)) }}
@@ -869,9 +878,9 @@ export default function Issue() {
         {cart.length === 0 ? (
           <p className="px-3 py-8 text-center text-sm text-slate-400">담긴 품목이 없습니다</p>
         ) : cartView === 'item' ? (
-          <div className="overflow-x-auto">
+          <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-xs min-w-[900px]">
-            <thead><tr className="bg-slate-50 text-slate-400">
+            <thead className="sticky top-0 z-[5]"><tr className="bg-slate-50 text-slate-400">
               <th className="px-2 py-1.5 text-center w-8">No</th>
               <th className="px-2 py-1.5 text-center w-12">부서</th>
               <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
@@ -961,9 +970,9 @@ export default function Issue() {
           </table>
           </div>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-xs min-w-[900px]">
-            <thead><tr className="bg-slate-50 text-slate-400">
+            <thead className="sticky top-0 z-[5]"><tr className="bg-slate-50 text-slate-400">
               <th className="px-2 py-1.5 text-left">기준코드</th><th className="px-2 py-1.5 text-left">품명</th>
               <th className="px-2 py-1.5 text-left">호기</th><th className="px-2 py-1.5 text-right">소요</th>
               <th className="px-2 py-1.5 text-right">불출</th><th className="px-2 py-1.5 text-right">결품</th><th className="px-2 py-1.5"></th>
@@ -997,9 +1006,6 @@ export default function Issue() {
           </div>
         )}
       </div>
-
-      {undoBar}
-      {msg && <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap text-slate-600">{msg}</pre>}
     </div>
   )
 }

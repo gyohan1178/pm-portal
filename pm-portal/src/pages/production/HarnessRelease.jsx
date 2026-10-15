@@ -9,6 +9,8 @@ import { logActivity } from '../../lib/activityLog'
 import { refreshProcurement } from '../../lib/refresh'
 import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
 import { useUndo } from '../../components/UndoBar'
+import { useFillHeight } from '../../hooks/useFillHeight'
+import { useCompact } from '../../hooks/useCompact'
 import PlanBadge from '../../components/PlanBadge'
 import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
 import { useCanEdit } from '../../hooks/useProfile'
@@ -131,6 +133,8 @@ export default function HarnessRelease() {
   const canEdit = useCanEdit()
   const [justIssued, setJustIssued] = useState(null)   // 방금 불출 처리한 줄 — 다품목 출고로 이어 보내기
   const { remember, bar: undoBar } = useUndo()   // 방금 한 불출 표시 되돌리기 (v4.58.0)
+  const compact = useCompact()
+  const [tblRef, tblH] = useFillHeight(true, 360)   // 표가 화면 아래를 채우게 (v4.65.0)
   const [tab, setTab] = useState('todo')
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(() => new Set())
@@ -304,7 +308,7 @@ export default function HarnessRelease() {
       <div>
         <p className="text-[11px] font-semibold text-slate-400">🤝 영업 · AXCELIS 하네스 (16번대 + 하네스 공정관리 등록분)</p>
         <h1 className="text-xl font-extrabold text-slate-900">🧵 하네스 출도 · 불출</h1>
-        <p className="text-[13px] text-slate-400 mt-0.5">
+        <p className="page-desc text-[13px] text-slate-400 mt-0.5">
           아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다.
           불출 처리 = 고객사 PO 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
         </p>
@@ -316,14 +320,15 @@ export default function HarnessRelease() {
         </div>
       )}
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3" data-hr-kpi>
+      <div className="kpi-grid grid grid-cols-2 md:grid-cols-4 gap-3" data-hr-kpi>
         <Kpi tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} />
         <Kpi tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} />
         <Kpi tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} />
         <Kpi tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-2 text-[12px]">
+      {/* 일 순서 안내 — 노트북 화면에선 숨겨 표에 자리를 준다 (v4.65.0) */}
+      <div className={`${compact ? 'hidden' : 'grid'} grid-cols-1 md:grid-cols-4 gap-2 text-[12px]`}>
         {[['① 고르기', '출력 전 목록에서 체크 (납기 빠른 순)'], ['② 「공정관리용 복사」', '머리글째 복사 — 불출일은 오늘로 채워짐'],
           ['③ 하네스 공정관리 → 작업지시서 QR → AXCELIS', '붙여넣기 → 폴더 고르고 만들기 (작업지시서 · 도면 출력, 수주 등록)'], ['④ 현장에 넘기면(출도) 「🧺 다품목 출고 → 불출」', '자재를 출고하고, 출고가 끝나면 그 줄을 불출 처리 (출고가 따로 없으면 「✅ 불출만 표시」)']]
           .map(([a, b], i) => (
@@ -369,7 +374,7 @@ export default function HarnessRelease() {
           <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
         </div>
 
-        <div className="overflow-x-auto border border-slate-200 rounded-xl max-h-[640px] overflow-y-auto">
+        <div ref={tblRef} className={`overflow-auto border border-slate-200 rounded-xl ${tblH ? '' : 'max-h-[640px]'}`} style={tblH ? { height: tblH + 'px' } : undefined}>
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-500 sticky top-0 z-10">
               <tr>
@@ -411,7 +416,7 @@ export default function HarnessRelease() {
             <textarea readOnly value={copied.text} onFocus={(e) => e.target.select()} className="mt-1.5 w-full h-28 font-mono text-[11px] bg-white border border-indigo-100 rounded p-2" />
           </div>
         )}
-        <p className="mt-2 text-[11px] text-slate-400">
+        <p className={`mt-2 text-[11px] text-slate-400 ${compact ? 'hidden' : ''}`}>
           줄을 누르면 선택됩니다 · 공정관리 기록은 출력(작업지시서 만들기) 때 켜지는 출력 표시와 QR 이력을 PO · 오더라인 · 납품라인으로 맞춰 봅니다 (라인 없는 옛 건은 PO · 도번).
           불출 취소는 「불출됨」에서 고르거나 고객사 PO 에서 체크를 풀면 됩니다.
         </p>

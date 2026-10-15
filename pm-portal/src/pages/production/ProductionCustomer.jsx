@@ -173,7 +173,7 @@ function ProductionCustomerInner() {
             ))}
           </div>
           <h1 className="text-lg font-bold text-slate-900">{CUST_NAME[cs] || cs} 생산관리</h1>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p className="page-desc text-xs text-slate-400 mt-0.5">
             {isAx
               ? '11번대 PO 연동 — 품번 기준 호기 매칭, 부족분 자동 생성, 납기·REV 동기화'
               : '프로젝트 · 호기 · 구분별 진행 상황'}

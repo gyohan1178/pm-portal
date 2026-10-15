@@ -605,7 +605,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
             </div>
           )}
 
-          <div className="grid grid-cols-4 gap-3">
+          <div className="kpi-grid grid grid-cols-4 gap-3">
             <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
             <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">발주필요</p><p className="text-xl font-bold text-red-600">{filtered.filter(r=>r.order_need>0).length}</p></div>
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">입력 품목</p><p className="text-xl font-bold text-amber-700">{activeManual.length}개</p></div>

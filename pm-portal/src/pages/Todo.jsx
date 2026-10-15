@@ -344,7 +344,7 @@ export default function Todo() {
       <div className="flex items-center gap-2 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
-          <p className="text-xs text-slate-400">내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만</p>
+          <p className="page-desc text-xs text-slate-400">내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만</p>
         </div>
         <button onClick={newDraft}
           className="ml-auto px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">

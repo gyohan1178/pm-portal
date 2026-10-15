@@ -17,6 +17,7 @@ const catBadge = c => PROC_CATS.has(c) ? 'bg-violet-50 text-violet-700' : (c==='
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { useCanEdit } from '../../hooks/useProfile'
+import { useCompact } from '../../hooks/useCompact'
 import { useUndo } from '../../components/UndoBar'
 
 async function fetchInventory() {
@@ -134,6 +135,7 @@ export default function Inventory() {
   //   실사와 같은 방식: inventory 수량을 덮어쓰고, 누가 얼마를 얼마로 바꿨는지 작업 기록에 남긴다.
   //   ⚠ 화면을 연 사이 입고 · 출고로 DB 수량이 바뀌었으면 덮어쓰기 전에 한 번 묻는다.
   const canEdit = useCanEdit()
+  const compact = useCompact()
   const qtyMut = useMutation({
     mutationFn: async ({ row, qty }) => {
       // 음수 재고는 받지 않는다 (v4.57.0) — 출고 기록이 빠졌으면 출고 화면에서 바로잡는다
@@ -358,6 +360,16 @@ export default function Inventory() {
         <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 보고용 추출</button>
       </div>
 
+      {/* 지표 — 노트북 화면이면 한 줄 칩으로 얇게 (v4.64.0) */}
+      {compact ? (
+        <div data-kpi-compact className="flex flex-wrap gap-1.5 text-xs">
+          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b></span>
+          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b></span>
+          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b></button>
+          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b></span>
+          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b></span>
+        </div>
+      ) : (
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{rows.length}</p></div>
         <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">재고 없음</p><p className="text-xl font-bold text-red-600">{zeroStock}</p></div>
@@ -368,6 +380,7 @@ export default function Inventory() {
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">안전재고 미달</p><p className="text-xl font-bold text-amber-700">{belowSafety}</p></div>
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">재고 금액</p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
       </div>
+      )}
 
       {/* 재고 실사 미리보기 */}
       {showAudit && (() => {
@@ -471,7 +484,7 @@ export default function Inventory() {
       )}
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
-        <ResizableTable cols={COLS} storageKey="inventory_cols">
+        <ResizableTable cols={COLS} storageKey="inventory_cols" fill fillMin={360} after={<MoreRows {...vis} />}>
           {() => (
             <tbody>
               {rows.length===0 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">재고 데이터가 없습니다</td></tr>
@@ -500,7 +513,7 @@ export default function Inventory() {
                     <td className="px-3 py-2">
                       <button onClick={()=>stockMgmtMut.mutate({itemId:r.item_id,value:!(r.items?.stock_managed??true)})}
                         disabled={stockMgmtMut.isPending}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold transition-colors ${(r.items?.stock_managed??true)?'bg-emerald-50 text-emerald-600 hover:bg-emerald-100':'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold whitespace-nowrap transition-colors ${(r.items?.stock_managed??true)?'bg-emerald-50 text-emerald-600 hover:bg-emerald-100':'bg-slate-100 text-slate-400 hover:bg-slate-200'}`}
                         title="클릭해서 재고관리 대상 전환">
                         {(r.items?.stock_managed??true)?'📦 관리':'제외'}
                       </button>
@@ -514,7 +527,6 @@ export default function Inventory() {
           )}
         </ResizableTable>
       )}
-      {!isLoading && <MoreRows {...vis} />}
     </div>
   )
 }

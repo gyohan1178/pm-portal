@@ -642,7 +642,7 @@ export default function Items() {
         </div>
       )}
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
-        <ResizableTable cols={COLS} storageKey="items_cols">
+        <ResizableTable cols={COLS} storageKey="items_cols" fill fillMin={360}>
           {() => (
             <tbody>
               {shown.length===0

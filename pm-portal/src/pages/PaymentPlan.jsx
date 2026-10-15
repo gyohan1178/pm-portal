@@ -205,7 +205,7 @@ export default function PaymentPlan() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">💳 결제 계획</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           발주는 한 번, 결제는 나눠 하는 건을 기록합니다.
           매입 금액은 입고 시점 기준이라 <b>매입 대시보드는 바뀌지 않습니다</b> —
           대금이 언제 얼마씩 나가는지 보여주기 위한 자료입니다.
@@ -241,7 +241,7 @@ export default function PaymentPlan() {
 
       {/* 발주서 묶음 */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">
-        <ResizableTable cols={COLS} storageKey="payment_plan_cols">
+        <ResizableTable cols={COLS} storageKey="payment_plan_cols" fill fillMin={360}>
           {() => (
           <tbody>
             {isLoading && (

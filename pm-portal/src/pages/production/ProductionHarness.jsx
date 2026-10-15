@@ -121,7 +121,7 @@ export default function ProductionHarness({ rows, csCode }) {
   return (
     <div className="space-y-4">
       {/* 요약 */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-500 mb-1">납품 지남</p><p className="text-xl font-bold text-red-700">{summary.overdue}</p><p className="text-[10px] text-red-400">묶음 기준</p></div>
         <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><p className="text-xs font-bold text-orange-500 mb-1">이번주 납품</p><p className="text-xl font-bold text-orange-700">{summary.soon}</p><p className="text-[10px] text-orange-400">7일 내</p></div>
         <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 mb-1">전체 묶음</p><p className="text-xl font-bold text-slate-900">{summary.bundleN}</p></div>

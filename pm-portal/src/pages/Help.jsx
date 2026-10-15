@@ -88,7 +88,7 @@ export default function Help() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-lg font-bold text-slate-900">도움말 · 업무 안내</h1>
-        <p className="text-xs text-slate-400 mt-1">신규 입사자를 위한 셀프 가이드 — 이 포털이 어떤 흐름으로 돌아가는지 정리했습니다.</p>
+        <p className="page-desc text-xs text-slate-400 mt-1">신규 입사자를 위한 셀프 가이드 — 이 포털이 어떤 흐름으로 돌아가는지 정리했습니다.</p>
       </div>
 
       {/* 시작 가이드 */}

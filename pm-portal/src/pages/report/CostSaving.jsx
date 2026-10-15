@@ -373,7 +373,7 @@ export default function CostSaving() {
         <div>
           <p className="text-[11px] font-semibold text-slate-400">📊 분석</p>
           <h1 className="text-xl font-extrabold text-slate-900">원가절감 실적</h1>
-          <p className="text-[13px] text-slate-400 mt-0.5">
+          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
             입고 단가를 <b className="text-slate-500">표준단가(DB단가)</b>와 견주어 절감액을 계산합니다. 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 봅니다.
             따로 인정할 건(업체변경·대체품 등)은 실적 대장에 남기세요.
           </p>

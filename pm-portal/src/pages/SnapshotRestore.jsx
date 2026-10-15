@@ -76,7 +76,7 @@ export default function SnapshotRestore() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">↩ 삭제 기록</h1>
-        <p className="text-xs text-slate-400">
+        <p className="page-desc text-xs text-slate-400">
           대량 삭제 전에 남긴 기록입니다. 되돌릴 수 있습니다.
         </p>
       </div>

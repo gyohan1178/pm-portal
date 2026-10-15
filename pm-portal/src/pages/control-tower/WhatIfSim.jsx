@@ -62,7 +62,7 @@ export default function WhatIfSim() {
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🔬 What-if 시뮬레이터</h1>
-          <p className="text-xs text-slate-400 mt-0.5">변수를 바꿔 "만약 이러면 어디가 터지나"를 미리 실험 — 실제 데이터는 안 바뀝니다</p>
+          <p className="page-desc text-xs text-slate-400 mt-0.5">변수를 바꿔 "만약 이러면 어디가 터지나"를 미리 실험 — 실제 데이터는 안 바뀝니다</p>
         </div>
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
           {CUST.map(c => (
