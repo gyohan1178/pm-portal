@@ -8,8 +8,11 @@ import { deptStyle, deptShort } from '../../lib/bomStyle'
 import { buildIssueSheet, openPrint } from '../../lib/issueSheet'
 import { todayISO } from '../../lib/utils'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { markPoIssued } from '../../lib/poIssue'
+import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
 import { refreshProcurement } from '../../lib/refresh'
+import { useUndo } from '../../components/UndoBar'
+import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
+import { must } from '../../lib/db'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -344,18 +347,75 @@ export default function Issue() {
     }
   }
 
+  // 되돌리기 (v4.58.0) — 출고 전 상태(담기함 · 호기 결품 · 불출 표시)를 떠 두었다가 그대로 돌려놓는다
+  const { remember, bar: undoBar } = useUndo()
+  async function snapForUndo(snapshot, handoffIds) {
+    const poIds = [...new Set([...snapshot.map(l => l.po_id), ...handoffIds].filter(Boolean))]
+    const prodIds = [...new Set(snapshot.map(l => l.production_id).filter(Boolean))]
+    const pns = [...new Set(snapshot.filter(l => l.source === 'hogi' && l.pn && l.hogi).map(l => l.pn))]
+    const boxKeys = new Set(snapshot.filter(l => l.source === 'hogi' && l.pn && l.hogi).map(l => `${l.pn}|${l.hogi}`))
+    const COLS = 'id,pn,hogi,po_id,missing_parts,part_issue,parts_done'
+    const prods = new Map()
+    const add = rows => (rows || []).forEach(r => prods.set(r.id, r))
+    for (let i = 0; i < prodIds.length; i += 200) add(must(await supabase.from('production').select(COLS).in('id', prodIds.slice(i, i + 200)), '호기 읽기'))
+    for (let i = 0; i < poIds.length; i += 200) add(must(await supabase.from('production').select(COLS).in('po_id', poIds.slice(i, i + 200)), '호기 읽기'))
+    for (let i = 0; i < pns.length; i += 200) add((must(await supabase.from('production').select(COLS).in('pn', pns.slice(i, i + 200)), '호기 읽기') || []).filter(r => boxKeys.has(`${r.pn}|${r.hogi}`)))
+    const issued = await snapIssued(poIds)
+    const expect = snapshot.map(l => ({ item_id: l.item_id, po_id: l.po_id || null, qty: Number(l.issue_qty ?? l.qty) || 0 })).filter(e => e.qty > 0 && e.item_id)
+    const itemIds = [...new Set(expect.map(e => e.item_id))]
+    const before = itemIds.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }) : []
+    // 값만 떠 둔다 (받아 온 줄 객체를 그대로 쥐고 있지 않게)
+    return { picking: snapshot, prods: JSON.parse(JSON.stringify([...prods.values()])), issued, expect, itemIds, before }
+  }
+  async function runUndoIssue(u) {
+    // ① 출고 줄 지우기 → 재고 · 로트 복구 (복구 기록 남김)
+    if (u.moveIds.length) await undoMoves(u.moveIds)
+    // ② 호기 결품 · 불출 표시 · 부품완료를 출고 전 값으로
+    for (const p of u.prods)
+      must(await supabase.from('production').update({ missing_parts: p.missing_parts ?? [], part_issue: p.part_issue, parts_done: p.parts_done }).eq('id', p.id), '호기 되돌리기')
+    await restoreIssued(u.issued)
+    // ③ 담기함 — 처리되어 지워진 줄만 다시 넣는다
+    const ids = u.picking.map(l => l.id).filter(Boolean)
+    const still = new Set()
+    for (let i = 0; i < ids.length; i += 200)
+      (must(await supabase.from('pm_picking').select('id').in('id', ids.slice(i, i + 200)), '담기함 읽기') || []).forEach(r => still.add(r.id))
+    const back = u.picking.filter(l => !still.has(l.id))
+    for (let i = 0; i < back.length; i += 200) must(await supabase.from('pm_picking').insert(back.slice(i, i + 200)), '담기함 되돌리기')
+    return `되돌렸습니다 — 출고 ${u.moveIds.length}줄 취소 · 담기함 ${back.length}줄 복구`
+  }
+
   const processMut = useMutation({
     mutationFn: async () => {
       if (!cart.length) return null   // 담은 게 없으면 아무것도 안 함 (넘겨받은 줄 불출도 묻지 않는다)
       const snapshot = cart.map(l => ({ ...l })) // 처리 후 비워지므로 스냅샷
+      let u = null
+      try { u = await snapForUndo(snapshot, (handoff?.rows || []).map(r => r.id)) } catch (e) { console.warn('되돌리기 준비 실패 — 출고는 진행', e) }
       // 출고 처리 전체를 Postgres 함수에서 트랜잭션으로 — 전부 성공 아니면 전부 취소(부분 실패 없음)
       const { data, error } = await supabase.rpc('pm_process_issue', { p_customer_id: csId })
       if (error) throw error
       await syncMissingToProduction(snapshot) // 결품 ↔ 생산관리 동기화 (실패해도 출고는 유지)
-      return (data && data.warnings) || []
+      if (u) {
+        try {
+          const after = u.itemIds.length ? await moveRows({ type: '출고', itemIds: u.itemIds, since: sinceYesterday() }) : []
+          u.moveIds = pickNew(u.before, after, u.expect)
+        } catch (e) { console.warn('되돌리기 준비 실패', e); u = null }
+      }
+      return { warnings: (data && data.warnings) || [], undo: u }
     },
-    onSuccess: async (warnings) => {
-      if (warnings == null) return
+    onSuccess: async (res) => {
+      if (res == null) return
+      const { warnings, undo: u } = res
+      const afterUndo = () => {
+        qc.invalidateQueries({ queryKey: ['picking', csId] }); refreshProcurement(qc)
+        qc.invalidateQueries({ queryKey: ['production'] }); qc.invalidateQueries({ queryKey: ['prodBoard'] }); qc.invalidateQueries({ queryKey: ['missingParts'] })
+        qc.invalidateQueries({ queryKey: ['harnessRelease'] }); qc.invalidateQueries({ queryKey: ['outboundHistory'], exact: false })
+        setMsg('')
+      }
+      if (u && (u.moveIds.length || !u.expect.length))
+        remember(`다품목 출고 ${u.picking.length}건`, () => runUndoIssue(u), {
+          note: `· 출고 ${u.moveIds.length}줄을 지우고 재고 · 로트를 되돌립니다 (복구 기록 남음)\n· 생산관리 결품 · 불출 표시와 고객사 PO 불출 체크를 출고 전 값으로 돌립니다\n· 담기함에 다시 넣습니다\n※ 그사이 다른 사람이 같은 호기를 고쳤다면 그 내용도 출고 전으로 돌아갑니다`,
+          after: afterUndo,
+        })
       // 예전엔 배열 형식(['x'])이라 앱의 모든 쿼리를 다시 받았다 → 필요한 것만 (v4.57.0)
       qc.invalidateQueries({ queryKey: ['picking', csId] })
       refreshProcurement(qc)
@@ -938,6 +998,7 @@ export default function Issue() {
         )}
       </div>
 
+      {undoBar}
       {msg && <pre className="text-xs bg-slate-50 border border-slate-200 rounded-lg p-3 whitespace-pre-wrap text-slate-600">{msg}</pre>}
     </div>
   )

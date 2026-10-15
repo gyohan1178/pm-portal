@@ -17,6 +17,7 @@ const catBadge = c => PROC_CATS.has(c) ? 'bg-violet-50 text-violet-700' : (c==='
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { useCanEdit } from '../../hooks/useProfile'
+import { useUndo } from '../../components/UndoBar'
 
 async function fetchInventory() {
   // 전체 페이징 (1000행 제한 회피)
@@ -90,15 +91,42 @@ export default function Inventory() {
   const [auditRows, setAuditRows] = useState([])
   const qc = useQueryClient()
 
+  // 되돌리기 (v4.58.0) — 직접 고친 재고를 고치기 전 수량으로
+  const { remember, bar: undoBar } = useUndo()
+  // backs: [{ id, code, from, to }] — 지금 수량이 내가 바꾼 값(to)과 다르면 (그사이 입고 · 출고) 한 번 묻는다
+  async function undoQty(backs, label) {
+    const ids = backs.map(b => b.id)
+    const { data: cur, error: e0 } = await supabase.from('inventory').select('id,qty').in('id', ids)
+    if (e0) throw e0
+    const now = new Map((cur || []).map(r => [r.id, Number(r.qty) || 0]))
+    const moved = backs.filter(b => now.has(b.id) && now.get(b.id) !== Number(b.to))
+    if (moved.length && !window.confirm(`그사이 재고가 바뀐 품목이 있습니다 (입고 · 출고):\n${moved.slice(0, 8).map(b => `${b.code} ${b.to} → 지금 ${now.get(b.id)}`).join('\n')}${moved.length > 8 ? '\n…' : ''}\n\n그래도 고치기 전 수량으로 덮어쓸까요?`)) throw new Error('취소했습니다')
+    for (const b of backs) {
+      const { error } = await supabase.from('inventory').update({ qty: b.from, updated_at: new Date().toISOString() }).eq('id', b.id)
+      if (error) throw error
+    }
+    logActivity('update', 'inventory', backs.length === 1 ? backs[0].code : `${backs.length}건`,
+      `재고 수정 되돌리기 (${label}) ` + backs.slice(0, 12).map(b => `${b.code} ${b.to}→${b.from}`).join(', '))
+    return `되돌렸습니다 — ${backs.length === 1 ? `${backs[0].code} 재고 ${backs[0].from}` : `${backs.length}건`}`
+  }
+  const afterUndoQty = () => { setChecked({}); refreshProcurement(qc) }
+
   const zeroMut = useMutation({
     mutationFn: async (ids) => {
-      // 선택된 음수재고 inventory 행을 0으로
+      // 선택된 음수재고 inventory 행을 0으로 — 되돌리기용으로 바꾸기 전 수량을 떠 둔다
+      const { data: cur } = await supabase.from('inventory').select('id,qty,item_id').in('id', ids)
+      const byId = new Map((allRows || []).map(r => [r.id, r]))
+      const backs = (cur || []).map(r => ({ id: r.id, code: byId.get(r.id)?.items?.std_code || r.item_id, from: Number(r.qty) || 0, to: 0 }))
       for (const id of ids) {
         const { error } = await supabase.from('inventory').update({ qty: 0 }).eq('id', id)
         if (error) throw error
       }
+      return backs
     },
-    onSuccess: () => { setChecked({}); qc.invalidateQueries(['inventory']) },
+    onSuccess: (backs) => {
+      setChecked({}); qc.invalidateQueries(['inventory'])
+      if (backs?.length) remember(`음수 재고 ${backs.length}건 → 0`, () => undoQty(backs, '음수 → 0'), { after: afterUndoQty })
+    },
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
@@ -118,11 +146,12 @@ export default function Inventory() {
       const { error } = await supabase.from('inventory').update({ qty, updated_at: new Date().toISOString() }).eq('id', row.id)
       if (error) throw error
       logActivity('update', 'inventory', row.items?.std_code || row.item_id, `재고 수정 (재고현황) ${dbQty} → ${qty}`)
-      return { code: row.items?.std_code, from: dbQty, to: qty }
+      return { id: row.id, code: row.items?.std_code, from: dbQty, to: Number(qty) }
     },
     onSuccess: (r) => {
       if (!r) return
       toastSuccess(`${r.code} 재고 ${r.from} → ${r.to}`)
+      remember(`${r.code} 재고 ${r.from} → ${r.to}`, () => undoQty([r], '재고현황'), { after: afterUndoQty })
       // 재고가 바뀌면 부족자재 · 소요량도 다시 계산되게 (예전엔 재고현황만 갱신했다) (v4.57.0)
       refreshProcurement(qc)
     },
@@ -283,6 +312,7 @@ export default function Inventory() {
     <div className="space-y-4">
       {pasteOpen && <StockPaste onClose={()=>setPasteOpen(false)} />}
       {auditOpen && <AuditApplyModal onClose={()=>setAuditOpen(false)} />}
+      {undoBar}
 
       {scanOpen && (
         <QrScanner onClose={()=>setScanOpen(false)}

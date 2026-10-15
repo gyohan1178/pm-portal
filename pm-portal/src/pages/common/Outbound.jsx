@@ -1,3 +1,6 @@
+import { useUndo } from '../../components/UndoBar'
+import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
+import { refreshProcurement } from '../../lib/refresh'
 import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -120,6 +123,7 @@ export default function Outbound() {
   })
 
   const iCanEdit = useCanEdit()
+  const { remember, bar: undoBar } = useUndo()
   const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   // ── 저장된 제작구분 로드 (프로젝트 선택 시) ──
   useEffect(() => {
@@ -274,14 +278,23 @@ export default function Outbound() {
         if (qty > 0 && mtOf(b.item_id) === 'normal')   // 정상만 재고 차감 (하네스·제외 제외)
           lines.push({ item_id: b.item_id, name: b.items?.name || '', qty })
       }
-      return callOutboundRpc(
+      // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
+      const itemIds = lines.map(l => l.item_id)
+      const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(() => null) : null
+      const res = await callOutboundRpc(
         { p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode },
         { p_customer_id: selCustomer||null, p_project_id: selProject||null })
+      if (!res?.aborted && before) {
+        try { res._moveIds = pickNew(before, await moveRows({ type: '출고', itemIds, since: sinceYesterday() }), lines.map(l => ({ item_id: l.item_id, qty: l.qty }))) } catch { /* 되돌리기만 못 한다 */ }
+      }
+      return res
     },
     onSuccess: (res) => {
       if (res?.aborted) { setStockWarning({ errors: res.warnings||[] }); return }
       const w = res?.warnings||[]
       setStockWarning(null)
+      if (res?._moveIds?.length) remember(`ASSY 출고 ${res._moveIds.length}품목`, async () => { const x = await undoMoves(res._moveIds); return `출고 ${x.cnt}줄을 되돌렸습니다${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` },
+        { note: '방금 나간 출고 줄을 지웁니다 — 재고가 출고 전으로 돌아갑니다 (로트도 되돌림).\n지운 줄은 복구 기록으로 남습니다.', after: () => { refreshProcurement(qc); qc.invalidateQueries({ queryKey: ['outboundHistory'], exact: false }) } })
       setResult(`출고 처리 완료 (${res?.processed||0}건)` + (w.length?` · 부족 ${w.length}건 제외`:''))
       setOutQtys({}); setNote('')
       qc.invalidateQueries(['inventory'])
@@ -545,6 +558,7 @@ export default function Outbound() {
             </div>
           )}
 
+          {undoBar}
           {result && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center">
               ✅ {result}

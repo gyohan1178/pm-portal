@@ -1,3 +1,5 @@
+import { useUndo } from '../../components/UndoBar'
+import { moveRows, pickNew, undoMoves } from '../../lib/undoMove'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
@@ -89,12 +91,18 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
     const up = inboundData[item.id]?.unit_price
     return { po_id: item.id, qty, unit_price: (up !== undefined && up !== '') ? Number(up) : null, item_id: item.item_id }
   }).filter(Boolean)
-  if (!lines.length) return
+  if (!lines.length) return null
+  // 되돌리기용 — 처리 전 이 발주들의 입고 줄을 떠 둔다 (v4.58.0)
+  const poIds = lines.map(l => l.po_id)
+  const before = await moveRows({ type: '입고', poIds }).catch(() => null)
   // RPC엔 기존 형식(po_id·qty·unit_price)만 전달
   const { error } = await supabase.rpc('pm_process_inbound', {
     p_lines: lines.map(({ item_id, ...l }) => l), p_note: note || null, p_date: inboundDate,
   })
   if (error) throw error
+  let moveIds = []
+  if (before) { try { moveIds = pickNew(before, await moveRows({ type: '입고', poIds }), lines.map(l => ({ po_id: l.po_id, qty: l.qty }))) } catch { /* 되돌리기만 못 한다 */ } }
+  const res = { moveIds, n: lines.length }
   logActivity('create', 'stock_movements', null,
     `입고 처리 ${lines.length}건 · ${inboundDate}${note ? ` · ${note}` : ''}`)
   // 입고 시 확정/수정된 단가를 최근 매입단가로 items.purchase_price에 반영 (입고가 발주단가보다 우선)
@@ -106,21 +114,23 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
     if (l.item_id && l.unit_price != null && l.unit_price > 0) latest[l.item_id] = l.unit_price
   }
   const ids = Object.keys(latest)
-  if (!ids.length) return
+  if (!ids.length) return res
   const { data: newer, error: nErr } = await supabase.from('stock_movements')
     .select('item_id').eq('movement_type', '입고').in('item_id', ids)
     .gt('movement_date', inboundDate).not('unit_price', 'is', null).limit(1000)
-  if (nErr) return   // 입고는 이미 끝났다. 최근 매입가 갱신만 건너뛴다.
+  if (nErr) return res   // 입고는 이미 끝났다. 최근 매입가 갱신만 건너뛴다.
   const skip = new Set((newer || []).map(r => r.item_id))
   const upd = ids.filter(id => !skip.has(id))
   for (let i = 0; i < upd.length; i += 20) {
     await Promise.all(upd.slice(i, i + 20).map(id =>
       supabase.from('items').update({ purchase_price: latest[id] }).eq('id', id)))
   }
+  return res
 }
 
 // 발주외(구두발주·단건) 입고 — PO 없이 품목 직접 입고
 async function processDirectInbound({ item_id, qty, unit_price, customer_id, memo, date }) {
+  const before = await moveRows({ type: '입고', itemIds: [item_id], poNull: true, since: date }).catch(() => null)
   const { error } = await supabase.rpc('pm_direct_inbound', {
     p_item_id: item_id,
     p_qty: Number(qty),
@@ -130,6 +140,9 @@ async function processDirectInbound({ item_id, qty, unit_price, customer_id, mem
     p_date: date,
   })
   if (error) throw error
+  let moveIds = []
+  if (before) { try { moveIds = pickNew(before, await moveRows({ type: '입고', itemIds: [item_id], poNull: true, since: date }), [{ item_id, qty: Number(qty) }]) } catch { /* 되돌리기만 못 한다 */ } }
+  return { moveIds }
 }
 
 const today = todayISO()
@@ -186,10 +199,14 @@ export default function Inbound() {
     return data || []
   }
   const iCanEdit = useCanEdit()
+  const { remember, bar: undoBar } = useUndo()
+  const UNDO_NOTE = '방금 넣은 입고 줄을 지웁니다 — 재고 · 발주 입고수량 · 완료 상태가 입고 전으로 돌아갑니다.\n지운 줄은 복구 기록으로 남습니다. (최근 매입가 · 단가 이력은 그대로 · 로트를 등록했다면 로트 관리에서 따로 지워 주세요)'
+  const afterUndo = () => { refreshProcurement(qc); qc.invalidateQueries({ queryKey: ['inboundHistory'], exact: false }); qc.invalidateQueries({ queryKey: ['pendingPOs'], exact: false }) }
   const guardEdit = () => { if (!iCanEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false } return true }
   const directMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processDirectInbound({ item_id:dItem.id, qty:dQty, unit_price:dPrice, customer_id:dCustomer, memo:dMemo, date:dDate }) },
-    onSuccess: () => {
+    onSuccess: (r) => {
+      if (r?.moveIds?.length) remember(`발주외 입고 ${dItem.std_code} ${dQty}${dItem.unit || ''}`, async () => { const x = await undoMoves(r.moveIds); return `입고 ${x.cnt}줄을 되돌렸습니다${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` }, { note: UNDO_NOTE, after: afterUndo })
       if (dItem?.lot_managed && Number(dQty) > 0) setLotAsk({ date: dDate, rows: [{
         key: 'direct', item_id: dItem.id, std_code: dItem.std_code, name: dItem.name,
         maker: dItem.manufacturer, maker_code: dItem.manufacturer_code, vendor: dMemo || '', qty: Number(dQty) }] })
@@ -240,7 +257,8 @@ export default function Inbound() {
 
   const inboundMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
-    onSuccess: () => {
+    onSuccess: (r) => {
+      if (r?.moveIds?.length) remember(`입고 처리 ${r.moveIds.length}줄 (${inboundDate})`, async () => { const x = await undoMoves(r.moveIds); return `입고 ${x.cnt}줄을 되돌렸습니다${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` }, { note: UNDO_NOTE, after: () => { afterUndo(); refetch() } })
       // 입고 → 로트: 로트 관리 대상이 섞여 있으면 바로 시리얼을 받는다
       const lotRows = checkedRows
         .filter(r => r.items?.lot_managed && Number(inboundData[r.id]?.qty) > 0)
@@ -506,6 +524,7 @@ export default function Inbound() {
             </div>
           </div>
 
+          {undoBar}
           {result && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center">
               ✅ {result}
@@ -774,6 +793,7 @@ export default function Inbound() {
             </button>
           </div>
 
+          {undoBar}
           {result && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center max-w-2xl">
               ✅ {result}

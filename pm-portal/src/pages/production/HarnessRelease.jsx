@@ -7,7 +7,8 @@ import { must } from '../../lib/db'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { refreshProcurement } from '../../lib/refresh'
-import { markPoIssued } from '../../lib/poIssue'
+import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
+import { useUndo } from '../../components/UndoBar'
 import { useCanEdit } from '../../hooks/useProfile'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
@@ -127,6 +128,7 @@ export default function HarnessRelease() {
   const nav = useNavigate()
   const canEdit = useCanEdit()
   const [justIssued, setJustIssued] = useState(null)   // 방금 불출 처리한 줄 — 다품목 출고로 이어 보내기
+  const { remember, bar: undoBar } = useUndo()   // 방금 한 불출 표시 되돌리기 (v4.58.0)
   const [tab, setTab] = useState('todo')
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(() => new Set())
@@ -251,11 +253,20 @@ export default function HarnessRelease() {
     if (!confirm(msg)) return
     setBusy(true)
     try {
+      const snap = await snapIssued(list.map(p => p.id))   // 되돌리기용 — 바꾸기 전 값 (v4.58.0)
       await markPoIssued(list.map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) })),
         val, val ? '하네스 출도 → 불출 처리' : '하네스 불출 취소')
       toastSuccess(val ? `${list.length}줄 불출 처리했습니다` : `${list.length}줄 불출 표시를 풀었습니다`)
       setSel(new Set())
       setJustIssued(val ? list : null)
+      remember(val ? `${list.length}줄 불출 표시` : `${list.length}줄 불출 표시 풀기`, async () => {
+        await restoreIssued(snap)
+        await logActivity('update', 'purchase_orders', null, `하네스 불출 표시 되돌리기 ${list.length}줄`, { ids: list.map(p => p.id) }, 'AXCELIS')
+      }, { after: () => {
+        setJustIssued(null); refreshProcurement(qc)
+        qc.invalidateQueries({ queryKey: ['harnessRelease'], exact: false })
+        qc.invalidateQueries({ queryKey: ['production'], exact: false })
+      } })
       refreshProcurement(qc)
       qc.invalidateQueries({ queryKey: ['harnessRelease'], exact: false })
       qc.invalidateQueries({ queryKey: ['production'], exact: false })
@@ -314,6 +325,7 @@ export default function HarnessRelease() {
             </div>))}
       </div>
 
+      {undoBar}
       {justIssued && justIssued.length > 0 && (
         <div data-hr-just className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-800">
           <b>✅ {justIssued.length}줄 불출 처리했습니다.</b>

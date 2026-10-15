@@ -18,3 +18,27 @@ export async function markPoIssued(rows, val, label = '하네스 출도 → 불�
     { rows: (rows || []).map(r => ({ id: r.id, po: r.po_number, ol: r.order_line, dl: r.del_line, pn: r.pn })) }, 'AXCELIS')
   return ids.length
 }
+
+// 되돌리기용 (v4.58.0) — 불출 표시를 바꾸기 「전」 값을 떠 두었다가 그대로 돌려놓는다
+//   (끄기로 되돌리면 원래 켜져 있던 호기까지 꺼지므로, 반대값이 아니라 원래값으로 돌린다)
+export async function snapIssued(poIds) {
+  const ids = [...new Set((poIds || []).filter(Boolean))]
+  const pos = [], prods = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200)
+    pos.push(...(must(await supabase.from('purchase_orders').select('id,material_issued').in('id', part), '불출 표시 읽기') || []))
+    prods.push(...(must(await supabase.from('production').select('id,part_issue').in('po_id', part), '호기 불출 표시 읽기') || []))
+  }
+  // 값만 떠 둔다 (받아 온 줄 객체를 그대로 쥐고 있지 않게)
+  return { pos: pos.map(r => ({ id: r.id, material_issued: !!r.material_issued })), prods: prods.map(r => ({ id: r.id, part_issue: !!r.part_issue })) }
+}
+export async function restoreIssued(snap) {
+  if (!snap) return
+  const grp = (rows, k) => rows.reduce((m, r) => { const v = !!r[k]; (m[v] ??= []).push(r.id); return m }, {})
+  for (const [v, ids] of Object.entries(grp(snap.pos || [], 'material_issued')))
+    for (let i = 0; i < ids.length; i += 200)
+      must(await supabase.from('purchase_orders').update({ material_issued: v === 'true' }).in('id', ids.slice(i, i + 200)), '불출 표시 되돌리기')
+  for (const [v, ids] of Object.entries(grp(snap.prods || [], 'part_issue')))
+    for (let i = 0; i < ids.length; i += 200)
+      must(await supabase.from('production').update({ part_issue: v === 'true' }).in('id', ids.slice(i, i + 200)), '호기 불출 표시 되돌리기')
+}
