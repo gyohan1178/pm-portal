@@ -532,77 +532,6 @@ export default function Inbound() {
             </div>
           )}
 
-          {/* 담아둔 것 — 검색을 바꿔도 남아 있어야 여러 품목을 찾아가며 담을 수 있다 */}
-          {/* 담을 때마다 이 칸이 커지면 아래 표가 밀려 누르던 자리가 어긋난다.
-              네 줄 높이를 미리 잡아 두고 그 안에서만 늘어나게 한다. */}
-          <div className={`rounded-xl border-2 overflow-hidden ${
-            checkedRows.length > 0 ? 'border-indigo-300 bg-indigo-50/50' : 'border-slate-200 bg-slate-50'}`}>
-              <div className={`px-3.5 py-2.5 flex items-center gap-2 flex-wrap ${
-                checkedRows.length > 0 ? 'border-b border-indigo-200' : ''}`}>
-                <span className={`text-xs font-bold ${checkedRows.length > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>
-                  {checkedRows.length > 0 ? `담은 품목 ${checkedRows.length}건` : '담은 품목 없음 — 아래에서 체크하세요'}
-                </span>
-                {checkedAmt > 0 && (
-                  <span className="text-xs font-bold text-slate-700">
-                    {checkedAmt.toLocaleString('ko-KR')}원
-                  </span>
-                )}
-                {checkedRows.length > 0 && (<>
-                  <button onClick={() => setCartOpen(v => !v)}
-                    className="text-[11px] text-indigo-600 font-semibold hover:underline">
-                    {cartOpen ? '접기 ▲' : '펼치기 ▼'}
-                  </button>
-                  <button onClick={() => { setChecked({}); setInboundData({}) }}
-                    className="ml-auto text-[11px] text-slate-400 hover:text-rose-500">
-                    전체 해제
-                  </button>
-                </>)}
-              </div>
-
-              {cartOpen && (
-                <div className="h-[148px] overflow-y-auto divide-y divide-indigo-100">
-                  {checkedRows.map(r => {
-                    const d = inboundData[r.id] || {}
-                    const qty = Number(d.qty) || 0
-                    const price = Number(
-                      d.unit_price !== '' && d.unit_price != null ? d.unit_price : r.unit_price
-                    ) || 0
-                    return (
-                      <div key={r.id} className="px-3.5 py-2 flex items-center gap-2 text-xs bg-white/60">
-                        <span className="font-mono text-indigo-600 w-28 flex-shrink-0 truncate">
-                          {r.items?.std_code || '-'}
-                        </span>
-                        <span className="text-slate-600 flex-1 min-w-0 truncate">
-                          {r.items?.name}
-                          {r.memo && (
-                            <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px]" title={r.memo}>{r.memo}</span>
-                          )}
-                        </span>
-                        <span className="text-slate-400 w-20 flex-shrink-0 truncate text-right">
-                          {r.vendors?.name || ''}
-                        </span>
-                        {/* 검색을 바꾸면 그 건이 표에서 사라져 수량을 고칠 수 없다.
-                            부분 입고가 흔하므로 여기서 바로 고치게 한다. */}
-                        <span className="flex items-center gap-0.5 flex-shrink-0">
-                          <input type="number" min="0" value={d.qty ?? ''}
-                            onChange={e => updateData(r.id, 'qty', e.target.value)}
-                            className="w-14 px-1 py-0.5 text-right font-bold border border-slate-200 rounded" />
-                          <span className="text-slate-400 w-8">/{r.qty_remaining}</span>
-                        </span>
-                        <span className="w-20 flex-shrink-0 text-right text-slate-600">
-                          {(qty * price).toLocaleString('ko-KR')}
-                        </span>
-                        <button onClick={() => {
-                            setChecked(prev => { const n = { ...prev }; delete n[r.id]; return n })
-                          }}
-                          className="text-slate-300 hover:text-rose-500 px-1 flex-shrink-0">✕</button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-
           <div className="space-y-2">
             <div className="flex items-center gap-2 flex-wrap">
               <p className="text-xs font-bold text-slate-500 uppercase tracking-wide">미입고 발주 — 들어온 품목 체크 후 일괄 입고</p>
@@ -686,19 +615,76 @@ export default function Inbound() {
                     <MoreRows {...vis} />
                   </div>
 
-                  <div className="p-3 border-t border-slate-200 bg-slate-50 flex items-center gap-3 flex-wrap">
+                </div>
+              )
+            }
+          </div>
+
+          {/* 담은 품목 + 입고 처리 — 화면 아래에 붙여 둔다 (v4.61.0)
+              예전엔 표 위에 있어서, 담는 순간 칸이 바뀌며 표가 밀려 누르던 자리 아래 다른 줄이 눌렸다.
+              아래에 붙어 있으면 담아도 표 위쪽은 그대로다. */}
+          {(pendingPOs.length > 0 || checkedRows.length > 0) && (
+            <div data-inb-dock className={`sticky bottom-0 z-20 rounded-xl border-2 bg-white overflow-hidden shadow-[0_-8px_20px_-10px_rgba(15,23,42,0.25)] ${
+              checkedRows.length > 0 ? 'border-indigo-300' : 'border-slate-200'}`}>
+              <div className={`px-3.5 py-2 flex items-center gap-2 flex-wrap ${checkedRows.length > 0 ? 'bg-indigo-50/70 border-b border-indigo-100' : 'bg-slate-50'}`}>
+                <span className={`text-xs font-bold ${checkedRows.length > 0 ? 'text-indigo-700' : 'text-slate-400'}`}>
+                  {checkedRows.length > 0 ? `담은 품목 ${checkedRows.length}건` : '담은 품목 없음 — 위 표에서 체크하세요'}
+                </span>
+                {checkedAmt > 0 && <span className="text-xs font-bold text-slate-700">{checkedAmt.toLocaleString('ko-KR')}원</span>}
+                {checkedRows.length > 0 && (<>
+                  <button data-inb-cart-toggle onClick={() => setCartOpen(v => !v)} className="text-[11px] text-indigo-600 font-semibold hover:underline">
+                    {cartOpen ? '목록 접기 ▼' : '목록 펼치기 ▲'}
+                  </button>
+                  <button onClick={() => { setChecked({}); setInboundData({}) }} className="ml-auto text-[11px] text-slate-400 hover:text-rose-500">전체 해제</button>
+                </>)}
+              </div>
+              {cartOpen && checkedRows.length > 0 && (
+                <div data-inb-cart className="max-h-[148px] overflow-y-auto divide-y divide-indigo-100 border-b border-indigo-100">
+                  {checkedRows.map(r => {
+                    const d = inboundData[r.id] || {}
+                    const qty = Number(d.qty) || 0
+                    const price = Number(
+                      d.unit_price !== '' && d.unit_price != null ? d.unit_price : r.unit_price
+                    ) || 0
+                    return (
+                      <div key={r.id} className="px-3.5 py-2 flex items-center gap-2 text-xs bg-white/60">
+                        <span className="font-mono text-indigo-600 w-28 flex-shrink-0 truncate">
+                          {r.items?.std_code || '-'}
+                        </span>
+                        <span className="text-slate-600 flex-1 min-w-0 truncate">
+                          {r.items?.name}
+                          {r.memo && (
+                            <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px]" title={r.memo}>{r.memo}</span>
+                          )}
+                        </span>
+                        <span className="text-slate-400 w-20 flex-shrink-0 truncate text-right">
+                          {r.vendors?.name || ''}
+                        </span>
+                        {/* 검색을 바꾸면 그 건이 표에서 사라져 수량을 고칠 수 없다.
+                            부분 입고가 흔하므로 여기서 바로 고치게 한다. */}
+                        <span className="flex items-center gap-0.5 flex-shrink-0">
+                          <input type="number" min="0" value={d.qty ?? ''}
+                            onChange={e => updateData(r.id, 'qty', e.target.value)}
+                            className="w-14 px-1 py-0.5 text-right font-bold border border-slate-200 rounded" />
+                          <span className="text-slate-400 w-8">/{r.qty_remaining}</span>
+                        </span>
+                        <span className="w-20 flex-shrink-0 text-right text-slate-600">
+                          {(qty * price).toLocaleString('ko-KR')}
+                        </span>
+                        <button onClick={() => {
+                            setChecked(prev => { const n = { ...prev }; delete n[r.id]; return n })
+                          }}
+                          className="text-slate-300 hover:text-rose-500 px-1 flex-shrink-0">✕</button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              <div className="px-3 py-2 flex items-center gap-3 flex-wrap">
                     <input value={note} onChange={e=>setNote(e.target.value)} placeholder="입고 비고 (선택)"
                       className="flex-1 min-w-[200px] px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                     <p className="text-xs text-slate-400 whitespace-nowrap">
                       입고일 <span className="font-semibold text-indigo-600">{inboundDate}</span>
-                      {' · 선택 '}<span className="font-semibold text-indigo-600">{checkedRows.length}</span>건
-                      {checkedAmt > 0 && (
-                        <>
-                          {' · '}
-                          <span className="font-bold text-slate-700">{checkedAmt.toLocaleString('ko-KR')}</span>
-                          <span className="text-slate-400">원</span>
-                        </>
-                      )}
                     </p>
                     <button onClick={()=>{
                       // 잔량보다 많이 받으면 한 번 확인한다 — MOQ 로 일부러 더 받는 건 그대로 진행,
@@ -714,11 +700,9 @@ export default function Inbound() {
                       className="px-6 py-2 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                       {inboundMut.isPending?'처리 중...':`✅ 선택 ${checkedRows.length}건 입고 처리`}
                     </button>
-                  </div>
-                </div>
-              )
-            }
-          </div>
+              </div>
+            </div>
+          )}
         </>
       )}
 
