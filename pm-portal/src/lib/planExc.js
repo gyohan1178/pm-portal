@@ -44,3 +44,32 @@ export async function planExcReady(supabase) {
   const { error } = await supabase.from('purchase_orders').select('plan_exc').limit(1)
   return !error
 }
+
+// Plan Exc 가 붙은 PO 만 변경 이력(changes)을 따로 받는다 — 「언제부터」 표시용 (v4.59.0)
+//   모든 줄의 changes 를 받으면 무거워서, HOT 등이 붙은 줄만 받는다.
+//   실패해도 화면은 그대로 (배지는 뜨고 「언제부터」만 빠진다).
+export async function fetchPlanChanges(supabase, ids) {
+  const out = {}
+  const list = [...new Set((ids || []).filter(Boolean))]
+  try {
+    for (let i = 0; i < list.length; i += 200) {
+      const { data, error } = await supabase.from('purchase_orders').select('id,changes').in('id', list.slice(i, i + 200))
+      if (error) throw error
+      ;(data || []).forEach(p => { out[p.id] = p.changes || [] })
+    }
+  } catch (e) { console.warn('Plan Exc 이력 조회 실패', e) }
+  return out
+}
+// 생산 호기(po_id) → Plan Exc 붙이기 — purchase_orders.plan_exc 가 없으면(SQL 전) 조용히 빈 값
+export async function fetchPlanByPo(supabase, poIds) {
+  const out = {}
+  const list = [...new Set((poIds || []).filter(Boolean))]
+  try {
+    for (let i = 0; i < list.length; i += 200) {
+      const { data, error } = await supabase.from('purchase_orders').select('id,plan_exc').in('id', list.slice(i, i + 200)).not('plan_exc', 'is', null)
+      if (error) throw error
+      ;(data || []).forEach(p => { if (String(p.plan_exc || '').trim()) out[p.id] = p.plan_exc })
+    }
+  } catch (e) { console.warn('Plan Exc 조회 실패', e) }
+  return out
+}

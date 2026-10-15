@@ -9,6 +9,8 @@ import { logActivity } from '../../lib/activityLog'
 import { refreshProcurement } from '../../lib/refresh'
 import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
 import { useUndo } from '../../components/UndoBar'
+import PlanBadge from '../../components/PlanBadge'
+import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
 import { useCanEdit } from '../../hooks/useProfile'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
@@ -162,7 +164,12 @@ export default function HarnessRelease() {
           })
         }
       } catch { /* 공정관리 표를 못 읽으면 하네스 구분 줄만 — 오류는 아래 공정관리 조회(hErr)에서 안내된다 */ }
-      return [...base, ...extra].sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
+      // HOT 등 Plan Exc 와 언제부터 — 따로 받는다 (칸이 없거나 실패해도 목록은 뜬다) (v4.59.0)
+      const all = [...base, ...extra]
+      const plan = await fetchPlanByPo(supabase, all.map(p => p.id))
+      const chg = await fetchPlanChanges(supabase, Object.keys(plan))
+      all.forEach(p => { if (plan[p.id]) { p.plan_exc = plan[p.id]; p.changes = chg[p.id] || null } })
+      return all.sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
     },
     staleTime: 30 * 1000,
   })
@@ -388,7 +395,7 @@ export default function HarnessRelease() {
                   <td className="px-2 py-1.5"><div className="truncate max-w-[300px]" title={p.items?.name}>{p.items?.name || '—'}</div>{p.ccn && <div className="text-[11px] text-slate-400">CCN {P(p.ccn)}</div>}</td>
                   <td className="px-2 py-1.5 text-center font-mono">{p.item_rev || '-'} / {p.item_brev || '-'}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{n(leftOf(p))}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap">{yy(p.promise_date) || '—'} {!p.material_issued && <DBadge d={dDay(p.promise_date)} />}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap">{yy(p.promise_date) || '—'} {!p.material_issued && <DBadge d={dDay(p.promise_date)} />}{p.plan_exc && <PlanBadge plan={p.plan_exc} changes={p.changes} className="ml-1" />}</td>
                   <td className="px-2 py-1.5" data-hr-hs>{hsTxt(p)}</td>
                   <td className="px-2 py-1.5 text-center" data-hr-iss>{p.material_issued ? <Badge tone="green">불출</Badge> : st[p.id]?.printed ? <Badge tone="amber">대기</Badge> : <span className="text-slate-300">—</span>}</td>
                 </tr>

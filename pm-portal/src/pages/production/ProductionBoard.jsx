@@ -9,6 +9,7 @@ import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
 import { todayISO, ymdKST } from '../../lib/utils'
 import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow'
+import { fetchPlanByPo, isHot } from '../../lib/planExc'
 
 // 🖥 AXCELIS PD 생산 전광판 — 공정 흐름형 (v4.24.0, 시안 B2)
 //
@@ -46,8 +47,10 @@ async function fetchBoard() {
   const items = must(await supabase.from('items').select('std_code,md_days,qc_md_days,is_prototype').like('std_code', 'AX-11%'), '품목 조회') || []
   const shipped = must(await supabase.from('production').select('id,shipped_date').eq('customer_code', 'AX').gte('shipped_date', mon), '출하 조회') || []
   const meta = Object.fromEntries(items.map((i) => [String(i.std_code).replace('AX-', ''), { qc: i.qc_md_days, proto: i.is_prototype }]))
+  // 고객사 PO 에 HOT 이 붙은 호기 (v4.59.0) — 못 받아도 전광판은 그대로
+  const plan = await fetchPlanByPo(supabase, prod.map((r) => r.po_id))
   return {
-    rows: prod, meta,
+    rows: prod.map((r) => (r.po_id && isHot({ plan_exc: plan[r.po_id] }) ? { ...r, _hot: true } : r)), meta,
     shippedToday: shipped.filter((s) => String(s.shipped_date).slice(0, 10) === today).length,
     shippedWeek: shipped.length,
   }
@@ -135,7 +138,7 @@ export default function ProductionBoard() {
       qc: `납기 3일 안 ${lanes[3].list.filter((c) => c._d != null && c._d <= 3).length}대`,
       ship: `출하 대기 ${lanes[4].list.length}대`,
     }
-    return { lanes, lateElec, missJobs, missCount: missJobs.reduce((a, c) => a + c._miss.length, 0), total: shown.length, next }
+    return { hot: shown.filter((c) => c._hot).length, lanes, lateElec, missJobs, missCount: missJobs.reduce((a, c) => a + c._miss.length, 0), total: shown.length, next }
   }, [rows, meta])
 
   const pulled = schChg.filter((c) => c.to_date && c.from_date && c.to_date < c.from_date)
@@ -199,6 +202,7 @@ export default function ProductionBoard() {
           <div style={chip(view.lateElec.length ? 'rgba(255,107,94,0.18)' : '#121B2B')}><span style={{ color: view.lateElec.length ? '#FF8A80' : '#93A3BD' }}>전장 지연 {view.lateElec.length}대</span></div>
           <div style={chip('#121B2B')}><span style={{ color: view.missJobs.length ? '#FF8A80' : '#93A3BD' }}>미불출 {view.missJobs.length}호기 · {view.missCount}건</span></div>
           <div style={chip('#121B2B')}><span style={{ color: pulled.length ? '#FFB547' : '#93A3BD' }}>납기 당겨짐 {pulled.length}</span></div>
+          {view.hot > 0 && <div data-board-hotcnt style={chip('rgba(255,107,94,0.18)')}><span style={{ color: '#FF8A80' }}>HOT {view.hot}대</span></div>}
           <div style={chip(revChg.length ? 'rgba(255,107,94,0.18)' : '#121B2B')}>
             <span style={{ color: revChg.length ? '#FF8A80' : '#93A3BD' }}>Rev 변경 {revChg.length}</span>
             <span style={{ fontSize: '0.8em', fontWeight: 600, color: '#93A3BD' }}>최근 7일</span>
@@ -238,6 +242,7 @@ export default function ProductionBoard() {
                         style={{ padding: '0 9px', borderRadius: 6, ...big, fontWeight: 700, fontSize: narrow ? 16 : 21,
                           background: c._rev.diff ? 'transparent' : '#243149', color: c._rev.diff ? '#FF8A80' : '#C3CEDF',
                           border: c._rev.diff ? '2px solid #FF6B5E' : '2px solid transparent', whiteSpace: 'nowrap' }}>{c._rev.text}</span>
+                      {c._hot && <span data-board-hot style={{ padding: '0 8px', borderRadius: 6, background: '#FF6B5E', color: '#1A0806', fontWeight: 800, whiteSpace: 'nowrap' }}>HOT</span>}
                       {c._proto && <span style={{ padding: '0 8px', borderRadius: 6, background: '#3A3016', color: '#FFD27A', fontWeight: 800, whiteSpace: 'nowrap' }}>초도</span>}
                       <span style={{ marginLeft: 'auto', color: '#93A3BD', whiteSpace: 'nowrap' }}>{c._dateLabel} {md(c._date)}</span>
                     </div>

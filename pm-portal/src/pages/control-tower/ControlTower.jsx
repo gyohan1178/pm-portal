@@ -258,6 +258,7 @@ export default function ControlTower({ scope = 'ax' }) {
                     {item.csName}
                   </span>
                 )}
+                {item.hot && <span data-ct-hot title="고객사 PO HOT — 고객사 긴급 요청" className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 flex-shrink-0">HOT</span>}
                 <span className="font-mono text-xs text-indigo-600 flex-shrink-0">{item.std_code}</span>
                 <span className="text-xs text-slate-500 flex-1 truncate">{item.name} · {item.detail}</span>
                 <span className="text-slate-300 text-xs">→</span>

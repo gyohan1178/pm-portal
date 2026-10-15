@@ -1,4 +1,5 @@
 import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
+import PlanBadge from '../../components/PlanBadge'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
@@ -966,6 +967,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   {/* 어느 발주 건인지 — Sub Assy 에서 특히 필요하다 */}
                   <td className="px-2 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">
                     {r.po_number || <span className="text-slate-300">-</span>}
+                    {r._plan_exc && <PlanBadge plan={r._plan_exc} changes={r._po_changes} className="ml-1" />}
                   </td>
                   <td className="px-2 py-2 text-slate-400">
                     {(() => {

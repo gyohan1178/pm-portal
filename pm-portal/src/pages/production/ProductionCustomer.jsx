@@ -8,6 +8,7 @@ import ProductionCalendar from './ProductionCalendar'
 import ProductionHarness from './ProductionHarness'
 import ProductionPDBox from './ProductionPDBox'
 import { syncThirdPartyProduction } from '../../lib/thirdParty'
+import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
 
 const CUST_NAME = { AX: 'AXCELIS', ED: 'Edwards', VM: 'VM', CSK: 'CSK' }
 const STATUS_COLOR = {
@@ -49,7 +50,11 @@ async function fetchByCustomer(code) {
     .select('id,po_number').in('id', ids)
     .then(({ data, error }) => { if (error) throw error; return data || [] })))   // 실패를 「PO 없음」으로 보이지 않게 (2026-10-08)
   poParts.flat().forEach(p => { poMap[p.id] = p.po_number })
-  return all.map(r => ({ ...r, po_number: r.po_id ? (poMap[r.po_id] || null) : null }))
+  // HOT 등 Plan Exc — 붙은 PO 만 이력까지 받는다 (v4.59.0). _ 로 시작해 저장할 때 빠진다 (stripDerived)
+  const plan = await fetchPlanByPo(supabase, poIds)
+  const planChg = await fetchPlanChanges(supabase, Object.keys(plan))
+  return all.map(r => ({ ...r, po_number: r.po_id ? (poMap[r.po_id] || null) : null,
+    ...(r.po_id && plan[r.po_id] ? { _plan_exc: plan[r.po_id], _po_changes: planChg[r.po_id] || null } : {}) }))
 }
 
 function dday(s) {

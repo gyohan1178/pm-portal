@@ -1,3 +1,4 @@
+import { isHot } from './planExc'
 // ─────────────────────────────────────────────────────────────
 // Control Tower KPI 계산 — 순수 함수 (프레임워크 무관)
 // 쇼티지 캐시 / PO / 생산 데이터를 받아 관제탑 지표 산출
@@ -77,6 +78,8 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
     urgency: 90 - monthDiff(it.firstNeg) * 10, link: 'short',
   }))
 
+  // 고객사 PO 에 HOT 이 붙은 호기 — 생산 지연 줄에 HOT 배지 (v4.59.0, 순서는 그대로)
+  const hotPo = new Set((pos || []).filter(isHot).map(x => x.id))
   // 3) 생산 지연: 납기 임박/지남인데 미완료 (req_date D-7 이하 & status≠완료)
   const prodDelay = prod.filter(p => {
     if (p.status === '완료') return false
@@ -89,7 +92,7 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
     if (!p.harness_recv) blockers.push('하네스 미완료')
     if (!p.elec_recv) blockers.push('전장 미완료')
     return {
-      kind: 'prodDelay', std_code: p.pn, name: `${p.name} ${p.hogi}`,
+      kind: 'prodDelay', std_code: p.pn, name: `${p.name} ${p.hogi}`, hot: hotPo.has(p.po_id),
       detail: `${d < 0 ? `납기 ${-d}일 지남` : d === 0 ? '오늘 납기' : `D-${d}`}${blockers.length ? ' · ' + blockers.join(', ') : ''}`,
       urgency: 95 - d * 3, link: 'production',
     }

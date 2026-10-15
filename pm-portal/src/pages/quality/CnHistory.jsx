@@ -490,7 +490,20 @@ function CnDetail({ id, onBack }) {
     if (val === String((cur && typeof cur === 'object' ? cur.v : cur) || '').trim()) return true
     if (needSql) { toastError(SQL_NOTE); return false }
     try {
-      const next = { ...(doc.apply_from || {}) }
+      // 저장 직전에 DB 의 최신 값을 다시 읽어 「이 품번만」 바꾼다 (v4.59.0)
+      //   예전엔 화면을 연 때의 값 전체를 덮어써서, 두 사람이 다른 품번을 저장하면 먼저 저장한 쪽이 사라졌다.
+      const fresh = must(await supabase.from('pm_cn_docs').select('apply_from').eq('id', id).maybeSingle(), '적용 호기 조회')
+      const latest = (fresh && fresh.apply_from && typeof fresh.apply_from === 'object') ? fresh.apply_from : {}
+      const vOf = (x) => String((x && typeof x === 'object' ? x.v : x) || '').trim()
+      // 같은 품번을 그사이 다른 사람이 바꿨으면 묻는다
+      if (vOf(latest[pn]) !== vOf(cur) && vOf(latest[pn]) !== val) {
+        const who = latest[pn] && typeof latest[pn] === 'object' && latest[pn].by ? ` (${latest[pn].by})` : ''
+        if (!window.confirm(`${pn} 적용 호기를 그사이 다른 사람이 바꿨습니다${who}.\n\n지금 값: ${vOf(latest[pn]) || '(비어 있음)'}\n내 값: ${val || '(지우기)'}\n\n내 값으로 덮어쓸까요?`)) {
+          qc.invalidateQueries({ queryKey: ['cnDoc', id] })
+          return false
+        }
+      }
+      const next = { ...latest }
       if (val) next[pn] = { v: val, by: me?.name || me?.email || null, at: new Date().toISOString() }
       else delete next[pn]
       must(await supabase.from('pm_cn_docs').update({ apply_from: next }).eq('id', id), '적용 호기 저장')

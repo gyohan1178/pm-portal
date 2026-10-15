@@ -4,6 +4,7 @@ import { isTpRow } from '../../lib/thirdParty'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { isHot } from '../../lib/planExc'
 
 const MAXBUNDLE = 10
 const WORK_UNIT = 4  // 한 번에 작업하는 권장 단위 (인원 제약상 10개를 4씩 끊어서)
@@ -48,7 +49,9 @@ function buildHarnessBundles(records, today) {
       const elecN = chunk.filter(r => r.part_issue).length
       const machineN = chunk.filter(r => r.machine_recv).length
       const issuedN = chunk.filter(r => r.harness_issue).length
-      bundles.push({ pn: g.pn, name: g.name, items: chunk, qty: chunk.length, hogiRange, workGroups, minReq, elecN, machineN, issuedN })
+      // 고객사 PO 에 HOT 이 붙은 호기 (v4.59.0) — 생산관리 목록에서 받은 _plan_exc
+      const hot = chunk.filter(r => isHot({ plan_exc: r._plan_exc })).map(r => r.hogi)
+      bundles.push({ pn: g.pn, name: g.name, items: chunk, qty: chunk.length, hogiRange, workGroups, minReq, elecN, machineN, issuedN, hot })
     }
   }
 
@@ -138,7 +141,7 @@ export default function ProductionHarness({ rows, csCode }) {
                   <div className="min-w-0">
                     <div className="font-mono text-indigo-600 text-sm">{b.pn}</div>
                     <div className="text-[11px] text-slate-400 truncate">{b.name}</div>
-                    <div className="text-xs font-bold text-slate-700 mt-0.5">{b.hogiRange} <span className="font-normal text-slate-400">· {b.qty}대</span></div>
+                    <div className="text-xs font-bold text-slate-700 mt-0.5">{b.hogiRange} <span className="font-normal text-slate-400">· {b.qty}대</span>{b.hot?.length > 0 && <span data-hot-bundle title={`고객사 PO HOT — ${b.hot.join(', ')}`} className="ml-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold align-middle">HOT{b.qty > 1 ? ` ${b.hot.length}대` : ''}</span>}</div>
                     {b.workGroups && b.workGroups.length > 1 && (
                       <div className="text-[10px] text-indigo-400 mt-0.5">작업단위: {b.workGroups.join(' / ')}</div>
                     )}
@@ -186,7 +189,7 @@ export default function ProductionHarness({ rows, csCode }) {
                     <div className="font-mono text-indigo-600">{b.pn}</div>
                     <div className="text-[11px] text-slate-400">{b.name}</div>
                   </td>
-                  <td className="px-3 py-2 font-bold text-slate-700">{b.hogiRange}
+                  <td className="px-3 py-2 font-bold text-slate-700">{b.hogiRange}{b.hot?.length > 0 && <span data-hot-bundle title={`고객사 PO HOT — ${b.hot.join(', ')}`} className="ml-1 px-1.5 py-0.5 rounded-full bg-red-100 text-red-700 text-[10px] font-bold align-middle">HOT{b.qty > 1 ? ` ${b.hot.length}대` : ''}</span>}
                     {b.workGroups && b.workGroups.length > 1 && <div className="text-[10px] font-normal text-indigo-400">↳ {b.workGroups.join(' / ')}</div>}
                   </td>
                   <td className="px-2 py-2 text-center font-bold">{b.qty}</td>
