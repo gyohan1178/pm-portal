@@ -442,6 +442,52 @@ export default function WeeklyReport() {
           </div>
         </div>
 
+        {/* KPI — 요약을 맨 위로 (v4.69.0: 요약 → 일정 → 지연 · 특이사항 순) */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-3">
+          <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center text-xs">📦</span>
+              <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide">이번 주 입고</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{inboundCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
+            <p className="text-xs text-slate-400 mt-1">총 {inboundTotal.toLocaleString()}개</p>
+          </div>
+          <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-xs">📋</span>
+              <p className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">차주 입고 예정</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{planCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
+            <p className="text-xs text-slate-400 mt-1">총 {planTotal.toLocaleString()}개</p>
+          </div>
+          {/* 자재요청 대응 (v4.69.0) — 자재요청 화면에서 그 주에 처리한 것 */}
+          <div data-req-sum className="rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50 to-white p-4 shadow-sm">
+            <div className="flex items-center gap-2 mb-1">
+              <span className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center text-xs">🙋</span>
+              <p className="text-[11px] font-bold text-purple-600 uppercase tracking-wide">자재요청 대응</p>
+            </div>
+            {d?.reqErr ? (
+              <p className="text-xs text-rose-600 mt-2">집계를 못 불러왔습니다 ({d.reqErr})</p>
+            ) : (
+              <>
+                <p className="text-3xl font-bold text-slate-900">{(d?.reqSum?.issue.items||0).toLocaleString()}<span className="text-base ml-1 text-slate-400 font-medium">품목 불출</span></p>
+                <p className="text-xs text-slate-500 mt-1">요청 {d?.reqSum?.issue.reqs||0}건 · 발주로 넘김 <b className="text-indigo-600">{d?.reqSum?.po.items||0}품목</b> ({d?.reqSum?.po.reqs||0}건)</p>
+                {d?.reqSum?.byDept?.length>0&&(
+                  <p className="text-xs text-slate-400 mt-0.5">{d.reqSum.byDept.map(x=>`${x.dept} ${x.reqs}건`).join(' · ')}</p>
+                )}
+              </>
+            )}
+          </div>
+          <div className={`rounded-2xl border p-4 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
+            <div className="flex items-center gap-2 mb-1">
+              <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${delayCount>0?'bg-red-100':'bg-slate-100'}`}>{delayCount>0?'🚨':'✅'}</span>
+              <p className={`text-[11px] font-bold uppercase tracking-wide ${delayCount>0?'text-red-600':'text-slate-500'}`}>납기 지연</p>
+            </div>
+            <p className="text-3xl font-bold text-slate-900">{delayCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
+            <p className="text-xs text-slate-400 mt-1">{delayCount>0?'약속 납기가 지난 미입고 — 아래 목록':'약속 납기 지난 미입고 없음'}</p>
+          </div>
+        </div>
+
         {/* 캘린더 — 이번주 + 다음주 */}
         {(() => {
           const thisWeekDays = getWeekDays(week.from)
@@ -453,25 +499,47 @@ export default function WeeklyReport() {
                 setCalModal({ date: item.target_date, type: item.category==='schedule_outbound'?'outbound':'consignment', editId: item.id })
                 setCalForm({ customer:item.customer||'AXCELIS', project:item.project||'', name:item.name||'', qty:item.qty||'', note:item.note||'', _customCs:false })
               }
-          function DayCol({ item }) {
+          // 칸 안 항목 (v4.69.0) — 그 고객사 칸에서는 고객사 이름을 빼고(기타 칸만 표시), 이름은 잘리지 않게 줄바꿈 · 수량은 오른쪽
+          function DayCol({ item, showCs, showProject }) {
             return (
-              <div draggable
+              <div draggable data-cal-item
                 onDragStart={e=>{e.stopPropagation();e.dataTransfer.setData('itemId',item.id)}}
                 onDragEnd={e=>e.preventDefault()}
                 className={`rounded border px-1.5 py-0.5 text-xs group cursor-grab active:cursor-grabbing ${csColor(item.customer).light} ${csColor(item.customer).border}`}
                 onClick={()=>openEdit(item)}>
-                <div className="flex items-center justify-between gap-1">
-                  <p className={`truncate leading-snug ${csColor(item.customer).text}`}>
-                    {item.customer&&<span className="font-semibold">{item.customer}</span>}
-                    {item.project&&<span className="ml-1 opacity-70">{item.project}</span>}
-                    {item.name&&<span className="ml-1">{item.name}</span>}
-                    {item.qty&&<span className="ml-1 font-bold">{Number(item.qty).toLocaleString()}</span>}
+                <div className="flex items-start justify-between gap-1">
+                  <p className={`min-w-0 break-words leading-snug ${csColor(item.customer).text}`}>
+                    {showCs&&item.customer&&<span className="font-semibold mr-1">{item.customer}</span>}
+                    {showProject&&item.project&&<span className="mr-1 opacity-70">{item.project}</span>}
+                    {item.name&&<span>{item.name}</span>}
                   </p>
-                  <button onClick={e=>{e.stopPropagation();if(window.confirm('삭제?'))deleteCalMut.mutate(item.id)}}
-                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 flex-shrink-0 no-print text-xs ml-1">×</button>
+                  <span className="flex items-center flex-shrink-0">
+                    {item.qty&&<span className={`font-bold tabular-nums ${csColor(item.customer).text}`}>{Number(item.qty).toLocaleString()}</span>}
+                    <button onClick={e=>{e.stopPropagation();if(window.confirm('삭제?'))deleteCalMut.mutate(item.id)}}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 no-print text-xs ml-1">×</button>
+                  </span>
                 </div>
               </div>
             )
+          }
+          // 같은 칸 안은 프로젝트 → 이름 순 (숫자는 크기대로). 같은 프로젝트가 여럿이면 프로젝트 이름을 묶음 머리로 한 번만
+          const calSort = (a, b) => String(a.project||'').localeCompare(String(b.project||''), 'ko', { numeric: true })
+            || String(a.name||'').localeCompare(String(b.name||''), 'ko', { numeric: true })
+          function CellItems({ items, cs }) {
+            const list = [...items].sort(calSort)
+            const cnt = {}
+            list.forEach(it => { const k = it.project || ''; cnt[k] = (cnt[k] || 0) + 1 })
+            return list.map((it, i) => {
+              const pj = it.project || ''
+              const grouped = pj && cnt[pj] > 1
+              const head = grouped && (i === 0 || (list[i - 1].project || '') !== pj)
+              return (
+                <div key={it.id}>
+                  {head && <p data-cal-group className={`px-0.5 pt-0.5 text-[11px] font-bold ${csColor(it.customer).text} opacity-80`}>{pj}</p>}
+                  <DayCol item={it} showCs={cs === '기타'} showProject={!grouped} />
+                </div>
+              )
+            })
           }
 
           return (
@@ -487,20 +555,9 @@ export default function WeeklyReport() {
                   <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-700">{label}</span>
                     <span className="text-xs text-slate-400">{wk.label}</span>
-                    {/* 그 주 자재요청 대응 — 자재요청 화면에서 처리한 것 자동 집계 (v4.68.0) */}
-                    {cur && (d?.reqErr ? (
-                      <span data-req-sum className="ml-auto text-xs text-rose-600">자재요청 집계를 못 불러왔습니다 ({d.reqErr})</span>
-                    ) : d?.reqSum && (
-                      <span data-req-sum className="ml-auto text-xs text-slate-600">
-                        📤 자재요청 대응 — 불출 <b className="text-purple-700">{d.reqSum.issue.items.toLocaleString()}품목</b>
-                        <span className="text-slate-400"> ({d.reqSum.issue.reqs}건)</span>
-                        {' · '}발주 <b className="text-indigo-700">{d.reqSum.po.items.toLocaleString()}품목</b>
-                        <span className="text-slate-400"> ({d.reqSum.po.reqs}건)</span>
-                        {d.reqSum.byDept.length > 0 && (
-                          <span className="text-slate-400"> · {d.reqSum.byDept.map(x => `${x.dept} ${x.reqs}건`).join(' / ')}</span>
-                        )}
-                      </span>
-                    ))}
+                    {cur && d?.reqErr && (
+                      <span className="ml-auto text-xs text-rose-600">자재요청 집계를 못 불러왔습니다 ({d.reqErr})</span>
+                    )}
                   </div>
 
                   {/* 고객사 헤더 */}
@@ -549,14 +606,14 @@ export default function WeeklyReport() {
                                 if (!c || (!c.issue.items && !c.po.items)) return null
                                 return (
                                   <div data-req-cs={cs} title="자재요청 화면에서 처리한 것 (자동 집계)"
-                                    className="rounded border border-dashed border-purple-300 bg-white px-1.5 py-0.5 text-xs text-purple-700 leading-snug">
-                                    <span className="font-semibold">자재요청</span>
-                                    {c.issue.items > 0 && <span className="ml-1">불출 <b>{c.issue.items}</b>품목<span className="text-purple-400">({c.issue.reqs}건)</span></span>}
-                                    {c.po.items > 0 && <span className="ml-1 text-indigo-600">발주 <b>{c.po.items}</b>품목</span>}
+                                    className="rounded border border-dashed border-purple-300 bg-white px-1.5 py-1 text-xs leading-snug">
+                                    <p className="text-[11px] font-bold text-purple-500">자재요청 대응</p>
+                                    {c.issue.items > 0 && <p className="text-purple-700 whitespace-nowrap">불출 <b className="text-sm">{c.issue.items}</b>품목 <span className="text-purple-400">· {c.issue.reqs}건</span></p>}
+                                    {c.po.items > 0 && <p className="text-indigo-600 whitespace-nowrap">발주 <b className="text-sm">{c.po.items}</b>품목 <span className="text-indigo-300">· {c.po.reqs}건</span></p>}
                                   </div>
                                 )
                               })()}
-                              {items.map(item => <DayCol key={item.id} item={item} />)}
+                              <CellItems items={items} cs={cs} />
                             </div>
                           </div>
                         )
@@ -639,34 +696,6 @@ export default function WeeklyReport() {
             </div>
           </div>
         )}
-
-        {/* KPI */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 print:grid-cols-3 gap-3">
-          <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center text-xs">📦</span>
-              <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide">이번 주 입고</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{inboundCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">총 {inboundTotal.toLocaleString()}개</p>
-          </div>
-          <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-xs">📋</span>
-              <p className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">차주 입고 예정</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{planCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">총 {planTotal.toLocaleString()}개</p>
-          </div>
-          <div className={`rounded-2xl border p-4 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${delayCount>0?'bg-red-100':'bg-slate-100'}`}>{delayCount>0?'🚨':'✅'}</span>
-              <p className={`text-[11px] font-bold uppercase tracking-wide ${delayCount>0?'text-red-600':'text-slate-500'}`}>납기 지연</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{delayCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">제출: {d?.submitters?.length||0}명</p>
-          </div>
-        </div>
 
         {/* 납기 지연 */}
         {(() => {

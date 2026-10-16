@@ -2,6 +2,15 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.50.0',
+    date: '2026-10-14',
+    changes: [
+      '★ 구매발주 가공물 도면 REV — 「제품 BOM 에서 가공품 불러오기」 표에 REV 칸이 생기고, 담으면 발주에 REV 가 같이 저장됩니다 (발주 목록 품번 옆 「REV C」)',
+      '이카운트 발주서 「규격」에 「REV C」 가 붙습니다 (제조사 · 제조사품번이 있으면 그 뒤에). REV 없이 만든 예전 가공물 발주는 내려받을 때 지금 BOM 의 REV 를 찾아 붙입니다',
+      'REV 는 BOM 의 부품 REV 기준 — 같은 품목이 여러 BOM 에 있으면 고른 제품 BOM 값, 없으면 가장 높은 REV',
+    ],
+  },
+  {
     version: 'v4.49.2',
     date: '2026-10-14',
     changes: [
