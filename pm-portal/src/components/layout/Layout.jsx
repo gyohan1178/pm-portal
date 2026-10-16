@@ -44,6 +44,38 @@ const PAGE_LABELS = {
   forecast:   [null, '포캐스트'],
 }
 
+// 위 표에 없는 화면 — 경로 전체로 찾는다 (v4.67.0: 머리글에 'material-request' 처럼 주소가 그대로 나오던 것)
+const PATH_LABELS = {
+  'outbound-history': ['자재', '출고 현황'],
+  'rack-layout':      ['자재', '창고 배치도'],
+  'payment-plan':     ['구매', '결제 계획'],
+  'production/harness-release': ['영업', '하네스 출도·불출'],
+  'sales-quote':      ['영업', '매출견적'],
+  'material-request': ['현장', '자재 요청'],
+  'field-search':     ['현장', '현장 검색'],
+  drawings:           ['현장', '도면 조회'],
+  board:              ['현장', '생산 전광판'],
+  'production/qr-demo': ['현장', 'QR 공정 데모'],
+  'quality/fa-progress': ['품질', '초도품 진행관리'],
+  'quality/fai':      ['품질', '초도품 자재 매칭'],
+  'quality/cn':       ['품질', '설계변경(CN) 이력'],
+  'quality/drawing-dist': ['품질', '도면 배포이력'],
+  'quality/lot':      ['품질', '로트 관리'],
+  'cost-saving':      ['분석', '원가절감 실적'],
+  sales:              ['분석', '매출 대시보드'],
+  cost:               ['분석', '원가분석'],
+  'request-load':     ['분석', '자재요청 업무량'],
+  'schedule-changes': ['분석', '납품 일정 변경'],
+  'master/codemap':   ['기초자료', '기준코드 매핑'],
+  activity:           ['기타', '활동 이력 · 용량'],
+  backup:             ['기타', '데이터 백업'],
+  todo:               ['', '할 일'],
+  upload:             ['', '파일 올리기'],
+  admin:              ['', '관리자'],
+  users:              ['', '사용자 관리'],
+  restore:            ['', '복구'],
+}
+
 export default function Layout({ profile }) {
   const location = useLocation()
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -54,7 +86,10 @@ export default function Layout({ profile }) {
   const segments = location.pathname.split('/').filter(Boolean)
   let section = '', title = '전체 현황'
 
-  if (segments[0] === 'customer' && segments[1]) {
+  const fullPath = segments.join('/')
+  if (PATH_LABELS[fullPath]) {
+    [section, title] = PATH_LABELS[fullPath]
+  } else if (segments[0] === 'customer' && segments[1]) {
     section = CUSTOMER_NAMES[segments[1]] || segments[1]
     title = PAGE_LABELS[segments[2] || '']?.[1] || segments[2] || ''
   } else if (segments[0] === 'master' && segments[1]) {
