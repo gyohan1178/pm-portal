@@ -28,7 +28,7 @@ const CUSTOMER_ALIAS = {
 //   김교한                → 엑셀리스
 //   황주현·문순옥·박웅진   → 에드워드
 //   남기문 → 메모 csk 있으면 CSK / vm·em·ex·ep 있으면 VM / 나머지 기타
-//   윤여민·황동일          → 하네스
+//   윤여민·황동일·안상현·임병창 → 하네스  (안상현·임병창 추가 2026-10-16 — 그동안 기타로 빠지던 것)
 //   그 외                  → 기타
 export function classifyByManager(manager, memo) {
   const name = String(manager || '').replace(/\s*(차장|과장|대리|주임|부장|이사|사원|팀장|실장|대표)\s*/g, '').trim()
@@ -41,7 +41,7 @@ export function classifyByManager(manager, memo) {
     if (/vm|em|ex|ep/.test(m)) return 'VM'
     return '기타'
   }
-  if (['윤여민', '황동일'].includes(name)) return '하네스'
+  if (['윤여민', '황동일', '안상현', '임병창'].includes(name)) return '하네스'
   return '기타'
 }
 
