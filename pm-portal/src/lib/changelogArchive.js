@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.49.1',
+    date: '2026-10-14',
+    changes: [
+      '설계변경(CN) 이력: 품번 상세 「우리 쪽 현황」 조회 오류(400) 수정 — 생산관리에 없는 칸(po_number)을 찾고 있었습니다',
+    ],
+  },
+  {
     version: 'v4.49.0',
     date: '2026-10-14',
     changes: [

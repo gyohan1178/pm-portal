@@ -59,19 +59,29 @@ export default function RackLayout3D({ racks = [], objs = [], gw = 80, gh = 62, 
   selRef.current = sel
 
   useEffect(() => {
-    const wrap = wrapRef.current, canvas = canvasRef.current, labWrap = labelRef.current
-    if (!wrap || !canvas || !labWrap) return
+    const wrap = wrapRef.current, host = canvasRef.current, labWrap = labelRef.current
+    if (!wrap || !host || !labWrap) return
+    // 그릴 때마다 새 캔버스를 만든다 (v4.67.1)
+    //   다 쓴 장면은 아래 정리에서 forceContextLoss 로 GPU 메모리를 돌려준다(2026-10-08). 그런데 같은 캔버스에
+    //   다시 그리면 「잃어버린」 그래픽 연결을 그대로 받아 3D 가 안 그려졌다 — 자료가 새로 불려 올 때마다
+    //   (다른 창 갔다 오기 등) 「이 기기·브라우저에서는 3D 를 그릴 수 없습니다」가 뜨던 원인
+    const canvas = document.createElement('canvas')
+    canvas.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;display:block;touch-action:none'
+    host.appendChild(canvas)
     let renderer
     // 3D 는 WebGL2 가 필요하다 (three 0.164). 그래픽 가속이 꺼졌거나 드라이버가 막힌 PC 에서는 만들 수 없다.
-    //   v4.67.0: 매끈하게(antialias) 그리기를 빼고 한 번 더 시도 — 일부 노트북 그래픽에서 이것만으로 된다.
+    //   v4.67.0: 매끈하게(antialias) 그리기를 빼고 한 번 더 시도.
     //   그래도 안 되면 「왜 안 되는지」를 구분해서 알려 준다 (예전엔 한 줄 안내뿐이라 원인을 몰랐다)
     for (const opt of [{ antialias: true }, { antialias: false, powerPreference: 'default' }]) {
       try { renderer = new THREE.WebGLRenderer({ canvas, alpha: true, ...opt }); break } catch { renderer = null }
     }
     if (!renderer) {
+      canvas.remove()
       let gl2 = false, gl1 = false
       try { const c = document.createElement('canvas'); gl2 = !!c.getContext('webgl2'); if (!gl2) gl1 = !!(c.getContext('webgl') || c.getContext('experimental-webgl')) } catch { /* 확인 실패 */ }
-      setErr(gl1
+      setErr(gl2
+        ? '3D 화면을 준비하지 못했습니다 — 새로고침(F5) 해 주세요. 계속 이러면 배치도 탭을 이용해 주세요.'
+        : gl1
         ? '이 브라우저는 3D(WebGL2)를 지원하지 않습니다 — 브라우저를 최신으로 업데이트해 주세요. 그동안은 배치도 탭을 이용해 주세요.'
         : '이 PC 에서 그래픽 가속(WebGL)이 꺼져 있어 3D 를 그릴 수 없습니다.\n웨일 · 크롬: 설정 → 시스템 → 「가능한 경우 하드웨어 가속 사용」을 켜고 브라우저를 다시 시작해 주세요.\n(주소창에 whale://gpu 또는 chrome://gpu 를 열면 WebGL 항목이 Hardware accelerated 인지 볼 수 있습니다)')
       return
@@ -291,6 +301,7 @@ export default function RackLayout3D({ racks = [], objs = [], gw = 80, gh = 62, 
       sun.dispose?.()
       renderer.dispose()
       renderer.forceContextLoss?.()
+      canvas.remove()
       labWrap.innerHTML = ''
       apiRef.current = null
     }
@@ -321,7 +332,7 @@ export default function RackLayout3D({ racks = [], objs = [], gw = 80, gh = 62, 
       <div className="grid gap-2 lg:grid-cols-[1fr_280px]">
         <div ref={wrapRef} className="relative rounded-xl border-2 border-slate-300 overflow-hidden min-w-0"
           style={{ height: '68vh', minHeight: 380, background: 'linear-gradient(#f1f5f9,#e2e8f0)' }}>
-          <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', touchAction: 'none' }} />
+          <div ref={canvasRef} data-3d-host style={{ position: 'absolute', inset: 0 }} />
           <div ref={labelRef} style={{ position: 'absolute', inset: 0, overflow: 'hidden', pointerEvents: 'none' }} />
           <div className="absolute left-2 top-2 flex flex-col gap-1">
             <button className={btn} title="확대" onClick={() => apiRef.current?.zoom(1.25)}>＋</button>
