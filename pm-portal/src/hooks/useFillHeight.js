@@ -16,10 +16,31 @@ export function useFillHeight(enabled = true, min = 420, reserve = 0) {
       const main = node.closest('main')
       if (!main) { setH(0); return }
       const pad = parseFloat(getComputedStyle(main).paddingBottom) || 0
-      const top = node.getBoundingClientRect().top - main.getBoundingClientRect().top + main.scrollTop
+      const nb = node.getBoundingClientRect()
+      const top = nb.top - main.getBoundingClientRect().top + main.scrollTop
       // 칸 아래에 붙은 것(바깥 카드 여백 · 안내 줄 등)도 화면 안에 들어오게 그만큼 뺀다 (v4.65.0)
-      const below = Math.max(0, main.scrollHeight - pad - top - node.offsetHeight)
-      setH(Math.max(min, Math.floor(main.clientHeight - top - pad - below - reserve)))
+      //   v4.66.0: 예전엔 main.scrollHeight 로 쟀는데, 내용이 화면보다 짧으면 scrollHeight 가 화면 높이가 돼
+      //   「남은 빈칸」까지 아래 것으로 잡혀 칸이 최소 높이에 갇혔다 (불러오는 중에 처음 잰 화면 — 입고 처리 등)
+      //   → 칸에서 위로 올라가며 「진짜로 아래에 있는 형제 칸 + 부모 아래 여백」만 더한다
+      let below = 0
+      let el = node
+      while (el && el !== main && el.parentElement) {
+        const parent = el.parentElement
+        const eb = el.getBoundingClientRect().bottom
+        let last = eb
+        for (let s = el.nextElementSibling; s; s = s.nextElementSibling) {
+          const cs = getComputedStyle(s)
+          if (cs.position === 'absolute' || cs.position === 'fixed' || cs.display === 'none') continue
+          const r = s.getBoundingClientRect()
+          if (r.height > 0 && r.top >= eb - 1) last = Math.max(last, r.bottom + (parseFloat(cs.marginBottom) || 0))
+        }
+        below += last - eb
+        if (parent === main) break   // main 아래 여백은 pad 로 따로 뺀다
+        const ps = getComputedStyle(parent)
+        below += (parseFloat(ps.paddingBottom) || 0) + (parseFloat(ps.borderBottomWidth) || 0)
+        el = parent
+      }
+      setH(Math.max(min, Math.floor(main.clientHeight - top - pad - Math.max(0, below) - reserve)))
     }
     fit()
     // 화면 크기(글자 비율)가 바뀌면 위쪽 칸 높이도 바뀐다 — 한 박자 뒤에 다시 잰다

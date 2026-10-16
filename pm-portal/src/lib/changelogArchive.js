@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.48.1',
+    date: '2026-10-12',
+    changes: [
+      '생산관리(PD BOX) 납품일을 YY-MM-DD 로 표시 — 내년 납기(예: 27-01-05)와 올해 것이 구분됩니다',
+    ],
+  },
+  {
     version: 'v4.48.0',
     date: '2026-10-12',
     changes: [
