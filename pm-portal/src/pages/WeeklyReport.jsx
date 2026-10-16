@@ -442,49 +442,33 @@ export default function WeeklyReport() {
           </div>
         </div>
 
-        {/* KPI — 요약을 맨 위로 (v4.69.0: 요약 → 일정 → 지연 · 특이사항 순) */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-3">
-          <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-6 h-6 rounded-lg bg-emerald-100 flex items-center justify-center text-xs">📦</span>
-              <p className="text-[11px] font-bold text-emerald-600 uppercase tracking-wide">이번 주 입고</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{inboundCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">총 {inboundTotal.toLocaleString()}개</p>
+        {/* KPI — 요약을 맨 위로 (v4.69.0: 요약 → 일정 → 지연 · 특이사항 순)
+            v4.69.1: 칸을 낮게 — 이름 한 줄 + 숫자 한 줄(보조 숫자는 옆에 작게) · 자재요청은 불출만 */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-2">
+          <div data-kpi="inbound" className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white px-3.5 py-2.5 shadow-sm">
+            <p className="text-[11px] font-bold text-emerald-600">📦 이번 주 입고</p>
+            <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{inboundCount.toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
+              <span className="text-xs text-slate-400 ml-2">{inboundTotal.toLocaleString()}개</span></p>
           </div>
-          <div className="rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-6 h-6 rounded-lg bg-blue-100 flex items-center justify-center text-xs">📋</span>
-              <p className="text-[11px] font-bold text-blue-600 uppercase tracking-wide">차주 입고 예정</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{planCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">총 {planTotal.toLocaleString()}개</p>
+          <div data-kpi="plan" className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white px-3.5 py-2.5 shadow-sm">
+            <p className="text-[11px] font-bold text-blue-600">📋 차주 입고 예정</p>
+            <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{planCount.toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
+              <span className="text-xs text-slate-400 ml-2">{planTotal.toLocaleString()}개</span></p>
           </div>
-          {/* 자재요청 대응 (v4.69.0) — 자재요청 화면에서 그 주에 처리한 것 */}
-          <div data-req-sum className="rounded-2xl border border-purple-100 bg-gradient-to-br from-purple-50 to-white p-4 shadow-sm">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="w-6 h-6 rounded-lg bg-purple-100 flex items-center justify-center text-xs">🙋</span>
-              <p className="text-[11px] font-bold text-purple-600 uppercase tracking-wide">자재요청 대응</p>
-            </div>
+          {/* 자재요청 대응 — 자재요청 화면에서 그 주에 불출 처리한 것 */}
+          <div data-req-sum className="rounded-xl border border-purple-100 bg-gradient-to-br from-purple-50 to-white px-3.5 py-2.5 shadow-sm">
+            <p className="text-[11px] font-bold text-purple-600">🙋 자재요청 대응 불출</p>
             {d?.reqErr ? (
-              <p className="text-xs text-rose-600 mt-2">집계를 못 불러왔습니다 ({d.reqErr})</p>
+              <p className="text-xs text-rose-600 mt-1">집계를 못 불러왔습니다 ({d.reqErr})</p>
             ) : (
-              <>
-                <p className="text-3xl font-bold text-slate-900">{(d?.reqSum?.issue.items||0).toLocaleString()}<span className="text-base ml-1 text-slate-400 font-medium">품목 불출</span></p>
-                <p className="text-xs text-slate-500 mt-1">요청 {d?.reqSum?.issue.reqs||0}건 · 발주로 넘김 <b className="text-indigo-600">{d?.reqSum?.po.items||0}품목</b> ({d?.reqSum?.po.reqs||0}건)</p>
-                {d?.reqSum?.byDept?.length>0&&(
-                  <p className="text-xs text-slate-400 mt-0.5">{d.reqSum.byDept.map(x=>`${x.dept} ${x.reqs}건`).join(' · ')}</p>
-                )}
-              </>
+              <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{(d?.reqSum?.issue.items||0).toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">품목</span>
+                <span className="text-xs text-slate-400 ml-2">요청 {d?.reqSum?.issue.reqs||0}건</span></p>
             )}
           </div>
-          <div className={`rounded-2xl border p-4 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
-            <div className="flex items-center gap-2 mb-1">
-              <span className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs ${delayCount>0?'bg-red-100':'bg-slate-100'}`}>{delayCount>0?'🚨':'✅'}</span>
-              <p className={`text-[11px] font-bold uppercase tracking-wide ${delayCount>0?'text-red-600':'text-slate-500'}`}>납기 지연</p>
-            </div>
-            <p className="text-3xl font-bold text-slate-900">{delayCount}<span className="text-base ml-1 text-slate-400 font-medium">건</span></p>
-            <p className="text-xs text-slate-400 mt-1">{delayCount>0?'약속 납기가 지난 미입고 — 아래 목록':'약속 납기 지난 미입고 없음'}</p>
+          <div className={`rounded-xl border px-3.5 py-2.5 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
+            <p className={`text-[11px] font-bold ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연</p>
+            <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{delayCount}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
+              <span className="text-xs text-slate-400 ml-2">{delayCount>0?'아래 목록':'지난 납기 없음'}</span></p>
           </div>
         </div>
 
@@ -603,13 +587,11 @@ export default function WeeklyReport() {
                               {/* 자재요청으로 나간 것 — 자동 (손으로 적은 불출과 구분되게 점선) */}
                               {cur && row.cat === 'schedule_outbound' && (() => {
                                 const c = d?.reqSum?.byCs?.[cs]
-                                if (!c || (!c.issue.items && !c.po.items)) return null
+                                if (!c || !c.issue.items) return null
                                 return (
                                   <div data-req-cs={cs} title="자재요청 화면에서 처리한 것 (자동 집계)"
                                     className="rounded border border-dashed border-purple-300 bg-white px-1.5 py-1 text-xs leading-snug">
-                                    <p className="text-[11px] font-bold text-purple-500">자재요청 대응</p>
-                                    {c.issue.items > 0 && <p className="text-purple-700 whitespace-nowrap">불출 <b className="text-sm">{c.issue.items}</b>품목 <span className="text-purple-400">· {c.issue.reqs}건</span></p>}
-                                    {c.po.items > 0 && <p className="text-indigo-600 whitespace-nowrap">발주 <b className="text-sm">{c.po.items}</b>품목 <span className="text-indigo-300">· {c.po.reqs}건</span></p>}
+                                    <p className="text-purple-700"><span className="text-[11px] font-bold text-purple-500 mr-1">자재요청</span>불출 <b className="text-sm">{c.issue.items}</b>품목 <span className="text-purple-400">· {c.issue.reqs}건</span></p>
                                   </div>
                                 )
                               })()}
