@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import PurchaseDashboard from './PurchaseDashboard'
 import { ymdKST } from '../lib/utils'
+import { fetchWeekRequests, summarizeRequests } from '../lib/weeklyRequest'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -95,6 +96,11 @@ async function fetchWeeklyReport(from, to) {
   //   자동과 겹치면 눈에 보이므로 수기 쪽을 지우면 된다.
   const manual = arr => (arr||[]).map(r => ({ ...r, _manual: true }))
 
+  // 그 주 자재요청 대응 (불출 · 발주) — 못 읽으면 숨기지 않고 「못 불러옴」으로 알린다 (v4.68.0)
+  let reqSum = null, reqErr = ''
+  try { reqSum = summarizeRequests(await fetchWeekRequests(supabase, from, to)) }
+  catch (e) { reqErr = e?.message || String(e) }
+
   return {
     submitters: [...new Set((allReports||[]).map(r=>r.submitted_by))],
     // 자동 집계가 기준. 수기 입력은 「직접 입력」 표시로 함께 보여 준다.
@@ -106,6 +112,7 @@ async function fetchWeeklyReport(from, to) {
                ...manual((items||[]).filter(r=>r.category==='outbound'&&thisWeekReportIds.has(r.report_id)))],
     calItems: (calItems||[]).filter(r=>r.category!=='special_note'),
     specialNotes: (calItems||[]).filter(r=>r.category==='special_note').sort((a,b)=>new Date(a.created_at)-new Date(b.created_at)),
+    reqSum, reqErr,
     purchaseData: [...(portal.purchase||[])],
     pendingData:  [...(portal.pending||[])],
   }
@@ -477,9 +484,23 @@ export default function WeeklyReport() {
                 { label: '다음 주', wk: nextWeek, days: nextWeekDays, cur: false },
               ].map(({ label, wk, days, cur }) => (
                 <div key={label}>
-                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2">
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-bold text-slate-700">{label}</span>
                     <span className="text-xs text-slate-400">{wk.label}</span>
+                    {/* 그 주 자재요청 대응 — 자재요청 화면에서 처리한 것 자동 집계 (v4.68.0) */}
+                    {cur && (d?.reqErr ? (
+                      <span data-req-sum className="ml-auto text-xs text-rose-600">자재요청 집계를 못 불러왔습니다 ({d.reqErr})</span>
+                    ) : d?.reqSum && (
+                      <span data-req-sum className="ml-auto text-xs text-slate-600">
+                        📤 자재요청 대응 — 불출 <b className="text-purple-700">{d.reqSum.issue.items.toLocaleString()}품목</b>
+                        <span className="text-slate-400"> ({d.reqSum.issue.reqs}건)</span>
+                        {' · '}발주 <b className="text-indigo-700">{d.reqSum.po.items.toLocaleString()}품목</b>
+                        <span className="text-slate-400"> ({d.reqSum.po.reqs}건)</span>
+                        {d.reqSum.byDept.length > 0 && (
+                          <span className="text-slate-400"> · {d.reqSum.byDept.map(x => `${x.dept} ${x.reqs}건`).join(' / ')}</span>
+                        )}
+                      </span>
+                    ))}
                   </div>
 
                   {/* 고객사 헤더 */}
@@ -522,6 +543,19 @@ export default function WeeklyReport() {
                                 className={`text-xs font-bold no-print ${row.btn}`}>＋</button>
                             </div>
                             <div className="p-1 space-y-0.5" style={{ minHeight: row.min }}>
+                              {/* 자재요청으로 나간 것 — 자동 (손으로 적은 불출과 구분되게 점선) */}
+                              {cur && row.cat === 'schedule_outbound' && (() => {
+                                const c = d?.reqSum?.byCs?.[cs]
+                                if (!c || (!c.issue.items && !c.po.items)) return null
+                                return (
+                                  <div data-req-cs={cs} title="자재요청 화면에서 처리한 것 (자동 집계)"
+                                    className="rounded border border-dashed border-purple-300 bg-white px-1.5 py-0.5 text-xs text-purple-700 leading-snug">
+                                    <span className="font-semibold">자재요청</span>
+                                    {c.issue.items > 0 && <span className="ml-1">불출 <b>{c.issue.items}</b>품목<span className="text-purple-400">({c.issue.reqs}건)</span></span>}
+                                    {c.po.items > 0 && <span className="ml-1 text-indigo-600">발주 <b>{c.po.items}</b>품목</span>}
+                                  </div>
+                                )
+                              })()}
                               {items.map(item => <DayCol key={item.id} item={item} />)}
                             </div>
                           </div>
