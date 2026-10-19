@@ -61,7 +61,7 @@ export async function downloadProposalExcel(d) {
     { width: 12 },  // J 합계금액
     { width: 10 },  // K 결제방식
     { width: 18 },  // L 프로젝트이력
-    { width: 16 },  // M 비고
+    { width: 26 },  // M 비고 (발주 메모가 따라온다)
   ]
 
   let r = 1

@@ -748,7 +748,13 @@ export default function PurchasePage() {
     const t = po?.vendors?.payment_terms
     return PAYS.includes(t) ? t : '카드 결제'
   }
-  const noteOf = id => proposalMeta[id]?.note || ''
+  // 비고 — 품의서에서 고쳐 쓴 값 > 발주 메모 (가공물 발주의 [프로젝트] · 소요량 조회 몫 등이 그대로 따라온다 · v4.74.1)
+  //   품의서에서 지우면(빈 칸) 빈 칸으로 둔다
+  const noteOf = id => {
+    const m = proposalMeta[id]
+    if (m && m.note !== undefined) return m.note
+    return purchases.find(p => p.id === id)?.memo || ''
+  }
   const setMeta = (id,k,v) => setProposalMeta(prev=>({...prev,[id]:{...prev[id],[k]:v}}))
   // 매입이 잡히는 달은 결제방식마다 다르다.
   //   정기 결제만 물건이 들어와야(입고요청일) 매입이 된다.
@@ -1647,7 +1653,7 @@ export default function PurchasePage() {
                             </td>
                             <td className="px-2 py-1.5 text-violet-600 whitespace-nowrap max-w-[140px] truncate" title={(projHist[p.item_id]||[]).join(', ')}>{(projHist[p.item_id]||[]).join(', ')||'-'}</td>
                             <td className="px-2 py-1.5">
-                              <input value={noteOf(p.id)} onChange={e=>setMeta(p.id,'note',e.target.value)} placeholder="비고" className="w-24 px-1 py-0.5 text-xs border border-slate-200 rounded"/>
+                              <input data-prop-note value={noteOf(p.id)} title={noteOf(p.id)} onChange={e=>setMeta(p.id,'note',e.target.value)} placeholder="비고" className="w-40 px-1 py-0.5 text-xs border border-slate-200 rounded"/>
                             </td>
                           </tr>
                         )
