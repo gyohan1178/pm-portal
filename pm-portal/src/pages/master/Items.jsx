@@ -325,10 +325,15 @@ export default function Items() {
           className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
           {['전체','코드','품명','규격','구매처'].map(f=><option key={f} value={f}>{f}</option>)}
         </select>
-        <input value={search} onChange={e=>setSearch(e.target.value)}
-          onKeyDown={e=>{ if(e.key==='Enter') setQuery({search, type:'전체', field:searchField}) }}
-          placeholder={searchField==='전체' ? "코드·품명·제조사·구매처 검색 (17* = 17로 시작)" : `${searchField}(으)로 검색 (17* = 17로 시작)`}
-          className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+        {/* 검색 — 휴대폰은 엔터 키가 「이동 · 완료」라 안 먹을 때가 있어 버튼을 같이 둔다 (v4.74.2)
+            form 으로 감싸 키보드의 「검색」 키로도 실행되게 */}
+        <form data-items-search className="flex w-full sm:w-auto gap-1.5"
+          onSubmit={e=>{ e.preventDefault(); e.target.querySelector('input')?.blur(); setQuery({search, type:'전체', field:searchField}) }}>
+          <input type="search" enterKeyHint="search" value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder={searchField==='전체' ? "코드·품명·제조사·구매처 검색 (17* = 17로 시작)" : `${searchField}(으)로 검색 (17* = 17로 시작)`}
+            className="flex-1 min-w-0 sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+          <button type="submit" className="px-3 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 whitespace-nowrap">🔍 검색</button>
+        </form>
         <select value={catFilter} onChange={e=>setCatFilter(e.target.value)}
           className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">
           <option value="전체">구분 전체</option>
