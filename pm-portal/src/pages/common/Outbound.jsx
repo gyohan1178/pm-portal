@@ -14,6 +14,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
+import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 
 async function fetchProjects(customerId) {
@@ -32,10 +33,21 @@ async function fetchActiveCPOs(customerId, projectId) {
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
   // 1,000줄에서 잘리지 않게 끝까지 · 읽기 실패는 0건이 아니라 오류로
-  return fetchAll(() => supabase.from('bom')
+  const rows = await fetchAll(() => supabase.from('bom')
     .select('*, items!bom_item_id_fkey(id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code,label_mode,pack_qty)')
     .eq('customer_id', customerId).eq('project_id', projectId).order('id'))
+  return withEffQty(rows)
 }
+// BOM 수량은 「바로 위 상위 1개당」이다 → 완제품 1대당으로 곱해 올린다 (v4.71.0)
+//   예전엔 줄 수량을 그냥 더해, 2개 들어가는 하위 조립품 밑의 부품(예: 110158840 의 500001934)이 1개로 잡혔다.
+//   BOM 화면 「대당」 · 부족자재 · 소요량과 같은 규칙(lib/bomSupply · DB pm_bom_eff): 상위 수량을 곱하고, 상위가 0(참조용)이면 하위도 0
+export function withEffQty(rows) {
+  const ordered = [...rows].sort((a, b) =>
+    (a.seq == null) - (b.seq == null) || (Number(a.seq) || 0) - (Number(b.seq) || 0) || String(a.id).localeCompare(String(b.id), undefined, { numeric: true }))
+  const tree = bomSupplyTree(ordered)
+  return rows.map(r => ({ ...r, eff_qty: tree.get(r.id)?.eff ?? (Number(r.qty_per_unit) || 0) }))
+}
+const effQ = (b) => Number(b.eff_qty ?? b.qty_per_unit) || 0
 // 출고 처리 — 고른 고객사·프로젝트도 같이 저장한다 (출고 현황에서 추적)
 //   DB 함수가 아직 옛 모양이면(SQL 적용 전) 예전 방식으로 한 번 더 — 출고 자체는 막지 않는다
 export async function callOutboundRpc(base, extra) {
@@ -162,7 +174,7 @@ export default function Outbound() {
       const q = { ...prev }
       itemIds.forEach(id => {
         if (make_type === 'normal') {
-          const per = bomItems.filter(b=>b.item_id===id).reduce((a,b)=>a+(b.qty_per_unit||0),0)
+          const per = bomItems.filter(b=>b.item_id===id).reduce((a,b)=>a+effQ(b),0)
           q[id] = per * (outUnits||1)
         } else {
           delete q[id]   // 하네스·현장재고·제외는 차감 대상 아님
@@ -307,7 +319,7 @@ export default function Outbound() {
 
   function autoFillFromBOM(qty) {
     const perItem = {}
-    bomItems.forEach(b=>{ if(b.item_id) perItem[b.item_id] = (perItem[b.item_id]||0) + (b.qty_per_unit||0) })
+    bomItems.forEach(b=>{ if(b.item_id) perItem[b.item_id] = (perItem[b.item_id]||0) + effQ(b) })
     const qtys = {}
     Object.entries(perItem).forEach(([id, per])=>{ if (mtOf(id)==='normal') qtys[id] = per * (qty||1) })
     setOutQtys(qtys)
@@ -316,7 +328,7 @@ export default function Outbound() {
   // BOM 로드되거나 대수 바뀌면 출고수량 자동계산 (제작구분 변경 시엔 리셋 안 함 — 수동 수정 보존)
   //   라벨 합산/개별 토글은 캐시(bomForOut)를 고쳐 쓰므로 배열이 새로 만들어진다.
   //   배열 자체를 보면 그때마다 손으로 고친 수량이 지워지므로, 품목·소요량이 바뀔 때만 다시 채운다.
-  const bomSig = bomItems.map(b => `${b.item_id}:${b.qty_per_unit}`).join('|')
+  const bomSig = bomItems.map(b => `${b.item_id}:${effQ(b)}`).join('|')
   useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomSig, outUnits, selCustomer, selProject])
 
   // 프로젝트 검색 필터
@@ -383,7 +395,7 @@ export default function Outbound() {
         label_mode: b.items?.label_mode ?? null,
         pack_qty: b.items?.pack_qty ?? null,
       }
-      merged[id].bom_qty += (b.qty_per_unit || 0)
+      merged[id].bom_qty += effQ(b)
     })
     const rows = Object.values(merged)
     const rank = { normal: 0, field_stock: 1, harness: 2, exclude: 3 }
