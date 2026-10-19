@@ -69,6 +69,29 @@ export async function addToCart(rows) {
   return { added: payload.length, skipped: rows.length - items.length }
 }
 
+// 품목 줄을 바로 담는다 — 소요량 조회에서 고른 품목 (v4.72.0)
+//   lines: [{ item_id, customer_id, qty, memo, vendor_id?, promise_date? }]
+//   구매처를 안 주면 품목 기본 구매처 · 단가는 최근 매입가로 채운다 (담기함에서 바꿀 수 있다)
+export async function addItemsToCart(lines) {
+  const items = (lines || []).filter((l) => l.item_id)
+  if (!items.length) throw new Error('담을 품목이 없습니다')
+  const ids = [...new Set(items.map((l) => l.item_id))]
+  const master = []
+  for (let i = 0; i < ids.length; i += 300) {
+    master.push(...(must(await supabase.from('items').select('id,vendor_id,purchase_price').in('id', ids.slice(i, i + 300)), '품목 조회') || []))
+  }
+  const mOf = new Map(master.map((m) => [m.id, m]))
+  const payload = items.map((l) => ({
+    request_id: null, item_id: l.item_id, customer_id: l.customer_id || null,
+    vendor_id: l.vendor_id || mOf.get(l.item_id)?.vendor_id || null,
+    qty: Number(l.qty) || 0, promise_date: l.promise_date || null,
+    unit_price: mOf.get(l.item_id)?.purchase_price ?? null,
+    memo: l.memo || null,
+  }))
+  must(await supabase.from('pm_po_cart').insert(payload), '발주 담기')
+  return { added: payload.length }
+}
+
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
 export default function PoCart({ open, onClose }) {
@@ -202,7 +225,7 @@ export default function PoCart({ open, onClose }) {
         {/* 목록 */}
         <div className="max-h-[60vh] overflow-auto">
           {isLoading ? <p className="p-8 text-center text-sm text-slate-400">불러오는 중…</p>
-            : !cart.length ? <p className="p-10 text-center text-sm text-slate-400">담아 둔 것이 없습니다. 자재요청에서 「🛒 발주 담기」로 담으세요.</p>
+            : !cart.length ? <p className="p-10 text-center text-sm text-slate-400">담아 둔 것이 없습니다. 자재요청 · 소요량 조회에서 「🛒 담기」로 담으세요.</p>
               : groups.map((g, gi) => (
                 <div key={gi} className="border-b border-slate-100 last:border-0">
                   <div className="px-5 py-2 bg-slate-50 flex items-center gap-2">

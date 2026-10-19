@@ -16,6 +16,7 @@ import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS, todayISO } from '..
 import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
 import { fetchVendors } from '../../lib/vendorsQuery'
+import PoCart, { addItemsToCart, fetchCart } from '../common/PoCart'
 
 // 입력 디바운스
 function useDebounced(val, ms=250) {
@@ -86,7 +87,7 @@ async function fetchProjects(customerId) {
 
 
 // 발주 만들기는 공용(lib/createPO)으로 — 규칙이 한 곳에 모인다
-function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
+function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName, memo }) {
   return createPurchaseOrders(items.map(item => ({
     customer_id: csId,
     item_id: item.item_id,
@@ -95,6 +96,7 @@ function createPOs({ items, csId, vendorId, promiseDate, poNumber, csName }) {
     qty_ordered: item.order_qty,
     unit_price: item.purchase_price ?? null,
     promise_date: promiseDate || null,
+    memo: memo || null,          // 어느 상위품번 몫인지 (v4.72.0)
   })), { poNumber: poNumber || 'auto', log: '소요량 역산에서 발주 생성', customerName: csName })
 }
 
@@ -336,8 +338,17 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   const meta = reqData?.meta || null
   const { data: vendors=[] } = useQuery({ queryKey:['vendors'], queryFn:fetchVendors })
 
+  // 발주 담기함 — 자재요청과 같은 담기함 (나만 보임). 여러 번 조회해 담아 두고 구매처별로 한꺼번에 등록 (v4.72.0)
+  const [cartOpen, setCartOpen] = useState(false)
+  const [carting, setCarting] = useState(false)
+  const { data: cartRows = [] } = useQuery({ queryKey: ['poCart'], queryFn: fetchCart, staleTime: 30 * 1000, enabled: !embedded })
+  const cartQtyOf = {}
+  cartRows.forEach(c => { cartQtyOf[c.item_id] = (cartQtyOf[c.item_id] || 0) + (Number(c.qty) || 0) })
+  // 발주 비고 — 어느 상위품번 몫인지 (예: 소요량 AX-110219638×2, AX-110158840×1)
+  const reqMemo = activeManual.length ? ('소요량 ' + activeManual.map(m => `${m.code}×${m.qty}`).join(', ')).slice(0, 200) : ''
+
   const orderMut = useMutation({
-    mutationFn:(items)=>createPOs({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber,csName:cs?.name}),
+    mutationFn:(items)=>createPOs({items,csId:cs?.id,vendorId:selVendor,promiseDate,poNumber,csName:cs?.name,memo:reqMemo}),
     onSuccess:(res)=>{
       refreshProcurement(qc)
       setMade(res)
@@ -360,7 +371,27 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   const vis = useVisibleRows(filtered, 200, [filtered.length, sortKey])
 
   const needOrder = filtered.filter(r=>r.order_need>0)
-  const checkedItems = filtered.filter(r=>checked[r.item_id]&&r.order_need>0)
+  // 충족 품목도 골라 추가 발주할 수 있다 (v4.72.0) — 수량은 직접 넣는다
+  const checkedItems = filtered.filter(r=>checked[r.item_id])
+  const qtyOf = (r) => Number(orderQtys[r.item_id] ?? r.order_need) || 0
+  const zeroQty = checkedItems.filter(r => !(qtyOf(r) > 0))
+  async function putInCart() {
+    if (!checkedItems.length) return
+    if (zeroQty.length) { toastError(`수량이 없는 품목 ${zeroQty.length}개 — 수량을 넣어 주세요 (${zeroQty.slice(0,3).map(r=>r.std_code).join(', ')}${zeroQty.length>3?' …':''})`); return }
+    const dup = checkedItems.filter(r => cartQtyOf[r.item_id] > 0)
+    if (dup.length && !window.confirm(`담기함에 이미 있는 품목 ${dup.length}개가 있습니다 (${dup.slice(0,3).map(r=>r.std_code).join(', ')}${dup.length>3?' …':''}).\n담으면 같은 품목 줄이 하나 더 생깁니다 — 담기함에서 합치거나 빼세요.\n\n계속 담을까요?`)) return
+    setCarting(true)
+    try {
+      const { added } = await addItemsToCart(checkedItems.map(r => ({
+        item_id: r.item_id, customer_id: cs?.id, qty: qtyOf(r), memo: reqMemo,
+        vendor_id: selVendor || null, promise_date: promiseDate || null,
+      })))
+      qc.invalidateQueries({ queryKey: ['poCart'] })
+      setChecked({}); setShowOrderForm(false); setOrderQtys({})
+      toastSuccess(`${added}개 품목을 담았습니다 — 🛒 담기함에서 구매처별로 묶어 등록하세요`)
+    } catch (e) { toastError('담기 실패: ' + e.message) }
+    finally { setCarting(false) }
+  }
   const allChecked = needOrder.length>0 && needOrder.every(r=>checked[r.item_id])
   const toggleCheck = (id,val)=>setChecked(p=>({...p,[id]:val}))
 
@@ -490,9 +521,15 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
             </div>
             <div className="flex-1"/>
             {checkedItems.length>0&&(
-              <button onClick={()=>{ const init={}; checkedItems.forEach(r=>{init[r.item_id]=r.order_need}); setOrderQtys(init); setShowOrderForm(true) }}
+              <button data-req-order onClick={()=>{ const init={}; checkedItems.forEach(r=>{init[r.item_id]=r.order_need>0?r.order_need:''}); setOrderQtys(init); setShowOrderForm(true) }}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-                📋 선택 {checkedItems.length}건 구매발주
+                📋 선택 {checkedItems.length}건 발주 · 담기
+              </button>
+            )}
+            {!embedded && (
+              <button data-req-cart onClick={()=>setCartOpen(true)} title="자재요청 · 소요량 조회에서 담아 둔 것 — 구매처별로 묶어 한꺼번에 발주 등록"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-indigo-50 hover:bg-indigo-100">
+                🛒 담기함{cartRows.length>0 && <span className="px-1.5 rounded-full bg-indigo-600 text-white text-[10px]">{cartRows.length}</span>}
               </button>
             )}
             <button onClick={resetWidths} className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1.5 border border-slate-200 rounded-lg">열 초기화</button>
@@ -505,7 +542,8 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
           {/* 구매발주 일괄 생성 폼 */}
           {showOrderForm&&(
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
-              <p className="text-xs font-bold text-slate-700">구매발주 일괄 생성 — {checkedItems.length}개 품목</p>
+              <p className="text-xs font-bold text-slate-700">선택 {checkedItems.length}개 품목 — 바로 발주하거나, 담기함에 담아 다른 조회분과 묶어 발주</p>
+              {reqMemo && <p className="text-[11px] text-slate-400">발주 비고에 남김: <span className="font-mono">{reqMemo}</span></p>}
               <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto max-h-48 overflow-y-auto">
                 <table className="w-full text-xs"><thead><tr className="bg-slate-50 border-b border-slate-200">
                   <th className="px-3 py-2 text-left font-bold text-slate-400">기준코드</th>
@@ -519,21 +557,21 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                     <tr key={r.item_id} className="border-b border-slate-100">
                       <td className="px-3 py-2 font-mono text-xs text-indigo-600">{r.std_code}</td>
                       <td className="px-3 py-2 text-slate-700">{r.name}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-red-600">{r.order_need}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-red-600">{r.order_need>0 ? r.order_need : <span data-extra className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600">충족 · 추가</span>}</td>
                       <td className="px-3 py-2 text-right">
-                        <input type="number" value={orderQtys[r.item_id] ?? r.order_need}
-                          onChange={e=>setOrderQtys(p=>({...p,[r.item_id]:Number(e.target.value)}))}
-                          className="w-20 px-2 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                        <input type="number" value={orderQtys[r.item_id] ?? r.order_need} placeholder="수량"
+                          onChange={e=>setOrderQtys(p=>({...p,[r.item_id]:e.target.value===''?'':Number(e.target.value)}))}
+                          className={`w-20 px-2 py-1 text-xs border rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 ${qtyOf(r)>0?'border-slate-200':'border-amber-300 bg-amber-50'}`}/>
                       </td>
                       <td className="px-3 py-2 text-right text-slate-500">{r.purchase_price?('₩'+Math.round(r.purchase_price).toLocaleString()):<span className="text-amber-500" title="단가 미등록">미등록</span>}</td>
-                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.purchase_price?('₩'+Math.round(r.purchase_price*(orderQtys[r.item_id] ?? r.order_need)).toLocaleString()):<span className="text-slate-300">-</span>}</td>
+                      <td className="px-3 py-2 text-right font-semibold text-slate-800">{r.purchase_price?('₩'+Math.round(r.purchase_price*qtyOf(r)).toLocaleString()):<span className="text-slate-300">-</span>}</td>
                     </tr>
                   ))}
                 </tbody></table>
               </div>
               <div className="flex justify-end items-baseline gap-2 text-xs">
                 <span className="font-bold text-slate-500">발주 총액</span>
-                <span className="text-base font-bold text-indigo-600">₩{Math.round(checkedItems.reduce((a,r)=>a+(r.purchase_price||0)*(orderQtys[r.item_id] ?? r.order_need),0)).toLocaleString()}</span>
+                <span className="text-base font-bold text-indigo-600">₩{Math.round(checkedItems.reduce((a,r)=>a+(r.purchase_price||0)*qtyOf(r),0)).toLocaleString()}</span>
                 {checkedItems.some(r=>!r.purchase_price)&&<span className="text-amber-500 font-semibold">· 단가 미등록 품목 제외</span>}
               </div>
               <div className="grid grid-cols-3 gap-3">
@@ -549,9 +587,19 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
               </div>
               <div className="flex gap-2 justify-end">
                 <button onClick={()=>setShowOrderForm(false)} className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
-                <button onClick={()=>orderMut.mutate(checkedItems.map(r=>({...r,order_qty:orderQtys[r.item_id] ?? r.order_need})))} disabled={orderMut.isPending}
+                {!embedded && (
+                  <button data-req-put-cart onClick={putInCart} disabled={carting || orderMut.isPending}
+                    title="담기함에 모아 두었다가 다른 상위품번 조회분과 함께 구매처별로 묶어 등록"
+                    className="px-4 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-50 disabled:opacity-40">
+                    {carting?'담는 중...':'🛒 담기함에 담기'}
+                  </button>
+                )}
+                <button onClick={()=>{
+                    if (zeroQty.length) { toastError(`수량이 없는 품목 ${zeroQty.length}개 — 수량을 넣어 주세요`); return }
+                    orderMut.mutate(checkedItems.map(r=>({...r,order_qty:qtyOf(r)})))
+                  }} disabled={orderMut.isPending || carting}
                   className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                  {orderMut.isPending?'생성 중...':'⚡ 구매발주 생성'}
+                  {orderMut.isPending?'생성 중...':'⚡ 바로 구매발주 생성'}
                 </button>
               </div>
             </div>
@@ -623,7 +671,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                   <thead>
                     <tr className="bg-slate-50 border-b border-slate-200">
                       <th className="px-3 py-2.5 w-8">
-                        <input type="checkbox" checked={allChecked} onChange={e=>{
+                        <input type="checkbox" checked={allChecked} title="발주필요 품목 전체 선택 · 충족 품목은 줄마다 골라 추가 발주" onChange={e=>{
                           if(e.target.checked){const n={};needOrder.forEach(r=>{n[r.item_id]=true});setChecked(n)}else setChecked({})
                         }} className="w-3.5 h-3.5 accent-indigo-600"/>
                       </th>
@@ -643,7 +691,9 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                     ) : vis.shown.map(r=>(
                       <tr key={r.item_id} className={`border-b border-slate-100 hover:bg-slate-50 ${r.order_need>0?'bg-red-50/10':''}`}>
                         <td className="px-3 py-2">
-                          {r.order_need>0&&<input type="checkbox" checked={!!checked[r.item_id]} onChange={e=>toggleCheck(r.item_id,e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600"/>}
+                          <input type="checkbox" data-req-check={r.std_code} checked={!!checked[r.item_id]} onChange={e=>toggleCheck(r.item_id,e.target.checked)}
+                            title={r.order_need>0?undefined:'충족 — 골라서 추가 발주할 수 있습니다'}
+                            className={`w-3.5 h-3.5 accent-indigo-600 ${r.order_need>0?'':'opacity-50 hover:opacity-100 checked:opacity-100'}`}/>
                         </td>
                         <td className="px-2 py-2 overflow-hidden">
                           <div className="font-mono text-xs text-indigo-600 truncate">{r.std_code}</div>
@@ -665,7 +715,9 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                         <td className="px-2 py-2 text-right font-bold text-slate-900">{r.total_need}</td>
                         <td className="px-2 py-2 text-right text-slate-600">{r.stock}</td>
                         <td className="px-2 py-2 text-right">{r.pending>0?<span className="text-emerald-600 font-semibold">+{r.pending}</span>:<span className="text-slate-300">-</span>}</td>
-                        <td className="px-2 py-2 text-right font-bold">{r.order_need>0?<span className="text-red-600">{r.order_need} {r.unit}</span>:<span className="text-emerald-600">충족</span>}</td>
+                        <td className="px-2 py-2 text-right font-bold">{r.order_need>0?<span className="text-red-600">{r.order_need} {r.unit}</span>:<span className="text-emerald-600">충족</span>}
+                          {cartQtyOf[r.item_id]>0 && <div data-in-cart className="text-[10px] font-semibold text-indigo-500" title="발주 담기함에 담아 둔 수량 (아직 발주 전 — 발주필요 계산에는 안 들어감)">🛒 {cartQtyOf[r.item_id]} 담김</div>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -673,12 +725,13 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                 <MoreRows {...vis} />
               </div>
             </div>
-            <p className="text-xs text-slate-400">💡 헤더 클릭 → 정렬(다시 클릭 시 오름/내림 전환) · 헤더 오른쪽 끝 드래그 → 열 너비 조절 · 구분은 DB 등록값 기준</p>
+            <p className="text-xs text-slate-400">💡 헤더 클릭 → 정렬(다시 클릭 시 오름/내림 전환) · 헤더 오른쪽 끝 드래그 → 열 너비 조절 · 구분은 DB 등록값 기준 · 충족 품목도 체크해 추가 발주 · 여러 상위품번은 한 번에 입력해 조회해야 재고를 나눠 계산합니다</p>
             </>
           )}
         </>
       )}
 
+      {!embedded && <PoCart open={cartOpen} onClose={()=>setCartOpen(false)} />}
       {activeManual.length===0&&!submitted&&(
         <div className="text-center py-16 text-slate-400">
           <p className="text-2xl mb-2">📋</p>
