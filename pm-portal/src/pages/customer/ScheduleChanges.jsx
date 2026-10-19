@@ -2,7 +2,7 @@ import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import { MAIN_PNS } from '../production/mainPns'
+import { isMainPn, useMainPns } from '../production/mainPns'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 
@@ -22,8 +22,9 @@ export default function ScheduleChanges() {
   const [open, setOpen] = useState(null)   // 이력을 펼친 행
   const [pdOnly, setPdOnly] = useState(false)   // 생산관리 대상(PD BOX)만
 
-  // 생산관리 대상 판별 — std_code 는 'AX-110153030' 형태라 접두를 벗겨 대조한다
-  const isPdBox = (code) => MAIN_PNS.has(String(code || '').replace(/^AX-/i, '').trim())
+  // 생산관리 대상 판별 — std_code 는 'AX-110153030' 형태 (isMainPn 이 접두를 벗긴다 · 화면에서 바꾼 값 포함)
+  useMainPns()
+  const isPdBox = (code) => isMainPn(code)
 
   const { data: allRows = [], isLoading } = useQuery({
     queryKey: ['scheduleChanges', days],

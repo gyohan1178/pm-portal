@@ -2,6 +2,15 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.56.0',
+    date: '2026-10-14',
+    changes: [
+      '★ 고객사 PO: HOT · RSIN · RSOU 등 Plan Exc 가 PO 올리기 때 바뀌면 그 줄 「변경 이력」에 남습니다 (예: 빈칸 → HOT · 10/21). 지금까지는 값만 덮어써서 언제 붙었는지 알 수 없었습니다',
+      '목록의 HOT 배지 옆에 언제부터인지 표시 — 「10/21~」(그날 올린 PO 에서 HOT 이 붙음, 마우스를 올리면 RSIN → HOT 처럼 이전 값) · 「기록 전」(10/14 기록 시작 전부터 붙어 있던 것)',
+      'PO 올리기 분석 화면: 「Plan Exc n줄을 맞추고 이력에 남깁니다 — HOT 새로 n · HOT 풀림 n」. 변경 이력 창에는 「Plan Exc (HOT 등) 변경」으로 나옵니다',
+    ],
+  },
+  {
     version: 'v4.55.0',
     date: '2026-10-14',
     changes: [

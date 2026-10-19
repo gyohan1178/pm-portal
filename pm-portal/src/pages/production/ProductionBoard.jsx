@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
-import { MAIN_PNS, isMainRow } from './mainPns'
+import { isMainPn, isMainRow, useMainPns } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
 import { todayISO, ymdKST } from '../../lib/utils'
@@ -89,6 +89,7 @@ export default function ProductionBoard() {
     else document.exitFullscreen?.()
   }
 
+  const { ver: mainVer } = useMainPns()   // 주요 관리 품번 (생산관리 › 모델별에서 바꿈)
   const { data, dataUpdatedAt, error } = useQuery({
     queryKey: ['prodBoard2'], queryFn: fetchBoard,
     refetchInterval: 5 * 60 * 1000, refetchIntervalInBackground: true,
@@ -102,10 +103,10 @@ export default function ProductionBoard() {
   })
   // 납기 변경 — 전주 월요일 기준 납기가 바뀐 PD BOX 품번
   const { data: schChg = [], error: schErr } = useQuery({
-    queryKey: ['boardChanges'],
+    queryKey: ['boardChanges', mainVer],
     queryFn: async () => {
       const d = must(await supabase.rpc('pm_schedule_changes', { p_days: 30 }), '납기 변경 조회') || []
-      return d.filter((c) => MAIN_PNS.has(String(c.std_code || '').replace(/^AX-/i, '').trim()))
+      return d.filter((c) => isMainPn(c.std_code))
     },
     staleTime: 5 * 60 * 1000, refetchInterval: 5 * 60 * 1000,
   })
@@ -139,7 +140,7 @@ export default function ProductionBoard() {
       ship: `출하 대기 ${lanes[4].list.length}대`,
     }
     return { hot: shown.filter((c) => c._hot).length, lanes, lateElec, missJobs, missCount: missJobs.reduce((a, c) => a + c._miss.length, 0), total: shown.length, next }
-  }, [rows, meta])
+  }, [rows, meta, mainVer])
 
   const pulled = schChg.filter((c) => c.to_date && c.from_date && c.to_date < c.from_date)
 

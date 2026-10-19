@@ -5,7 +5,7 @@ import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
 import { toastError } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
-import { isMainRow } from './mainPns'
+import { isMainRow, fetchMainOverrides } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
 import { QR_STEPS, doneFromRow, nextStep, parseQr, scanRevCheck, revInfo, md } from '../../lib/prodFlow'
@@ -30,6 +30,8 @@ async function fetchDemoRows() {
   const prod = await fetchAll(() => supabase.from('production')
     .select('id,pn,hogi,name,status,req_date,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,missing_parts,rev,brev,ccn,po_id,customer_code,company')
     .eq('customer_code', 'AX').neq('status', '완료').order('id'))
+  // 주요 관리 품번 — 화면에서 바꾼 값까지 (실패해도 기본 목록으로)
+  await fetchMainOverrides().catch(() => null)
   const main = prod.filter((r) => isMainRow(r.pn, r.customer_code) && !isTpRow(r))
   const ids = [...new Set(main.map((r) => r.po_id).filter(Boolean))]
   const po = {}

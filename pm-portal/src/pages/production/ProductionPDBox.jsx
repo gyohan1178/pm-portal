@@ -3,7 +3,7 @@ import PlanBadge from '../../components/PlanBadge'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
-import { isMainPn, isMainRow, MAIN_PNS } from './mainPns'
+import { isMainPn, isMainRow, useMainPns, saveMainPn, isOverridden, DEFAULT_MAIN_PNS } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -195,6 +195,26 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     } catch (err) { toastError('파일을 읽지 못했습니다: ' + err.message) }
   }
   const qc = useQueryClient()
+  // 주요 관리 / Sub Assy 구분 — 모델별에서 바꾼다 (v4.73.0)
+  const { ver: mainVer, missing: mainMissing } = useMainPns()
+  const mainMut = useMutation({
+    mutationFn: ({ pn, toMain }) => saveMainPn(pn, toMain),
+    onSuccess: (_, { pn, toMain }) => {
+      qc.invalidateQueries({ queryKey: ['mainPns'] })
+      qc.invalidateQueries({ queryKey: ['qrDemoRows'] })
+      toastSuccess(`${pn} → ${toMain ? '⭐ 주요 관리' : 'Sub Assy'}`)
+    },
+    onError: (e) => toastError('구분 저장 실패: ' + e.message),
+  })
+  function toggleMain(m) {
+    if (mainMissing) { toastError('먼저 SQL(생산관리_주요품번_설정_261019.sql)을 실행해 주세요'); return }
+    const toMain = !m.main
+    const msg = toMain
+      ? `${m.rawPn} 을 ⭐ 주요 관리로 옮길까요?\n가공물·하네스·전장 일정 체크와 하네스 우선순위 · 생산 전광판에 들어갑니다.`
+      : `${m.rawPn} 을 Sub Assy 로 옮길까요?\n일정 체크 · 하네스 우선순위 · 생산 전광판에서 빠지고 진행상태만 봅니다.`
+    if (!window.confirm(msg)) return
+    mainMut.mutate({ pn: m.rawPn, toMain })
+  }
   // production.vm 칸이 있는가 (SQL pm_vm_production_261007 실행 여부) — 없으면 자재 칸 · VM 진행 묶음을 숨긴다
   const { data: vmReady = false } = useQuery({
     queryKey: ['vmReady'], enabled: isVM, staleTime: 300000,
@@ -626,7 +646,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       // 3rd party 줄(「95EA」 한 줄)은 호기 1대가 아니다 — 주요 품번 집계에 섞지 않고 업체 이름을 붙여 따로 (2026-10-08)
       const tp = isTpRow(r)
       const k = tp ? `${r.pn || '?'} (${r.company})` : (r.pn || '?')
-      g[k] ??= { pn: k, name: r.name, main: !tp && isMainRow(r.pn || '?', csCode), total: 0, done: 0, making: 0, waiting: 0, next: null }
+      g[k] ??= { pn: k, rawPn: r.pn || '', tp, name: r.name, main: !tp && isMainRow(r.pn || '?', csCode), total: 0, done: 0, making: 0, waiting: 0, next: null }
       g[k].total++
       if (r.status === '완료') g[k].done++
       // 제작대기는 자재만 나간 상태라 아직 만들기 전이다. 대기로 센다.
@@ -638,7 +658,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     })
     return Object.values(g).sort((a, b) =>
       (b.main - a.main) || String(a.next || '9999').localeCompare(String(b.next || '9999')))
-  }, [rows])
+  }, [rows, mainVer])
 
   const filtered = useMemo(() => {
     let r = rows.filter(x => showDone || x.status !== '완료')
@@ -674,7 +694,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       out.push(x)
     }
     return out
-  }, [rows, showDone, dq, mainTab, isED, isCSK, edF, edRules])
+  }, [rows, showDone, dq, mainTab, isED, isCSK, edF, edRules, mainVer])
 
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
@@ -686,7 +706,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (qw) { g[qw] ??= { wk: qw, elecMd: 0, elecCnt: 0, qcCnt: 0 }; g[qw].qcCnt++ }
     })
     return Object.values(g).sort((a, b) => a.wk.localeCompare(b.wk))
-  }, [rows, mdMap])
+  }, [rows, mdMap, mainVer])
 
   return (
     <>
@@ -871,6 +891,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <thead className="bg-slate-50 text-slate-400 border-b border-slate-200">
                   <tr>
                     <th className="px-3 py-2 text-left font-bold">모델 (품번)</th>
+                    {csCode === 'AX' && <th className="px-3 py-2 text-center font-bold" title="누르면 ⭐ 주요 관리 ↔ Sub Assy 를 바꿉니다">구분</th>}
                     <th className="px-3 py-2 text-left font-bold">품명</th>
                     <th className="px-3 py-2 text-center font-bold">진행률</th>
                     <th className="px-3 py-2 text-center font-bold">완료</th>
@@ -887,6 +908,17 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                       <td className="px-3 py-2 font-mono font-bold text-slate-700">
                         {m.pn}{!m.main && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold">sub</span>}
                       </td>
+                      {csCode === 'AX' && (
+                        <td data-no-select className="px-3 py-2 text-center" onClick={e => e.stopPropagation()}>
+                          {m.tp ? <span className="text-[10px] text-slate-300" title="3rd party 줄은 항상 Sub Assy">3rd party</span> : (
+                            <button data-main-toggle={m.rawPn} onClick={() => toggleMain(m)} disabled={mainMut.isPending}
+                              title={(m.main ? '누르면 Sub Assy 로' : '누르면 ⭐ 주요 관리로') + (isOverridden(m.rawPn) ? ' · 화면에서 바꾼 값' : ' · 기본 목록')}
+                              className={`px-2 py-0.5 rounded-full text-[11px] font-bold border transition-colors disabled:opacity-40 ${m.main ? 'bg-indigo-50 text-indigo-700 border-indigo-200 hover:bg-indigo-100' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-100'}`}>
+                              {m.main ? '⭐ 주요' : 'Sub'}{isOverridden(m.rawPn) && (DEFAULT_MAIN_PNS.has(m.rawPn) !== m.main) && <span className="ml-0.5 text-[9px] text-amber-500">●</span>}
+                            </button>
+                          )}
+                        </td>
+                      )}
                       <td className="px-3 py-2 text-slate-600 text-left max-w-[220px] overflow-hidden text-ellipsis whitespace-nowrap">{m.name}</td>
                       <td className="px-3 py-2 w-40">
                         <div className="flex items-center gap-1.5">

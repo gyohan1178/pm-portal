@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { isMainRow } from './mainPns'
+import { isMainRow, useMainPns } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -93,7 +93,8 @@ function arrivalStatus(b) {
 export default function ProductionHarness({ rows, csCode }) {
   const qc = useQueryClient()
   const today = useMemo(() => new Date().setHours(0, 0, 0, 0), [])
-  const bundles = useMemo(() => buildHarnessBundles(rows, today), [rows, today])
+  const { ver: mainVer } = useMainPns()   // 주요 관리 품번이 바뀌면 다시 묶는다
+  const bundles = useMemo(() => buildHarnessBundles(rows, today), [rows, today, mainVer])
 
   const summary = useMemo(() => ({
     overdue: bundles.filter(b => b.minReq < 0).length,        // 납품 지난 묶음
