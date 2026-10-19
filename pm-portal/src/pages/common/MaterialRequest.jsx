@@ -11,6 +11,8 @@ import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
 import { ilikeAny } from '../../lib/pgFilter'
+import { cutLabel } from '../../lib/requestCut'
+import { downloadRequestExcel } from '../../lib/requestExcel'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -68,14 +70,8 @@ const emptyRow = () => ({
   qty: '', unit: 'EA', reason: '', cut_mm: '', strip_l_mm: '', strip_r_mm: '',
 })
 
-// 절단 요청 내용 한 줄 — 「✂ 1,200mm · 탈피 좌 10 / 우 15」 (2026-09-30)
-const mmTxt = v => Number(v).toLocaleString('ko-KR')
-export function cutLabel(r, { icon = true } = {}) {
-  if (!r || r.req_kind !== '절단' || !(Number(r.cut_mm) > 0)) return ''
-  const L = Number(r.strip_l_mm) > 0, R = Number(r.strip_r_mm) > 0
-  const strip = L || R ? ` · 탈피 좌 ${L ? mmTxt(r.strip_l_mm) : '-'} / 우 ${R ? mmTxt(r.strip_r_mm) : '-'}` : ''
-  return `${icon ? '✂ ' : ''}${mmTxt(r.cut_mm)}mm${strip}`
-}
+// 절단 요청 내용 한 줄 — 엑셀 내려받기에서도 쓰려고 lib/requestCut.js 로 옮겼다 (v4.74.0)
+export { cutLabel }
 
 // 자재 요청.
 //
@@ -605,6 +601,33 @@ export default function MaterialRequest() {
   // 요청서 출력.
   //   선택한 요청을 종이로 뽑아 창고를 돌 때 쓴다.
   //   위치순으로 나오고 확인칸이 있어 꺼내면서 표시할 수 있다.
+  // 목록 엑셀 — 지금 화면에 걸린 조건 그대로 · 출력용 양식 (v4.74.0)
+  //   진행 중이면 구간(지금 볼 것 → …)과 처리자 · 요약 지표 조건까지. 접어 둔 구간도 포함한다.
+  const [listXlBusy, setListXlBusy] = useState(false)
+  async function exportList() {
+    const rowsAll = liveTab ? reqView.shown.flatMap(g => g.items) : list
+    if (!rowsAll.length) { toastError('내보낼 요청이 없습니다'); return }
+    setListXlBusy(true)
+    try {
+      // 보관 위치 — 창고에서 들고 다니며 꺼내기 좋게
+      const ids = [...new Set(rowsAll.map(r => r.item_id).filter(Boolean))]
+      const locOf = new Map()
+      for (let i = 0; i < ids.length; i += 300) {
+        const { data, error } = await supabase.from('inventory').select('item_id,location').in('item_id', ids.slice(i, i + 300))
+        if (error) break            // 위치를 못 읽어도 엑셀은 나간다 (위치 칸만 빈다)
+        ;(data || []).forEach(x => { if (x.location) locOf.set(x.item_id, x.location) })
+      }
+      const statusL = { null: '진행 중', 완료: '완료', 반려: '반려', 전체: '전체' }[String(filter)] || '진행 중'
+      const KPI_L = { overdue: '필요일 지남', readyLate: '불출 예정일 지남', unassigned: '미배정', urgent: '긴급' }
+      const whoL = !liveTab || who === null ? '' : who === '__me' ? '내 담당' : who === '__none' ? '미배정' : who === '__etc' ? '그 외 처리자' : `처리자 ${who}`
+      const cond = [statusL, deptFilter || '', mine ? '내 요청만' : '', whoL, liveTab && kpi ? KPI_L[kpi] : ''].filter(Boolean).join(' · ')
+      const d = new Date(), stamp = `${String(d.getFullYear()).slice(2)}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`
+      await downloadRequestExcel({ view: reqView, live: liveTab, cond, locOf }, `자재요청_${statusL.replace(/\s/g, '')}_${stamp}.xlsx`)
+      toastSuccess(`요청 ${n(liveTab ? reqView.shown.length : reqView.groups.length)}건 · 품목 ${n(rowsAll.length)}줄 내려받음`)
+    } catch (e) { toastError('엑셀 내려받기 실패: ' + e.message) }
+    finally { setListXlBusy(false) }
+  }
+
   async function printRequest() {
     if (!checked.length) { toastError('출력할 요청을 선택하세요'); return }
     try {
@@ -1519,6 +1542,11 @@ export default function MaterialRequest() {
               ))}
             </div>
 
+            <button data-req-xl onClick={exportList} disabled={listXlBusy || !list.length}
+              title="지금 화면 조건 그대로(상태 · 부서 · 내 요청 · 처리자 · 지표) 출력용 엑셀로 내려받습니다 — A4 가로 · 요청별 묶음 · 위치 · 확인칸"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap disabled:opacity-40">
+              {listXlBusy ? '…' : '📥 엑셀'}
+            </button>
             <button onClick={() => setTab('hist')}
               title="지난 요청을 기간·검색으로 찾고 엑셀로 내려받습니다"
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
