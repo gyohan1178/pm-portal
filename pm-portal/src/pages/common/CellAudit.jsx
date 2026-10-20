@@ -12,10 +12,13 @@ import { refreshProcurement } from '../../lib/refresh'
 import { useCycleBase } from '../../hooks/useCycleCount'
 import { ownerCells, checkMap, todayPlan, ownerOfLoc, DAILY, normLoc } from '../../lib/cycleCount'
 import { fetchAuxAt, fetchAuxByItems, registerAux, releaseAux } from '../../lib/cellAux'
+import { fetchUnitWeights, saveUnitWeight, fmtW } from '../../lib/unitWeight'
+import WeightCount from '../../components/WeightCount'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const NO_AUX = { ok: false, rows: [] }   // 기본값은 바깥에 — 렌더마다 새 객체면 아래 효과가 계속 돈다
 const NO_MAP = new Map()
+const NO_W = { ok: false, map: new Map() }
 
 // QR 을 스캔하면 열리는 화면. 폰에서 쓰므로 글자와 입력창을 크게 둔다.
 //
@@ -27,6 +30,7 @@ const NO_MAP = new Map()
 //   4. 보조 칸 (v4.79.0) — 본 칸에 자리가 모자라 같은 품목을 다른 칸에 둘 때
 //      보조 칸에서 「🔗 보조 칸 등록」 → 본 칸 QR → 품목 고르기. 칸마다 그 칸 것만 세고, 합계(재고)에 반영된다.
 //      본 칸 장부 = 합계 − 보조 칸 수량들
+//   5. ⚖ 무게로 세기 (v4.80.0) — 벌크 품목은 계수저울 무게 ÷ 개당 무게(items.unit_weight)로 수량을 채운다
 export default function CellAudit() {
   const { loc } = useParams()
   const nav = useNavigate()
@@ -47,6 +51,7 @@ export default function CellAudit() {
   const searchTimer = useRef(null)
   // 보조 칸 등록 — null | { stage:'scan' } | { stage:'pick', mainLoc, items, sel:{}, qty:{} }
   const [auxReg, setAuxReg] = useState(null)
+  const [wOpen, setWOpen] = useState(null)   // 무게로 세기 펼친 줄 (entry key)
 
   // 위치 글자 맞추기 — 손으로 'n1-1-1' 을 넣어도 'N1-01-1' 로 (v4.79.1)
   //   예전엔 대문자만 바꿔 'N1-1-1' 칸으로 열려, 그 칸 품목이 안 보이고 센 기록도 다른 칸으로 남았다
@@ -98,6 +103,21 @@ export default function CellAudit() {
     })),
   ]
   const keyOfItem = new Map(entries.map(e => [String(e.it.item_id), e.key]))
+
+  // 개당 무게 (v4.80.0) — 칸이 없으면(DB 설정 전) 빈 값
+  const allIds = entries.map(e => e.it.item_id)
+  const { data: uw = NO_W } = useQuery({
+    queryKey: ['unitWeights', location, allIds.join(',')], enabled: allIds.length > 0,
+    queryFn: () => fetchUnitWeights(allIds), staleTime: 60 * 1000,
+  })
+  async function saveUnitOf(it, g) {
+    try {
+      const v = await saveUnitWeight(it.item_id, g)
+      logActivity('update', 'items', it.std_code, `개당 무게 ${v} g`)
+      toastSuccess(`${it.std_code} 개당 ${v} g 저장`)
+      qc.invalidateQueries({ queryKey: ['unitWeights'] })
+    } catch (er) { toastError('개당 무게 저장 실패: ' + er.message); throw er }
+  }
 
   // 오늘 이 칸을 이미 실사했는지
   const { data: prev = [] } = useQuery({
@@ -286,7 +306,7 @@ export default function CellAudit() {
     } finally { setBusy(false) }
   }
 
-  const goCell = (l) => { setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }
+  const goCell = (l) => { setCounts({}); setMemos({}); setSaved(false); setWOpen(null); nav(`/cell/${l}`) }
 
   // 전부 장부와 같다고 표시 (차이 없을 때 빠르게)
   const fillAllSame = () => {
@@ -607,6 +627,12 @@ export default function CellAudit() {
                       </div>
                     )}
                   </div>
+                  {wOpen === e.key && (
+                    <WeightCount key={e.key} unit={uw.map.get(it.item_id) || null} canEdit={canEdit}
+                      onUse={(q) => { setCounts(p => ({ ...p, [e.key]: String(q) })); setWOpen(null) }}
+                      onSaveUnit={(g) => saveUnitOf(it, g)}
+                      onClose={() => setWOpen(null)} />
+                  )}
                   {(isAux || e.aux?.length > 0) && (
                     <p data-total-line className="text-[11px] text-slate-500 mt-1.5">
                       재고 합계 {n(e.total)}{after !== null && after !== e.total ? <> → <b className="text-slate-800">{n(after)}</b></> : ''}
@@ -623,6 +649,12 @@ export default function CellAudit() {
                   )}
                   <div className="flex items-center gap-2 mt-1">
                     <span className="text-[10px] text-slate-400">{it.unit}</span>
+                    {uw.map.has(it.item_id) && <span data-unit-w className="text-[10px] text-slate-400">· 개당 {fmtW(uw.map.get(it.item_id))} g</span>}
+                    {wOpen !== e.key && (
+                      <button type="button" data-weight-open onClick={() => setWOpen(e.key)}
+                        title="계수저울 — 전체 무게 ÷ 개당 무게로 수량을 채웁니다"
+                        className="text-[10px] px-2 py-0.5 rounded border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">⚖ 무게로</button>
+                    )}
                     {isAux ? (
                       <button data-aux-release onClick={() => auxRelease(e)} disabled={!canEdit}
                         title="다 썼거나 본 칸으로 옮겼을 때 — 이 칸 수량은 본 칸에 있는 것으로 봅니다"

@@ -9,7 +9,7 @@ import { ResizableTable } from '../../components/ResizableTable'
 import VendorPicker from '../../components/VendorPicker'
 import * as XLSX from 'xlsx'
 
-const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false }
+const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
 // JS코드 prefix → 세부 분류명
 const CAT_LIST = ['케이블','와이어','커넥터','차단기','전장','판금','어셈블리','하네스','하드웨어','기타']
@@ -162,6 +162,12 @@ export default function Items() {
         stock_managed: data.stock_managed !== false,
         proc_order: !!data.proc_order,
       }
+      // 개당 무게(g) — 바꿨을 때만 보낸다 (DB 설정 전에도 다른 칸 저장은 그대로 되게)
+      const uw = String(data.unit_weight ?? '').trim()
+      if (uw !== String(data._uw0 ?? '').trim()) {
+        if (uw !== '' && !(Number(uw) > 0)) throw new Error('개당 무게는 0보다 큰 숫자(g)로 넣어 주세요')
+        payload.unit_weight = uw === '' ? null : Math.round(Number(uw) * 10000) / 10000
+      }
       if (editId) {
         const { error } = await supabase.from('items').update(payload).eq('id', editId)
         if (error) throw error
@@ -247,6 +253,7 @@ export default function Items() {
       manufacturer: item.manufacturer||'', manufacturer_code: item.manufacturer_code||'',
       purchase_price: item.purchase_price||'', dept: item.dept||'',
       vendor_id: item.vendor_id||'', memo: item.memo||'', prod_managed: !!item.prod_managed, stock_managed: item.stock_managed !== false,
+      unit_weight: item.unit_weight ?? '', _uw0: item.unit_weight ?? '',
     })
     setEditId(item.id); setShowForm(true)
   }
@@ -310,6 +317,7 @@ export default function Items() {
       '품명':item.name, '구분':catOf(item), '자재구분':item.type, '단위':item.unit,
       'LT(주)':item.lt_weeks, '안전재고':item.safety_stock, '매입가':item.purchase_price||'',
       '관리부서':item.dept||'', '재고관리':item.stock_managed!==false?'관리':'제외', '규격':item.spec||'', '구매처':item.vendors?.name||'',
+      '개당무게(g)':item.unit_weight ?? '',
     }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), '기준코드DB')
@@ -534,6 +542,12 @@ export default function Items() {
               <label className="block text-xs font-bold text-slate-500 mb-1">매입가</label>
               <input type="number" value={form.purchase_price} onChange={f('purchase_price')} placeholder="단가"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">개당 무게 (g)</label>
+              <input type="number" inputMode="decimal" value={form.unit_weight ?? ''} onChange={f('unit_weight')} placeholder="예) 0.35"
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+              <p className="text-[10px] text-slate-400 mt-0.5">계수저울 실사용 · 칸 실사 「⚖ 무게로」에서도 잴 수 있음</p>
             </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">관리부서</label>
