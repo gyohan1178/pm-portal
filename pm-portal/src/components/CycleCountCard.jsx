@@ -47,7 +47,7 @@ export default function CycleCountCard({ inv = [], onScan }) {
   const mine = who ? byOwner.get(who) : null
   const isMe = who && who === myName
   const target = isMe ? DAILY + extra * DAILY : DAILY
-  const plan = useMemo(() => (mine ? todayPlan(mine.cells, cm, today, target) : null), [mine, cm, today, target])
+  const plan = useMemo(() => (mine ? todayPlan(mine.cells, cm, today, target, mine.late) : null), [mine, cm, today, target])
   const rs = useMemo(() => (mine ? roundStats(mine.cells, cm) : null), [mine, cm])
   const wl = useMemo(() => (mine ? workload(mine.cells, byLoc) : null), [mine, byLoc])
 
@@ -98,7 +98,7 @@ export default function CycleCountCard({ inv = [], onScan }) {
           <p className="text-[11px] text-indigo-600 font-bold">오늘 실사 · {dayTxt}</p>
           <h3 className="text-base font-bold text-slate-900">
             📋 {who ? `${who}${isMe ? '' : ' 님'} 담당` : '순환 실사'}
-            {mine && <span className="ml-2 text-xs font-normal text-slate-400">{rackRanges(mine.racks, base.racks)} · {n(wl.cells)}칸 · 품목 {n(wl.items)}개</span>}
+            {mine && <span className="ml-2 text-xs font-normal text-slate-400">{rackRanges(mine.racks.filter(c => !mine.lateRacks.includes(c)), base.racks)}{mine.lateRacks.length ? ` · ${mine.lateRacks.join(' · ')}(맨 뒤)` : ''} · {n(wl.cells)}칸 · 품목 {n(wl.items)}개</span>}
           </h3>
         </div>
         <div className="ml-auto flex items-center gap-2">
@@ -149,7 +149,7 @@ export default function CycleCountCard({ inv = [], onScan }) {
               <div className="flex items-center gap-2 flex-wrap">
                 <p className="text-[11px] text-slate-400">
                   {goalMet ? <b className="text-emerald-600">오늘 목표 끝 ✓ </b> : null}
-                  순서: 담당 렉 앞에서부터 · 안 센 칸 · 오래 안 센 칸 먼저 · 빈 칸도 포함 · 목록에 없는 칸을 QR 로 세도 오늘 센 칸에 들어갑니다
+                  순서: 담당 렉 앞에서부터 · 안 센 칸 · 오래 안 센 칸 먼저 · 빈 칸도 포함 · 「맨 뒤」 렉(불용재고 등)은 한 바퀴 끝에 · 목록에 없는 칸을 QR 로 세도 오늘 센 칸에 들어갑니다
                 </p>
                 {isMe && (
                   <div className="ml-auto flex items-center gap-1.5">
@@ -169,7 +169,7 @@ export default function CycleCountCard({ inv = [], onScan }) {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {names.map((nm) => {
               const o = byOwner.get(nm)
-              const p = todayPlan(o.cells, cm, today, DAILY)
+              const p = todayPlan(o.cells, cm, today, DAILY, o.late)
               const r = roundStats(o.cells, cm)
               const w = workload(o.cells, byLoc)
               const on = nm === who

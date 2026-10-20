@@ -2,7 +2,9 @@
 //
 //   · 렉마다 담당자가 있다 (pm_rack_owner). 담당 렉의 칸 전부(빈 칸 포함)를 차례로 돈다.
 //   · 칸 순서 = 렉 정렬순 → 칸(1,2,3…) → 층(1,2,3…)  예) J1-01-1, J1-01-2, J1-01-3, J1-02-1 …
-//   · 오늘 셀 칸 = 한 번도 안 센 칸 먼저 → 마지막으로 센 날이 오래된 칸 → 같으면 칸 순서 (붙어 있는 칸끼리)
+//   · 오늘 셀 칸 = 이번 바퀴에서 아직 안 센 칸 먼저(센 횟수 적은 칸) → 「맨 뒤」 렉(불용재고 등)은 그 바퀴 끝에
+//                  → 마지막으로 센 날이 오래된 칸 → 같으면 칸 순서 (붙어 있는 칸끼리)
+//   · 렉 담당 표의 late=true 렉(예: G2 불용재고)은 칸 순서에서도 맨 뒤 (v4.77.2)
 //   · 하루 기본 5칸. 「＋5칸 더」로 늘릴 수 있고, 목록 밖의 칸을 QR 로 세도 오늘 센 칸에 들어간다.
 //   · 한 바퀴 = 담당 칸을 모두 한 번씩 센 것. 진행률 = 이번 바퀴에서 센 칸 / 담당 칸.
 
@@ -39,17 +41,23 @@ export function rackRanges(codes, racks) {
 // 담당자별 칸 목록 (칸 순서대로)
 //   racks: pm_rack [{code, rows_cnt, levels_cnt, sort_no}] · owners: pm_rack_owner [{rack_code, owner_name}]
 export function ownerCells(racks, owners) {
-  const who = new Map((owners || []).map((o) => [String(o.rack_code).toUpperCase(), o.owner_name]))
-  const sorted = [...(racks || [])].sort((a, b) => (Number(a.sort_no) || 0) - (Number(b.sort_no) || 0))
-  const out = new Map()   // name → { racks:[code], cells:[loc] }
+  const who = new Map((owners || []).map((o) => [String(o.rack_code).toUpperCase(), o]))
+  const isLate = (r) => !!who.get(String(r.code).toUpperCase())?.late
+  const sorted = [...(racks || [])].sort((a, b) => (isLate(a) - isLate(b)) || (Number(a.sort_no) || 0) - (Number(b.sort_no) || 0))
+  const out = new Map()   // name → { racks:[code], cells:[loc], late:Set(loc), lateRacks:[code] }
   for (const r of sorted) {
-    const name = who.get(String(r.code).toUpperCase())
+    const name = who.get(String(r.code).toUpperCase())?.owner_name
     if (!name) continue
-    if (!out.has(name)) out.set(name, { racks: [], cells: [] })
+    if (!out.has(name)) out.set(name, { racks: [], cells: [], late: new Set(), lateRacks: [] })
     const o = out.get(name)
     o.racks.push(r.code)
+    if (isLate(r)) o.lateRacks.push(r.code)
     for (let row = 1; row <= (Number(r.rows_cnt) || 0); row++)
-      for (let lv = 1; lv <= (Number(r.levels_cnt) || 0); lv++) o.cells.push(cellLoc(r.code, row, lv))
+      for (let lv = 1; lv <= (Number(r.levels_cnt) || 0); lv++) {
+        const loc = cellLoc(r.code, row, lv)
+        o.cells.push(loc)
+        if (isLate(r)) o.late.add(loc)
+      }
   }
   return out
 }
@@ -71,14 +79,17 @@ export function checkMap(checks) {
 // 오늘 목록
 //   target: 오늘 목표 칸 수 (5, ＋5칸 더 누르면 10 …)
 //   반환: { list:[{loc, done, last, days, order}], done, target, left }
-export function todayPlan(cells, cm, today, target = DAILY) {
+//   late: 「맨 뒤」 칸 Set (불용재고 렉 등) — 같은 바퀴 안에서 맨 끝으로
+export function todayPlan(cells, cm, today, target = DAILY, late = null) {
   const info = (loc, i) => {
     const x = cm.get(loc)
-    return { loc, i, last: x?.last || null, days: x?.days || 0, done: x?.last === today }
+    return { loc, i, last: x?.last || null, days: x?.days || 0, done: x?.last === today, late: !!late?.has(loc) }
   }
   const all = (cells || []).map(info)
   const done = all.filter((c) => c.done)
   const pending = all.filter((c) => !c.done).sort((a, b) => {
+    if (a.days !== b.days) return a.days - b.days            // 이번 바퀴에서 안 센 칸(센 횟수 적은 칸) 먼저
+    if (a.late !== b.late) return a.late ? 1 : -1            // 「맨 뒤」 렉은 그 바퀴 끝에
     if (!a.last !== !b.last) return a.last ? 1 : -1          // 안 센 칸 먼저
     if (a.last !== b.last) return a.last < b.last ? -1 : 1   // 오래된 칸 먼저
     return a.i - b.i                                          // 칸 순서

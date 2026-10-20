@@ -49,8 +49,8 @@ export default function CellAudit() {
     if (!cyc?.setup) return null
     const owner = ownerOfLoc(location, cyc.owners)
     if (!owner) return { owner: null }
-    const cells = ownerCells(cyc.racks, cyc.owners).get(owner)?.cells || []
-    const plan = todayPlan(cells, checkMap(cyc.checks), todayISO(), 1e9)
+    const o = ownerCells(cyc.racks, cyc.owners).get(owner)
+    const plan = todayPlan(o?.cells || [], checkMap(cyc.checks), todayISO(), 1e9, o?.late)
     const next = plan.list.find(c => !c.done && c.loc !== location)?.loc || null
     return { owner, done: plan.done, next }
   })()

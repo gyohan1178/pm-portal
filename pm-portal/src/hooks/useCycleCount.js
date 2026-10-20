@@ -6,7 +6,7 @@ import { fetchAll } from '../lib/paginate'
 //   재고현황 「오늘 실사」 카드와 칸 실사 화면(다음 칸)이 같이 쓴다 (같은 캐시).
 //   담당 표(pm_rack_owner)가 없으면 = 순환 실사 SQL 을 아직 안 돌린 것 → setup:false
 export async function fetchCycleBase() {
-  const { data: owners, error: e1 } = await supabase.from('pm_rack_owner').select('rack_code,owner_name')
+  const { data: owners, error: e1 } = await supabase.from('pm_rack_owner').select('*')   // late(맨 뒤) 칸은 SQL 전엔 없을 수 있어 * 로
   if (e1) return { setup: false, racks: [], owners: [], checks: [] }
   const { data: racks, error: e2 } = await supabase.from('pm_rack').select('code,rows_cnt,levels_cnt,zone,sort_no').order('sort_no')
   if (e2) throw e2
