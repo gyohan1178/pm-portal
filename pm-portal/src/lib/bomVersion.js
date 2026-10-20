@@ -10,6 +10,13 @@ import { supabase } from './supabase'
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
 export const normRev = (r) => String(r ?? '').trim().toUpperCase() || 'A'
 
+// REV 앞뒤 — 글자 REV 만 (A < B < … < Z < AA < AB). 숫자 등 다른 모양이면 null (비교 안 함)
+export function revCmp(a, b) {
+  const x = normRev(a), y = normRev(b)
+  if (!/^[A-Z]{1,3}$/.test(x) || !/^[A-Z]{1,3}$/.test(y)) return null
+  return x.length - y.length || (x < y ? -1 : x > y ? 1 : 0)
+}
+
 // 올리기 직전 보관 — 이 고객사의 이 상위품번들. DB 설정 전(함수 없음)이면 조용히 건너뛴다.
 //   반환: [{ code, rev, cnt }] (보관한 것) · null = 보관 기능 없음
 export async function archiveBoms(customerId, codes) {
@@ -38,7 +45,7 @@ export function revChanges(before, after) {
   return out
 }
 
-// 어셈블리의 구버전 목록 (지금 REV 는 뺀다) — 최근에 보관한 것 먼저
+// 어셈블리의 구버전 목록 (지금 REV 는 뺀다) — 높은 REV 먼저
 export async function fetchBomVersions(projectId, currentRev) {
   if (!projectId) return []
   const { data, error } = await supabase.from('pm_bom_version')
@@ -46,7 +53,9 @@ export async function fetchBomVersions(projectId, currentRev) {
     .order('saved_at', { ascending: false }).order('id', { ascending: false })
   if (error) return []   // 표가 없으면(설정 전) 버전 선택만 안 보인다
   const cur = normRev(currentRev)
+  // 높은 REV 먼저 (늦게 올린 옛 REV 가 위로 오지 않게) · 비교 못 하는 REV 는 보관 순
   return (data || []).filter((v) => normRev(v.rev) !== cur)
+    .sort((a, b) => { const c = revCmp(b.rev, a.rev); return c == null || c === 0 ? 0 : c })
     .map((v) => ({ ...v, rev: normRev(v.rev), label: `REV ${normRev(v.rev)}${v.uploaded_on ? ` · ${md(v.uploaded_on)} 올림` : ''} · ${Number(v.row_cnt || 0).toLocaleString('ko-KR')}줄` }))
 }
 

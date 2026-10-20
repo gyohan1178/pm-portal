@@ -20,7 +20,7 @@ import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
 import BomImageDialog from '../../components/BomImageDialog'
 import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
-import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows } from '../../lib/bomVersion'
+import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows, revCmp, normRev } from '../../lib/bomVersion'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -197,10 +197,9 @@ function decodeHtm(buf) {
 }
 
 // 다중 어셈블리 BOM 저장 — 배치 처리로 대량(만 단위) 빠르게
-async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
+export async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   const cs = String(csCode || '').toLowerCase()
   const PRE = PREFIX[cs] || ''
-  const PARENT_PRE = PARENT_PREFIX[cs] || ''
   const AX = (pn) => withPrefix(pn, PRE)
   // 상위품번에 접두를 붙이는 고객사
   const PARENT_PREFIX = String(csCode || '').toLowerCase() === 'ax'
@@ -238,8 +237,20 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   //   REV 가 바뀌면 이전 REV 가 구버전으로 남는다. 보관 실패면 아무것도 바꾸지 않고 멈춘다.
   onProgress?.('이전 BOM 보관 중...')
   const archived = await archiveBoms(customerId, parentCodes)
-  // upsert는 한 번에 (onConflict customer_id,code)
-  const { error: pErr } = await supabase.from('projects').upsert(projRows, { onConflict: 'customer_id,code', ignoreDuplicates: false })
+  // 지금 REV 보다 예전 REV 를 늦게 올린 것 → 지금 BOM 은 그대로 두고 구버전으로만 넣는다
+  //   (보관 기능이 있고 · 지금 BOM 이 있고 · 두 REV 가 글자 REV 로 비교될 때만)
+  const olderOf = {}   // code → { rev: 올린 REV, cur: 지금 REV }
+  if (archived) {
+    const newRev = Object.fromEntries(projRows.map(p => [p.code, p.rev]))
+    for (const a of archived) {
+      if (a.cnt > 0 && revCmp(newRev[a.code], a.rev) < 0) olderOf[a.code] = { rev: normRev(newRev[a.code]), cur: a.rev }
+    }
+  }
+  // upsert는 한 번에 (onConflict customer_id,code) — 예전 REV 로 올린 것은 어셈블리 REV · 등록일을 안 바꾼다
+  const projUp = projRows.filter(p => !olderOf[p.code])
+  const { error: pErr } = projUp.length
+    ? await supabase.from('projects').upsert(projUp, { onConflict: 'customer_id,code', ignoreDuplicates: false })
+    : { error: null }
   if (pErr) throw new Error('어셈블리(프로젝트) 저장 실패: ' + pErr.message)
   // 프로젝트 id 맵 확보
   const projMap = {}
@@ -298,7 +309,7 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
 
   onProgress?.('기존 BOM 정리 중...')
   // 5) 업로드 대상 어셈블리의 기존 BOM 일괄 삭제
-  const projIds = Object.values(projMap)
+  const projIds = Object.entries(projMap).filter(([c]) => !olderOf[c]).map(([, id]) => id)
   // 지우기 전에 기록을 남긴다. 예전에 1,626행을 잃은 적이 있다.
   let snapId = null, snapCnt = 0
   for (let i = 0; i < projIds.length; i += 200) {
@@ -315,6 +326,7 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
   // 6) BOM 행 전부 구성 (dedup 포함) → 일괄 insert
   onProgress?.('BOM 저장 중...')
   const bomRows = []
+  const olderRows = {}   // code → 예전 REV 로 올린 줄 (구버전 보관용)
   for (const code of parentCodes) {
     const projId = projMap[code]
     if (!projId) { skipped += groups[code].length; continue }
@@ -337,7 +349,7 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
       if (pn === code) continue   // 자기행(어셈블리 자신) 제외 — 부품 아님
       const itemId = itemMap[pn]
       if (!itemId) { skipped++; continue }
-      bomRows.push({
+      ;(olderOf[code] ? (olderRows[code] = olderRows[code] || []) : bomRows).push({
         customer_id: customerId, project_id: projId, item_id: itemId,
         qty_per_unit: parseBomQty(row['실수량'] ?? row['QTY'] ?? row['수량']),
         level: parseInt(row['LEVEL'] ?? row['LV'] ?? 1) || 1,
@@ -365,8 +377,20 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
     onProgress?.(`BOM 저장 중... ${Math.min(i + 500, bomRows.length)}/${bomRows.length}`)
   }
 
-  const revMoved = revChanges(archived, Object.fromEntries(projRows.map(p => [p.code, p.rev])))
-  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId, archived, revMoved }
+  // 예전 REV 로 올린 것 → 구버전으로만 보관 (같은 REV 보관본이 있으면 덮어씀)
+  const olderKept = []
+  for (const [code, o] of Object.entries(olderOf)) {
+    const rs = (olderRows[code] || []).map((r, k) => ({ ...r, id: `v${o.rev}-${k + 1}` }))
+    if (!rs.length) continue
+    const { error } = await supabase.from('pm_bom_version').upsert({
+      customer_id: customerId, project_id: projMap[code], code, rev: o.rev,
+      row_cnt: rs.length, rows: rs, uploaded_on: todayISO(), saved_at: new Date().toISOString(),
+    }, { onConflict: 'project_id,rev' })
+    if (error) { failed += rs.length; if (!failMsg) failMsg = '구버전 보관 실패: ' + error.message }
+    else { saved += rs.length; olderKept.push({ code, rev: o.rev, cur: o.cur, cnt: rs.length }) }
+  }
+  const revMoved = revChanges(archived, Object.fromEntries(projRows.filter(p => !olderOf[p.code]).map(p => [p.code, p.rev])))
+  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId, archived, revMoved, olderKept }
 }
 
 // (구) 단일 어셈블리 BOM 저장
@@ -1097,6 +1121,12 @@ export default function BOM() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center gap-3">
           {result.failed > 0 ? '⚠ 일부만 저장' : '✅ 저장 완료'} — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
+        </div>
+      )}
+      {result?.olderKept?.length > 0 && (
+        <div data-bom-olderkept className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+          <p className="font-bold">📚 지금 REV 보다 예전 REV 를 올린 어셈블리 {result.olderKept.length}개 — 지금 BOM 은 그대로 두고 구버전으로만 넣었습니다</p>
+          <p className="mt-1 font-mono">{result.olderKept.slice(0, 12).map(m => `${m.code} REV ${m.rev} (현재 ${m.cur} 유지)`).join('  ·  ')}{result.olderKept.length > 12 ? `  … 외 ${result.olderKept.length - 12}개` : ''}</p>
         </div>
       )}
       {result?.revMoved?.length > 0 && (
