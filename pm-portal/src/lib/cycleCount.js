@@ -143,3 +143,27 @@ export function loadExtra(today) {
 export function saveExtra(today, n) {
   try { localStorage.setItem(XKEY, JSON.stringify({ d: today, n })) } catch { /* 기억 못 해도 그만 */ }
 }
+
+// ── 할 일 탭 (v4.78.0) ──
+//   못 한 날은 넘기지 않는다 — 매일 5칸. 못 한 날은 이번 주 줄에 0 으로만 남는다.
+const WD = ['일', '월', '화', '수', '목', '금', '토']
+const addDays = (ymd, n) => { const d = new Date(`${ymd}T12:00:00Z`); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10) }
+const dow = (ymd) => new Date(`${ymd}T12:00:00Z`).getUTCDay()
+
+// 실사하는 날 = 평일 · 공휴일 아님
+export const isWorkday = (ymd, isHoliday = () => false) => { const w = dow(ymd); return w !== 0 && w !== 6 && !isHoliday(ymd) }
+
+// 이번 주 월~금 — [{ d, label, n, today, future, off }]
+//   n = 그날 센 담당 칸 수 (누가 셌든 그 사람 렉 칸)
+export function weekStrip(cells, cm, today, isHoliday = () => false) {
+  const w = dow(today)
+  const mon = addDays(today, w === 0 ? -6 : 1 - w)
+  const out = []
+  for (let k = 0; k < 5; k++) {
+    const d = addDays(mon, k)
+    let n = 0
+    for (const loc of cells || []) if (cm.get(loc)?.dates?.has(d)) n++
+    out.push({ d, label: WD[dow(d)], n, today: d === today, future: d > today, off: isHoliday(d) })
+  }
+  return out
+}

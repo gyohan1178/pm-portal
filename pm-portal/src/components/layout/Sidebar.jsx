@@ -7,6 +7,9 @@ import { primaryCsCode } from '../../lib/customers'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { alertCountFor } from '../../lib/todoView'
+import { todayISO } from '../../lib/utils'
+import { isHoliday } from '../../lib/bizdays'
+import { DAILY, isWorkday, normLoc, rackOf } from '../../lib/cycleCount'
 import { toastError } from '../../lib/toast'
 
 // 즐겨찾기에 표시할 이름·아이콘
@@ -95,6 +98,19 @@ function useAlertCounts() {
             supabase.rpc('pm_todo_items'),
           ])
           if (p) out['/todo'] = alertCountFor(todos || [], p)
+          // 오늘 순환 실사가 안 끝났으면 1 더한다 (v4.78.0) — 담당 렉이 있는 사람만 · 실사하는 날만
+          try {
+            const t = todayISO()
+            if (p?.name && isWorkday(t, isHoliday)) {
+              const { data: ow, error: oe } = await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
+              if (!oe && ow?.length) {
+                const racks = new Set(ow.map(o => String(o.rack_code).toUpperCase()))
+                const { data: ck } = await supabase.from('pm_cell_check').select('location').eq('check_date', t)
+                const n = new Set((ck || []).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
+                if (n < DAILY) out['/todo'] = (out['/todo'] || 0) + 1
+              }
+            }
+          } catch { /* 순환 실사 설정 전이어도 메뉴는 그려야 한다 */ }
         }
       } catch { /* 실패해도 메뉴는 그려야 한다 */ }
       return out

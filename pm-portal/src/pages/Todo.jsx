@@ -5,6 +5,7 @@ import { toastError, toastSuccess } from '../lib/toast'
 import { useMe } from '../hooks/useProfile'
 import { todayISO } from '../lib/utils'
 import { dday, isOwnedBy, canEditTodo, isNewForMe, groupOf, postponeDate } from '../lib/todoView'
+import { useCycleTodo, CycleTodoRow } from '../components/CycleTodo'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
 const PRIORITY = ['높음', '보통', '낮음']
@@ -76,6 +77,8 @@ export default function Todo() {
     queryKey: ['todoCmt', cmtFor], queryFn: () => fetchComments(cmtFor), enabled: !!cmtFor,
   })
   const nameOf = (id) => people.find(p => p.id === id)?.name || ''
+  // 오늘 순환 실사 줄 (v4.78.0) — 할 일 글이 아니라 센 기록으로 계산
+  const cyc = useCycleTodo({ who, me, people })
 
   // 고칠 수 있는지 = 내가 담당이거나 내가 적은 일
   const isMine = (r) => canEditTodo(r, me)
@@ -189,7 +192,8 @@ export default function Todo() {
     const open = rows.filter(r => r.status !== '완료')
     const cnt = (person) => {
       const mine = open.filter(r => isOwnedBy(r, person))
-      return { open: mine.length, over: mine.filter(r => groupOf(r) === 'overdue').length }
+      const cy = person?.name && cyc.pendingNames.has(person.name) ? 1 : 0   // 오늘 실사 안 끝남
+      return { open: mine.length + cy, over: mine.filter(r => groupOf(r) === 'overdue').length }
     }
     const list = [{ key: 'me', label: '나', ...cnt(me) }]
     people.filter(p => p.id !== me?.id).forEach(p => {
@@ -202,9 +206,9 @@ export default function Todo() {
         .filter(n => !me || !isOwnedBy({ owner: n }, me))
         .forEach(n => list.push({ key: 'name:' + n, label: n, ...cnt({ name: n }) }))
     }
-    list.push({ key: 'all', label: '전체', open: open.length, over: open.filter(r => groupOf(r) === 'overdue').length })
+    list.push({ key: 'all', label: '전체', open: open.length + cyc.pendingNames.size, over: open.filter(r => groupOf(r) === 'overdue').length })
     return list
-  }, [rows, people, me])
+  }, [rows, people, me, cyc.pendingNames])
 
   const whoPerson = who === 'me' ? me
     : who === 'all' ? null
@@ -234,6 +238,8 @@ export default function Todo() {
   }, [list, me])
 
   const newCnt = list.filter(r => isNewForMe(r, me)).length
+  // 검색 · 주간회의 안건만 볼 때는 실사 줄을 숨긴다
+  const cycShown = q.trim() || agendaOnly ? [] : cyc.items
 
   function postpone(r, kind) {
     patchMut.mutate({ id: r.id, patch: { due_date: postponeDate(kind) } })
@@ -379,7 +385,7 @@ export default function Todo() {
       )}
 
       {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
-      {!isLoading && !list.length && (
+      {!isLoading && !list.length && !cycShown.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">
             {q ? '찾는 항목이 없습니다' : who === 'me' ? '남은 내 일이 없습니다' : '적어 둔 일이 없습니다'}
@@ -388,19 +394,21 @@ export default function Todo() {
         </div>
       )}
 
-      {!isLoading && list.length > 0 && (
+      {!isLoading && (list.length > 0 || cycShown.length > 0) && (
         <div className="space-y-3">
           {GROUPS.map(gr => {
             const items = grouped[gr.key]
-            if (!items.length) return null
+            const cy = cycShown.filter(c => (gr.key === 'done') === c.complete && (gr.key === 'soon' || gr.key === 'done'))
+            if (!items.length && !cy.length) return null
             const isFolded = !q && folded[gr.key]
             return (
               <div key={gr.key} data-todo-group={gr.key} className="rounded-xl border border-slate-200 bg-white overflow-hidden">
                 <button onClick={() => setFolded(f => ({ ...f, [gr.key]: !f[gr.key] }))}
                   className={`w-full flex items-center gap-2 px-3 py-2 text-xs font-bold border-b ${gr.cls}`}>
-                  <span>{gr.icon}</span>{gr.label} <span>{items.length}</span>
+                  <span>{gr.icon}</span>{gr.label} <span>{items.length + cy.length}</span>
                   <span className="ml-auto font-normal">{isFolded ? '펼치기 ▾' : '접기 ▴'}</span>
                 </button>
+                {!isFolded && cy.map(c => <CycleTodoRow key={c.key} it={c} cyc={cyc} showName={who === 'all'} />)}
                 {!isFolded && items.map(renderRow)}
               </div>
             )

@@ -183,6 +183,7 @@ export default function CellAudit() {
     qc.invalidateQueries({ queryKey: ['cellItems'] })
     qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
     qc.invalidateQueries({ queryKey: ['cycle'] })
+    qc.invalidateQueries({ queryKey: ['menuAlerts'] })   // 할 일 숫자 (오늘 실사)
     qc.invalidateQueries({ queryKey: ['cycleDiffs'] })
     qc.invalidateQueries({ queryKey: ['pendingAuditCount'] })
     refreshProcurement(qc)
