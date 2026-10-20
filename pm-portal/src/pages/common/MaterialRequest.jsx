@@ -12,6 +12,8 @@ import { todayISO, ymdKST } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
 import { ilikeAny } from '../../lib/pgFilter'
 import { cutLabel } from '../../lib/requestCut'
+import { buildLabelZpl } from '../../lib/labelZpl'
+import { requestLabelRows, sendZplToPrinter } from '../../lib/requestLabel'
 import { downloadRequestExcel } from '../../lib/requestExcel'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
@@ -718,6 +720,24 @@ export default function MaterialRequest() {
     } catch (e) {
       toastError('출력 실패: ' + e.message)
     }
+  }
+
+  // 라벨 출력 (v4.81.0) — 고른 요청의 품목을 ZM400 라벨로. NO = 요청서(🖨 출력) 번호
+  const [labelBusy, setLabelBusy] = useState(false)
+  async function printReqLabels() {
+    if (!checked.length) { toastError('라벨을 뽑을 요청을 선택하세요'); return }
+    setLabelBusy(true)
+    try {
+      const { data, error } = await supabase.rpc('pm_request_print', { p_ids: checked.map(r => r.id) })
+      if (error) throw error
+      const { labels, skipped } = requestLabelRows(data || [], checked)
+      if (!labels.length) { toastError(`출력할 라벨이 없습니다${skipped.length ? ` (${skipped.map(s => `${s.code || '-'} ${s.why}`).join(', ')})` : ''}`); return }
+      const skipTxt = skipped.length ? `\n\n빠지는 줄 ${skipped.length}: ${skipped.slice(0, 5).map(s => `${s.no}. ${s.code || '-'} (${s.why})`).join(', ')}${skipped.length > 5 ? ' …' : ''}` : ''
+      if (!window.confirm(`라벨 ${labels.length}장을 ZM400 으로 출력할까요?\n\nNO 는 🖨 출력(요청서) 번호와 같습니다.${skipTxt}`)) return
+      await sendZplToPrinter(buildLabelZpl(labels))
+      toastSuccess(`자재요청 라벨 ${labels.length}장 전송`)
+    } catch (e) { toastError('라벨 출력 실패: ' + e.message) }
+    finally { setLabelBusy(false) }
   }
 
   // 코드 부여 — 품목을 만들고 요청에 연결한다
@@ -1568,6 +1588,11 @@ export default function MaterialRequest() {
                   title="선택한 요청을 출력합니다 — 보관 위치순으로 나오고 확인칸이 있습니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white">
                   🖨 출력
+                </button>
+                <button data-req-label onClick={printReqLabels} disabled={labelBusy}
+                  title="선택한 요청의 품목을 ZM400 라벨로 — NO 는 요청서 번호와 같고, 기준코드 없는 줄 · 라벨류는 빠집니다 (Zebra Browser Print 필요)"
+                  className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-teal-200 text-teal-600 bg-white hover:bg-teal-50 disabled:opacity-40">
+                  {labelBusy ? '…' : '🏷 라벨'}
                 </button>
                 {canEdit && (<>
                 <button onClick={openReady}
