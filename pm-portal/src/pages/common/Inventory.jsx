@@ -9,7 +9,8 @@ import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import StockPaste from '../../components/StockPaste'
 import AuditApplyModal from '../../components/AuditApplyModal'
-import CycleCountCard from '../../components/CycleCountCard'
+import AuxLocs from '../../components/AuxLocs'
+import { fetchAllAux, locWithAux } from '../../lib/cellAux'
 import { useNavigate } from 'react-router-dom'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -20,6 +21,8 @@ import { logActivity } from '../../lib/activityLog'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useCompact } from '../../hooks/useCompact'
 import { useUndo } from '../../components/UndoBar'
+
+const EMPTY_AUX = new Map()
 
 async function fetchInventory() {
   // 전체 페이징 (1000행 제한 회피)
@@ -272,6 +275,8 @@ export default function Inventory() {
     queryKey:['inventory','all'], queryFn:()=>fetchInventory(),
   })
   const allRows = useMemo(() => filterInventory(invAll || [], appliedSearch), [invAll, appliedSearch])
+  // 보조 칸(넘쳐 보관) — 보관위치 옆에 · 엑셀에도 (v4.79.0)
+  const { data: auxAll = EMPTY_AUX } = useQuery({ queryKey: ['cellAuxAll'], queryFn: fetchAllAux, staleTime: 60 * 1000 })
 
   const baseRows = useMemo(() => (typeFilter==='전체' ? allRows : allRows.filter(r=>r.items?.type===typeFilter))
     .filter(r => hideExcluded ? (r.items?.stock_managed !== false) : true), [allRows, typeFilter, hideExcluded])
@@ -287,7 +292,7 @@ export default function Inventory() {
   const checkedIds=Object.keys(checked).filter(k=>checked[k])
 
   function exportExcel() {
-    const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':r.location||'','최종업데이트':r.updated_at?.split('T')[0]}))
+    const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':locWithAux(r.location||'', auxAll.get(r.item_id), true),'최종업데이트':r.updated_at?.split('T')[0]}))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'재고현황')
     XLSX.writeFile(wb,`재고현황_${todayISO()}.xlsx`)
@@ -321,8 +326,7 @@ export default function Inventory() {
         <QrScanner onClose={()=>setScanOpen(false)}
           onScan={(loc)=>{ setScanOpen(false); navTo(`/cell/${loc}`) }} />
       )}
-      {/* 순환 실사 — 오늘 셀 칸 (v4.76.0) */}
-      <CycleCountCard inv={invAll || []} onScan={()=>setScanOpen(true)} />
+      {/* 순환 실사 카드는 할 일 탭으로 옮겼다 (v4.79.1) */}
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e=>setSearch(e.target.value)}
           onKeyDown={e=>{if(e.key==='Enter')setAppliedSearch(search)}}
@@ -522,7 +526,7 @@ export default function Inventory() {
                       </button>
                     </td>
                     <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{(r.items?.customer_item_codes||[]).map((c,i)=><span key={i} className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500"><span className="text-slate-300">{c.customers?.name}</span>{c.customer_code}</span>)}</div></td>
-                    <td className="px-3 py-2 text-slate-400">{r.location||'-'}</td>
+                    <td className="px-3 py-2 text-slate-400">{r.location||'-'} <AuxLocs aux={auxAll.get(r.item_id)} /></td>
                   </tr>
                 )
               })}

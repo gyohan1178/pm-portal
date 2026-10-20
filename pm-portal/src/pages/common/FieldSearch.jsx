@@ -1,3 +1,5 @@
+import AuxLocs from '../../components/AuxLocs'
+import { fetchAuxByItems } from '../../lib/cellAux'
 import { useState, useEffect } from 'react'
 import RackSpot, { parseLoc } from '../../components/RackSpot'
 import RackMiniMap, { useRackMap } from '../../components/RackMiniMap'
@@ -37,10 +39,14 @@ async function searchItems(q) {
       qtyMap[r.item_id] = (qtyMap[r.item_id] || 0) + (Number(r.qty) || 0)
     })
   }
+  // 보조 칸(넘쳐 보관) — v4.79.0
+  let aux = new Map()
+  try { aux = await fetchAuxByItems(ids) } catch { /* 보조 칸 없이 */ }
   return (data || []).map(d => ({
     ...d,
     location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
     qty: qtyMap[d.id] ?? null,
+    aux: aux.get(d.id) || [],
   }))
 }
 
@@ -184,6 +190,7 @@ export default function FieldSearch() {
                             </span>
                           )}
                           {it.location && <span className="px-2 py-0.5 rounded bg-slate-800 text-white font-mono text-xs font-bold">{it.location}</span>}
+                          <AuxLocs aux={it.aux} />
                         </span>
                       </div>
                       <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
@@ -214,7 +221,7 @@ export default function FieldSearch() {
                               it.qty > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
                               {it.qty != null ? Number(it.qty).toLocaleString('ko-KR') : '-'}
                             </td>
-                            <td className="px-3 py-2 font-semibold text-slate-700">{it.location || '-'}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-700">{it.location || '-'} <AuxLocs aux={it.aux} /></td>
                             <td className="px-3 py-2">
                               <button onClick={() => openBOM(it.std_code)} className="text-[11px] text-indigo-500 hover:underline font-semibold">전개 ↗</button>
                             </td>
@@ -427,6 +434,22 @@ export default function FieldSearch() {
                             <RackMiniMap code={p2.rack} racks={racks} objs={rackMap?.objs || []} />
                           )}
                           <RackSpot loc={l} rack={rk} />
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                {/* 보조 칸 — 본 칸에 자리가 모자라 넘쳐 둔 곳 */}
+                {detail.aux?.length > 0 && (
+                  <div data-aux-detail className="mt-2 space-y-2">
+                    <p className="text-[11px] font-bold text-blue-700">📦 보조 칸 (넘쳐 보관) — 본 칸 + 보조 칸 = 재고 합계</p>
+                    {detail.aux.map(a => {
+                      const p2 = parseLoc(a.location)
+                      const rk = p2 && racks.find(r => r.code === p2.rack)
+                      return (
+                        <div key={a.id} className="rounded-lg border border-blue-200 bg-blue-50/40 p-2 space-y-1">
+                          <p className="text-xs text-blue-800"><b className="font-mono">{a.location}</b> · {Number(a.qty || 0).toLocaleString('ko-KR')} {detail.unit || 'EA'}{a.counted_at ? ` (${String(a.counted_at).slice(5)} 셈)` : ''}</p>
+                          <RackSpot loc={a.location} rack={rk} />
                         </div>
                       )
                     })}

@@ -8,6 +8,7 @@
 //   다품목 출고 · 구매발주 · 통합검색이 같은 함수를 쓴다.
 
 import { supabase } from './supabase'
+import { fetchAuxByItems, locWithAux } from './cellAux'
 
 // 한 품목이 여러 위치에 나뉘어 있을 수 있어 합산하고 위치는 모은다
 export async function stockByItemIds(ids) {
@@ -27,8 +28,11 @@ export async function stockByItemIds(ids) {
       if (r.location) o.locs.add(r.location)
     }
   }
+  // 보조 칸(넘쳐 보관)도 위치 글에 — 'N1-01-1 (+N1-01-2)' (v4.79.0) · 못 읽어도 본 칸만
+  let aux = new Map()
+  try { aux = await fetchAuxByItems(Object.keys(out)) } catch { /* 보조 칸 없이 */ }
   for (const k of Object.keys(out)) {
-    out[k] = { qty: out[k].qty, location: [...out[k].locs].join(', ') }
+    out[k] = { qty: out[k].qty, location: locWithAux([...out[k].locs].join(', '), aux.get(k)), aux: aux.get(k) || [] }
   }
   return out
 }

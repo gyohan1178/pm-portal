@@ -1,3 +1,5 @@
+import AuxLocs from '../../components/AuxLocs'
+import { fetchAuxByItems } from '../../lib/cellAux'
 import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
@@ -33,9 +35,13 @@ async function searchItems(q) {
       }
     })
   }
+  // 보조 칸(넘쳐 보관) — 위치만 (수량은 받지 않는 화면) · v4.79.0
+  let aux = new Map()
+  try { aux = await fetchAuxByItems(ids) } catch { /* 보조 칸 없이 */ }
   return (data || []).map(d => ({
     ...d,
     location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
+    aux: aux.get(d.id) || [],
   }))
 }
 
@@ -183,6 +189,7 @@ export default function CommonSearch() {
                                             className="font-mono text-[11px] px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 hover:bg-emerald-100">{loc} ↗</button>
                                         : <span key={loc} className="font-mono text-[11px]">{loc}</span>
                                     })}
+                                    <AuxLocs aux={it.aux} withQty={false} />
                                   </div>
                                 : '-'}
                             </td>
