@@ -93,3 +93,37 @@ export function buildView(list, { who = null, kpi = null, me = '', today = ymdLo
   const sections = BUCKETS.map((b) => ({ ...b, groups: shown.filter((g) => g.bucket === b.key).sort(SORT[b.key]) }))
   return { groups, shown, counts, chips, sections, filtered: who !== null || !!kpi, items: (list || []).length }
 }
+
+// ── 완료 · 반려 · 전체 탭 (v4.82.0) — 검색 · 처리유형 · 정렬 ──
+//   예전엔 받은 순서 그대로라 방금 불출한 건을 찾기 어려웠다. 기본은 「최근 처리순」.
+//   검색: 띄어쓰기로 나눈 낱말이 모두 들어 있는 요청 (요청번호 · 품번 · 품명 · 제조사 · 제조사품번 · 요청자 · 처리자 · 목적 · 제품 · 호기)
+//   처리유형: 요청 안에 그 유형 품목이 하나라도 있으면 보인다 (요청은 통째로)
+export const DONE_SORTS = [
+  { key: 'handled', label: '최근 처리순' },
+  { key: 'reqNew', label: '최근 요청순' },
+  { key: 'reqOld', label: '오래된 요청순' },
+]
+const HAY_KEYS = ['req_no', 'std_code', 'item_name', 'maker', 'maker_code', 'requester', 'handler', 'purpose', 'product_code', 'unit_no', 'customer_code', 'check_dept']
+const typeOf = (t) => (t === '불출' || t === '발주' ? t : '기타')
+// 처리 시각 → '10/19 14:32' (이 PC 시각 — DB 는 UTC 로 준다)
+export function fmtHandled(ts) {
+  const d = new Date(ts)
+  if (!ts || isNaN(d)) return ''
+  return `${p2(d.getMonth() + 1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
+}
+export const lastHandled = (g) => g.items.reduce((m, r) => { const t = r.handled_at ? new Date(r.handled_at).getTime() : NaN; return t > (m ? new Date(m).getTime() : -Infinity) ? r.handled_at : m }, '')
+
+export function doneView(groups, { q = '', type = null, sort = 'handled' } = {}) {
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean)
+  const hay = (g) => g.items.map((r) => HAY_KEYS.map((k) => r[k] ?? '').join(' ')).join(' ').toLowerCase()
+  const types = { 불출: 0, 발주: 0, 기타: 0 }
+  const searched = (groups || []).filter((g) => { const h = hay(g); return words.every((w) => h.includes(w)) })
+  searched.forEach((g) => { new Set(g.items.filter((r) => r.handle_type).map((r) => typeOf(r.handle_type))).forEach((t) => { types[t]++ }) })
+  const shown = searched.filter((g) => !type || g.items.some((r) => r.handle_type && typeOf(r.handle_type) === type))
+  const byReq = (a, b) => cmp(a.head.req_date || '', b.head.req_date || '') || cmp(a.key, b.key)
+  const sorted = [...shown].sort(
+    sort === 'reqNew' ? (a, b) => -byReq(a, b)
+    : sort === 'reqOld' ? byReq
+    : (a, b) => ((lastHandled(b) ? new Date(lastHandled(b)).getTime() : 0) - (lastHandled(a) ? new Date(lastHandled(a)).getTime() : 0)) || -byReq(a, b))   // 처리 안 된 것(반려 전 등)은 맨 뒤
+  return { groups: sorted, total: searched.length, all: (groups || []).length, types }
+}

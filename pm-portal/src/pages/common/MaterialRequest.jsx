@@ -6,7 +6,7 @@ import { attachStock } from '../../lib/stockLookup'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest, useMe } from '../../hooks/useProfile'
-import { buildView } from '../../lib/requestView'
+import { buildView, doneView, DONE_SORTS, lastHandled, fmtHandled } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
@@ -187,9 +187,14 @@ export default function MaterialRequest() {
   }
   // 진행 중 목록에서만 구간 · 지표를 쓴다 (완료 · 반려 · 전체는 예전처럼 한 줄 목록)
   const liveTab = filter === null
+  // 완료 · 반려 · 전체 탭 — 검색 · 처리유형 · 정렬 (v4.82.0)
+  const [dQ, setDQ] = useState('')
+  const [dType, setDType] = useState(null)
+  const [dSort, setDSort] = useState('handled')
   const reqView = useMemo(
     () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '' }),
     [list, who, kpi, me?.name, liveTab])
+  const doneV = useMemo(() => doneView(reqView.groups, { q: dQ, type: dType, sort: dSort }), [reqView, dQ, dType, dSort])
 
   // ── 내가 낸 요청 중 아직 안 본 알림 ──
   //   반려하거나 부서를 넘겨도 요청자는 찾아보지 않으면 모른다.
@@ -1663,6 +1668,32 @@ export default function MaterialRequest() {
             )}
           </div>
 
+          {/* 완료 · 반려 · 전체 — 검색 · 처리유형 · 정렬 (v4.82.0) */}
+          {!liveTab && list.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap rounded-xl border border-slate-200 bg-white px-3 py-2" data-req-done-tools>
+              <div className="relative flex-1 min-w-[220px]">
+                <input data-req-done-q value={dQ} onChange={e => { setDQ(e.target.value); setSel({}) }}
+                  placeholder="요청번호 · 품번 · 품명 · 제조사품번 · 요청자 · 처리자 검색"
+                  className="w-full pl-8 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-indigo-400" />
+                <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">🔍</span>
+                {dQ && <button onClick={() => { setDQ(''); setSel({}) }} className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 hover:text-slate-600">✕</button>}
+              </div>
+              <div className="flex gap-1">
+                {[[null, '전체', doneV.total], ['불출', '불출', doneV.types.불출], ['발주', '발주', doneV.types.발주], ['기타', '기타', doneV.types.기타]].map(([k, l, c]) => (
+                  <button key={l} data-done-type={k ?? ''} onClick={() => { setDType(k); setSel({}) }}
+                    className={`px-2.5 py-1 text-xs font-bold rounded-full border whitespace-nowrap ${dType === k ? 'border-slate-800 bg-slate-800 text-white' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                    {l} {n(c)}
+                  </button>
+                ))}
+              </div>
+              <select data-req-done-sort value={dSort} onChange={e => setDSort(e.target.value)}
+                className="px-2 py-1.5 text-xs font-bold border border-slate-200 rounded-lg bg-white text-slate-600">
+                {DONE_SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
+              {(dQ || dType) && <span className="text-[11px] text-slate-400">{n(doneV.groups.length)} / {n(doneV.all)}건</span>}
+            </div>
+          )}
+
           {/* 처리자별 — 내 담당 · 미배정이 따로 보인다 (진행 중 목록) */}
           {liveTab && list.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap rounded-xl border border-slate-200 bg-white px-3 py-2" data-req-who>
@@ -1828,6 +1859,9 @@ export default function MaterialRequest() {
                                     : h.handle_type === '발주' ? 'bg-indigo-100 text-indigo-700'
                                     : 'bg-slate-100 text-slate-500'}`}>{h.handle_type}</span>
                                 )}
+                                {!g.live && lastHandled(g) && (
+                                  <span data-done-at className="text-slate-400">{fmtHandled(lastHandled(g))} 처리</span>
+                                )}
                               </>
                             ) })()}
                             {g.unassigned && (
@@ -1976,8 +2010,16 @@ export default function MaterialRequest() {
                 )
               }
 
-              // 완료 · 반려 · 전체 탭은 예전처럼 받은 순서 그대로
-              if (!liveTab) return reqView.groups.map(renderGroup)
+              // 완료 · 반려 · 전체 탭 — 검색 · 처리유형 · 정렬 (기본 최근 처리순)
+              if (!liveTab) {
+                if (list.length && !doneV.groups.length) return (
+                  <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+                    찾는 요청이 없습니다
+                    <button onClick={() => { setDQ(''); setDType(null) }} className="ml-2 text-xs font-bold text-indigo-600 hover:underline">조건 풀기</button>
+                  </div>
+                )
+                return doneV.groups.map(renderGroup)
+              }
 
               const TONE = {
                 red:   { dot: 'bg-rose-500',  tx: 'text-rose-700',  line: 'bg-rose-100' },
