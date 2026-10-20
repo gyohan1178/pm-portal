@@ -17,6 +17,7 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import { todayISO } from '../../lib/utils'
 import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
+import BomImageDialog from '../../components/BomImageDialog'
 import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
 
@@ -510,6 +511,7 @@ export default function BOM() {
   const [asmSearch, setAsmSearch] = useState('')
 
   const [detailSearch, setDetailSearch] = useState('')
+  const [imgOpen, setImgOpen] = useState(false)   // 📐 도면용 이미지 (v4.75.0)
   const [result, setResult] = useState(null)
   const [progress, setProgress] = useState('')
 
@@ -1250,6 +1252,9 @@ export default function BOM() {
                   </button>
                   <button onClick={()=>exportDetailCSV(bomDetail, selAssembly)} disabled={!bomDetail.length}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
+                  <button data-bom-img-open onClick={()=>setImgOpen(true)} disabled={!bomDetail.length}
+                    title="도면에 붙일 BOM 을 흑백 이미지로 — 클립보드 복사 · PNG 저장"
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40">📐 도면용 이미지</button>
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
@@ -1539,6 +1544,7 @@ export default function BOM() {
       )}
 
       {/* BOM 행 추가 */}
+      {imgOpen && selAssembly && <BomImageDialog rows={bomDetail} assembly={selAssembly} onClose={() => setImgOpen(false)} />}
       {addOpen && selAssembly && (
         <BomRowModal
           row={null} mode="add"
