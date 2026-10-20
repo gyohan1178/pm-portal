@@ -9,6 +9,7 @@ import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import StockPaste from '../../components/StockPaste'
 import AuditApplyModal from '../../components/AuditApplyModal'
+import CycleCountCard from '../../components/CycleCountCard'
 import { useNavigate } from 'react-router-dom'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -320,6 +321,8 @@ export default function Inventory() {
         <QrScanner onClose={()=>setScanOpen(false)}
           onScan={(loc)=>{ setScanOpen(false); navTo(`/cell/${loc}`) }} />
       )}
+      {/* 순환 실사 — 오늘 셀 칸 (v4.76.0) */}
+      <CycleCountCard inv={invAll || []} onScan={()=>setScanOpen(true)} />
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e=>setSearch(e.target.value)}
           onKeyDown={e=>{if(e.key==='Enter')setAppliedSearch(search)}}

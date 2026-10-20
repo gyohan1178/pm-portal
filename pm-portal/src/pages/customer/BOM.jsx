@@ -20,6 +20,7 @@ import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
 import BomImageDialog from '../../components/BomImageDialog'
 import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
+import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows } from '../../lib/bomVersion'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -233,6 +234,10 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
       status: '진행중', start_date: todayISO(),
     }
   })
+  // 올리기 전에 지금 BOM 을 그때 REV 로 보관 (v4.77.0 — 구버전 출력 · 출고용)
+  //   REV 가 바뀌면 이전 REV 가 구버전으로 남는다. 보관 실패면 아무것도 바꾸지 않고 멈춘다.
+  onProgress?.('이전 BOM 보관 중...')
+  const archived = await archiveBoms(customerId, parentCodes)
   // upsert는 한 번에 (onConflict customer_id,code)
   const { error: pErr } = await supabase.from('projects').upsert(projRows, { onConflict: 'customer_id,code', ignoreDuplicates: false })
   if (pErr) throw new Error('어셈블리(프로젝트) 저장 실패: ' + pErr.message)
@@ -360,7 +365,8 @@ async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
     onProgress?.(`BOM 저장 중... ${Math.min(i + 500, bomRows.length)}/${bomRows.length}`)
   }
 
-  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId }
+  const revMoved = revChanges(archived, Object.fromEntries(projRows.map(p => [p.code, p.rev])))
+  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId, archived, revMoved }
 }
 
 // (구) 단일 어셈블리 BOM 저장
@@ -530,9 +536,20 @@ export default function BOM() {
       if (hit) { setSelAssembly(hit); setTab('detail'); setSearchParams({}, { replace: true }) }
     }
   }, [searchParams, assemblies])
+  // BOM 버전 — '' = 지금 BOM · 숫자 = 보관된 구버전 (읽기 전용) (v4.77.0)
+  const [selVer, setSelVer] = useState('')
+  useEffect(() => { setSelVer('') }, [selAssembly?.id])
+  const { data: versions = [] } = useQuery({
+    queryKey: ['bomVersions', selAssembly?.id, selAssembly?.rev],
+    queryFn: () => fetchBomVersions(selAssembly?.id, selAssembly?.rev),
+    enabled: !!selAssembly?.id,
+  })
+  const verObj = selVer ? versions.find(v => String(v.id) === String(selVer)) : null
   const { data: bomDetail = [], isLoading: detailLoading, error: detailError } = useQuery({
-    queryKey: ['bomDetail', cs?.id, selAssembly?.id],
-    queryFn: () => fetchBOMDetail(cs?.id, selAssembly?.id),
+    queryKey: ['bomDetail', cs?.id, selAssembly?.id, selVer || ''],
+    queryFn: () => selVer
+      ? fetchBomVersionRows(selVer, 'std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code, dept')
+      : fetchBOMDetail(cs?.id, selAssembly?.id),
     enabled: !!cs?.id && !!selAssembly?.id,
   })
 
@@ -614,7 +631,8 @@ export default function BOM() {
   // 대체품 사용 등으로 등록 후 수정이 필요한 경우.
   // 재업로드하면 어셈블리 전체가 갈아끼워지므로, 여기서 고친 내용은
   // 같은 리포트를 다시 올리면 사라진다. (대체품은 보통 리포트에 없으므로 주의)
-  const canEdit = useCanEdit()
+  const canEditRaw = useCanEdit()
+  const canEdit = canEditRaw && !selVer   // 구버전은 읽기 전용
   const [editRow, setEditRow] = useState(null)      // 편집 중인 bom 행
 
   // ── 상위품목 구매 / 자작 (2026-09-30) ─────────────────────────
@@ -1081,6 +1099,12 @@ export default function BOM() {
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
         </div>
       )}
+      {result?.revMoved?.length > 0 && (
+        <div data-bom-revmoved className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-3 text-xs text-indigo-800">
+          <p className="font-bold">📚 REV 가 바뀐 어셈블리 {result.revMoved.length}개 — 이전 REV 는 구버전으로 보관했습니다 (BOM 조회 · ASSY 출고에서 골라 쓸 수 있음)</p>
+          <p className="mt-1 font-mono">{result.revMoved.slice(0, 12).map(m => `${m.code} REV ${m.from} → ${m.to}`).join('  ·  ')}{result.revMoved.length > 12 ? `  … 외 ${result.revMoved.length - 12}개` : ''}</p>
+        </div>
+      )}
 
       {/* CSV 미리보기 (다중 어셈블리) */}
       {preview && (
@@ -1229,10 +1253,24 @@ export default function BOM() {
                 <span className="text-slate-300">/</span>
                 <span className="text-xs font-semibold text-slate-700">{selAssembly.code}</span>
                 <span className="text-xs text-slate-400">{selAssembly.name}</span>
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 ml-1">REV {selAssembly.rev || 'A'}</span>
-                <button onClick={() => setEditAsm({ ...selAssembly })}
-                  title="상위품번·품명·REV 수정"
-                  className="text-slate-300 hover:text-indigo-500 px-1">✎</button>
+                {versions.length > 0 ? (
+                  <span data-bom-vers className="inline-flex items-center gap-1 ml-1">
+                    <button onClick={() => setSelVer('')}
+                      className={`px-2 py-0.5 rounded-full text-xs font-bold border ${!selVer ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>REV {selAssembly.rev || 'A'} · 현재</button>
+                    {versions.map(v => (
+                      <button key={v.id} data-bom-ver={v.rev} onClick={() => setSelVer(String(v.id))} title={v.label}
+                        className={`px-2 py-0.5 rounded-full text-xs border ${String(selVer) === String(v.id) ? 'bg-amber-500 border-amber-500 text-white font-bold' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                        REV {v.rev}{v.uploaded_on ? ` · ${String(v.uploaded_on).slice(5, 10).replace('-', '/')}` : ''}</button>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 ml-1">REV {selAssembly.rev || 'A'}</span>
+                )}
+                {!selVer && (
+                  <button onClick={() => setEditAsm({ ...selAssembly })}
+                    title="상위품번·품명·REV 수정"
+                    className="text-slate-300 hover:text-indigo-500 px-1">✎</button>
+                )}
                 <div className="ml-auto flex items-center gap-2">
                   <span className="text-xs text-slate-400">{bomDetail.length}개 품목</span>
                   {(() => {
@@ -1246,17 +1284,25 @@ export default function BOM() {
                       </span>
                     )
                   })()}
+                  {!selVer && (
                   <button onClick={() => setAddPart({ qty: 1, rev: '' })}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
                     + 품목 추가
                   </button>
-                  <button onClick={()=>exportDetailCSV(bomDetail, selAssembly)} disabled={!bomDetail.length}
+                  )}
+                  <button onClick={()=>exportDetailCSV(bomDetail, verObj ? { ...selAssembly, code: `${selAssembly.code}_REV${verObj.rev}` } : selAssembly)} disabled={!bomDetail.length}
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
                   <button data-bom-img-open onClick={()=>setImgOpen(true)} disabled={!bomDetail.length}
                     title="도면에 붙일 BOM 을 흑백 이미지로 — 클립보드 복사 · PNG 저장"
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40">📐 도면용 이미지</button>
                 </div>
               </div>
+              {verObj && (
+                <div data-bom-oldver className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2">
+                  <span>⚠ <b>구버전 REV {verObj.rev}</b> 를 보는 중 ({verObj.label}) — 읽기 전용입니다. CSV · 도면용 이미지는 이 버전으로 나갑니다.</span>
+                  <button onClick={() => setSelVer('')} className="ml-auto font-bold underline">현재 REV {selAssembly.rev || 'A'} 로</button>
+                </div>
+              )}
               <div className="flex flex-wrap items-center gap-2">
                 <input value={detailSearch} onChange={e=>setDetailSearch(e.target.value)}
                   placeholder="코드·품명·제조사·제조사코드 검색"
@@ -1544,7 +1590,7 @@ export default function BOM() {
       )}
 
       {/* BOM 행 추가 */}
-      {imgOpen && selAssembly && <BomImageDialog rows={bomDetail} assembly={selAssembly} onClose={() => setImgOpen(false)} />}
+      {imgOpen && selAssembly && <BomImageDialog rows={bomDetail} assembly={verObj ? { ...selAssembly, rev: verObj.rev } : selAssembly} onClose={() => setImgOpen(false)} />}
       {addOpen && selAssembly && (
         <BomRowModal
           row={null} mode="add"

@@ -5,6 +5,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
+import { fetchBomVersions, fetchBomVersionRows } from '../../lib/bomVersion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useCompact } from '../../hooks/useCompact'
@@ -29,6 +30,11 @@ async function fetchActiveCPOs(customerId, projectId) {
   if (projectId) q = q.eq('project_id', projectId)
   const { data } = await q.order('created_at', { ascending: false })
   return data || []
+}
+// 구버전 BOM (v4.77.0) — 보관본 줄에 품목 정보를 붙여 지금 BOM 과 같은 모양으로
+async function fetchBOMVersionItems(verId) {
+  const rows = await fetchBomVersionRows(verId, 'id,std_code,name,unit,type,js_code,manufacturer,manufacturer_code,label_mode,pack_qty')
+  return withEffQty(rows)
 }
 async function fetchBOMItems(customerId, projectId) {
   if (!customerId || !projectId) return []
@@ -132,8 +138,20 @@ export default function Outbound() {
   const { data: cpos=[] } = useQuery({
     queryKey:['activeCPOs',selCustomer,selProject], queryFn:()=>fetchActiveCPOs(selCustomer,selProject||null), enabled:!!selCustomer,
   })
+  // BOM 버전 — '' = 지금 BOM · 보관된 구버전 id (v4.77.0)
+  //   구버전을 고르면 불출표 · 라벨 · 출고(재고 차감) 모두 그 REV BOM 기준
+  const [selVer, setSelVer] = useState('')
+  useEffect(() => { setSelVer('') }, [selCustomer, selProject])
+  const curProj = projects.find(p => p.id === selProject) || null
+  const { data: versions=[] } = useQuery({
+    queryKey:['bomVersions',selProject,curProj?.rev], queryFn:()=>fetchBomVersions(selProject, curProj?.rev), enabled:!!selProject,
+  })
+  const verObj = selVer ? versions.find(v => String(v.id) === String(selVer)) : null
+  const revTxt = verObj ? `REV ${verObj.rev} (구버전)` : curProj ? `REV ${String(curProj.rev || 'A').trim().toUpperCase()}` : ''
   const { data: bomItems=[] } = useQuery({
-    queryKey:['bomForOut',selCustomer,selProject], queryFn:()=>fetchBOMItems(selCustomer,selProject), enabled:!!selCustomer&&!!selProject,
+    queryKey:['bomForOut',selCustomer,selProject,selVer||''],
+    queryFn:()=> selVer ? fetchBOMVersionItems(selVer) : fetchBOMItems(selCustomer,selProject),
+    enabled:!!selCustomer&&!!selProject,
   })
 
   const iCanEdit = useCanEdit()
@@ -296,7 +314,7 @@ export default function Outbound() {
       const itemIds = lines.map(l => l.item_id)
       const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(() => null) : null
       const res = await callOutboundRpc(
-        { p_lines: lines, p_po_id: selCPO?.id||null, p_note: note||null, p_mode: mode },
+        { p_lines: lines, p_po_id: selCPO?.id||null, p_note: (verObj ? [`[BOM REV ${verObj.rev} 구버전]`, note].filter(Boolean).join(' ') : note)||null, p_mode: mode },
         { p_customer_id: selCustomer||null, p_project_id: selProject||null })
       if (!res?.aborted && before) {
         try { res._moveIds = pickNew(before, await moveRows({ type: '출고', itemIds, since: sinceYesterday() }), lines.map(l => ({ item_id: l.item_id, qty: l.qty }))) } catch { /* 되돌리기만 못 한다 */ }
@@ -442,6 +460,7 @@ export default function Outbound() {
       csName: selCustomer ? (customers.find(c => c.id === selCustomer)?.name || '') : '',
       meta: [
         selProject ? (projects.find(p => p.id === selProject)?.code || '') : '',
+        revTxt,
         extraMeta,
       ].filter(Boolean).join(' · '),
       rows: rows.map(r => ({
@@ -538,6 +557,14 @@ export default function Outbound() {
                   <option value="">전체</option>
                   {projFiltered.map(p=><option key={p.id} value={p.id}>{p.code}{p.name?` - ${p.name}`:''}</option>)}
                 </select>
+                {selProject && versions.length > 0 && (
+                  <select data-out-ver value={selVer} onChange={e=>setSelVer(e.target.value)}
+                    title="BOM 버전 — 구버전을 고르면 불출표 · 라벨 · 출고가 모두 그 REV 기준"
+                    className={`w-full mt-1 px-3 py-1.5 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${selVer ? 'border-amber-300 bg-amber-50 text-amber-800 font-bold' : 'border-slate-200 text-slate-600'}`}>
+                    <option value="">BOM {revTxt || 'REV'} · 현재</option>
+                    {versions.map(v=><option key={v.id} value={String(v.id)}>{v.label}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">고객사 PO <span className="text-slate-300 font-normal">(선택 시 대수 자동)</span></label>
@@ -559,6 +586,13 @@ export default function Outbound() {
               </div>
             </div>
           </div>
+
+          {verObj && (
+            <div data-out-oldver className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2 flex-wrap">
+              <span>⚠ <b>구버전 REV {verObj.rev}</b> BOM 으로 보는 중 ({verObj.label}) — 불출표 · 라벨 · 출고(재고 차감)가 모두 이 REV 기준입니다. 출고 메모에 「BOM REV {verObj.rev} 구버전」이 남습니다.</span>
+              <button onClick={()=>setSelVer('')} className="ml-auto font-bold underline whitespace-nowrap">현재 BOM 으로</button>
+            </div>
+          )}
 
           {stockWarning && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 space-y-3">

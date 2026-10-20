@@ -8,6 +8,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { useCanEdit } from '../../hooks/useProfile'
 import { ilikeAny } from '../../lib/pgFilter'
+import { refreshProcurement } from '../../lib/refresh'
+import { useCycleBase } from '../../hooks/useCycleCount'
+import { ownerCells, checkMap, todayPlan, ownerOfLoc, DAILY } from '../../lib/cycleCount'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -15,7 +18,9 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 //
 //   1. 칸에 있는 품목과 장부 수량이 보인다
 //   2. 실제 센 수량을 입력한다
-//   3. 저장하면 차이가 기록되고, 반영은 따로 확인 후 한다
+//   3. 저장하면 재고에 바로 반영된다 (순환 실사 v4.76.0 — pm_cycle_save)
+//      빈 칸이면 「비어 있음 확인」 한 번. 저장 뒤에는 담당자의 다음 칸으로 바로 간다.
+//      (DB 설정 전이면 예전처럼 기록만 하고 「재고 반영」을 따로 누른다)
 export default function CellAudit() {
   const { loc } = useParams()
   const nav = useNavigate()
@@ -24,6 +29,7 @@ export default function CellAudit() {
   const [memos, setMemos] = useState({})
   const [busy, setBusy] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [justDone, setJustDone] = useState(null)   // 방금 저장한 결과 → 다음 칸 안내
   const [scanOpen, setScanOpen] = useState(false)
   // 이 칸에 없는 품목을 찾아 넣거나, 다른 칸에 있던 것을 옮긴다
   const [addOpen, setAddOpen] = useState(false)
@@ -35,6 +41,19 @@ export default function CellAudit() {
   const searchTimer = useRef(null)
 
   const location = (loc || '').toUpperCase()
+  useEffect(() => { setJustDone(null) }, [location])
+
+  // 순환 실사 — 이 칸 담당자 · 다음 칸
+  const { data: cyc } = useCycleBase()
+  const cycle = (() => {
+    if (!cyc?.setup) return null
+    const owner = ownerOfLoc(location, cyc.owners)
+    if (!owner) return { owner: null }
+    const cells = ownerCells(cyc.racks, cyc.owners).get(owner)?.cells || []
+    const plan = todayPlan(cells, checkMap(cyc.checks), todayISO(), 1e9)
+    const next = plan.list.find(c => !c.done && c.loc !== location)?.loc || null
+    return { owner, done: plan.done, next }
+  })()
 
   const { data: items = [], isLoading, error } = useQuery({
     queryKey: ['cellItems', location],
@@ -152,6 +171,23 @@ export default function CellAudit() {
     finally { setApplying(false) }
   }
 
+  // 저장 = 재고에 바로 반영. rows 가 비면 「빈 칸 확인」
+  async function cycleSave(rows) {
+    const { data, error } = await supabase.rpc('pm_cycle_save', { p_loc: location, p_rows: rows })
+    if (error) throw error
+    return Array.isArray(data) ? data[0] : data
+  }
+  const missingFn = (e) => e?.code === 'PGRST202' || /pm_cycle_save/.test(e?.message || '')
+  function afterSave() {
+    setSaved(true)
+    qc.invalidateQueries({ queryKey: ['cellItems'] })
+    qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
+    qc.invalidateQueries({ queryKey: ['cycle'] })
+    qc.invalidateQueries({ queryKey: ['cycleDiffs'] })
+    qc.invalidateQueries({ queryKey: ['pendingAuditCount'] })
+    refreshProcurement(qc)
+  }
+
   async function save() {
     const rows = items
       .filter(it => counts[it.item_id] !== undefined && counts[it.item_id] !== '')
@@ -162,17 +198,46 @@ export default function CellAudit() {
         memo: memos[it.item_id] || null,
       }))
     if (!rows.length) { toastError('입력한 수량이 없습니다'); return }
+    if (rows.some(r => !(r.counted_qty >= 0))) { toastError('수량은 0 이상 숫자로 넣어 주세요'); return }
+    if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return }
+    if (rows.length < items.length &&
+      !window.confirm(`${items.length - rows.length}품목은 수량을 안 넣었습니다.\n\n넣은 ${rows.length}품목만 저장 · 반영할까요?`)) return
     setBusy(true)
     try {
-      const { data, error } = await supabase.rpc('pm_audit_save', { p_loc: location, p_rows: rows })
-      if (error) throw error
-      setSaved(true)
-      qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
-      toastSuccess(`${n(data)}건 실사 기록 — 아래 「재고 반영」을 누르면 재고가 바뀝니다 (재고현황 › 칸 실사 반영에서도 가능)`)
+      try {
+        const r = await cycleSave(rows)
+        afterSave()
+        setJustDone({ saved: r?.saved_cnt ?? rows.length, diff: r?.diff_cnt ?? 0, empty: false })
+        toastSuccess(`재고에 바로 반영 — ${n(r?.saved_cnt)}품목 · 차이 ${n(r?.diff_cnt)}${r?.diff_cnt ? ` (줄임 ${n(r?.out_cnt)} · 늘림 ${n(r?.in_cnt)})` : ''}`)
+      } catch (e) {
+        if (!missingFn(e)) throw e
+        // DB 설정 전 — 예전 방식 (기록만)
+        const { data, error } = await supabase.rpc('pm_audit_save', { p_loc: location, p_rows: rows })
+        if (error) throw error
+        setSaved(true)
+        qc.invalidateQueries({ queryKey: ['cellAuditToday'] })
+        toastSuccess(`${n(data)}건 실사 기록 — 아래 「재고 반영」을 누르면 재고가 바뀝니다 (재고현황 › 칸 실사 반영에서도 가능)`)
+      }
     } catch (e) {
       toastError('저장 실패: ' + e.message)
     } finally { setBusy(false) }
   }
+
+  // 빈 칸 확인 — 센 기록만 남긴다
+  async function confirmEmpty() {
+    if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return }
+    setBusy(true)
+    try {
+      await cycleSave([])
+      afterSave()
+      setJustDone({ saved: 0, diff: 0, empty: true })
+      toastSuccess(`${location} 빈 칸 확인`)
+    } catch (e) {
+      toastError(missingFn(e) ? '순환 실사 DB 설정(순환실사_261020.sql)을 먼저 실행해야 합니다' : '저장 실패: ' + e.message)
+    } finally { setBusy(false) }
+  }
+
+  const goCell = (l) => { setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }
 
   // 전부 장부와 같다고 표시 (차이 없을 때 빠르게)
   const fillAllSame = () => {
@@ -273,7 +338,7 @@ export default function CellAudit() {
 
       {scanOpen && (
         <QrScanner onClose={() => setScanOpen(false)}
-          onScan={(l) => { setScanOpen(false); setCounts({}); setMemos({}); setSaved(false); nav(`/cell/${l}`) }} />
+          onScan={(l) => { setScanOpen(false); goCell(l) }} />
       )}
       {/* 위치 */}
       <div className="rounded-2xl bg-slate-900 text-white p-5 relative">
@@ -285,8 +350,32 @@ export default function CellAudit() {
         <p className="text-4xl font-bold font-mono tracking-tight mt-1">{location}</p>
         <p className="text-xs text-slate-400 mt-1">
           {location.split('-')[0]} 랙 · {Number(location.split('-')[1])}칸 · {location.split('-')[2]}층
+          {!!items.length && ` · 품목 ${items.length}`}
+          {cycle?.owner && ` · ${cycle.owner} 담당`}
         </p>
       </div>
+
+      {/* 방금 저장 → 다음 칸 */}
+      {justDone && (
+        <div data-cycle-next className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <p className="text-sm font-bold text-emerald-700">
+            ✓ {justDone.empty ? '빈 칸 확인' : `저장 · 재고 반영됨 (${n(justDone.saved)}품목${justDone.diff ? ` · 차이 ${n(justDone.diff)}` : ' · 모두 맞음'})`}
+          </p>
+          {cycle?.owner && (
+            <p className="text-xs text-emerald-700/80 mt-0.5">
+              {cycle.owner} 오늘 {n(cycle.done)}칸{cycle.done >= DAILY ? ' — 오늘 목표 끝 ✓ 더 세도 됩니다' : ` / ${DAILY}칸`}
+            </p>
+          )}
+          <div className="flex gap-2 mt-3">
+            {cycle?.next && (
+              <button onClick={() => goCell(cycle.next)}
+                className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white">다음 칸 → <span className="font-mono">{cycle.next}</span></button>
+            )}
+            <button onClick={() => nav('/inventory')}
+              className="px-4 py-3 text-sm font-semibold rounded-xl border border-slate-200 bg-white text-slate-600">오늘 목록</button>
+          </div>
+        </div>
+      )}
 
       {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
       {error && <p className="text-center py-10 text-rose-500 text-sm">위치를 찾을 수 없습니다: {location}</p>}
@@ -294,10 +383,14 @@ export default function CellAudit() {
       {!isLoading && !items.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-8 text-center">
           <p className="text-sm text-slate-400">이 칸에 등록된 재고가 없습니다.</p>
-          <p className="text-xs text-slate-400 mt-1">품목을 찾아 이 칸에 넣을 수 있습니다.</p>
+          <p className="text-xs text-slate-400 mt-1">실제로도 비어 있으면 「비어 있음 확인」 · 물건이 있으면 품목을 찾아 넣으세요.</p>
           <div className="flex flex-col sm:flex-row gap-2 justify-center mt-4">
+            <button data-cycle-empty onClick={confirmEmpty} disabled={busy || justDone?.empty}
+              className="px-5 py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+              {justDone?.empty ? '✓ 확인됨' : '✓ 비어 있음 확인'}
+            </button>
             <button onClick={() => setAddOpen(true)}
-              className="px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+              className="px-5 py-2.5 text-sm font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">
               ＋ 품목 넣기
             </button>
             <button onClick={() => setScanOpen(true)}
@@ -387,9 +480,9 @@ export default function CellAudit() {
                 className="px-4 py-3 text-sm font-semibold rounded-xl bg-slate-900 text-white">
                 📷
               </button>
-              <button onClick={save} disabled={busy || !filled}
-                className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {busy ? '저장 중…' : `실사 기록 (${filled}/${items.length})`}
+              <button data-cycle-save onClick={save} disabled={busy || !filled}
+                className="flex-1 py-3 text-sm font-bold rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
+                {busy ? '저장 중…' : cyc?.setup ? `저장 · 재고에 바로 반영 (${filled}/${items.length})` : `실사 기록 (${filled}/${items.length})`}
               </button>
               {/* 기록한 것 중 차이가 있고 아직 반영 안 한 것이 있으면 — 바로 재고에 반영 */}
               {saved && pendingIds.length > 0 && canEdit && (
