@@ -20,7 +20,8 @@ import VendorPicker from '../../components/VendorPicker'
 // ⚠ pm_po_cart 에는 외래키를 두지 않았다. 그래서 items(...) 처럼 붙여 읽을 수 없어
 //   (PostgREST 는 외래키를 보고 조인한다) 품목·구매처는 따로 읽어서 붙인다.
 export async function fetchCart() {
-  const rows = must(await supabase.from('pm_po_cart').select('*').order('created_at'), '발주 담기함 조회') || []
+  // 담은 순서 그대로 — 한 번에 담은 줄은 created_at 이 같아, id 로 한 번 더 정렬해야 고칠 때마다 순서가 안 바뀐다
+  const rows = must(await supabase.from('pm_po_cart').select('*').order('created_at').order('id'), '발주 담기함 조회') || []
   if (!rows.length) return rows
   const itemIds = [...new Set(rows.map((r) => r.item_id).filter(Boolean))]
   const vendIds = [...new Set(rows.map((r) => r.vendor_id).filter(Boolean))]
@@ -101,15 +102,18 @@ export default function PoCart({ open, onClose }) {
   const [bulkDate, setBulkDate] = useState('')
   const { data: cart = [], isLoading } = useQuery({ queryKey: ['poCart'], queryFn: fetchCart, enabled: !!open })
 
+  // 발주서 묶음 (구매처별) — 등록할 때 · 요약 칩에만 쓴다. 목록은 담은 순서 그대로 한 표 (v4.78.1)
+  //   예전엔 구매처별로 표를 나눠, 구매처를 바꿀 때마다 줄이 다른 묶음으로 튀어 위치가 바뀌었다.
   const groups = useMemo(() => {
     const m = new Map()
     for (const c of cart) {
       const k = c.vendor_id || '__none'
-      if (!m.has(k)) m.set(k, { name: c.vendors?.name || '구매처 미지정', rows: [] })
+      if (!m.has(k)) m.set(k, { key: k, name: c.vendors?.name || '구매처 미지정', none: !c.vendor_id, rows: [] })
       m.get(k).rows.push(c)
     }
-    return [...m.values()]
+    return [...m.values()].map((g, i) => ({ ...g, no: i + 1 }))
   }, [cart])
+  const noOf = useMemo(() => new Map(groups.map((g) => [g.key, g])), [groups])
 
   const reload = () => qc.invalidateQueries({ queryKey: ['poCart'] })
 
@@ -217,42 +221,61 @@ export default function PoCart({ open, onClose }) {
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg" />
             </div>
             <span className="text-xs text-slate-400 ml-auto">
-              {cart.length.toLocaleString('ko-KR')}줄 · 발주서 {groups.length}장으로 묶임
+              {cart.length.toLocaleString('ko-KR')}줄 · 발주서 {groups.length}장으로 묶임 (같은 번호끼리 한 장)
             </span>
           </div>
         </div>
 
-        {/* 목록 */}
+        {/* 발주서 요약 — 구매처별 몇 줄 · 몇 장 */}
+        {cart.length > 0 && (
+          <div data-cart-sum className="px-5 py-2 bg-slate-50 border-b border-slate-100 flex items-center gap-1.5 flex-wrap">
+            <span className="text-[11px] font-bold text-slate-500 mr-1">발주서</span>
+            {groups.map((g) => (
+              <span key={g.key} className={`inline-flex items-center gap-1 pl-1.5 pr-1 py-0.5 rounded-full border text-[11px] ${g.none ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-slate-200 bg-white text-slate-600'}`}>
+                <span className={`w-4 h-4 rounded-full text-[10px] font-bold flex items-center justify-center ${g.none ? 'bg-amber-200 text-amber-800' : 'bg-indigo-100 text-indigo-700'}`}>{g.no}</span>
+                <b>{g.name}</b> {g.rows.length}줄
+                <button onClick={() => remove(g.rows.map((r) => r.id))} title="이 구매처 줄 빼기"
+                  className="ml-0.5 w-4 h-4 rounded-full text-slate-300 hover:text-rose-600 hover:bg-rose-50">×</button>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {/* 목록 — 한 표 · 담은 순서 고정 (구매처를 바꿔도 줄이 안 움직임) */}
         <div className="max-h-[60vh] overflow-auto">
           {isLoading ? <p className="p-8 text-center text-sm text-slate-400">불러오는 중…</p>
             : !cart.length ? <p className="p-10 text-center text-sm text-slate-400">담아 둔 것이 없습니다. 자재요청 · 소요량 조회에서 「🛒 담기」로 담으세요.</p>
-              : groups.map((g, gi) => (
-                <div key={gi} className="border-b border-slate-100 last:border-0">
-                  <div className="px-5 py-2 bg-slate-50 flex items-center gap-2">
-                    <span className="text-xs font-bold text-slate-600">{g.name}</span>
-                    <span className="text-[11px] text-slate-400">{g.rows.length}줄 · 발주서 1장</span>
-                    <button onClick={() => remove(g.rows.map((r) => r.id))}
-                      className="ml-auto text-[11px] text-slate-400 hover:text-rose-600">이 묶음 빼기</button>
-                  </div>
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-left text-slate-400">
-                        <th className="px-3 py-1.5 font-semibold">기준코드 / 품명</th>
-                        <th className="px-3 py-1.5 font-semibold w-56">구매처</th>
-                        <th className="px-3 py-1.5 font-semibold w-24 text-right">수량</th>
-                        <th className="px-3 py-1.5 font-semibold w-36">납기</th>
-                        <th className="px-3 py-1.5 font-semibold w-28 text-right">단가</th>
-                        <th className="px-3 py-1.5 font-semibold">비고</th>
-                        <th className="w-8" />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {g.rows.map((c) => (
-                        <tr key={c.id} className="border-t border-slate-100 align-top">
+              : (
+                <table data-cart-table className="w-full text-xs table-fixed">
+                  <colgroup>
+                    <col className="w-10" /><col className="w-[230px]" /><col className="w-56" /><col className="w-24" />
+                    <col className="w-40" /><col className="w-32" /><col /><col className="w-8" />
+                  </colgroup>
+                  <thead className="sticky top-0 bg-white z-10">
+                    <tr className="text-left text-slate-400 border-b border-slate-100">
+                      <th className="px-2 py-1.5 font-semibold text-center" title="같은 번호끼리 발주서 한 장">장</th>
+                      <th className="px-3 py-1.5 font-semibold">기준코드 / 품명</th>
+                      <th className="px-3 py-1.5 font-semibold">구매처</th>
+                      <th className="px-3 py-1.5 font-semibold text-right">수량</th>
+                      <th className="px-3 py-1.5 font-semibold">납기</th>
+                      <th className="px-3 py-1.5 font-semibold text-right">단가</th>
+                      <th className="px-3 py-1.5 font-semibold">비고</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {cart.map((c) => {
+                      const g = noOf.get(c.vendor_id || '__none')
+                      return (
+                        <tr key={c.id} data-cart-row={c.id} className="border-t border-slate-100 align-top">
+                          <td className="px-2 py-2 text-center">
+                            <span title={`${g?.name} — 발주서 ${g?.no}`}
+                              className={`inline-flex w-5 h-5 rounded-full text-[10px] font-bold items-center justify-center ${g?.none ? 'bg-amber-100 text-amber-800' : 'bg-indigo-100 text-indigo-700'}`}>{g?.no}</span>
+                          </td>
                           <td className="px-3 py-2">
-                            <div className="font-mono text-indigo-600">{c.items?.std_code || '-'}</div>
-                            <div className="text-[11px] text-slate-500 truncate max-w-[220px]" title={c.items?.name}>{c.items?.name}</div>
-                            <div className="text-[10px] text-slate-400 truncate max-w-[220px]">
+                            <div className="font-mono text-indigo-600 truncate">{c.items?.std_code || '-'}</div>
+                            <div className="text-[11px] text-slate-500 truncate" title={c.items?.name}>{c.items?.name}</div>
+                            <div className="text-[10px] text-slate-400 truncate">
                               {[c.items?.manufacturer, c.items?.manufacturer_code].filter(Boolean).join(' ')}
                             </div>
                           </td>
@@ -268,7 +291,7 @@ export default function PoCart({ open, onClose }) {
                           <td className="px-3 py-2">
                             <input type="date" defaultValue={c.promise_date || ''}
                               onChange={(e) => patch(c.id, { promise_date: e.target.value || null })}
-                              className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
+                              className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
                           </td>
                           <td className="px-3 py-2 text-right">
                             <input type="number" defaultValue={c.unit_price ?? c.items?.purchase_price ?? ''} step="0.01"
@@ -284,7 +307,7 @@ export default function PoCart({ open, onClose }) {
                             )}
                           </td>
                           <td className="px-3 py-2">
-                            <input defaultValue={c.memo || ''}
+                            <input defaultValue={c.memo || ''} title={c.memo || ''}
                               onBlur={(e) => e.target.value !== (c.memo || '') && patch(c.id, { memo: e.target.value || null })}
                               className="w-full px-2 py-1.5 text-sm border border-slate-200 rounded-lg" />
                           </td>
@@ -292,11 +315,11 @@ export default function PoCart({ open, onClose }) {
                             <button onClick={() => remove([c.id])} className="text-slate-300 hover:text-rose-600">×</button>
                           </td>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ))}
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
         </div>
 
         {/* 발 */}
