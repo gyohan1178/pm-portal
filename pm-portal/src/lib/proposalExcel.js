@@ -83,68 +83,116 @@ export async function downloadProposalExcel(d) {
   if (r === ovStart) { put(ws, `A${r}`, ''); ws.mergeCells(`A${r}:M${r}`); r++ }
   r++
 
-  // ── 2. 월별 매입 합계 ──
+  // ── 2. 월별 매입 합계 / 3. 세부 품목 — 수식으로 이어 둔다 (v4.83.0) ──
+  //   세부 품목의 수량 · 단가 · 결제방식 · 날짜를 고치면 합계금액 · 월별 합계 · 총합이 바로 다시 계산된다.
+  //   매입월(N열, 숨김) = 정기 결제는 입고요청일, 카드 · 선급 · 해외 송금은 발주일의 「YYYY-MM」 — 화면 계산과 같다.
+  //   결제방식 칸은 목록에서 고른다 (오타가 나면 월별 합계에서 빠지므로).
+  //   ⚠ 표에 없는 달로 날짜를 바꾸면 그 금액은 월별 표에 안 잡힌다 (총합 · 「계」 열은 맞음 → 차이로 보인다)
+  const rows = d.rows || []
+  const mHead = r + 1
+  const payRow0 = mHead + 1
+  const mTotRow = payRow0 + d.pays.length
+  const dTitle = mTotRow + 2
+  const headRow = dTitle + 1
+  const bodyStart = headRow + 1
+  const bodyEnd = bodyStart + Math.max(rows.length, 1) - 1
+  const totRow = bodyEnd + 1
+  const rng = (col) => `$${col}$${bodyStart}:$${col}$${bodyEnd}`
+  const colL = (i) => ws.getColumn(i).letter
+  const F_ = (formula, result) => ({ formula, result })
+  // 화면 계산과 같은 값 — 엑셀이 다시 계산하기 전(미리 보기 등)에도 숫자가 보이게 결과를 같이 넣는다
+  const lastCol = 2 + d.months.length   // 「계」 열
+  // 매입월(계산용) 열 — 보통 N. 달이 12개를 넘어 월별 표가 N 까지 오면 그 오른쪽으로 민다
+  const HC = Math.max(14, lastCol + 1), HL = colL(HC)
+
   put(ws, `A${r}`, '2. 월별 매입 합계', { bold: true, size: 10, border: false })
-  r++
-  const mHead = r
-  put(ws, `A${r}`, '결제구분', { bold: true, align: 'center', fill: HEAD_FILL })
+  put(ws, `A${mHead}`, '결제구분', { bold: true, align: 'center', fill: HEAD_FILL })
   d.months.forEach((m, i) => {
-    put(ws, ws.getRow(r).getCell(2 + i).address, `${m.slice(5)}월`,
-      { bold: true, align: 'center', fill: HEAD_FILL })
+    put(ws, ws.getRow(mHead).getCell(2 + i).address, `${m.slice(5)}월`, { bold: true, align: 'center', fill: HEAD_FILL })
   })
-  r++
-  d.pays.forEach((pay) => {
-    put(ws, `A${r}`, pay, { bold: true })
+  put(ws, ws.getRow(mHead).getCell(lastCol).address, '계', { bold: true, align: 'center', fill: HEAD_FILL })
+  d.pays.forEach((pay, k) => {
+    const rr = payRow0 + k
+    put(ws, `A${rr}`, pay, { bold: true })
+    let rowSum = 0
     d.months.forEach((m, i) => {
-      put(ws, ws.getRow(r).getCell(2 + i).address, d.sum[pay]?.[m] || 0,
-        { align: 'right', fmt: MONEY })
+      const v = d.sum[pay]?.[m] || 0
+      rowSum += v
+      put(ws, ws.getRow(rr).getCell(2 + i).address,
+        F_(`SUMIFS(${rng('J')},${rng('K')},$A${rr},${rng(HL)},"${m}")`, v), { align: 'right', fmt: MONEY })
     })
-    r++
+    const a = colL(2), b = colL(lastCol - 1)
+    put(ws, ws.getRow(rr).getCell(lastCol).address,
+      F_(d.months.length ? `SUM(${a}${rr}:${b}${rr})` : '0', rowSum), { bold: true, align: 'right', fmt: MONEY })
   })
-  put(ws, `A${r}`, '합계', { bold: true, fill: TOTAL_FILL })
+  put(ws, `A${mTotRow}`, '합계', { bold: true, fill: TOTAL_FILL })
+  let allSum = 0
   d.months.forEach((m, i) => {
-    put(ws, ws.getRow(r).getCell(2 + i).address, d.monthTotal(m),
+    const c = colL(2 + i), v = d.monthTotal(m)
+    allSum += v
+    put(ws, `${c}${mTotRow}`, F_(`SUM(${c}${payRow0}:${c}${mTotRow - 1})`, v),
       { bold: true, align: 'right', fmt: MONEY, fill: TOTAL_FILL })
   })
-  r += 2
+  const cL = colL(lastCol)
+  put(ws, `${cL}${mTotRow}`, F_(`SUM(${cL}${payRow0}:${cL}${mTotRow - 1})`, allSum),
+    { bold: true, align: 'right', fmt: MONEY, fill: TOTAL_FILL })
 
   // ── 3. 세부 품목 ──
-  put(ws, `A${r}`, '3. 세부 품목', { bold: true, size: 10, border: false })
-  r++
+  put(ws, `A${dTitle}`, '3. 세부 품목', { bold: true, size: 10, border: false })
   const HEAD = ['발주일자', '입고요청일', '공급업체', '품목코드', '제조사', '제조사품번',
                 '수량', '발주금액', '단위', '합계금액', '결제방식', '프로젝트이력', '비고']
-  const headRow = r
   HEAD.forEach((h, i) => {
-    put(ws, ws.getRow(r).getCell(1 + i).address, h,
+    put(ws, ws.getRow(headRow).getCell(1 + i).address, h,
       { bold: true, align: 'center', fill: HEAD_FILL, wrap: true })
   })
-  ws.getRow(r).height = 20
-  r++
+  put(ws, `${HL}${headRow}`, '매입월', { bold: true, align: 'center', fill: HEAD_FILL })
+  ws.getRow(headRow).height = 20
 
-  const bodyStart = r
-  d.rows.forEach((x) => {
+  const BY_ORDER = ['카드 결제', '선급 결제', '해외 송금']
+  const monthOf = (x) => {
+    const dt = BY_ORDER.includes(x.pay) ? (x.order_date || x.promise_date) : (x.promise_date || x.order_date)
+    return String(dt || '').slice(0, 7)
+  }
+  // 날짜를 엑셀에서 날짜로 다시 쳐도(숫자) 글자로 둬도 「YYYY-MM」 이 나오게
+  const ym = (c) => `IF(ISNUMBER(${c}),TEXT(${c},"yyyy-mm"),LEFT(${c},7))`
+  const payList = `"${d.pays.join(',')}"`
+  rows.forEach((x, k) => {
+    const rr = bodyStart + k
+    const qty = Number(x.qty) || 0, price = Number(x.price) || 0
     const cells = [
       [x.order_date, 'center'], [x.promise_date, 'center'], [x.vendor, 'left'],
       [x.std_code, 'left'], [x.maker, 'left'], [x.maker_code, 'left'],
-      [Number(x.qty) || 0, 'right', QTY], [Number(x.price) || 0, 'right', MONEY],
-      [x.unit, 'center'], [Number(x.amount) || 0, 'right', MONEY],
+      [qty, 'right', QTY], [price, 'right', MONEY],
+      [x.unit, 'center'], [F_(`ROUND(G${rr}*H${rr},0)`, Number(x.amount) || Math.round(qty * price)), 'right', MONEY],
       [x.pay, 'center'], [x.proj, 'left'], [x.note, 'left'],
     ]
+    const helper = [F_(`IF(OR(${BY_ORDER.map(p => `K${rr}="${p}"`).join(',')}),IF(A${rr}<>"",${ym(`A${rr}`)},${ym(`B${rr}`)}),IF(B${rr}<>"",${ym(`B${rr}`)},${ym(`A${rr}`)}))`, monthOf(x)), 'center']
     cells.forEach(([v, align, fmt], i) => {
-      put(ws, ws.getRow(r).getCell(1 + i).address, v ?? '', { align, fmt })
+      put(ws, ws.getRow(rr).getCell(1 + i).address, v ?? '', { align, fmt })
     })
-    r++
+    put(ws, `${HL}${rr}`, helper[0], { align: 'center' })
+    ws.getCell(`K${rr}`).dataValidation = {
+      type: 'list', allowBlank: false, formulae: [payList],
+      showErrorMessage: true, errorTitle: '결제방식', error: `${d.pays.join(' · ')} 중에서 고르세요`,
+    }
   })
 
   // 합계 줄
-  put(ws, `A${r}`, '합계', { bold: true, align: 'center', fill: TOTAL_FILL })
+  put(ws, `A${totRow}`, '합계', { bold: true, align: 'center', fill: TOTAL_FILL })
   for (let c = 2; c <= 9; c++) {
-    put(ws, ws.getRow(r).getCell(c).address, '', { fill: TOTAL_FILL })
+    put(ws, ws.getRow(totRow).getCell(c).address, '', { fill: TOTAL_FILL })
   }
-  put(ws, `J${r}`, Number(d.grand) || 0, { bold: true, align: 'right', fmt: MONEY, fill: TOTAL_FILL })
+  put(ws, `J${totRow}`, rows.length ? F_(`SUM(J${bodyStart}:J${bodyEnd})`, Number(d.grand) || 0) : 0,
+    { bold: true, align: 'right', fmt: MONEY, fill: TOTAL_FILL })
   for (let c = 11; c <= 13; c++) {
-    put(ws, ws.getRow(r).getCell(c).address, '', { fill: TOTAL_FILL })
+    put(ws, ws.getRow(totRow).getCell(c).address, '', { fill: TOTAL_FILL })
   }
+  // 매입월은 계산용 — 숨겨 둔다 (인쇄 폭도 그대로)
+  put(ws, `${HL}${totRow}`, '', { fill: TOTAL_FILL })
+  ws.getColumn(HC).width = 9
+  ws.getColumn(HC).hidden = true
+  // 열 때 다시 계산
+  wb.calcProperties = { ...(wb.calcProperties || {}), fullCalcOnLoad: true }
 
   // 머리글은 고정해 두고 스크롤한다
   ws.views = [{ showGridLines: false, state: 'frozen', ySplit: headRow }]
@@ -159,5 +207,4 @@ export async function downloadProposalExcel(d) {
   a.download = `구매품의서_${todayISO()}.xlsx`
   a.click()
   URL.revokeObjectURL(url)
-  void bodyStart
 }
