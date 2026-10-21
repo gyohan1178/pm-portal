@@ -199,7 +199,12 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         if (planHist) planUpd.push({ id: ex.id, v: r.plan_exc || null, hist: planHist, prev: ex.changes || [], inChg: chg.length > 0 })
       }
 
-      // 사라진 PO: 기존 진행중인데 이번 Current Data에 없는 것 → Received면 납품, 아니면 취소
+      // 사라진 PO: 기존 진행중인데 이번 Current Data에 없는 것
+      //   Received 현황 납품 완료 · 발송 완료 → 납품 / 발주 취소 → 취소 / 그 밖 → 확인 필요
+      //   Received 에도 없음 → 확인 필요 (v4.85.0 — 예전엔 「취소」로 추정했는데, 출하 후 Received 반영 전 · 줄 번호 바뀜 등이 섞여 있었다)
+      //   이번 파일에 같은 PO · 품번이 새 줄로 들어왔으면 알려 준다 (줄 번호가 바뀐 것일 수 있음)
+      const newLinesOf = {}
+      news.forEach(n => { const k2 = `${n.po_number}|${n.code}`; (newLinesOf[k2] = newLinesOf[k2] || []).push(`L${n.order_line || '-'}/${n.del_line || '-'}`) })
       const disappeared = []
       for (const e of all) {
         const k = kOf(e)
@@ -209,7 +214,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         const rcv = receivedSet[k]                 // Received에 있으면 {qty,price,state…}, 없으면 undefined
         // 납품은 Received 「현황」이 납품 완료 · 발송 완료일 때만. 발주 취소 → 취소, 빈칸 등 → 확인 필요
         const delivered = rcv !== undefined && rcv.state === 'done'
-        const kind = delivered ? '납품' : rcv === undefined ? '취소' : rcv.state === 'cancel' ? '취소' : '확인'
+        const kind = delivered ? '납품' : rcv !== undefined && rcv.state === 'cancel' ? '취소' : '확인'
         const rcvQty = delivered ? rcv.qty : 0
         const rcvPrice = delivered ? rcv.price : 0
         // 부분납품: DB수량 ≠ Received수량이면 수량 보정 필요 (예: 4개 중 3개만 납품)
@@ -222,6 +227,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
           kind,
           // src: 왜 그렇게 봤는지 — rcv(Received 현황) / none(Received 에도 없음)
           src: rcv === undefined ? 'none' : 'rcv', stText: rcv?.stText || '', note: rcv?.note || '',
+          promise_date: e.promise_date || '', movedTo: rcv === undefined ? (newLinesOf[`${e.po_number}|${e.items?.std_code}`] || []) : [],
           tp: (tpReady && e.third_party) || '',
           rcvQty: delivered ? rcvQty : null, qtyMismatch,
           rcvPrice, priceFill,
@@ -617,7 +623,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                       📦 사라진 PO {diff.disappeared.length}건 — 납품 {diff.disappeared.filter(d=>d.kind==='납품').length} · 취소 {diff.disappeared.filter(d=>d.kind==='취소').length}
                       {diff.disappeared.some(d=>d.kind==='확인') && <span className="text-amber-600"> · 확인 필요 {diff.disappeared.filter(d=>d.kind==='확인').length}</span>}
                     </span>
-                    <span className="text-[11px] text-violet-400">체크된 것만 처리 (납품→완료, 취소→취소) · Received 「현황」 칸 기준</span>
+                    <span className="text-[11px] text-violet-400">체크된 것만 처리 (납품→완료, 취소→취소) · Received 「현황」 칸 기준 · Received 에 없으면 「확인 필요」(기본 그대로 둠)</span>
                   </div>
                   {diff.disappearWarn && (
                     <div className="px-3 py-2 bg-red-50 border-b border-red-200 text-[11px] text-red-600 font-semibold">
@@ -647,8 +653,13 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                         {d.order_line && <span className="text-slate-400">L{d.order_line}/{d.del_line}</span>}
                         {/* 왜 그렇게 봤는지 — Received 현황 글자 · 전달사항 · 비고 */}
                         <span className="text-[10px] text-slate-400 truncate max-w-[280px]" title={[d.stText, d.note].filter(Boolean).join(' · ')}>
-                          {d.src === 'none' ? (d.tp ? '3rd party 시트에 없음' : 'Received 에 없음') : d.kind === '확인' ? `현황 ${d.stText ? '「' + d.stText + '」' : '빈칸'}${d.note ? ' · ' + d.note : ''}` : d.stText ? `현황 「${d.stText}」` : ''}
+                          {d.src === 'none' ? `${d.tp ? '3rd party 시트에 없음' : 'Received 에 없음'}${d.promise_date ? ` · 납기 ${String(d.promise_date).slice(5).replace('-', '/')}` : ''}` : d.kind === '확인' ? `현황 ${d.stText ? '「' + d.stText + '」' : '빈칸'}${d.note ? ' · ' + d.note : ''}` : d.stText ? `현황 「${d.stText}」` : ''}
                         </span>
+                        {d.movedTo?.length > 0 && (
+                          <span data-dis-moved className="px-1.5 py-0.5 rounded bg-sky-100 text-sky-700 text-[10px] font-bold" title="이번 파일에 같은 PO · 품번이 새 줄로 들어왔습니다 — 줄 번호가 바뀐 것일 수 있어요 (그대로 두고 새 줄을 보세요)">
+                            새 줄 {d.movedTo.join(' · ')} 로 들어옴?
+                          </span>
+                        )}
                         <span className="text-slate-400 ml-auto">
                           {d.qtyMismatch
                             ? <span className="text-amber-600 font-semibold">{d.qty_ordered}→{d.rcvQty}개 (부분납품)</span>

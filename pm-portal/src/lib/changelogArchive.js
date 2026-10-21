@@ -2,6 +2,13 @@
 //   (lib/version.js 에서 떼어 냈다. 최근 것은 그쪽에 있다.)
 export const CHANGELOG_OLD = [
   {
+    version: 'v4.71.1',
+    date: '2026-10-19',
+    changes: [
+      '생산관리 목록: PO 번호 옆 HOT · RSIN 배지 옆의 「10/14~」 · 「기록 전」 글자를 뺌 (배지만 · 언제부터인지는 배지에 마우스를 올리면 나옴)',
+    ],
+  },
+  {
     version: 'v4.71.0',
     date: '2026-10-19',
     changes: [
