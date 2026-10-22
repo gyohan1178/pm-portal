@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile } from '../../hooks/useProfile'
@@ -7,6 +7,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { DEFAULT_CFG } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import QuoteHistory from './QuoteHistory'
+import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 
@@ -25,6 +26,13 @@ export default function SalesQuote() {
 
   const [buyRate, setBuyRate] = useState(DEFAULT_CFG.buyRate)
   const [sellRate, setSellRate] = useState(DEFAULT_CFG.sellRate)
+  // 기준 환율 — ⚙ 마진구간에서 고정한 값으로 시작한다 (모든 PC 공통 · v4.86.0)
+  //   화면 칸에서 고친 값은 이 견적에만. 기준을 다시 저장하면 그 값으로 맞춘다.
+  const { data: qcfg } = useQuery({ queryKey: QUOTE_CFG_KEY, queryFn: fetchQuoteMarginCfg, staleTime: 10 * 60 * 1000 })
+  const baseBuy = qcfg?.buyRate || DEFAULT_CFG.buyRate
+  const baseSell = qcfg?.sellRate || DEFAULT_CFG.sellRate
+  useEffect(() => { setBuyRate(baseBuy); setSellRate(baseSell) }, [baseBuy, baseSell])
+  const offBase = Number(buyRate) !== Number(baseBuy) || Number(sellRate) !== Number(baseSell)
   const cfg = { ...DEFAULT_CFG, buyRate: Number(buyRate) || 1, sellRate: Number(sellRate) || 1 }
 
   // 최근 매출견적 (같은 건을 다시 견적할 때 참고)
@@ -73,6 +81,13 @@ export default function SalesQuote() {
             <input type="number" value={sellRate} onChange={(e) => setSellRate(e.target.value)}
               className="w-24 px-2 py-1.5 text-sm text-right rounded border border-slate-200" />
           </Field>}
+          {tab === 'write' && (offBase ? (
+            <button type="button" data-rate-reset onClick={() => { setBuyRate(baseBuy); setSellRate(baseSell) }}
+              title={`기준 환율(매입 ${baseBuy} · 판매 ${baseSell})로 되돌립니다 — 기준은 견적서의 ⚙ 마진구간에서 고정`}
+              className="self-end mb-0.5 px-2 py-1.5 text-[11px] font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50">↺ 기준 {Number(baseBuy).toLocaleString()} · {Number(baseSell).toLocaleString()}</button>
+          ) : (
+            <span data-rate-base className="self-end mb-1.5 text-[10px] text-slate-400" title="기준 환율은 견적서의 ⚙ 마진구간에서 고정합니다 (모든 PC 공통)">📌 기준 환율</span>
+          ))}
         </div>
       </div>
 

@@ -7,6 +7,7 @@ import { fetchAll } from '../../lib/paginate'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
+import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
 import MarginSimulator from '../../components/MarginSimulator'
 
@@ -164,25 +165,18 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const sellRate = num(cfg.sellRate) || 1250
   const qc = useQueryClient()
 
-  // 마진 구간 · 작업비 마진 — 공용 설정(pm_settings). 없으면 기본값으로 돈다.
+  // 마진 구간 · 작업비 마진 · 기준 환율 — 공용 설정(pm_settings). 없으면 기본값으로 돈다. (매출견적 화면과 같은 캐시)
   const { data: mcfg = FALLBACK_MCFG } = useQuery({
-    queryKey: ['quoteMarginCfg'],
-    queryFn: async () => {
-      const { data } = await supabase.from('pm_settings')
-        .select('value').eq('key', 'quote_margin').maybeSingle()
-      const v = data?.value || {}
-      return {
-        tiers: Array.isArray(v.tiers) && v.tiers.length ? v.tiers : DEFAULT_TIERS,
-        laborMarg: Number.isFinite(Number(v.laborMarg)) ? Number(v.laborMarg) : DEFAULT_CFG.laborMarg,
-      }
-    },
+    queryKey: QUOTE_CFG_KEY,
+    queryFn: fetchQuoteMarginCfg,
     staleTime: 10 * 60 * 1000,
   })
 
   // 설정이 늦게 오거나 구간을 고치면 담겨 있는 줄의 단가를 다시 뽑는다.
   //   ⚠ mcfg 객체가 아니라 「내용」으로 비교한다. 창을 다시 켜서 같은 값을 또 받아올 때
   //     손으로 고쳐 둔 단가가 도로 계산되면 안 된다.
-  const mcfgKey = JSON.stringify(mcfg)
+  //   기준 환율만 바뀐 것은 여기서 다시 뽑지 않는다 (환율은 매출견적 화면 칸으로 넘어온다)
+  const mcfgKey = JSON.stringify({ tiers: mcfg.tiers, laborMarg: mcfg.laborMarg })
   useEffect(() => {
     if (!isSales) return
     // 지난 견적에서 불러온 줄(fromQuote)은 제출했던 단가를 지킨다
@@ -211,6 +205,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setTierDraft({
       tiers: (mcfg.tiers || DEFAULT_TIERS).map((t) => ({ min: t.min, pct: t.pct })),
       laborMarg: mcfg.laborMarg,
+      buyRate: mcfg.buyRate || DEFAULT_CFG.buyRate,
+      sellRate: mcfg.sellRate || DEFAULT_CFG.sellRate,
     })
     setCfgOpen(true)
   }
@@ -569,18 +565,19 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         .sort((a, b) => b.min - a.min)
       if (!tiers.length) throw new Error('구간이 하나도 없습니다.')
       if (!tiers.some((t) => t.min === 0)) throw new Error('맨 아래 구간(0원 이상)이 있어야 합니다.')
+      if (!(num(v.buyRate) > 0) || !(num(v.sellRate) > 0)) throw new Error('기준 환율(매입 · 판매)을 넣어 주세요.')
       const { data: { user } } = await supabase.auth.getUser()
       const { error } = await supabase.from('pm_settings').upsert({
         key: 'quote_margin',
-        value: { tiers, laborMarg: num(v.laborMarg) },
+        value: { tiers, laborMarg: num(v.laborMarg), buyRate: num(v.buyRate), sellRate: num(v.sellRate) },
         updated_at: new Date().toISOString(), updated_by: user?.email || null,
       }, { onConflict: 'key' })
       if (error) throw error
     },
     onSuccess: () => {
       setCfgOpen(false)
-      qc.invalidateQueries({ queryKey: ['quoteMarginCfg'] })
-      toastSuccess('마진 구간을 저장했습니다 — 담겨 있는 줄의 단가가 다시 계산됩니다')
+      qc.invalidateQueries({ queryKey: QUOTE_CFG_KEY })
+      toastSuccess('마진 구간 · 기준 환율을 저장했습니다 — 모든 PC 에 같은 값으로 열립니다')
     },
     onError: (e) => toastError('마진 구간 저장 실패: ' + e.message),
   })
@@ -839,7 +836,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </button>
         <button onClick={() => setLines((ls) => [...ls, newLine()])}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
-        <button onClick={openCfg} title="금액대별 마진율을 고칩니다"
+        <button onClick={openCfg} title="금액대별 마진율 · 기준 환율(모든 PC 공통)을 고칩니다"
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 마진구간</button>
         <div className="flex-1" />
         <button onClick={() => draftMut.mutate()} disabled={draftMut.isPending || !lines.length}
@@ -1341,7 +1338,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           <div className="bg-white rounded-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between px-5 py-3 border-b border-slate-200">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">⚙ 마진 구간</h3>
+                <h3 className="text-sm font-bold text-slate-800">⚙ 마진 구간 · 기준 환율</h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">부품 <b>한 개 매입가</b>가 어느 구간에 드는지로 마진율이 정해집니다.</p>
               </div>
               <button onClick={() => setCfgOpen(false)} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -1377,6 +1374,19 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   onChange={(e) => setTierDraft((s0) => ({ ...s0, laborMarg: (Number(e.target.value) || 0) / 100 }))}
                   className="w-20 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
                 <span className="w-6" />
+              </div>
+
+              <div className="pt-3 mt-2 border-t border-slate-100 space-y-1.5" data-cfg-rates>
+                <p className="text-xs font-bold text-slate-600">기준 환율 <span className="font-normal text-slate-400">— 매출견적을 열 때 이 값으로 시작합니다 (화면에서 고친 값은 그 견적에만)</span></p>
+                {[['buyRate', '매입환율 (원/$)'], ['sellRate', '판매환율 (원/$)']].map(([k, l]) => (
+                  <div key={k} className="flex items-center gap-2">
+                    <span className="flex-1 text-xs font-semibold text-slate-500 text-right pr-1">{l}</span>
+                    <input type="number" data-cfg-rate={k} value={tierDraft[k] ?? ''}
+                      onChange={(e) => setTierDraft((s0) => ({ ...s0, [k]: e.target.value }))}
+                      className="w-24 px-2 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+                    <span className="w-2" />
+                  </div>
+                ))}
               </div>
 
               <p className="text-[10px] text-slate-400 pt-1">· 맨 아래 구간은 <b>0</b> 으로 두세요. 어디에도 안 걸리는 금액이 없어야 합니다.</p>
