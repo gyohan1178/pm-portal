@@ -7,6 +7,7 @@
 //
 //   건수 출처
 //     c  = pm_flow_counts() — 수주대장 · 자재요청 · 도면 배포 · 생산 상태 (가벼운 집계 한 번)
+//          「새 PO 회신 대기」는 PDF · 직접 등록 PO 만 (이관 줄은 회신 이력이 없어 뺌 — v4.91.1)
 //     ct = 관제탑 계산(부족 · 발주 필요 · 입고 지연) — 무거워서 구매자재 흐름을 볼 때만 받는다
 //   건수를 못 받으면(SQL 전 · 권한 없음) 그 칸만 비운다. 흐름과 이동은 그대로 된다.
 
@@ -39,7 +40,7 @@ const F = {
       { icon: '📤', name: '견적 접수 · 작성', where: '영업 › 매출견적', path: () => '/sales-quote', soon: '견적 접수 탭 준비 중', badges: () => [] },
       { icon: '🧬', name: 'BOM 확인', where: '기초자료 › BOM', path: (pcs) => `/customer/${pcs}/bom`, badges: () => [] },
       { icon: '📨', name: '수주 등록', where: '영업 › 수주대장 › PDF 올리기', path: () => '/orders', badges: (c) => [['이번 달 접수', c?.ord_month, 'gray']] },
-      { icon: '💬', name: '구매자재 회신', where: '구매자재가 처리 — 기다리는 단계', other: '구매자재', path: () => '/orders', badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'gray']] },
+      { icon: '💬', name: '구매자재 회신', where: '구매자재가 처리 — 기다리는 단계', other: '구매자재', path: () => '/orders', badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']] },
       { icon: '✅', name: '회신 확인 · 납기 협의', where: '영업 › 수주대장', path: () => '/orders', badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
     ],
     inbox: [{ from: '구매자재', text: '수주대장 회신 — 조건부 · 불가 (고객사 납기 협의)', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' }],
@@ -49,7 +50,7 @@ const F = {
     title: '구매자재 — 수주 확인부터 불출 · 도면 배포까지',
     desc: '다른 부서가 넘긴 일(새 PO · 자재 요청)부터 처리합니다.',
     steps: [
-      { icon: '📨', name: '수주 확인 · 회신', where: '영업 › 수주대장', path: () => '/orders', badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'amber']] },
+      { icon: '📨', name: '수주 확인 · 회신', where: '영업 › 수주대장', path: () => '/orders', badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'amber']] },
       { icon: '🙋', name: '자재 요청', where: '현장 › 자재 요청', path: () => '/material-request', badges: (c) => [['요청', c?.req_open, 'amber'], ['처리 중', c?.req_doing, 'gray']] },
       { icon: '🚨', name: '부족 확인', where: '구매 › 자재 상황판', path: (pcs) => `/customer/${pcs}/short`, badges: (c, ct) => [['재고 음수 예정', ct?.negSoon, 'amber']] },
       { icon: '🛒', name: '구매발주', where: '구매 › 구매발주', path: (pcs) => `/customer/${pcs}/purchase`, badges: (c, ct) => [['발주 필요', ct?.orderNeeded, 'amber']] },
