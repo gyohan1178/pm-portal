@@ -369,6 +369,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
+          {!canAccessSection(profile, 'master') && <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>}
         </CollapseSection>
         )}
     </>),

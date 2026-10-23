@@ -226,6 +226,10 @@ export function canAccessPath(profile, pathname) {
   //   쓰기(공유 · 배포 · 수령 확인)는 화면 안에서 편집 권한으로 다시 가린다
   if (pathname === '/quality/drawing-dist') return !isFieldOnly(profile)
 
+  // BOM 은 영업도 연다 — 견적 접수에 BOM 이 없으면 영업이 고객 BOM 을 올린다 (v4.92.1)
+  //   기초자료(기준코드 DB · 협력사 …) 권한까지 줄 필요 없이 BOM 화면만
+  if (/^\/customer\/[^/]+\/bom$/.test(pathname)) return !isFieldOnly(profile) && (canAccessSection(profile, 'master') || canAccessSection(profile, 'sales'))
+
   // 삭제 기록 복구는 편집 권한자만
   if (pathname === '/restore') return canEdit(profile)
 

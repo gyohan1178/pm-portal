@@ -10,7 +10,7 @@ import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
-import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday } from './rfq'
+import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
@@ -53,7 +53,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
     bom: count('bom'),
     price: count('price') + count('noprice'),
     priceLate: scoped.filter((r) => r.stage === 'price' && r.price_req_at && Math.round((Date.now() - new Date(r.price_req_at)) / 86400000) > 2).length,
-    ready: count('ready'),
+    ready: scoped.filter((r) => r.status === '진행' && readyLines(r).length > 0).length,
     month: scoped.filter((r) => String(r.created_at).slice(0, 7) === month).length,
   }
 
@@ -91,6 +91,18 @@ export default function RfqBoard({ customers = [], onWrite }) {
 
   async function saveResult() {
     const r = result
+    if (r.status === '제출') {
+      // 고른 품목만 제출 · 남은 품목은 나누기(기본) — 보류 · 미준비 품목을 빼고 먼저 낸다 (v4.92.1)
+      const src = rfqs.find((x) => x.id === r.id)
+      if (!r.lineIds.length) { toastError('제출할 품목을 하나 이상 골라 주세요'); return }
+      await run(r.id, async () => {
+        const res = await submitRfq(src, { lineIds: r.lineIds, quote_no: r.quote_no, submitted_at: r.submitted_at || today, submit_amount: r.submit_amount, currency: r.currency, split: r.split, meName })
+        logActivity('update', 'pm_rfq', r.title, `견적 제출 — ${r.title} · ${r.lineIds.length}품목${res.child ? ` · 남은 품목은 「${res.child.title}」로 나눔` : ''}`)
+        toastSuccess(res.child ? `${r.lineIds.length}품목 제출 · 남은 품목은 「${res.child.title}」로 나눴습니다` : res.partial ? `${r.lineIds.length}품목 제출 · 남은 품목은 이 접수에서 계속` : '제출로 저장했습니다')
+      })
+      setResult(null)
+      return
+    }
     const patch = { status: r.status }
     if (r.status === '제출') Object.assign(patch, { quote_no: r.quote_no || null, submitted_at: r.submitted_at || today, submit_amount: r.submit_amount === '' ? null : Number(r.submit_amount), currency: r.currency || null })
     if (r.status === '수주') Object.assign(patch, { po_no: r.po_no || null, result_at: today })
@@ -124,7 +136,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
         <Kpi tone="bg-red-50/70 border-red-100 text-red-600" label="회신 기한 D-3 이내" v={kpi.due} sub="고객사에 견적 낼 날이 3일 안 (지난 것 포함)" />
         <Kpi tone="bg-red-50/70 border-red-100 text-red-600" label="BOM 필요" v={kpi.bom} sub="포털에 BOM · 품목이 없어 견적을 못 시작" />
         <Kpi tone="bg-amber-50/70 border-amber-100 text-amber-700" label="단가 없음 · 요청 중" v={kpi.price} sub={kpi.priceLate ? `구매자재 요청 2일 넘음 ${kpi.priceLate}건` : '구매자재가 매입 단가 확인'} />
-        <Kpi tone="bg-violet-50/70 border-violet-100 text-violet-700" label="작성 가능" v={kpi.ready} sub="BOM · 단가 다 있음 — 견적 작성" />
+        <Kpi tone="bg-violet-50/70 border-violet-100 text-violet-700" label="작성 가능" v={kpi.ready} sub="준비된 품목이 있음 — 일부만이라도 견적 작성" />
         <Kpi tone="bg-white border-slate-200 text-slate-800" label="이번 달 접수" v={kpi.month} sub="고객사 견적 요청 건수" />
       </div>
 
@@ -137,6 +149,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
           {pill('noprice', '③ 단가 없음', count('noprice'), 'bg-amber-50 text-amber-700 border-amber-200')}
           {pill('price', '③ 단가 요청 중', count('price'), 'bg-amber-50 text-amber-700 border-amber-200')}
           {pill('ready', '④ 작성 가능', count('ready'), 'bg-violet-50 text-violet-700 border-violet-200')}
+          {pill('hold', '보류', count('hold'), 'bg-slate-100 text-slate-600 border-slate-300')}
           {pill('제출', '⑤ 제출', count('제출'))}
           {pill('수주', '⑥ 수주', count('수주'), 'bg-emerald-50 text-emerald-700 border-emerald-200')}
           {pill('실주', '실주', count('실주'))}
@@ -196,8 +209,13 @@ export default function RfqBoard({ customers = [], onWrite }) {
             {!isLoading && !shown.length && <tr><td colSpan={7} className="p-10 text-center text-slate-400">{rfqs.length ? '조건에 맞는 접수가 없습니다' : '아직 접수한 견적이 없습니다 — 「＋ 견적 접수」로 시작하세요'}</td></tr>}
             {shown.map((r) => {
               const ls = r.lines
-              const none = ls.filter((l) => (l.kind || 'none') === 'none' && l.checked_at)
-              const miss = ls.reduce((a, l) => a + (+l.noprice_count || 0), 0)
+              const openLs = ls.filter(isOpenLine)
+              const none = openLs.filter((l) => (l.kind || 'none') === 'none' && l.checked_at)
+              const miss = openLs.reduce((a, l) => a + (+l.noprice_count || 0), 0)
+              const held = ls.filter((l) => l.hold && !l.quoted_at)
+              const quoted = ls.filter((l) => l.quoted_at)
+              const ready = readyLines(r)
+              const partial = ready.length > 0 && ready.length < ls.length - quoted.length
               const parts = ls.reduce((a, l) => a + (+l.part_count || 0), 0)
               const b = busy === r.id
               const late = r.d !== null && r.d < 0
@@ -230,6 +248,8 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       : miss ? <><span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700" data-rfq-miss>단가 없음 {n(miss)}</span><div className="text-[10.5px] text-slate-400 mt-0.5">부품 {n(parts)}개 중</div>
                         {r.price_req_at && !r.price_done_at && <div className="text-[10.5px] text-amber-700 mt-0.5">요청 {md(r.price_req_at)} · {r.price_req_by || ''}</div>}</>
                       : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">✓ {n(parts)}/{n(parts)}</span>}
+                    {held.length > 0 && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-slate-100 text-slate-600 border border-slate-300" data-rfq-held title={held.map((l) => `${l.pn}: ${l.hold}${l.hold_memo ? ` (${l.hold_memo})` : ''}`).join('\n')}>보류 {n(held.length)}품목</span></div>}
+                    {quoted.length > 0 && <div className="mt-1 text-[10.5px] text-slate-500">제출 {n(quoted.length)}품목</div>}
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
                     <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${STAGE_TONE[r.stage] || ''}`} data-rfq-stage-of={r.stage}>{stageLabel(r.stage)}</span>
@@ -245,17 +265,18 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       {r.stage === 'price' && (isBuy
                         ? <Btn tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
                         : <span className="text-[11px] text-slate-500">구매자재 처리 중</span>)}
-                      {r.stage === 'ready' && <Btn tone="primary" onClick={() => onWrite?.(r)} data="write">✏ 견적 작성 →</Btn>}
+                      {r.status === '진행' && ready.length > 0 && <Btn tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
                       {editable && ['bom', 'noprice', 'price', 'ready'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
                       {editable && isBuy && r.stage === 'price' && <Btn onClick={() => priceDone(r)} busy={b} data="done">단가 요청 끝</Btn>}
-                      {editable && ['진행', '제출'].includes(r.status) && <Btn onClick={() => setResult({ id: r.id, title: r.title, status: r.status === '진행' ? '제출' : '수주', quote_no: r.quote_no || '', submitted_at: r.submitted_at || today, submit_amount: r.submit_amount ?? '', currency: r.currency || (r.customer_code === 'ax' ? 'USD' : 'KRW'), po_no: r.po_no || '', result_memo: r.result_memo || '' })} data="result">결과 입력</Btn>}
+                      {editable && ['진행', '제출'].includes(r.status) && <Btn onClick={() => setResult({ id: r.id, title: r.title, status: r.status === '진행' ? '제출' : '수주', quote_no: r.quote_no || '', submitted_at: r.submitted_at || today, submit_amount: r.submit_amount ?? '', currency: r.currency || (r.customer_code === 'ax' ? 'USD' : 'KRW'), po_no: r.po_no || '', result_memo: r.result_memo || '',
+                        lineIds: ready.map((l) => l.id), split: true })} data="result">결과 입력</Btn>}
                     </div>
                   </td>
                 </tr>,
                 open === r.id && (
                   <tr key={r.id + ':lines'} className="bg-slate-50/60"><td colSpan={7} className="px-4 py-3">
                     <table className="w-full text-[11.5px]" data-rfq-line-table>
-                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th>단가 없는 부품</th></tr></thead>
+                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th className="pr-3">단가 없는 부품</th><th>보류 (구매자재) · 제출</th></tr></thead>
                       <tbody>
                         {ls.map((l) => (
                           <tr key={l.id} className="border-t border-slate-100 align-top">
@@ -266,6 +287,19 @@ export default function RfqBoard({ customers = [], onWrite }) {
                             <td className="pr-3 text-right font-mono">{n(l.qty)}</td>
                             <td className="pr-3 whitespace-nowrap">{!l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}</td>
                             <td className="text-amber-700">{+l.noprice_count > 0 ? <span title={(l.noprice_codes || []).join(', ')}><b>{n(l.noprice_count)}</b> · <span className="font-mono">{(l.noprice_codes || []).slice(0, 6).join(', ')}{(l.noprice_codes || []).length > 6 ? ` 외 ${(l.noprice_codes || []).length - 6}` : ''}</span></span> : <span className="text-slate-300">—</span>}</td>
+                            <td className="pl-3" data-rfq-hold-cell={l.pn}>
+                              {l.quoted_at ? <span className="text-emerald-700 font-bold">✓ 제출 {l.quote_no || ''} {md(l.quoted_at)}</span>
+                                : isBuy && editable && r.status === '진행' ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <select value={l.hold || ''} data-rfq-hold={l.pn} disabled={busy === r.id}
+                                      onChange={(e) => { const v = e.target.value; const memo = v ? (window.prompt(`${l.pn} — ${v} 사유 (선택)`, l.hold_memo || '') ?? '') : ''; run(r.id, () => setLineHold(r, l, v || null, memo, meName), v ? `${l.pn} 보류 — ${v}` : `${l.pn} 보류 해제`) }}
+                                      className="px-1.5 py-1 text-[11px] border border-slate-200 rounded bg-white">
+                                      <option value="">— 진행</option>{HOLDS.map((h) => <option key={h} value={h}>{h}</option>)}
+                                    </select>
+                                    {l.hold_memo && <span className="text-[10.5px] text-slate-500 truncate max-w-[160px]" title={l.hold_memo}>{l.hold_memo}</span>}
+                                  </div>
+                                ) : l.hold ? <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-600 font-bold" title={[l.hold_memo, l.hold_by].filter(Boolean).join(' · ')}>보류 · {l.hold}{l.hold_memo ? ` — ${l.hold_memo}` : ''}</span> : <span className="text-slate-300">—</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -284,6 +318,28 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         <label className="space-y-1 font-bold text-slate-600">제출일<input type="date" value={result.submitted_at} onChange={(e) => setResult({ ...result, submitted_at: e.target.value })} className={INP} /></label>
                         <label className="space-y-1 font-bold text-slate-600">금액<input value={result.submit_amount} onChange={(e) => setResult({ ...result, submit_amount: e.target.value.replace(/[^0-9.]/g, '') })} className={`${INP} w-32 text-right`} /></label>
                         <label className="space-y-1 font-bold text-slate-600">통화<select value={result.currency} onChange={(e) => setResult({ ...result, currency: e.target.value })} className={INP}><option>KRW</option><option>USD</option></select></label>
+                        <div className="basis-full mt-1 rounded-lg border border-violet-100 bg-white px-3 py-2" data-rfq-submit-lines>
+                          <div className="font-bold text-slate-600 mb-1">이번에 제출할 품목 <span className="font-normal text-slate-400">— 준비된 품목이 기본 · 보류 · 미준비 품목은 빼고 먼저 낼 수 있어요</span></div>
+                          <div className="flex flex-wrap gap-x-4 gap-y-1">
+                            {ls.filter((l) => !l.quoted_at).map((l) => {
+                              const on = result.lineIds.includes(l.id)
+                              const why = l.hold ? `보류 · ${l.hold}` : (l.kind || 'none') === 'none' ? 'BOM 없음' : +l.noprice_count > 0 ? `단가 없음 ${l.noprice_count}` : '준비됨'
+                              return (
+                                <label key={l.id} className="flex items-center gap-1.5">
+                                  <input type="checkbox" checked={on} data-rfq-submit-line={l.pn} onChange={() => setResult({ ...result, lineIds: on ? result.lineIds.filter((x) => x !== l.id) : [...result.lineIds, l.id] })} className="w-4 h-4 accent-violet-600" />
+                                  <span className="font-mono font-bold">{l.pn}</span><span className={`text-[10.5px] ${why === '준비됨' ? 'text-emerald-700' : 'text-amber-700'}`}>{why}</span>
+                                </label>
+                              )
+                            })}
+                          </div>
+                          {ls.filter((l) => !l.quoted_at && !result.lineIds.includes(l.id)).length > 0 && (
+                            <label className="mt-2 flex items-center gap-1.5 font-bold text-slate-700">
+                              <input type="checkbox" checked={result.split} onChange={(e) => setResult({ ...result, split: e.target.checked })} data-rfq-split className="w-4 h-4 accent-violet-600" />
+                              남은 {ls.filter((l) => !l.quoted_at && !result.lineIds.includes(l.id)).length}품목은 새 접수(「{r.title} (잔여)」)로 나눠 계속 진행
+                              <span className="font-normal text-slate-400">— 끄면 이 접수에 남아 「진행」 그대로</span>
+                            </label>
+                          )}
+                        </div>
                       </>}
                       {result.status === '수주' && <label className="space-y-1 font-bold text-slate-600">수주 PO번호<input value={result.po_no} onChange={(e) => setResult({ ...result, po_no: e.target.value })} placeholder="수주대장 PO번호" className={INP} /></label>}
                       {(result.status === '실주' || result.status === '취소') && <label className="space-y-1 font-bold text-slate-600 flex-1 min-w-[220px]">{result.status === '실주' ? '실주 사유' : '취소 사유'} {result.status === '실주' && <span className="text-red-500">*</span>}<input value={result.result_memo} onChange={(e) => setResult({ ...result, result_memo: e.target.value })} placeholder="예: 단가 · 납기 · 사양 변경" className={INP} data-rfq-result-memo /></label>}
@@ -297,7 +353,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-400 px-1">한 줄 = 고객사 견적 요청 한 건. 품목 칸을 누르면 품목마다 점검 결과(BOM · 단가 없는 부품)가 나옵니다. BOM 을 올리거나 단가를 등록한 뒤 「🔍 다시 점검」을 누르세요.</p>
+      <p className="text-[11px] text-slate-400 px-1">한 줄 = 고객사 견적 요청 한 건. 품목 칸을 누르면 품목마다 점검 결과(BOM · 단가 없는 부품)가 나옵니다. BOM 을 올리거나 단가를 등록한 뒤 「🔍 다시 점검」을 누르세요. 구매자재가 「수급 어려움 · 단가 대기」로 보류한 품목은 빼고 준비된 품목부터 견적 · 제출할 수 있습니다.</p>
     </div>
   )
 }
