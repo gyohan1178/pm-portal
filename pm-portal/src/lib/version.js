@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.94.0'
+export const APP_VERSION = 'v4.94.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,15 @@ export const APP_VERSION = 'v4.94.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.94.1',
+    date: '2026-10-23',
+    changes: [
+      'BOM 하위 어셈블리 — CSK · VM · Edwards 도 잡히게: 전에는 「이미 어셈블리로 등록된 품번」만 하위 ASSY 로 봐서 AXCELIS(코드 = AX-…)만 됐음. 이제 BOM 안에서 아래 줄이 더 깊은 레벨이면 하위 ASSY',
+      'BOM 을 올리면 그 안의 하위 ASSY BOM 을 자동으로 만듦(없으면 어셈블리도 새로) — 이미 BOM 이 있는 하위 ASSY 는 그대로 · 결과에 「하위 ASSY BOM n개 자동 생성」',
+      '같은 하위 ASSY 가 한 BOM 에 두 번 나오면 하위 줄이 두 번 들어가던 것 고침 · CSK 하위 ASSY 는 코드 끝 -08 을 REV 로',
+    ],
+  },
   {
     version: 'v4.94.0',
     date: '2026-10-23',

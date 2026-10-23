@@ -21,6 +21,7 @@ import BomImageDialog from '../../components/BomImageDialog'
 import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
 import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows, revCmp, normRev } from '../../lib/bomVersion'
+import { buildSubBomsFor } from '../../lib/bomSubExpand'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -390,7 +391,7 @@ export async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
     else { saved += rs.length; olderKept.push({ code, rev: o.rev, cur: o.cur, cnt: rs.length }) }
   }
   const revMoved = revChanges(archived, Object.fromEntries(projRows.filter(p => !olderOf[p.code]).map(p => [p.code, p.rev])))
-  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId, archived, revMoved, olderKept }
+  return { asmCount, saved, skipped, newItems, failed, failMsg, snapId, archived, revMoved, olderKept, codes: projUp.map(p => p.code) }
 }
 
 // (구) 단일 어셈블리 BOM 저장
@@ -840,6 +841,11 @@ export default function BOM() {
   const saveMut = useMutation({
     mutationFn: async (rows) => {
       const res = await saveBOMMulti({ rows, customerId: cs?.id, csCode, onProgress: setProgress })
+      // 하위 어셈블리 BOM 자동 생성 — 모든 고객사 (v4.94.1). 실패해도 BOM 저장 결과는 그대로
+      if (res.codes?.length && !res.failed) {
+        setProgress('하위 어셈블리 확인 중...')
+        try { res.sub = await buildSubBomsFor(res.codes, setProgress) } catch { /* 버튼으로 다시 만들 수 있음 */ }
+      }
       // HTM 업로드 + 옵션 켜짐일 때만, 기존 품목의 빈 제조사 채우기
       if (htmInfo && fillMfr) {
         setProgress('제조사 빈칸 채우는 중...')
@@ -853,6 +859,7 @@ export default function BOM() {
     onSuccess: (res) => {
       setResult(res); setPreview(null); setRawRows([]); setProgress(''); setHtmInfo(null)
       qc.invalidateQueries(['assemblies', cs?.id])
+      qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
     },
     onError: (e) => { setProgress(''); toastError('저장 오류: ' + e.message) },
   })
@@ -1119,7 +1126,7 @@ export default function BOM() {
       )}
       {result && (
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center gap-3">
-          {result.failed > 0 ? '⚠ 일부만 저장' : '✅ 저장 완료'} — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}
+          {result.failed > 0 ? '⚠ 일부만 저장' : '✅ 저장 완료'} — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}{result.sub?.made?.length > 0 && <span data-bom-sub-auto> · 하위 ASSY BOM {result.sub.made.length}개 자동 생성 (부품 {result.sub.total.toLocaleString()}행)</span>}
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
         </div>
       )}

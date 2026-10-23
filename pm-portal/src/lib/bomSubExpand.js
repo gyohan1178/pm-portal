@@ -57,3 +57,23 @@ export async function spliceSubBoms(customerId, rows, fetchRows, rootProjectId) 
   const out = await walk(rows, [rootProjectId], 0)
   return { rows: out, expanded }
 }
+
+// 하위 어셈블리 BOM 자동 생성 (v4.94.1) — BOM 을 올린 뒤 그 안의 하위 ASSY(아래 줄이 더 깊은 레벨인 줄)에
+//   자기 BOM 이 없으면 상위 BOM 의 하위 줄을 그대로 가져와 만든다. 어셈블리가 없으면 같은 고객사로 새로 만든다.
+//   이미 BOM 이 있는 하위 ASSY 는 건드리지 않는다 (덮어쓰기는 BOM 화면 「기존도 갱신」으로만).
+//   codes: 방금 올린 상위 어셈블리 코드들 · 함수(SQL) 전이면 조용히 0
+export async function buildSubBomsFor(codes, onProgress) {
+  const made = []
+  let total = 0
+  for (const code of [...new Set((codes || []).filter(Boolean))]) {
+    const { data: list, error } = await supabase.rpc('pm_sub_bom_list', { p_source_code: code })
+    if (error) continue
+    const todo = (list || []).filter((x) => !x.has_bom)
+    for (let i = 0; i < todo.length; i++) {
+      onProgress?.(`하위 어셈블리 BOM 만드는 중… ${code} ${i + 1}/${todo.length}`)
+      const { data, error: e2 } = await supabase.rpc('pm_build_sub_bom_one', { p_source_code: code, p_assy_code: todo[i].assy_code, p_overwrite: false })
+      if (!e2 && data?.[0]) { made.push(data[0]); total += data[0].rows_created || 0 }
+    }
+  }
+  return { made, total }
+}
