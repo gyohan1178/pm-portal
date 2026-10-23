@@ -6,11 +6,12 @@
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
+import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
@@ -195,12 +196,13 @@ export default function OrderIntake() {
     // 예상 매출 — 취소 빼고 납품 완료 포함. 달러(CCN B)는 환율을 곱한다
     // 올해 납기(납품일) 줄만 — 엑셀 매출 결산과 같은 기준. 내년 이후 · 납기 없음은 따로 (v4.90.2)
     const yr = today.slice(0, 4)
-    const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0 }
+    const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0, byCust: {} }
     scoped.filter((l) => !l.st.cancelled).forEach((l) => {
       const y = String(l.due_date || '').slice(0, 4)
       if (y !== yr) { const a = amountOf(l) * (isUsd(l.o) ? fx : 1); if (!y) m.noDue += a; else if (y > yr) m.later += a; return }
       const a = amountOf(l), d = Math.min(+l.delivered_qty || 0, +l.qty || 0) * (+l.unit_price || 0)
       if (isUsd(l.o)) { m.usd += a; m.doneUsd += d } else { m.krw += a; m.doneKrw += d }
+      m.byCust[l.o.customer_code] = (m.byCust[l.o.customer_code] || 0) + a * (isUsd(l.o) ? fx : 1)
     })
     m.total = m.krw + m.usd * fx
     m.done = m.doneKrw + m.doneUsd * fx
@@ -270,7 +272,7 @@ export default function OrderIntake() {
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error },
-    onSuccess: () => { setPoOpen(null); refresh(); toastSuccess('삭제했습니다') },
+    onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, ORDER_CUSTOMERS[o.customer_code]?.name); setPoOpen(null); refresh(); toastSuccess('삭제했습니다') },
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
 
@@ -287,7 +289,14 @@ export default function OrderIntake() {
     setAxBusy(false)
   }
 
-  const liveVisible = lines.filter((l) => !l.st.cancelled)
+  // 목록이 길면 화면이 무거움 — 100건씩 펼치고 「더 보기」 (v4.90.3)
+  const PAGE = 100
+  const [limit, setLimit] = useState(PAGE)
+  useEffect(() => { setLimit(PAGE) }, [mode, cust, q, view, kpi, sort, axOnlyElec])
+  const shownLines = useMemo(() => lines.slice(0, limit), [lines, limit])
+  const shownPos = useMemo(() => poRows.slice(0, limit), [poRows, limit])
+  const totalN = mode === 'line' ? lines.length : poRows.length
+  const liveVisible = shownLines.filter((l) => !l.st.cancelled)
   const checkedLines = liveVisible.filter((l) => checked.has(l.id))
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const allOn = liveVisible.length > 0 && liveVisible.every((l) => checked.has(l.id))
@@ -315,22 +324,36 @@ export default function OrderIntake() {
         <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         <Kpi tone="red" label="미확인" value={kpis.unconfirmed.length} sub={`PO ${pos(kpis.unconfirmed)}건 · 등록 1영업일 넘게 확인 없음`} {...kpiBtn('unconfirmed')} />
         <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} />
         <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} />
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} />
-        <div className={`rounded-xl border px-4 py-3 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
-          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 납품 포함</span></div>
-          <div className="text-[22px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
-          <div className="text-[11px] text-slate-500 tabular-nums">납품 {won(m.done)} · 남은 {won(m.total - m.done)}</div>
+      </div>
+
+      {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) */}
+      <div className={`rounded-xl border px-5 py-3 flex flex-wrap items-center gap-x-8 gap-y-2 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
+        <div>
+          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가 · 납품 포함</span></div>
+          <div className="text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
+        </div>
+        <div className="text-[12px] text-slate-600 tabular-nums leading-relaxed">
+          <div>납품 <b>{won(m.done)}</b></div>
+          <div>남은 <b>{won(m.total - m.done)}</b></div>
+        </div>
+        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12px] tabular-nums" data-money-cust>
+          {Object.entries(ORDER_CUSTOMERS).filter(([k2]) => m.byCust[k2]).map(([k2, v]) => (
+            <div key={k2} className="whitespace-nowrap"><span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: v.color }} /><span className="text-slate-500">{v.name}</span> <b className="text-slate-700">{won(m.byCust[k2])}</b></div>
+          ))}
+        </div>
+        <div className="ml-auto text-[10.5px] text-slate-400 tabular-nums space-y-0.5 text-right">
           {m.usd > 0 && (
-            <div className="text-[10.5px] text-slate-400 flex items-center gap-1 tabular-nums">달러 ${fmt(Math.round(m.usd))} × 환율
+            <div className="flex items-center justify-end gap-1">달러 ${fmt(Math.round(m.usd))} × 환율
               <input value={fxIn} onChange={(e) => setFxIn(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(qcfg?.sellRate || 1400)} title="달러(CCN B) PO 환율 — 비우면 매출견적 기준 판매환율" data-fx className="w-14 px-1 py-0.5 text-[10.5px] border border-emerald-200 rounded bg-white" /></div>
           )}
-          {m.later > 0 && <div className="text-[10.5px] text-slate-400 tabular-nums" data-money-later>내년 이후 납기 {won(m.later)} 별도</div>}
-          {m.noPrice > 0 && <div className="text-[10.5px] text-amber-600">단가 없는 품목 {m.noPrice} (합계 제외)</div>}
+          {m.later > 0 && <div data-money-later>내년 이후 납기 {won(m.later)} 별도</div>}
+          {m.noPrice > 0 && <div className="text-amber-600">단가 없는 품목 {m.noPrice} (합계 제외)</div>}
         </div>
       </div>
 
@@ -425,7 +448,7 @@ export default function OrderIntake() {
             <tbody>
               {isLoading && <tr><td colSpan={9} className="p-8 text-center text-slate-400">불러오는 중…</td></tr>}
               {!isLoading && !lines.length && <tr><td colSpan={9} className="p-10 text-center text-slate-400">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다 — 「📄 PDF 올리기」로 시작하세요'}</td></tr>}
-              {lines.map((l) => {
+              {shownLines.map((l) => {
                 const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
                 const [stLabel, stCls] = statusOf(l)
                 return (
@@ -476,7 +499,7 @@ export default function OrderIntake() {
             </tr></thead>
             <tbody>
               {!isLoading && !poRows.length && <tr><td colSpan={7} className="p-10 text-center text-slate-400">조건에 맞는 PO 가 없습니다</td></tr>}
-              {poRows.map(({ o, ls, amount }) => {
+              {shownPos.map(({ o, ls, amount }) => {
                 const rp = ls.filter((l) => !l.st.cancelled)
                 const replied = rp.filter((l) => l.reply).length
                 const liveL = rp.filter((l) => l.st.live)
@@ -498,6 +521,13 @@ export default function OrderIntake() {
         )}
       </div>
 
+      {totalN > limit && (
+        <div className="-mt-2 flex items-center justify-center gap-2 py-2" data-more>
+          <span className="text-xs text-slate-500 tabular-nums">{limit.toLocaleString('ko-KR')} / {totalN.toLocaleString('ko-KR')}{mode === 'line' ? '품목' : '건'} 표시</span>
+          <button type="button" onClick={() => setLimit((n) => n + PAGE)} data-more-btn className="px-4 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50">더 보기 (+{Math.min(PAGE, totalN - limit)})</button>
+          <button type="button" onClick={() => setLimit(totalN)} data-more-all className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-800">전체 보기</button>
+        </div>
+      )}
       <div className="-mt-2 flex items-center gap-2 px-1 text-[11px] text-slate-400">
         <span>💡 열 머리글 오른쪽 끝을 끌면 너비를 바꿀 수 있습니다 (이 브라우저에 기억)</span>
         <button type="button" onClick={() => (mode === 'line' ? lineRz : poRz).resetWidths()} data-reset-cols className="ml-auto hover:text-slate-600 underline-offset-2 hover:underline">열 너비 초기화</button>

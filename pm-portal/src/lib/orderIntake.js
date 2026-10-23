@@ -4,6 +4,7 @@
 //   기존 고객 PO 표(purchase_orders)는 읽기만 한다 — AXCELIS 진행 중 PO 를 들여올 때.
 import { supabase } from './supabase'
 import { fetchAll } from './paginate'
+import { logActivity } from './activityLog'
 
 export const ORDER_CUSTOMERS = {
   AX:  { name: 'AXCELIS', prefix: 'AX-', color: '#8b5cf6', badge: 'bg-violet-50 text-violet-700' },
@@ -271,6 +272,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     }
     let linked = 0
     for (const n of lines.filter((l) => l.plan)) linked += await movePlanned(o.id, po.po_no, n, meName, source)
+    logActivity('create', 'pm_order', po.po_no, `${SOURCE_LABEL[source] || source} 등록 · 품목 ${lines.length}${linked ? ` · 발주 예정 ${linked}건 확정` : ''}`, null, ORDER_CUSTOMERS[cust]?.name)
     return { id: o.id, created: true, lines: lines.length, linked }
   }
   // 같은 PO — 바뀐 줄만 고치고 이력 남김
@@ -328,7 +330,9 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   let { error } = await supabase.from('pm_order').update(head).eq('id', existing.id)
   if (error && /ship_to/.test(error.message || '') && head.ship_to) { delete head.ship_to; ({ error } = await supabase.from('pm_order').update(head).eq('id', existing.id)) }
   if (error) throw error
-  return { id: existing.id, created: false, changed: d.changes.length + d.added.length + d.removed.length + linked, resets: resetLogs.length, linked, fills: fp.labels, diff: d }
+  const nChanged = d.changes.length + d.added.length + d.removed.length + linked
+  logActivity('update', 'pm_order', po.po_no, [nChanged ? `발주서 변경 ${nChanged}건 반영` : '', resetLogs.length ? `재회신 ${resetLogs.length}` : '', fp.any ? `빈 칸 채움: ${fp.labels.join(' · ')}` : ''].filter(Boolean).join(' · ') || '같은 발주서 다시 올림', null, ORDER_CUSTOMERS[cust]?.name)
+  return { id: existing.id, created: false, changed: nChanged, resets: resetLogs.length, linked, fills: fp.labels, diff: d }
 }
 
 // ── AXCELIS PO 파일 반영 (고객 PO 표 → 수주대장) ─────────────────
@@ -452,6 +456,7 @@ export async function axSyncRun(pv, meName) {
   }
   const touched = [...new Set([...pv.upd, ...pv.add].map((u) => u.order_id))]
   if (touched.length) await supabase.from('pm_order').update({ updated_at: now }).in('id', touched)
+  logActivity('upload', 'pm_order', null, `AX PO 파일 반영 — 새 PO ${created}건 · 바뀐 품목 ${pv.upd.length + pv.add.length}${pv.summary.resets ? ` · 재회신 ${pv.summary.resets}` : ''}`, null, 'AXCELIS')
   return { created, changed: pv.upd.length + pv.add.length, logs: all.length, resets: pv.summary.resets }
 }
 
@@ -520,8 +525,13 @@ export async function replyLines(lines, { reply, date, memo }, meName) {
   const orderIds = [...new Set(lines.map((l) => l.order_id))]
   const { error } = await supabase.from('pm_order').update({ confirmed_at: now, confirmed_name: meName || null, updated_at: now }).in('id', orderIds).is('confirmed_at', null)
   if (error) throw error
+  logActivity('update', 'pm_order', poNosOf(lines), `회신 「${reply}」 ${ids.length}품목${date ? ` · 준비일 ${date}` : ''}`, null, custNameOf(lines))
   return { lines: ids.length, orders: orderIds.length }
 }
+
+// 활동 이력용 — 고른 줄들의 PO번호 · 고객사 (v4.90.3)
+const poNosOf = (ls) => { const n = [...new Set(ls.map((l) => l.o?.po_no).filter(Boolean))]; return n.length ? `${n.slice(0, 3).join(', ')}${n.length > 3 ? ` 외 ${n.length - 3}` : ''}` : null }
+const custNameOf = (ls) => { const c = [...new Set(ls.map((l) => l.o?.customer_code).filter(Boolean))]; return c.length === 1 ? ORDER_CUSTOMERS[c[0]]?.name : null }
 
 // 협력사 불출일 — 협력사에 자재를 내줘야 하는 날 (Edwards 엑셀 「납품 요청일」). 납기(고객사 납품일)와 따로 관리 (v4.90.0)
 export async function setReleaseDate(lines, date, meName) {
@@ -535,6 +545,7 @@ export async function setReleaseDate(lines, date, meName) {
   const logs = lines.filter((l) => (l.release_date || '') !== (date || ''))
     .map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'release_date', before_val: l.release_date || null, after_val: date || null, source: 'manual', changed_name: meName || null }))
   if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
+  logActivity('update', 'pm_order', poNosOf(lines), `협력사 불출일 ${date || '지움'} · ${lines.length}품목`, null, custNameOf(lines))
 }
 
 export async function markDelivered(lines, delivered, meName) {
@@ -546,4 +557,5 @@ export async function markDelivered(lines, delivered, meName) {
   }
   const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'delivered', before_val: String(+l.delivered_qty || 0), after_val: String(delivered ? +l.qty : 0), source: 'manual', changed_name: meName || null }))
   if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
+  if (lines.length) logActivity('update', 'pm_order', poNosOf(lines), `${delivered ? '납품 표시' : '납품 취소'} ${lines.length}품목`, null, custNameOf(lines))
 }

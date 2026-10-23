@@ -76,4 +76,5 @@ export const TARGET_LABEL = {
   production: '생산관리',
   pm_profiles: '계정',
   cleanup: '데이터 정리',
+  pm_order: '수주대장',
 }
