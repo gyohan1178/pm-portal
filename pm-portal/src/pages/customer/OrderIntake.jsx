@@ -119,7 +119,7 @@ export default function OrderIntake() {
     .filter((l) => !axOnlyElec || l.o.customer_code !== 'AX' || !l.division || l.division === '전장'), [orders, axOnlyElec])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
   const k = q.trim().toUpperCase()
-  const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc].some((v) => String(v || '').toUpperCase().includes(k))
+  const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const month = todayISO().slice(0, 7)
@@ -342,7 +342,7 @@ export default function OrderIntake() {
                     <td className="px-2"><span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${c.badge}`}>{c.name}</span></td>
                     <td className="px-2 whitespace-nowrap"><button type="button" onClick={() => setPoOpen(l.order_id)} className="font-mono font-bold text-indigo-600 hover:underline" data-po-link={l.o.po_no}>{l.o.po_no}</button><span className="text-slate-400 ml-1">L{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</span></td>
                     <td className="px-2 font-mono font-bold whitespace-nowrap">{l.items?.std_code || <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px]">미등록 {l.raw_pn || ''}</span>}</td>
-                    <td className="px-2 text-slate-500 max-w-[220px] truncate" title={l.items?.name || l.raw_desc || ''}>{l.items?.name || l.raw_desc || '—'}</td>
+                    <td className="px-2 text-slate-500 max-w-[240px]" title={[l.items?.name || l.raw_desc, l.note].filter(Boolean).join('\n')}><div className="truncate">{l.items?.name || l.raw_desc || '—'}</div>{l.note && <div className="text-[10px] text-slate-400 truncate">{l.note}</div>}</td>
                     <td className="px-2">{l.rev || '—'}</td>
                     <td className="px-2 text-right font-mono">{fmt(l.qty)}</td>
                     <td className={`px-2 text-right font-mono ${l.st.delivered ? 'text-emerald-600 font-bold' : ''}`}>{+l.delivered_qty ? fmt(l.delivered_qty) : '—'}</td>

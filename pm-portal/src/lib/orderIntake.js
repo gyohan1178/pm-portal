@@ -72,22 +72,49 @@ const FIELDS = [
 ]
 // oldLines: DB 줄(item_id · items.std_code 포함) / newLines: 읽은 줄(item 포함)
 //   반환 { changes:[{line_key, field, before_val, after_val}], added:[newLine], removed:[oldLine], same }
-export function diffOrder(oldLines, newLines) {
+// 이전 줄 ↔ 새 줄 짝짓기 — 라인/분할 번호가 같으면 그 줄.
+//   번호가 안 맞는 줄은 같은 품목(품번)끼리 순서대로 다시 짝짓는다.
+//   엑셀 이관 PO 는 줄 번호를 순서대로 매겼으므로 발주서 번호와 다를 수 있다 (v4.88.1).
+const idOf = (x) => x.item_id || x.item?.id || null
+const pnOf = (x) => normKey(x.raw_pn ?? x.pn) || null
+const sameItem = (a, b) => (!!idOf(a) && idOf(a) === idOf(b)) || (!!pnOf(a) && pnOf(a) === pnOf(b))
+export function pairLines(oldLines, newLines) {
+  const live = oldLines.filter((o) => !o.cancelled)
   const om = new Map(oldLines.map((o) => [lineKey(o), o]))
-  const nm = new Map(newLines.map((n) => [lineKey(n), n]))
+  const pair = new Map()            // 새 줄 index → 이전 줄
+  const used = new Set()
+  const known = (x) => !!(idOf(x) || pnOf(x))
+  // ① 번호가 같고 품목도 같은(또는 어느 한쪽 품목을 모르는) 줄
+  newLines.forEach((n, i) => { const o = om.get(lineKey(n)); if (o && (!known(o) || !known(n) || sameItem(o, n))) { pair.set(i, o); used.add(o) } })
+  // ② 번호가 달라도 같은 품목
+  newLines.forEach((n, i) => {
+    if (pair.has(i)) return
+    const o = live.find((x) => !used.has(x) && sameItem(x, n))
+    if (o) { pair.set(i, o); used.add(o) }
+  })
+  // ③ 남은 것 중 번호가 같은 줄 — 같은 라인에서 품번이 바뀐 경우
+  newLines.forEach((n, i) => { if (pair.has(i)) return; const o = om.get(lineKey(n)); if (o && !used.has(o)) { pair.set(i, o); used.add(o) } })
+  return { pair, used }
+}
+
+// oldLines: DB 줄(item_id · items.std_code 포함) / newLines: 읽은 줄(item 포함)
+//   반환 { changes:[{line_key, field, before_val, after_val}], added:[newLine], removed:[oldLine], same, pair }
+export function diffOrder(oldLines, newLines) {
+  const { pair, used } = pairLines(oldLines, newLines)
   const changes = [], added = [], removed = []
-  newLines.forEach((n) => {
-    const o = om.get(lineKey(n))
+  newLines.forEach((n, i) => {
+    const o = pair.get(i)
     if (!o) { added.push(n); return }
     FIELDS.forEach(([field, nk, f]) => {
       const before = field === 'item' ? (o.items?.std_code || o.raw_pn || '') : f(o[field])
       const after = field === 'item' ? (n.item?.std_code || n.pn || '') : f(n[nk])
       if (field === 'item' && (!n.item || !o.item_id)) return     // 품목을 못 찾은 쪽은 비교하지 않는다
+      if (field === 'rev' && !before) return                       // 비어 있던 Rev 를 채우는 것은 변경이 아니다 (저장은 함)
       if (before !== after) changes.push({ line_key: lineKey(n), field, before_val: before, after_val: after })
     })
   })
-  oldLines.forEach((o) => { if (!nm.has(lineKey(o)) && !o.cancelled) removed.push(o) })
-  return { changes, added, removed, same: !changes.length && !added.length && !removed.length }
+  oldLines.forEach((o) => { if (!used.has(o) && !o.cancelled) removed.push(o) })
+  return { changes, added, removed, same: !changes.length && !added.length && !removed.length, pair }
 }
 
 export async function loadOrderByNo(cust, poNo) {
@@ -140,13 +167,14 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   }
   // 같은 PO — 바뀐 줄만 고치고 이력 남김
   const d = diffOrder(existing.pm_order_line || [], lines)
-  const byKey = new Map((existing.pm_order_line || []).map((o) => [lineKey(o), o]))
   const now = new Date().toISOString()
   const resetLogs = []
-  for (const n of lines) {
-    const o = byKey.get(lineKey(n))
+  for (const [i, n] of lines.entries()) {
+    const o = d.pair.get(i)
     if (!o) continue
     const patch = {}
+    // 번호가 달랐던 줄(엑셀 이관 등)은 발주서 번호로 맞춘다
+    if (lineKey(o) !== lineKey(n)) { patch.line_no = String(n.line_no); patch.del_line = String(n.del_line || '1') }
     if (+o.qty !== +(n.qty || 0)) patch.qty = Number(n.qty) || 0
     if ((o.due_date || '') !== (n.due || '')) patch.due_date = n.due || null
     if ((o.unit_price == null ? '' : +o.unit_price) !== (n.price == null ? '' : +n.price)) patch.unit_price = n.price ?? null
@@ -154,7 +182,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     if (n.item?.id && n.item.id !== o.item_id) patch.item_id = n.item.id
     if (o.cancelled) patch.cancelled = false
     // 납기 · 수량 · Rev · 품목이 바뀐 줄은 회신을 다시 받는다 (단가만 바뀐 것은 그대로)
-    if (o.reply && ['qty', 'due_date', 'rev', 'item_id'].some((k) => k in patch)) {
+    if (o.reply && (['qty', 'due_date', 'item_id'].some((k) => k in patch) || ('rev' in patch && o.rev))) {
       Object.assign(patch, REPLY_CLEAR)
       resetLogs.push({ line_key: lineKey(o), field: 'reply_reset', before_val: replyText(o), after_val: '변경으로 재회신 필요' })
     }
@@ -341,7 +369,7 @@ export function bizDaysSince(ts, now = new Date()) {
   return n
 }
 
-export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동' }
+export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
 export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신' }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)
