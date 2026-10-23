@@ -27,7 +27,7 @@ const MENU_META = {
   '/': ['🎯','관제탑'], '/todo': ['📋','할 일'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
   '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','다품목 출고'],
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
-  '/sales-quote': ['📤','매출견적'],
+  '/sales-quote': ['📤','매출견적'], '/orders': ['📨','수주대장'],
   '/field-search': ['🔎','현장 검색'], '/production': ['🏭','생산 대시보드'],
   '/production/AX': ['🔧','생산 관리'], '/production/qr-demo': ['🧪','QR 공정 데모'], '/production/harness-release': ['🧵','하네스 출도·불출'], '/board': ['🖥','생산 전광판'], '/drawings': ['📐','도면 조회'],
   '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
@@ -364,6 +364,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 🤝 영업 */}
         {canAccessSection(profile, 'sales') && (
         <CollapseSection mover={mv} label="🤝 영업" sKey="sales">
+          <MenuItem to="/orders" icon="📨" onNavigate={onNavigate}>수주대장</MenuItem>
           <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
           <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>

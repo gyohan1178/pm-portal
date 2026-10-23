@@ -20,6 +20,7 @@ const MissingParts = lazy(() => import('./pages/common/MissingParts'))
 const Inventory = lazy(() => import('./pages/common/Inventory'))
 const Quote = lazy(() => import('./pages/common/Quote'))
 const CustomerPO = lazy(() => import('./pages/customer/CustomerPO'))
+const OrderIntake = lazy(() => import('./pages/customer/OrderIntake'))
 const PurchasePage = lazy(() => import('./pages/customer/PurchasePage'))
 const Shortage = lazy(() => import('./pages/customer/Shortage'))
 const BOM = lazy(() => import('./pages/customer/BOM'))
@@ -153,6 +154,7 @@ export default function App() {
         <Route path="quality/cn" element={<CnHistory />} />
         <Route path="request-load" element={<RequestLoad />} />
         <Route path="sales-quote"   element={<SalesQuote />} />
+        <Route path="orders"        element={<OrderIntake />} />
         <Route path="quote-history"  element={<QuoteHistory />} />
         <Route path="control-tower"        element={<ControlTower scope="all" />} />
         <Route path="control-tower/:scope" element={<ControlTowerRoute />} />

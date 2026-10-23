@@ -37,6 +37,7 @@ function buildCommands() {
   push('기초자료', '단가변동이력', '/master/price', 'price danga')
   push('기초자료', '견적입력', '/quote', 'quote gyeonjeok')
   push('기초자료', '매출견적', '/sales-quote', 'sales quote maechul gyeonjeok')
+  push('영업', '수주대장', '/orders', 'orders suju po balju')
   push('기초자료', '결제 계획', '/payment-plan', 'payment plan gyeolje')
   push('기초자료', 'ERP 연동', '/erp', 'erp')
   // 주간 / 분석

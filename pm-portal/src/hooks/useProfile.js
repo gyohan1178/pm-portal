@@ -158,7 +158,7 @@ export function sectionOfPath(pathname) {
   // 구매 — 입고·품목 단가 등록(/quote)
   if (pathname === '/inbound' || pathname === '/quote' || pathname === '/payment-plan') return 'buy'
   // 영업 — 매출견적(+견적이력 내부 탭)
-  if (pathname === '/sales-quote' || pathname === '/quote-history') return 'sales'
+  if (pathname === '/sales-quote' || pathname === '/quote-history' || pathname === '/orders') return 'sales'
   // 분석 — 원가분석이 여기로 이동
   if (pathname.startsWith('/weekly') || pathname === '/ecount' || pathname === '/purchase-dashboard'
       || pathname === '/sales' || pathname === '/cost'
