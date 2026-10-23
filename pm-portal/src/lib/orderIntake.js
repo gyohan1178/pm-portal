@@ -5,6 +5,7 @@
 import { supabase } from './supabase'
 import { fetchAll } from './paginate'
 import { logActivity } from './activityLog'
+import { divisionOf } from './axPoFile'
 
 export const ORDER_CUSTOMERS = {
   AX:  { name: 'AXCELIS', prefix: 'AX-', color: '#8b5cf6', badge: 'bg-violet-50 text-violet-700' },
@@ -264,7 +265,10 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       delete head.ship_to;
       ({ data: o, error } = await supabase.from('pm_order').insert(head).select('id').single())
     }
-    if (error) throw error
+    if (error) {
+      if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${po.po_no} 는 이미 수주대장에 있습니다 — 파일을 다시 올려 비교하세요`)
+      throw error
+    }
     const rows = lines.filter((l) => !l.plan).map((l) => lineRow(o.id, l))
     for (let i = 0; i < rows.length; i += 500) {
       const { error: e2 } = await supabase.from('pm_order_line').insert(rows.slice(i, i + 500))
@@ -335,58 +339,43 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   return { id: existing.id, created: false, changed: nChanged, resets: resetLogs.length, linked, fills: fp.labels, diff: d }
 }
 
-// ── AXCELIS PO 파일 반영 (고객 PO 표 → 수주대장) ─────────────────
-//   AXCELIS 는 납기 변경이 잦은데 발주서(PDF)가 새로 오지 않는다 — 바뀐 납기는 PO 파일(시트)로만 온다.
-//   그래서 「고객사 PO」 화면에서 PO 파일을 올린 뒤, 여기서 그 내용을 수주대장에 맞춘다.
+// ── AXCELIS PO 엑셀 반영 (PO 관리 엑셀 → 수주대장) ─────────────────
+//   AXCELIS 는 납기 변경이 잦은데 발주서(PDF)가 새로 오지 않는다 — 바뀐 납기는 PO 엑셀로만 온다.
+//   v4.90.5 — 「고객사 PO」 표를 거치지 않고, 수주대장에서 PO 엑셀(Current Data + Received 시트)을 바로 올려 맞춘다.
 //     · 수주대장에 있는 AX PO → 같은 라인/분할의 납기 · 수량 · Rev · 단가 차이를 고치고 변경 이력을 남긴다
-//                             PO 파일이 「완료」면 납품 완료로, 「취소」면 취소로. PO 파일에만 있는 줄은 추가.
-//     · 수주대장에 없는 AX PO → PO 째로 들여온다 (완료 줄은 납품 · 판매입력 완료로)
-//       v4.89.0 — 납품이 다 끝난 PO 도 들인다 (예상 매출 · 이력에 납품 완료분이 빠지던 문제)
-//       v4.90.2 — 하네스 · 구매품만 있는 PO 도 들인다 (전체 리스트). 화면의 「AX 전장만」으로 걸러 볼 수 있음
+//                             Received 가 납품 완료면 납품 완료로, 발주 취소면 취소로. 엑셀에만 있는 줄은 추가.
+//     · 수주대장에 없는 AX PO → PO 째로 들여온다 (납품 줄은 납품 · 판매입력 완료로) · 하네스 · 구매품 PO 포함
+//     · 엑셀 어디에도 없는 수주대장 진행 중 줄은 바꾸지 않고 「확인 필요」로 알려만 준다
 //   납기가 당겨지거나 수량이 늘면 구매자재 회신을 다시 받는다. 납기가 밀린 것은 기록만.
-const PO_COLS = 'id,po_number,order_line,del_line,item_id,item_rev,qty_ordered,unit_price,promise_date,order_date,division,status,ccn,issued_at, items!purchase_orders_item_id_fkey(std_code,name)'
 const keyOfPo = (r) => `${String(r.order_line || '1')}/${String(r.del_line || '1')}`
 const numEq = (a, b) => (a == null || a === '' ? null : +a) === (b == null || b === '' ? null : +b)
 
-// 「실적 업로드」(PO 파일의 Received 시트 → pm_sales) 줄 — PO 파일(진행 중 시트)에는 6월 이후 것만 있고
-//   이미 납품이 끝나 빠진 줄도 있어서, 매출 대시보드와 맞추려면 실적도 함께 들여야 한다 (v4.90.4)
-//   올해 납기 이후만 · 발주 취소 제외 · PO 파일에 같은 PO/라인/분할이 있으면 PO 파일이 우선
-async function salesRowsAX(poRows) {
-  const from = `${new Date().getFullYear()}-01-01`
-  let sales
-  try {
-    sales = await fetchAll(() => supabase.from('pm_sales').select('id,part_no,po_number,order_line,del_line,item_desc,qty,unit_price,ccn,promise_date,status_note,customer_code')
-      .gte('promise_date', from).order('id'))
-  } catch { return [] }                          // 실적 표를 못 읽으면 PO 파일만
-  const have = new Set(poRows.map((r) => `${r.po_number}|${keyOfPo(r)}`))
-  const divByItem = new Map()
-  poRows.forEach((r) => { if (r.item_id && r.division && !divByItem.has(r.item_id)) divByItem.set(r.item_id, r.division) })
-  const use = sales.filter((r) => r.po_number && (r.customer_code || 'AX') === 'AX' && r.status_note !== '발주 취소'
-    && !have.has(`${r.po_number}|${String(r.order_line || '1')}/${String(r.del_line || '1')}`))
-  const codes = [...new Set(use.map((r) => r.part_no && `AX-${String(r.part_no).trim()}`).filter(Boolean))]
+// PO 엑셀(parseAxPoWorkbook 결과) → 비교용 줄 모양 + 포털 품목 연결 (v4.90.5)
+//   예전엔 「고객사 PO」 표(purchase_orders)를 읽었다 — 이제는 수주대장에서 올린 PO 엑셀을 바로 읽는다
+async function axRowsOfFile(fileRows) {
+  const codes = [...new Set(fileRows.map((r) => `AX-${r.pn}`))]
   const byCode = new Map()
   for (let i = 0; i < codes.length; i += 150) {
-    const { data } = await supabase.from('items').select(ITEM_COLS).in('std_code', codes.slice(i, i + 150))
+    const { data, error } = await supabase.from('items').select(ITEM_COLS).in('std_code', codes.slice(i, i + 150))
+    if (error) throw error
     ;(data || []).forEach((x) => byCode.set(x.std_code, x))
   }
-  return use.map((r) => {
-    const it = byCode.get(`AX-${String(r.part_no || '').trim()}`) || null
-    const done = /완료/.test(r.status_note || '')
+  return fileRows.map((r, i) => {
+    const it = byCode.get(`AX-${r.pn}`) || null
     return {
-      id: `s${r.id}`, po_number: r.po_number, order_line: r.order_line, del_line: r.del_line || '1', item_id: it?.id || null,
-      items: it ? { std_code: it.std_code, name: it.name } : null, raw_pn: r.part_no || null, raw_desc: r.item_desc || null,
-      item_rev: null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: null,
-      division: (it && divByItem.get(it.id)) || null, status: done ? '완료' : '진행중', ccn: r.ccn || null,
-      issued_at: done ? r.promise_date : null, fromSales: true,
+      id: `f${i}`, po_number: r.po_number, order_line: r.order_line || '1', del_line: r.del_line || '1',
+      item_id: it?.id || null, items: it ? { std_code: it.std_code, name: it.name } : null, raw_pn: r.pn, raw_desc: r.desc || null,
+      item_rev: r.item_rev || null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: null,
+      division: divisionOf(r.pn), status: r.status, ccn: r.ccn || null,
+      issued_at: r.status === '완료' ? r.promise_date : null, fromRcv: r.src === 'rcv',
     }
   })
 }
 
-export async function axSyncPreview() {
-  const poRows = await fetchAll(() => supabase.from('purchase_orders').select(PO_COLS)
-    .eq('order_type', 'customer_po').eq('customer_id', AX_CUSTOMER_ID).order('id'))
-  const salesRows = await salesRowsAX(poRows)
-  const rows = [...poRows, ...salesRows]
+// fileRows: parseAxPoWorkbook(...).rows
+export async function axSyncPreview(fileRows) {
+  if (!fileRows?.length) throw new Error('PO 엑셀에서 읽은 줄이 없습니다')
+  const rows = await axRowsOfFile(fileRows)
   const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
   const hids = heads.map((h) => h.id)
   const lines = []
@@ -435,13 +424,19 @@ export async function axSyncPreview() {
     }
   }
   newPos.sort((a, b) => a.po_no.localeCompare(b.po_no))
+  // PO 엑셀 어디에도(진행 중 · 올해 Received) 없는 수주대장 진행 중 줄 — 바꾸지 않고 알려만 준다
+  const fileKeys = new Set(rows.map((r) => `${r.po_number}|${keyOfPo(r)}`))
+  const noByHead = new Map(heads.map((h) => [h.id, h.po_no]))
+  const missing = lines.filter((l) => !l.cancelled && (+l.delivered_qty || 0) < (+l.qty || 0) && !fileKeys.has(`${noByHead.get(l.order_id)}|${l.line_no}/${l.del_line}`))
+    .map((l) => ({ po_no: noByHead.get(l.order_id), key: `${l.line_no}/${l.del_line}`, due: l.due_date }))
   const cnt = (f) => hist.filter((x) => x.field === f).length
   return {
-    newPos, upd, add, hist,
+    newPos, upd, add, hist, missing,
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
       newLive: newPos.filter((p) => p.live).length, newDone: newPos.filter((p) => !p.live).length,
-      fromSales: newPos.reduce((a, p) => a + p.lines.filter((l) => l.fromSales).length, 0) + add.filter((x) => x.r.fromSales).length,
+      fromRcv: newPos.reduce((a, p) => a + p.lines.filter((l) => l.fromRcv).length, 0) + add.filter((x) => x.r.fromRcv).length,
+      missing: missing.length,
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), price: cnt('unit_price'),
       delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
@@ -456,7 +451,7 @@ const importRow = (orderId, l) => {
     raw_pn: l.items?.std_code?.replace(/^AX-/, '') || l.raw_pn || null, raw_desc: l.items?.name || l.raw_desc || null, rev: l.item_rev || null,
     qty: Number(l.qty_ordered) || 0, unit_price: l.unit_price ?? null, due_date: l.promise_date || null, division: l.division || null,
     delivered_qty: done ? Number(l.qty_ordered) || 0 : 0, delivered_at: done ? (l.issued_at || '').slice(0, 10) || null : null,
-    sales_done_at: l.fromSales && done ? new Date().toISOString() : null, cancelled: l.status === '취소',   // 실적에서 온 납품 줄은 지난 일 → 판매입력도 끝난 것으로
+    sales_done_at: l.fromRcv && done ? new Date().toISOString() : null, cancelled: l.status === '취소',   // Received 에서 온 납품 줄은 지난 일 → 판매입력도 끝난 것으로
   }
 }
 
@@ -493,7 +488,7 @@ export async function axSyncRun(pv, meName) {
   }
   const touched = [...new Set([...pv.upd, ...pv.add].map((u) => u.order_id))]
   if (touched.length) await supabase.from('pm_order').update({ updated_at: now }).in('id', touched)
-  logActivity('upload', 'pm_order', null, `AX PO 파일 반영 — 새 PO ${created}건 · 바뀐 품목 ${pv.upd.length + pv.add.length}${pv.summary.resets ? ` · 재회신 ${pv.summary.resets}` : ''}`, null, 'AXCELIS')
+  logActivity('upload', 'pm_order', pv.fileName || null, `AX PO 엑셀 반영 — 새 PO ${created}건 · 바뀐 품목 ${pv.upd.length + pv.add.length}${pv.summary.resets ? ` · 재회신 ${pv.summary.resets}` : ''}`, null, 'AXCELIS')
   return { created, changed: pv.upd.length + pv.add.length, logs: all.length, resets: pv.summary.resets }
 }
 

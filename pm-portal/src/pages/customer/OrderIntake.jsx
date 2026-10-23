@@ -6,7 +6,7 @@
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
@@ -19,6 +19,7 @@ import {
   ORDER_CUSTOMERS, fetchOrders, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf,
 } from '../../lib/orderIntake'
+import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
@@ -290,14 +291,24 @@ export default function OrderIntake() {
 
   const [axPrev, setAxPrev] = useState(null)
   const [axBusy, setAxBusy] = useState(false)
-  async function axPreview() {
+  const axFileRef = useRef(null)
+  // AXCELIS PO 엑셀(「고객사 PO」에 올리는 그 파일)을 골라 바로 읽는다 — Current Data + Received (v4.90.5)
+  async function axPreview(file) {
+    if (!file) return
     setAxBusy(true)
-    try { setAxPrev(await axSyncPreview()) } catch (e) { toastError('읽기 실패: ' + e.message) }
+    try {
+      const XLSX = await import('xlsx')
+      const buf = await new Promise((ok, no) => { const r = new FileReader(); r.onload = () => ok(r.result); r.onerror = () => no(r.error); r.readAsArrayBuffer(file) })
+      const wb = XLSX.read(buf, { type: 'array', cellDates: true })
+      const parsed = parseAxPoWorkbook(XLSX, wb)
+      const pv = await axSyncPreview(parsed.rows)
+      setAxPrev({ ...pv, fileName: file.name, stats: parsed.stats })
+    } catch (e) { toastError('PO 엑셀 읽기 실패: ' + e.message) }
     setAxBusy(false)
   }
   async function axRun() {
     setAxBusy(true)
-    try { const r = await axSyncRun(axPrev, meName); toastSuccess(`PO 파일 반영 — 새 PO ${r.created}건 · 바뀐 품목 ${r.changed}${r.resets ? ` · 재회신 ${r.resets}` : ''}`); setAxPrev(null); refresh() } catch (e) { toastError('반영 실패: ' + e.message) }
+    try { const r = await axSyncRun(axPrev, meName); toastSuccess(`PO 엑셀 반영 — 새 PO ${r.created}건 · 바뀐 품목 ${r.changed}${r.resets ? ` · 재회신 ${r.resets}` : ''}`); setAxPrev(null); refresh() } catch (e) { toastError('반영 실패: ' + e.message) }
     setAxBusy(false)
   }
 
@@ -398,7 +409,11 @@ export default function OrderIntake() {
           ))}
           <span className="text-[11px] text-slate-400" data-count-unit>숫자 = {mode === 'line' ? '품목 줄 수' : 'PO 수'}</span>
           <div className="ml-auto flex gap-2">
-            {isBuy && <button type="button" onClick={axPreview} disabled={axBusy} data-ax-import className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">🔁 AX PO 파일 반영</button>}
+            {isBuy && <>
+              <button type="button" onClick={() => axFileRef.current?.click()} disabled={axBusy} data-ax-import title="「고객사 PO」에 올리는 AXCELIS PO 관리 엑셀을 고르세요 (Current Data · Received 시트)"
+                className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">{axBusy ? '읽는 중…' : '🔁 AX PO 엑셀 반영'}</button>
+              <input ref={axFileRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" data-ax-file onChange={(e) => { axPreview(e.target.files?.[0]); e.target.value = '' }} />
+            </>}
             {editable && <button type="button" onClick={() => setUpload(true)} data-open-upload className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700">📄 PDF 올리기</button>}
           </div>
         </div>
@@ -420,13 +435,16 @@ export default function OrderIntake() {
         const nothing = !s.newPos && !s.changedPos
         return (
           <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-sm" data-ax-preview>
-            <b>AXCELIS PO 파일 → 수주대장 반영</b>
-            <span className="text-xs text-slate-500"> — 「고객사 PO」에서 올린 최신 PO 파일(진행 중 · 실적) 내용으로 납기 · 수량 · Rev · 단가 · 완료 · 취소를 맞춥니다.</span>
+            <b>AXCELIS PO 엑셀 → 수주대장 반영</b> <span className="text-xs font-mono text-slate-500">{axPrev.fileName}</span>
+            <div className="text-xs text-slate-500 mt-0.5" data-ax-stats>
+              읽은 줄: Current Data(진행 중) <b>{axPrev.stats.cur.toLocaleString('ko-KR')}</b>
+              {axPrev.stats.rcvSheet ? <> · Received 올해 납기 <b>{axPrev.stats.rcv.toLocaleString('ko-KR')}</b> (납품 {axPrev.stats.rcvDone} · 취소 {axPrev.stats.rcvCancel} · 그 밖 {axPrev.stats.rcvOther}) · 작년 이전 {axPrev.stats.rcvOld.toLocaleString('ko-KR')}줄은 안 씀</> : ' · Received 시트 없음'}
+            </div>
             {nothing ? <div className="mt-2 text-xs text-slate-600">바뀐 것이 없습니다.</div> : (
               <div className="mt-2 text-xs text-slate-700 space-y-1">
                 {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
                 {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · Rev {s.rev} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
-                {s.fromSales > 0 && <div>· 그중 실적(Received)에서 납품 {s.fromSales}줄 — PO 파일에 없는 지난 납품분 (매출 대시보드와 같은 기준)</div>}
+                {s.fromRcv > 0 && <div>· 그중 Received 시트에서 온 줄 {s.fromRcv} — Current Data 에 없는 지난 납품 · 취소분</div>}
                 {s.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>재회신 필요</b> {s.resets}건</div>}
                 {axPrev.hist.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto bg-white rounded-lg border border-violet-100 p-2 font-mono text-[11px]">
@@ -437,6 +455,12 @@ export default function OrderIntake() {
                   </div>
                 )}
               </div>
+            )}
+            {s.missing > 0 && (
+              <details className="mt-2 text-xs text-amber-700" data-ax-missing>
+                <summary className="cursor-pointer">⚠ 엑셀 어디에도 없는 수주대장 진행 중 줄 {s.missing} — 바꾸지 않음 (줄 번호가 바뀌었거나 Received 반영 전일 수 있음)</summary>
+                <div className="mt-1 font-mono text-[11px] text-slate-600 max-h-32 overflow-y-auto">{axPrev.missing.slice(0, 80).map((x, i) => <div key={i}>{x.po_no} {x.key} · 납기 {x.due || '—'}</div>)}</div>
+              </details>
             )}
             <div className="mt-3 flex gap-2">
               <button type="button" onClick={() => setAxPrev(null)} className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-200">닫기</button>

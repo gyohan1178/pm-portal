@@ -65,9 +65,13 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
 
   async function save(f, idx) {
     const lines = f.lines.map((l) => ({ ...l, deliveredAll: l.deliveredAll || f.allDelivered }))
-    const r = await saveOrder({ po: f.po, lines, existing: f.existing, fileName: f.name, migrated: !!f.allDelivered || lines.some((l) => l.deliveredAll), meName })
+    // 등록 직전에 다시 찾는다 — 같은 PO 파일이 둘(「… (1).pdf」 등)이면 앞 파일이 먼저 등록해
+    //   읽을 때는 없던 PO 가 지금은 있다. 그때 새로 넣으면 409(이미 있음)로 실패하므로 변경 반영으로 돌린다 (v4.90.5)
+    const fresh = await loadOrderByNo(f.po.customer, f.po.po_no)
+    const r = await saveOrder({ po: f.po, lines, existing: fresh, fileName: f.name, migrated: !fresh && (!!f.allDelivered || lines.some((l) => l.deliveredAll)), meName })
     const label = r.created ? '등록됨' : [r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? '빈 칸 채움' : ''].filter(Boolean).join(' · ')
-    setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label } : x)))
+      || (!f.existing && fresh ? '같은 PO 앞 파일로 등록됨' : '바뀐 것 없음')
+    setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label, err: null } : x)))
     return r
   }
   async function saveOne() {
@@ -84,11 +88,17 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   async function saveAllOk() {
     setBusy(true)
     let n = 0
-    try {
-      for (let i = 0; i < files.length; i++) { if (canSave(files[i]) && !files[i].po.warns.length) { await save(files[i], i); n++ } }
-      toastSuccess(`점검 통과 ${n}건 등록`); onSaved?.()
-    } catch (e) { toastError('등록 실패: ' + e.message) }
-    setBusy(false)
+    const bad = []
+    // 한 파일이 실패해도 나머지는 계속 (v4.90.5)
+    for (let i = 0; i < files.length; i++) {
+      if (!(canSave(files[i]) && !files[i].po.warns.length)) continue
+      try { await save(files[i], i); n++ } catch (e) {
+        bad.push(`${files[i].po.po_no}: ${e.message}`)
+        setFiles((fs) => fs.map((x, k) => (k === i ? { ...x, err: e.message } : x)))
+      }
+    }
+    if (n) { toastSuccess(`점검 통과 ${n}건 등록${bad.length ? ` · 실패 ${bad.length}건` : ''}`); onSaved?.() }
+    if (bad.length) toastError(`등록 실패 ${bad.length}건 — ${bad.slice(0, 3).join(' / ')}`)
   }
 
   const okCount = files.filter((f) => canSave(f) && !f.po.warns.length).length
@@ -126,7 +136,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
             </div>
             {files.map((f, i) => {
               const c = f.po.customer ? ORDER_CUSTOMERS[f.po.customer] : null
-              const tag = f.saved ? ['bg-emerald-50 text-emerald-700', `✓ ${f.saved}`]
+              const tag = f.err ? ['bg-red-50 text-red-600', '⚠ 등록 실패'] : f.saved ? ['bg-emerald-50 text-emerald-700', `✓ ${f.saved}`]
                 : !f.po.kind ? ['bg-red-50 text-red-600', '⚠ 모르는 양식']
                 : f.po.warns.length ? ['bg-amber-50 text-amber-700', `⚠ 확인 ${f.po.warns.length}`]
                 : f.existing ? (f.diff?.same ? (fillOf(f)?.any ? ['bg-violet-50 text-violet-700', '빈 칸 채우기'] : ['bg-slate-100 text-slate-500', '변경 없음']) : ['bg-blue-50 text-blue-700', `변경 ${f.diff.changes.length + f.diff.added.length + f.diff.removed.length}`])
