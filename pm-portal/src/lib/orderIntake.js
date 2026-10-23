@@ -16,6 +16,8 @@ export const AX_CUSTOMER_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
 export const normKey = (s) => String(s ?? '').toUpperCase().replace(/[^0-9A-Z가-힣]/g, '')
 export const lineKey = (l) => `${l.line_no}/${l.del_line || '1'}`
 const ITEM_COLS = 'id,std_code,name,js_code'
+const REPLY_CLEAR = { reply: null, reply_date: null, reply_memo: null, replied_name: null, replied_at: null }
+export const replyText = (l) => (l?.reply ? `${l.reply}${l.reply_date ? ` · ${l.reply_date}` : ''}` : null)
 
 // 품명 · 사양 속 코드 모양 글자 (ECK114111028-03 · 790-0010-062)
 const codeTokens = (s) => String(s || '').toUpperCase().match(/[A-Z]{2,}\d{5,}(?:-\d{2})?|\d{3}-\d{4}-\d{3}/g) || []
@@ -140,6 +142,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   const d = diffOrder(existing.pm_order_line || [], lines)
   const byKey = new Map((existing.pm_order_line || []).map((o) => [lineKey(o), o]))
   const now = new Date().toISOString()
+  const resetLogs = []
   for (const n of lines) {
     const o = byKey.get(lineKey(n))
     if (!o) continue
@@ -150,6 +153,11 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     if ((o.rev || '') !== (n.rev || '')) patch.rev = n.rev || null
     if (n.item?.id && n.item.id !== o.item_id) patch.item_id = n.item.id
     if (o.cancelled) patch.cancelled = false
+    // 납기 · 수량 · Rev · 품목이 바뀐 줄은 회신을 다시 받는다 (단가만 바뀐 것은 그대로)
+    if (o.reply && ['qty', 'due_date', 'rev', 'item_id'].some((k) => k in patch)) {
+      Object.assign(patch, REPLY_CLEAR)
+      resetLogs.push({ line_key: lineKey(o), field: 'reply_reset', before_val: replyText(o), after_val: '변경으로 재회신 필요' })
+    }
     if (Object.keys(patch).length) {
       const { error } = await supabase.from('pm_order_line').update({ ...patch, updated_at: now }).eq('id', o.id)
       if (error) throw error
@@ -167,20 +175,15 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     ...d.changes.map((c) => ({ ...c })),
     ...d.added.map((l) => ({ line_key: lineKey(l), field: 'line_add', before_val: null, after_val: `${l.item?.std_code || l.pn || l.desc || ''} ×${l.qty}` })),
     ...d.removed.map((o) => ({ line_key: lineKey(o), field: 'line_del', before_val: `${o.items?.std_code || o.raw_pn || o.raw_desc || ''} ×${o.qty}`, after_val: null })),
+    ...resetLogs,
   ].map((h) => ({ ...h, order_id: existing.id, source, changed_name: meName || null }))
   if (hist.length) {
     const { error } = await supabase.from('pm_order_change').insert(hist)
     if (error) throw error
   }
-  // 변경이 있으면 구매자재가 다시 확인 · 회신하도록 확인 · 회신을 비운다 (이전 회신은 이력으로)
-  const headPatch = { updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total }
-  if (hist.length && (existing.confirmed_at || existing.reply)) {
-    Object.assign(headPatch, { confirmed_at: null, confirmed_name: null, reply: null, reply_date: null, reply_memo: null, replied_at: null, replied_name: null })
-    if (existing.reply) await supabase.from('pm_order_change').insert({ order_id: existing.id, field: 'reply_reset', before_val: `${existing.reply}${existing.reply_date ? ` · ${existing.reply_date}` : ''}`, after_val: '변경으로 재회신 필요', source, changed_name: meName || null })
-  }
-  const { error } = await supabase.from('pm_order').update(headPatch).eq('id', existing.id)
+  const { error } = await supabase.from('pm_order').update({ updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total }).eq('id', existing.id)
   if (error) throw error
-  return { id: existing.id, created: false, changed: hist.length, diff: d }
+  return { id: existing.id, created: false, changed: hist.length - resetLogs.length, resets: resetLogs.length, diff: d }
 }
 
 // ── AXCELIS PO 파일 반영 (고객 PO 표 → 수주대장) ─────────────────
@@ -197,7 +200,7 @@ const numEq = (a, b) => (a == null || a === '' ? null : +a) === (b == null || b 
 export async function axSyncPreview() {
   const rows = await fetchAll(() => supabase.from('purchase_orders').select(PO_COLS)
     .eq('order_type', 'customer_po').eq('customer_id', AX_CUSTOMER_ID).order('id'))
-  const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no,confirmed_at,reply,reply_date').eq('customer_code', 'AX').order('id'))
+  const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
   const hids = heads.map((h) => h.id)
   const lines = []
   for (let i = 0; i < hids.length; i += 200) {
@@ -208,7 +211,7 @@ export async function axSyncPreview() {
   rows.forEach((r) => { if (!r.po_number) return; if (!byPo.has(r.po_number)) byPo.set(r.po_number, []); byPo.get(r.po_number).push(r) })
   const headByNo = new Map(heads.map((h) => [h.po_no, h]))
 
-  const newPos = [], upd = [], add = [], hist = [], resetIds = new Set()
+  const newPos = [], upd = [], add = []; const hist = []; let resets = 0
   for (const [po_no, ls] of byPo) {
     const h = headByNo.get(po_no)
     if (!h) {
@@ -227,11 +230,13 @@ export async function axSyncPreview() {
       }
       const patch = {}
       const log = (field, before, after) => hist.push({ po_no, order_id: h.id, line_key: k, field, before_val: before == null ? null : String(before), after_val: after == null ? null : String(after) })
+      let reset = false
       if ((m.due_date || '') !== (r.promise_date || '')) {
         patch.due_date = r.promise_date || null; log('due_date', m.due_date, r.promise_date)
-        if (r.promise_date && m.due_date && r.promise_date < m.due_date) resetIds.add(h.id)   // 당겨짐
+        if (r.promise_date && m.due_date && r.promise_date < m.due_date) reset = true   // 당겨짐
       }
-      if (!numEq(m.qty, r.qty_ordered)) { patch.qty = Number(r.qty_ordered) || 0; log('qty', m.qty, r.qty_ordered); if (+r.qty_ordered > +m.qty) resetIds.add(h.id) }
+      if (!numEq(m.qty, r.qty_ordered)) { patch.qty = Number(r.qty_ordered) || 0; log('qty', m.qty, r.qty_ordered); if (+r.qty_ordered > +m.qty) reset = true }
+      if (reset && m.reply) { Object.assign(patch, REPLY_CLEAR); log('reply_reset', replyText(m), '납기 당겨짐 · 수량 증가로 재회신 필요'); resets++ }
       if ((m.rev || '') !== (r.item_rev || '') && r.item_rev) { patch.rev = r.item_rev; log('rev', m.rev, r.item_rev) }
       if (r.unit_price != null && !numEq(m.unit_price, r.unit_price)) { patch.unit_price = r.unit_price; log('unit_price', m.unit_price, r.unit_price) }
       if (r.item_id && m.item_id !== r.item_id && !m.item_id) patch.item_id = r.item_id
@@ -242,16 +247,15 @@ export async function axSyncPreview() {
       if (Object.keys(patch).length) upd.push({ id: m.id, order_id: h.id, po_no, key: k, patch })
     }
   }
-  const resets = heads.filter((h) => resetIds.has(h.id) && (h.confirmed_at || h.reply))
   newPos.sort((a, b) => a.po_no.localeCompare(b.po_no))
   const cnt = (f) => hist.filter((x) => x.field === f).length
   return {
-    newPos, upd, add, hist, resets,
+    newPos, upd, add, hist,
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), price: cnt('unit_price'),
-      delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets: resets.length,
+      delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
     },
   }
 }
@@ -293,19 +297,14 @@ export async function axSyncRun(pv, meName) {
     const { error } = await supabase.from('pm_order_line').insert(pv.add.map((a) => importRow(a.order_id, a.r)))
     if (error) throw error
   }
-  const resetLogs = pv.resets.map((h) => ({ order_id: h.id, field: 'reply_reset', before_val: h.reply ? `${h.reply}${h.reply_date ? ` · ${h.reply_date}` : ''}` : '확인', after_val: '납기 당겨짐 · 수량 증가로 재회신 필요' }))
-  const all = [...pv.hist, ...resetLogs].map(({ po_no, ...x }) => ({ ...x, source: 'po_file', changed_name: meName || null }))
+  const all = pv.hist.map(({ po_no, ...x }) => ({ ...x, source: 'po_file', changed_name: meName || null }))
   for (let i = 0; i < all.length; i += 500) {
     const { error } = await supabase.from('pm_order_change').insert(all.slice(i, i + 500))
     if (error) throw error
   }
-  for (const h of pv.resets) {
-    const { error } = await supabase.from('pm_order').update({ confirmed_at: null, confirmed_name: null, reply: null, reply_date: null, reply_memo: null, replied_at: null, replied_name: null, updated_at: now }).eq('id', h.id)
-    if (error) throw error
-  }
-  const touched = [...new Set([...pv.upd, ...pv.add].map((u) => u.order_id))].filter((id) => !pv.resets.some((h) => h.id === id))
+  const touched = [...new Set([...pv.upd, ...pv.add].map((u) => u.order_id))]
   if (touched.length) await supabase.from('pm_order').update({ updated_at: now }).in('id', touched)
-  return { created, changed: pv.upd.length + pv.add.length, logs: all.length }
+  return { created, changed: pv.upd.length + pv.add.length, logs: all.length, resets: pv.summary.resets }
 }
 
 // ── 목록 ────────────────────────────────────────────────────
@@ -324,7 +323,7 @@ export function stageOf(o) {
   const qty = live.reduce((a, l) => a + (+l.qty || 0), 0)
   const dlv = live.reduce((a, l) => a + Math.min(+l.delivered_qty || 0, +l.qty || 0), 0)
   return {
-    received: true, confirmed: !!o.confirmed_at, replied: !!o.reply,
+    received: true, confirmed: !!o.confirmed_at || live.some((l) => l.reply), replied: live.length > 0 && live.every((l) => l.reply || (+l.delivered_qty || 0) >= (+l.qty || 0)),
     delivered: qty > 0 && dlv >= qty, partDelivered: dlv > 0 && dlv < qty,
     cancelled: o.cancelled || (live.length === 0 && o.lines.length > 0),
     qty, dlv,
@@ -344,3 +343,45 @@ export function bizDaysSince(ts, now = new Date()) {
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동' }
 export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신' }
+
+// 줄 상태 — 품번별 화면 (v4.88.0)
+export function lineState(l, o) {
+  const q = +l.qty || 0, d = Math.min(+l.delivered_qty || 0, q)
+  const cancelled = !!l.cancelled || !!o?.cancelled
+  return { cancelled, delivered: q > 0 && d >= q, partDelivered: d > 0 && d < q, live: !cancelled && !(q > 0 && d >= q), confirmed: !!o?.confirmed_at || !!l.reply, replied: !!l.reply }
+}
+
+// 회신 — 고른 줄들에 한꺼번에 (줄마다 이력 · PO 는 확인 처리)
+export async function replyLines(lines, { reply, date, memo }, meName) {
+  if (!lines.length) throw new Error('회신할 줄을 고르세요')
+  if (!['가능', '조건부', '불가'].includes(reply)) throw new Error('가능 · 조건부 · 불가 중 하나를 고르세요')
+  if (reply !== '가능' && !String(memo || '').trim()) throw new Error('조건부 · 불가는 메모(사유)를 적어 주세요')
+  const now = new Date().toISOString()
+  const patch = { reply, reply_date: date || null, reply_memo: String(memo || '').trim() || null, replied_name: meName || null, replied_at: now, updated_at: now }
+  const ids = lines.map((l) => l.id)
+  for (let i = 0; i < ids.length; i += 200) {
+    const { error } = await supabase.from('pm_order_line').update(patch).in('id', ids.slice(i, i + 200))
+    if (error) throw error
+  }
+  const after = replyText(patch)
+  const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'reply', before_val: replyText(l), after_val: after, source: 'manual', changed_name: meName || null }))
+  for (let i = 0; i < logs.length; i += 500) {
+    const { error } = await supabase.from('pm_order_change').insert(logs.slice(i, i + 500))
+    if (error) throw error
+  }
+  const orderIds = [...new Set(lines.map((l) => l.order_id))]
+  const { error } = await supabase.from('pm_order').update({ confirmed_at: now, confirmed_name: meName || null, updated_at: now }).in('id', orderIds).is('confirmed_at', null)
+  if (error) throw error
+  return { lines: ids.length, orders: orderIds.length }
+}
+
+export async function markDelivered(lines, delivered, meName) {
+  const now = new Date().toISOString()
+  for (const l of lines) {
+    const patch = delivered ? { delivered_qty: l.qty, delivered_at: now.slice(0, 10), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now }
+    const { error } = await supabase.from('pm_order_line').update(patch).eq('id', l.id)
+    if (error) throw error
+  }
+  const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'delivered', before_val: String(+l.delivered_qty || 0), after_val: String(delivered ? +l.qty : 0), source: 'manual', changed_name: meName || null }))
+  if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
+}

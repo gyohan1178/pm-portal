@@ -32,6 +32,17 @@ export const STATUS_LABEL = {
   rejected: '거절됨',
 }
 
+// 부서 (v4.88.0) — 메뉴 권한과 별개. 「누가 무엇을 맡나」(수주대장 화면 · 알림 · 할 일 담당)에 쓴다.
+export const DEPTS = ['영업', '구매자재', '제조', '생산기술', '품질', '기타']
+
+// 구매자재 담당인가 — 부서가 있으면 부서로, 아직 비어 있으면 예전처럼 「구매」 메뉴 권한 + 편집 권한으로
+export function isPurchasing(profile) {
+  if (!profile) return false
+  if (!canEdit(profile)) return false
+  if (profile.dept) return profile.dept === '구매자재'
+  return canAccessSection(profile, 'buy')
+}
+
 // role 우선순위 (높을수록 권한 큼)
 export const ROLE_RANK = { viewer: 0, editor: 1, admin: 2 }
 export function hasRole(profile, minRole) {
