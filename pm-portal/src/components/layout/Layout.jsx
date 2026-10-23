@@ -71,6 +71,7 @@ const PATH_LABELS = {
   activity:           ['기타', '활동 이력 · 용량'],
   backup:             ['기타', '데이터 백업'],
   todo:               ['', '할 일'],
+  flow:               ['', '업무 흐름'],
   upload:             ['', '파일 올리기'],
   admin:              ['', '관리자'],
   users:              ['', '사용자 관리'],

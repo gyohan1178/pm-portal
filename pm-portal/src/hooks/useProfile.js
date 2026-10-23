@@ -201,10 +201,10 @@ export function landingPath(profile) {
   if (a !== null) {
     // 관제탑(home) 이 허용되면 홈으로, 아니면 허용된 첫 섹션으로.
     // 현장 검색은 모두가 볼 수 있는 화면이라 기본 도착지로 둔다.
-    if (a.includes('home')) return '/'
-    return SECTION_LANDING[a.find(x => x !== 'home')] || '/field-search'
+    if (a.includes('home') && profile?.role !== 'viewer') return '/'   // 조회 계정은 관제탑을 못 보므로 '/' 로 보내면 돌고 돈다
+    return '/flow'     // 첫 화면 = 내 부서 업무 흐름 (v4.91.0 — 예전: 허용된 첫 섹션)
   }
-  if (profile?.role === 'viewer') return '/search'   // 제한 없는 조회 계정: 통합검색
+  if (profile?.role === 'viewer') return '/flow'   // 제한 없는 조회 계정도 업무 흐름부터 (예전: 통합검색)
   return '/'          // 전체 접근 (menu_scope 없음)
 }
 
@@ -218,6 +218,9 @@ export function canAccessPath(profile, pathname) {
   //   'home' 으로 분류되어 관제탑 규칙에 걸리면서
   //   현장·조회 계정이 열지 못하던 문제가 있었다.
   if (pathname === '/help') return true
+
+  // 업무 흐름은 현장 전용 계정 말고 모두 본다 — 부서별로 보이는 흐름은 화면 안에서 가린다 (v4.91.0)
+  if (pathname === '/flow') return !isFieldOnly(profile)
 
   // 삭제 기록 복구는 편집 권한자만
   if (pathname === '/restore') return canEdit(profile)

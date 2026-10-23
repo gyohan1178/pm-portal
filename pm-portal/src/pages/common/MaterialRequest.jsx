@@ -64,7 +64,17 @@ const HIST_COLS = [
   { key: 'handler',    label: '처리자',   defaultWidth: 78 },
   { key: 'handle_type', label: '처리유형', defaultWidth: 80 },
   { key: 'handled_at', label: '처리일시', defaultWidth: 118 },
+  { key: 'handle_memo', label: '처리 메모 · 반려 사유', defaultWidth: 200 },
 ]
+
+// 반려 사유 — 반려할 때 적은 메모 (pm_request_update 가 handle_memo · notice_msg 에 남긴다) (v4.90.9)
+//   알림 「확인했습니다」를 누르면 알림은 사라지지만 사유는 목록 · 이력에서 계속 볼 수 있어야 한다
+const rejectReasonOf = (r) => {
+  if (r?.status !== '반려') return ''
+  const m = String(r.handle_memo || '').trim()
+  if (m) return m
+  return String(r.notice_msg || '').replace(/^반려\s*[—-]\s*/, '').trim() || '사유 없음'
+}
 
 const emptyRow = () => ({
   key: Math.random().toString(36).slice(2),
@@ -998,6 +1008,7 @@ export default function MaterialRequest() {
               </button>
             </div>
           ))}
+          <p className="text-[11px] text-rose-500">확인해도 반려 사유는 지워지지 않습니다 — 요청 목록 「반려」 탭(🙋 내 요청만)과 「📊 이력」에서 다시 볼 수 있습니다.</p>
         </div>
       )}
 
@@ -1756,6 +1767,12 @@ export default function MaterialRequest() {
                 const showItems = !multi || (cardOpen[g.key] ?? allCards)
                 const allOn = g.items.every(x => sel[x.id])
                 const someOn = g.items.some(x => sel[x.id])
+                // 반려 사유 — 카드에 크게 · 품목마다 다르거나 일부만 반려면 품목 줄에도 (v4.90.9)
+                const rejItems = g.items.filter(x => x.status === '반려')
+                const rejReasons = [...new Set(rejItems.map(rejectReasonOf))]
+                const rejPerItem = rejItems.length > 0 && (rejReasons.length > 1 || rejItems.length < g.items.length)
+                const rejBy = [...new Set(rejItems.map(x => x.notice_by || x.handler).filter(Boolean))].join(' · ')
+                const rejAt = rejItems.map(x => x.notice_at || x.handled_at).filter(Boolean).sort().pop()
 
                 // A안 (2026-10-16) — 카드 높이를 줄이고 품목 칸을 표처럼 맞춘다
                 //   머리 1줄: 상태 · 긴급 · 제목 · 제품코드 · 종류 · 필요일   /   2줄: 요청번호 · 고객사 · 부서 | 요청자 → 처리자
@@ -1880,7 +1897,7 @@ export default function MaterialRequest() {
                                 )}
                               </>
                             )}
-                            {h.handle_memo && <span className="text-slate-400">· {h.handle_memo}</span>}
+                            {h.handle_memo && h.status !== '반려' && <span className="text-slate-400">· {h.handle_memo}</span>}
                             {multi && (
                               <button data-card-toggle onClick={e => { e.stopPropagation(); setCardOpen(c => ({ ...c, [g.key]: !showItems })) }}
                                 className="px-1.5 py-0.5 rounded border border-slate-200 bg-white font-bold text-slate-500 hover:text-indigo-600 hover:border-indigo-300 whitespace-nowrap">
@@ -1888,6 +1905,17 @@ export default function MaterialRequest() {
                               </button>
                             )}
                           </div>
+                          {rejItems.length > 0 && (
+                            <div data-reject-reason className="rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[12px] leading-snug text-rose-700">
+                              <b>⊗ 반려 사유</b>{rejItems.length < g.items.length ? ` (${n(rejItems.length)}품목)` : ''}
+                              {' — '}<span className="font-semibold break-words">{rejReasons.length === 1 ? rejReasons[0] : '품목마다 다름 · 아래 품목 줄에 표시'}</span>
+                              {(rejBy || rejAt) && (
+                                <span className="ml-1.5 text-[11px] text-rose-500 whitespace-nowrap">
+                                  {rejBy}{rejBy && rejAt ? ' · ' : ''}{rejAt ? String(rejAt).slice(0, 16).replace('T', ' ') : ''}
+                                </span>
+                              )}
+                            </div>
+                          )}
                         </div>
                         <div className="flex flex-col items-end gap-1 flex-shrink-0">
                           {/* 현장이 "언제 준비되나" 를 한눈에 보게 한다.
@@ -1956,6 +1984,9 @@ export default function MaterialRequest() {
                             </span>
                             {r.reason && (
                               <span className="block text-[11px] text-sky-700 truncate" title={`필요 사유: ${r.reason}`}>💬 {r.reason}</span>
+                            )}
+                            {rejPerItem && r.status === '반려' && (
+                              <span data-item-reject className="block text-[11px] font-bold text-rose-600 break-words">⊗ 반려: {rejectReasonOf(r)}</span>
                             )}
                           </span>
                           <span className="min-w-0 text-[11px] text-slate-500 leading-tight">
@@ -2222,6 +2253,10 @@ export default function MaterialRequest() {
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.handle_type || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">
                         {r.handled_at ? String(r.handled_at).slice(0, 16).replace('T', ' ') : ''}
+                      </td>
+                      <td data-hist-memo className={`px-3 py-2 whitespace-nowrap overflow-hidden ${r.status === '반려' ? 'font-bold text-rose-600' : 'text-slate-500'}`}
+                        title={r.status === '반려' ? `반려 사유: ${rejectReasonOf(r)}` : (r.handle_memo || '')}>
+                        {r.status === '반려' ? `⊗ ${rejectReasonOf(r)}` : (r.handle_memo || '')}
                       </td>
                     </tr>
                   ))}

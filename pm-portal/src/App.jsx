@@ -33,6 +33,7 @@ const PriceHistory = lazy(() => import('./pages/master/PriceHistory'))
 const CostAnalysis = lazy(() => import('./pages/master/CostAnalysis'))
 const FaiNavigator = lazy(() => import('./pages/quality/FaiNavigator'))
 const DrawingDist = lazy(() => import('./pages/quality/DrawingDist'))
+const WorkFlowPage = lazy(() => import('./pages/WorkFlowPage'))
 const FaProgress = lazy(() => import('./pages/quality/FaProgress'))
 const CnHistory = lazy(() => import('./pages/quality/CnHistory'))
 const RequestLoad = lazy(() => import('./pages/RequestLoad'))
@@ -203,6 +204,7 @@ export default function App() {
         <Route path="help" element={<Help />} />
         <Route path="restore" element={<SnapshotRestore />} />
         <Route path="todo" element={<Todo />} />
+        <Route path="flow" element={<WorkFlowPage />} />
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/qr-demo" element={<QrDemo />} />
         <Route path="production/harness-release" element={<HarnessRelease />} />

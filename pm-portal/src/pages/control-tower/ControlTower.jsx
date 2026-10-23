@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
+import WorkFlow from '../../components/WorkFlow'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -141,6 +142,9 @@ export default function ControlTower({ scope = 'ax' }) {
   return (
     <div className="space-y-5">
       <AnalysisTabs />
+
+      {/* 첫 화면 맨 위 — 부서별 업무 흐름 (v4.91.0). 관제탑 「전체」에서만 */}
+      {isMaster && <WorkFlow />}
 
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-2">

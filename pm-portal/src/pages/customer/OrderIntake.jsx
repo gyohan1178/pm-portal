@@ -17,7 +17,7 @@ import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import {
   ORDER_CUSTOMERS, fetchOrders, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf,
+  replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
@@ -59,6 +59,7 @@ const KPI_PICK = {
   risk: (l) => l.st.live && (l.reply === '조건부' || l.reply === '불가'),
   late: (l, today) => l.st.live && !!l.due_date && l.due_date < today,
   noPrice: (l) => !l.st.cancelled && !(+l.unit_price > 0),
+  odd: (l) => l.st.live && !!l.odd,
 }
 const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.live && !l.st.planned
   : view === 'plan' ? l.st.live && l.st.planned : view === 'done' ? l.st.delivered && !l.st.cancelled : true)
@@ -128,6 +129,17 @@ function PackNote({ l }) {
   const n = packOf(l)
   if (!n) return null
   return <div className="mt-0.5 inline-block px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold whitespace-nowrap" title={`품명의 PK${n} = 한 개에 ${n}개 묶음 — 실제 ${(+l.qty || 0) * n}개 준비`} data-pack>⚠ PK{n} · 실제 {fmt((+l.qty || 0) * n)}개</div>
+}
+
+// 특이사항 표시 — 바로 앞 PO 와 Rev · 단가가 다름 · 메모에 ⚠ (v4.90.7)
+function OddBadges({ odd }) {
+  if (!odd) return null
+  const pct = odd.price ? odd.price.pct : 0
+  return <>
+    {odd.rev && <span className="px-1.5 py-[1px] rounded bg-red-50 text-red-600 text-[10px] font-bold whitespace-nowrap" title={`바로 앞 PO ${odd.rev.po} 는 Rev ${odd.rev.prev} — 도면 · 자재 Rev 확인`} data-odd-rev>Rev {odd.rev.prev}→{odd.rev.now}</span>}
+    {odd.price && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold whitespace-nowrap" title={`바로 앞 PO ${odd.price.po} 단가 ${fmt(odd.price.prev)} → 이번 ${fmt(odd.price.now)}`} data-odd-price>단가 {pct > 0 ? '+' : ''}{pct.toFixed(Math.abs(pct) < 10 ? 1 : 0)}%</span>}
+    {odd.note && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold whitespace-nowrap" title="메모에 ⚠ — 메모를 확인하세요" data-odd-note>⚠ 메모</span>}
+  </>
 }
 
 function CustCell({ o }) {
@@ -213,7 +225,12 @@ export default function OrderIntake() {
   const narrow = useNarrow()
 
   // 줄 펼치기 — 고객사 · 구분 상관없이 전체 (v4.90.4 「AX 전장만」 없앰)
-  const allLines = useMemo(() => orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) }))), [orders])
+  const { allLines, oddMap } = useMemo(() => {
+    const ls = orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) })))
+    const odd = oddsOf(ls)                   // 특이사항 — 바로 앞 PO 와 Rev · 단가 다름 · ⚠ 메모 (v4.90.7)
+    ls.forEach((l) => { const x = odd.get(l.id); if (x) l.odd = x })
+    return { allLines: ls, oddMap: odd }
+  }, [orders])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
   const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
   const k = qd.trim().toUpperCase()
@@ -245,8 +262,9 @@ export default function OrderIntake() {
     m.done = m.doneKrw + m.doneUsd * fx
     // 단가 없는 품목 — 연도 상관없이 (금액 합계에서 빠지는 줄). 눌러서 목록으로 본다 (v4.90.4)
     const noPrice = scoped.filter((l) => KPI_PICK.noPrice(l))
+    const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
-    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice }
+    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, odd }
   }, [scoped, orders, month, today, cust, fx])
 
   const lines = useMemo(() => {
@@ -473,6 +491,13 @@ export default function OrderIntake() {
           <select value={sort} onChange={(e) => setSort(e.target.value)} className={sel} data-sort>
             <option value="due">납기 빠른 순</option><option value="reg">최근 접수 순</option><option value="cust">고객사 순</option>
           </select>
+          <button type="button" onClick={() => { setKpi(kpi === 'odd' ? null : 'odd'); setMode('line') }} data-odd-btn
+            title={`진행 중 줄 가운데 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 줄`}
+            className={`px-3 py-2 rounded-lg text-xs font-bold border whitespace-nowrap ${kpi === 'odd' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'}`}>
+            ⚠ 특이사항 {kpis.odd.length.toLocaleString('ko-KR')}
+            <span className="font-semibold text-amber-600/80 ml-1">Rev {kpis.odd.filter((l) => l.odd.rev).length} · 단가 {kpis.odd.filter((l) => l.odd.price).length}{kpis.odd.some((l) => l.odd.note) ? ` · 메모 ${kpis.odd.filter((l) => l.odd.note).length}` : ''}</span>
+            {kpi === 'odd' && ' ✕'}
+          </button>
           {kpi && <button type="button" onClick={() => setKpi(null)} className="text-xs text-violet-600 font-bold">지표 거르기 해제 ✕</button>}
         </div>
       </div>
@@ -574,10 +599,11 @@ export default function OrderIntake() {
                         : <div className="text-[11px] text-slate-400 mt-0.5 truncate">Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
                     </td>
                     <td className="px-3 py-3 overflow-hidden">
-                      <div className="flex items-center gap-1.5">
+                      <div className="flex flex-wrap items-center gap-1.5">
                         {l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span>}
                         {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
                         {l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}
+                        <OddBadges odd={l.odd} />
                       </div>
                       <div className="text-[11.5px] text-slate-500 truncate" title={l.items?.name || l.raw_desc || ''}>{l.items?.name || l.raw_desc || '—'}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400 truncate" title={l.note}>{l.note}</div>}
@@ -646,7 +672,7 @@ export default function OrderIntake() {
       </div>
 
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} fx={fx} onClose={() => setPoOpen(null)}
+        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} fx={fx} oddMap={oddMap} onClose={() => setPoOpen(null)}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
@@ -678,6 +704,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen }) {
             {l.items ? <span className="font-mono font-bold text-[12px] text-slate-800 break-all">{l.items.std_code}</span> : <span className="font-mono text-[12px] text-slate-500 break-all">{l.raw_pn || '품번 없음'}</span>}
             {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
             {l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}
+            <OddBadges odd={l.odd} />
           </div>
           <div className="text-[11.5px] text-slate-500 truncate">{l.items?.name || l.raw_desc || '—'}</div>
           {(l.o.ship_to || mgmtNoOf(l)) && <div className="text-[10.5px] text-slate-400 truncate">{[l.o.ship_to, mgmtNoOf(l)].filter(Boolean).join(' · ')}</div>}
@@ -722,7 +749,7 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, fx, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete }) {
+function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
     queryFn: async () => {
@@ -787,7 +814,7 @@ function PoDrawer({ o, isBuy, fx, onClose, onReply, replyBusy, onDlv, dlvBusy, o
                   <tr key={l.id} className={`border-t border-slate-100 align-top ${l.st.cancelled ? 'opacity-40 line-through' : ''}`} data-dline={`${l.line_no}/${l.del_line}`}>
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}{l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}</div>
+                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}{l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}<OddBadges odd={oddMap?.get(l.id)} /></div>
                       <div className="text-[11px] text-slate-500">{l.items?.name || l.raw_desc}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400">{l.note}</div>}
                     </td>

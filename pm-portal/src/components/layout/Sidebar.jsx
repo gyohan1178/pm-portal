@@ -24,7 +24,7 @@ const MENU_META = {
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
-  '/': ['🎯','관제탑'], '/todo': ['📋','할 일'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
+  '/': ['🎯','관제탑'], '/flow': ['🧭','업무 흐름'], '/todo': ['📋','할 일'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
   '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','다품목 출고'],
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
   '/sales-quote': ['📤','매출견적'], '/orders': ['📨','수주대장'],
@@ -469,9 +469,16 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           )}
         </div>
 
+        {/* 업무 흐름 — 현장 전용 계정 말고 모두 (v4.91.0) */}
+        {!fieldOnly && !(profile?.role !== 'viewer' && canAccessSection(profile, 'home')) && (
+        <div className="py-1">
+          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate}>업무 흐름</MenuItem>
+        </div>
+        )}
         {/* 홈 — 현장·조회 계정은 숨김 */}
         {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
+          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate}>업무 흐름</MenuItem>
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
           <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>

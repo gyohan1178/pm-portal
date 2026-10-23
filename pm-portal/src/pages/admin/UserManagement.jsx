@@ -10,6 +10,7 @@ const USER_COLS = [
   { key:'name',       label:'이름',   defaultWidth:120 },
   { key:'email',      label:'이메일', defaultWidth:220 },
   { key:'dept',       label:'부서',   defaultWidth:110, style:{textAlign:'center'} },
+  { key:'is_lead',    label:'팀장급', defaultWidth:80,  style:{textAlign:'center'} },
   { key:'role',       label:'권한',   defaultWidth:140, style:{textAlign:'center'}, sortable:false },
   { key:'created_at', label:'신청일', defaultWidth:110, style:{textAlign:'center'} },
   { key:'_act',       label:'관리',   defaultWidth:130, style:{textAlign:'center'}, sortable:false },
@@ -57,6 +58,17 @@ export default function UserManagement() {
       {DEPTS.map(d => <option key={d} value={d}>{d}</option>)}
     </select>
   )
+  // 팀장급 — 업무 흐름에서 모든 부서를 본다 (v4.91.0). 칸이 아직 없으면(SQL 전) 알려 준다
+  const setLead = (id, v) => mut.mutate({ id, patch: { is_lead: v } }, {
+    onSuccess: () => toastSuccess(v ? '팀장급으로 지정' : '팀장급 해제'),
+    onError: (e) => toastError(/is_lead/.test(e.message || '') ? '팀장급 칸이 아직 없습니다 — 업무흐름_반영_261023.sql 을 먼저 실행하세요' : '변경 오류: ' + e.message),
+  })
+  const LeadChk = ({ p }) => (
+    <label className="inline-flex items-center gap-1 text-xs text-slate-600 cursor-pointer" title="업무 흐름에서 모든 부서 흐름을 봅니다 (관리자는 체크 없이도 전체)">
+      <input type="checkbox" checked={p.role === 'admin' || !!p.is_lead} disabled={p.role === 'admin'} onChange={e => setLead(p.id, e.target.checked)} data-lead={p.email} className="w-4 h-4 accent-violet-600" />
+      {p.role === 'admin' ? '관리자' : '팀장급'}
+    </label>
+  )
   const saveScope = (id, scope) => mut.mutate({ id, patch: { menu_scope: scope && scope.length ? scope : null } }, { onSuccess: () => { qc.invalidateQueries(['profiles']); toastSuccess('메뉴 권한 저장됨'); setScopeEdit(null) } })
 
   const pending = profiles.filter(p => p.status === 'pending')
@@ -69,7 +81,7 @@ export default function UserManagement() {
     <div className="space-y-4">
       <div>
         <h1 className="text-lg font-bold text-slate-900">👥 회원 관리</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">가입 신청 승인 · 부서 · 권한 설정 (관리자 / 편집 / 조회). 부서는 수주대장 화면 구분 · 알림 · 할 일 담당에 쓰고, 메뉴 권한은 보이는 메뉴만 정합니다.</p>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">가입 신청 승인 · 부서 · 권한 설정 (관리자 / 편집 / 조회). 부서는 수주대장 화면 구분 · 알림 · 할 일 담당에 쓰고, 메뉴 권한은 보이는 메뉴만 정합니다. 「팀장급」은 첫 화면 업무 흐름에서 모든 부서를 봅니다 (그 밖은 내 부서 · 제조만).</p>
       </div>
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
@@ -103,6 +115,7 @@ export default function UserManagement() {
                 {tab === 'active' && (
                   <div className="flex items-center gap-2 mt-2">
                     <DeptSel p={p} cls="px-2 py-1.5 text-xs border border-slate-200 rounded-lg" />
+                    <LeadChk p={p} />
                     {p.id === myId ? (
                       <span className="text-xs text-indigo-500 font-bold">{ROLE_LABEL[p.role]} (본인)</span>
                     ) : (
@@ -129,6 +142,7 @@ export default function UserManagement() {
                     <td className="px-3 py-2 text-center">
                       {tab === 'active' ? <DeptSel p={p} cls="px-2 py-1 text-xs border border-slate-200 rounded-lg" /> : <span className="text-slate-400">{p.dept || '-'}</span>}
                     </td>
+                    <td className="px-3 py-2 text-center">{tab === 'active' ? <LeadChk p={p} /> : <span className="text-slate-400">{p.is_lead ? '팀장급' : '-'}</span>}</td>
                     <td className="px-3 py-2 text-center">
                       {tab === 'active' ? (
                         p.id === myId

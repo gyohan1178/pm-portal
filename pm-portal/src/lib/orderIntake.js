@@ -600,6 +600,54 @@ export function bizDaysSince(ts, now = new Date()) {
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
 export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림' }
 
+// 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
+//   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })
+//   바로 앞 = 다른 PO 이면서 날짜(발주일 → 없으면 납기)가 더 이른 마지막 줄. 취소 · 발주 예정은 비교에서 뺀다.
+//   단가는 통화(원 · 달러)가 같을 때만, ODD_PRICE_PCT(10%) 넘게 다를 때만 — AXCELIS 원화 단가는 환율 따라 몇 % 씩 늘 바뀌므로
+//   (실데이터: AX 진행 중 비교 319줄 중 3% 넘게 139 · 5% 112 · 10% 24 · 20% 7)
+export const ODD_PRICE_PCT = 10
+const oddDate = (l) => String(l.o?.order_date || l.due_date || l.o?.registered_at || '').slice(0, 10)
+const oddUsd = (o) => o?.currency === 'USD' || o?.ccn === 'B'
+export function oddsOf(lines) {
+  const groups = new Map()
+  for (const l of lines) {
+    if (l.cancelled || l.o?.cancelled || l.o?.planned) continue
+    const pn = normKey(l.raw_pn)
+    if (!l.item_id && !pn) continue
+    const k = `${l.o?.customer_code}|${l.item_id || 'pn:' + pn}`
+    if (!groups.has(k)) groups.set(k, [])
+    groups.get(k).push(l)
+  }
+  const out = new Map()
+  for (const g of groups.values()) {
+    if (g.length < 2) continue
+    g.sort((a, b) => oddDate(a).localeCompare(oddDate(b)))
+    for (let i = 1; i < g.length; i++) {
+      const l = g[i], d = oddDate(l)
+      // Rev 는 바로 앞 PO 와 · 단가는 같은 통화의 바로 앞 PO 와
+      let p = null, pp = null
+      for (let j = i - 1; j >= 0 && !(p && pp); j--) {
+        const x = g[j]
+        if (x.order_id === l.order_id || oddDate(x) >= d) continue
+        if (!p) p = x
+        if (!pp && oddUsd(x.o) === oddUsd(l.o)) pp = x
+      }
+      if (!p) continue
+      const r = {}
+      const ra = String(l.rev || '').trim().toUpperCase(), rb = String(p.rev || '').trim().toUpperCase()
+      if (ra && rb && ra !== rb) r.rev = { now: ra, prev: rb, po: p.o?.po_no }
+      const a = +l.unit_price, b = +(pp?.unit_price)
+      if (pp && a > 0 && b > 0 && (Math.abs(a - b) / b) * 100 > ODD_PRICE_PCT) r.price = { now: a, prev: b, pct: ((a - b) / b) * 100, po: pp.o?.po_no }
+      if (r.rev || r.price) out.set(l.id, r)
+    }
+  }
+  for (const l of lines) {
+    if (l.cancelled || !/⚠/.test(l.note || '')) continue
+    out.set(l.id, { ...(out.get(l.id) || {}), note: true })
+  }
+  return out
+}
+
 // 줄 상태 — 품번별 화면 (v4.88.0)
 export function lineState(l, o) {
   const q = +l.qty || 0, d = Math.min(+l.delivered_qty || 0, q)
