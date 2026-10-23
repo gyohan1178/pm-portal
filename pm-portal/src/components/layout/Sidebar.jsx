@@ -340,7 +340,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         <CollapseSection mover={mv} label="📦 자재" sKey="mat">
           <MenuItem to="/search"    icon="🔎" onNavigate={onNavigate}>통합 검색</MenuItem>
           <MenuItem to="/inventory" icon="📦" onNavigate={onNavigate}>재고현황</MenuItem>
-          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고 (BOM 단위)</MenuItem>
+          <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
           <MenuItem to="/outbound-history" icon="📋" onNavigate={onNavigate}>출고 현황</MenuItem>
           <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
@@ -355,7 +355,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
           <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
           <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
-          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>자재 상황판</MenuItem>
+          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>부족자재</MenuItem>
           <MenuItem to="/missing" icon="🧩" onNavigate={onNavigate}>결품 현황</MenuItem>
         </CollapseSection>
         )}

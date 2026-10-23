@@ -45,7 +45,9 @@ const stripPrefix = (c) => String(c).replace(/^(AX|ED|CS|VM)-/i, '')
 export function candidatesOf(cust, l) {
   const codes = [...new Set([l.pn, ...codeTokens(`${l.desc || ''} ${l.spec || ''}`)].filter(Boolean).map((c) => stripPrefix(String(c).trim().toUpperCase())))]
   const make = (p) => codes.flatMap((c) => [p + c, ...(l.rev ? [`${p}${c}-${l.rev}`] : [])])
-  const own = make(ORDER_CUSTOMERS[cust]?.prefix || '')
+  // CSK 완제품은 이카운트에서 하이픈 없이 「CS + 품번」으로 들어와 있다 (SCS0195S-0L1-ON084 → CSSCS0195S0L1ON084, v4.93.2)
+  const squash = cust === 'CSK' ? codes.map((c) => 'CS' + c.replace(/[^0-9A-Z]/g, '')) : []
+  const own = [...make(ORDER_CUSTOMERS[cust]?.prefix || ''), ...squash]
   const other = Object.entries(ORDER_CUSTOMERS).filter(([k]) => k !== cust).flatMap(([, v]) => make(v.prefix))
   return { own, other }
 }
@@ -71,7 +73,7 @@ export async function matchLines(cust, lines) {
   }
   return lines.map((l, i) => {
     const own = cand[i].own.map((c) => byCode.get(c)).find(Boolean)
-    if (own) return { ...l, item: own, how: own.std_code.endsWith(`-${l.rev}`) && l.rev ? '품번+Rev' : l.pn && own.std_code.endsWith(stripPrefix(l.pn).toUpperCase()) ? '품번' : '품명 속 코드' }
+    if (own) return { ...l, item: own, how: own.std_code.endsWith(`-${l.rev}`) && l.rev ? '품번+Rev' : l.pn && normKey(own.std_code).endsWith(normKey(stripPrefix(l.pn))) ? '품번' : '품명 속 코드' }
     const al = alias.get(aliasKeyOf(l))
     if (al) return { ...l, item: al, how: '기억' }
     const other = cand[i].other.map((c) => byCode.get(c)).find(Boolean)
@@ -557,7 +559,7 @@ async function fetchParallel(table, cols, { order = 'id', conc = 6, page = 1000 
   return all
 }
 // 목록에 쓰는 칸만 (created_at · replied_at · unit 등 화면에 안 쓰는 칸은 뺌)
-const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,note,plnd_no,prod_no,updated_at'
+const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,replied_at,note,plnd_no,prod_no,updated_at'
 
 export async function fetchOrders() {
   const headsP = fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))

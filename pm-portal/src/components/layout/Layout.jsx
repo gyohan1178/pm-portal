@@ -9,11 +9,11 @@ import { getSidebarCollapsed, setSidebarCollapsed } from '../../lib/viewPrefs'
 
 const CUSTOMER_NAMES = { ax:'AXCELIS', ed:'Edwards', vm:'VM', csk:'CSK' }
 const PAGE_LABELS = {
-  '':         ['', '전체 현황'],
+  '':         ['', '관제탑'],
   // 일일 업무
   inbound:    ['일일 업무', '입고'],
-  outbound:   ['일일 업무', '출고'],
-  issue:      ['일일 업무', '출고 작업(불출)'],
+  outbound:   ['일일 업무', 'ASSY 출고'],
+  issue:      ['일일 업무', '다품목 출고'],
   inventory:  ['일일 업무', '재고현황'],
   search:     ['일일 업무', '통합 검색'],
   // 고객사 업무
@@ -24,7 +24,7 @@ const PAGE_LABELS = {
   missing:    ['생산', '결품 현황'],
   // 주간 / 분석
   weekly:     ['주간 / 분석', '주간업무보고'],
-  'purchase-dashboard': ['주간 / 분석', '매입 현황'],
+  'purchase-dashboard': ['주간 / 분석', '매입 대시보드'],
   'control-tower': ['주간 / 분석', '마스터 관제탑'],
   'what-if':  ['주간 / 분석', 'What-if 시뮬레이터'],
   insights:   ['주간 / 분석', '인사이트 (관리자)'],
@@ -33,7 +33,7 @@ const PAGE_LABELS = {
   vendors:    ['기초자료', '협력사'],
   price:      ['기초자료', '단가변동이력'],
   erp:        ['기초자료', 'ERP 연동'],
-  quote:      ['기초자료', '견적입력'],
+  quote:      ['기초자료', '품목 단가 등록'],
   help:       ['', '도움말'],
   // 고객사 work 탭 (section = 고객사명)
   cpo:        [null, '고객사 PO'],

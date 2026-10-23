@@ -1,4 +1,4 @@
-// 🧭 업무 흐름 — 부서 탭 · 단계 상자(누르면 그 화면) · 넘어온 일 / 넘긴 일 (v4.91.0)
+// 업무 흐름 — 부서 탭 · 단계 상자(누르면 그 화면) · 넘어온 일 / 넘긴 일 (v4.91.0)
 //   첫 화면(관제탑 위)과 「업무 흐름」 화면에서 같이 쓴다. 규칙 · 단계는 lib/workflow.js
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -106,35 +106,33 @@ export default function WorkFlow() {
                 : s.hot ? 'bg-white border border-red-200 shadow-[inset_0_3px_0_#e0505f] hover:shadow-md'
                 : 'bg-white border border-slate-200 hover:border-violet-300 hover:shadow-md'}`}>
                 <button type="button" onClick={() => go(s.path)} disabled={!ok} data-flow-step={s.name}
-                  title={ok ? `${s.where} 으로 이동` : '이 메뉴 권한이 없습니다'}
-                  className={`flex-1 flex flex-col gap-1.5 text-left px-3.5 pt-3 pb-2.5 rounded-xl ${ok ? '' : 'cursor-not-allowed'}`}>
+                  title={ok ? `${s.links[0].label} 으로 이동` : '이 메뉴 권한이 없습니다'}
+                  className={`flex-1 flex flex-col gap-1.5 text-left px-3.5 pt-3 pb-2 rounded-xl ${ok ? '' : 'cursor-not-allowed'}`}>
                   <span className="flex items-center gap-2">
-                    <span className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-extrabold font-mono ${s.other ? 'bg-slate-200 text-slate-500' : 'bg-violet-50 text-violet-700'}`}>{i + 1}</span>
-                    <span className="text-[18px] leading-none">{s.icon}</span>
-                    {s.other && <span className="ml-auto px-1.5 py-[1px] rounded-full bg-slate-200/70 text-slate-600 text-[10px] font-bold">{s.other}</span>}
+                    <span className={`w-7 h-7 rounded-full flex items-center justify-center text-[12px] font-extrabold font-mono ${s.other ? 'bg-slate-200 text-slate-500' : 'bg-violet-50 text-violet-700'}`}>{i + 1}</span>
+                    {s.other && <span className="ml-auto px-2 py-[2px] rounded-full bg-slate-200/70 text-slate-600 text-[11px] font-bold">{s.other} 처리</span>}
                   </span>
-                  <span className="text-[15px] font-extrabold text-slate-800 leading-snug">{s.name}</span>
-                  <span className="text-[11.5px] text-slate-400 leading-snug">{s.where}</span>
+                  <span className="text-[16px] font-extrabold text-slate-800 leading-snug">{s.name}</span>
+                  {s.note && <span className="text-[12px] text-slate-500 leading-snug" data-flow-note>{s.note}</span>}
                   <span className="flex flex-wrap gap-1 mt-auto pt-1">
-                    {s.soon && <span className="px-1.5 py-[1px] rounded-full border border-violet-200 bg-violet-50 text-violet-700 text-[10.5px] font-bold">{s.soon}</span>}
                     {s.badges.map((b) => (
-                      <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[11px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>
+                      <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[11.5px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>
                         {b.t} <b className="font-mono">{nf(b.n)}</b>
                       </span>
                     ))}
                   </span>
-                  {!s.links.length && <span className={`text-[12px] font-bold ${ok ? 'text-[#5b6ee8]' : 'text-slate-400'}`}>{ok ? '바로가기 →' : '권한 없음'}</span>}
                 </button>
-                {s.links.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 px-3.5 pb-3" data-flow-links>
-                    {s.links.map((l) => (
-                      <button key={l.path} type="button" onClick={() => go(l.path)} disabled={!can(l.path)}
-                        className="px-2.5 py-1 rounded-lg border border-violet-200 bg-white text-[12px] font-bold text-[#5b6ee8] hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed">
-                        {l.label} →
+                <div className="flex flex-wrap gap-1.5 px-3.5 pb-3" data-flow-links>
+                  {s.links.map((l) => {
+                    const lok = can(l.path)
+                    return (
+                      <button key={l.path} type="button" onClick={() => go(l.path)} disabled={!lok} data-flow-menu={l.label} title={lok ? '' : '이 메뉴 권한이 없습니다'}
+                        className="px-2.5 py-1 rounded-lg border border-violet-200 bg-white text-[12px] font-bold text-[#5b6ee8] hover:bg-violet-50 disabled:border-slate-200 disabled:text-slate-400 disabled:cursor-not-allowed">
+                        {lok ? `${l.label} →` : `${l.label} · 권한 없음`}
                       </button>
-                    ))}
-                  </div>
-                )}
+                    )
+                  })}
+                </div>
                 {i < f.steps.length - 1 && (
                   <span className="hidden sm:flex absolute top-1/2 -right-[19px] -translate-y-1/2 w-[14px] justify-center text-slate-300 pointer-events-none" aria-hidden="true">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
@@ -156,8 +154,8 @@ export default function WorkFlow() {
                   <button key={s.name} type="button" onClick={() => go(s.path)} disabled={!ok} data-flow-sub={s.name}
                     title={ok ? '' : '이 메뉴 권한이 없습니다'}
                     className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50/60 text-left hover:bg-white hover:border-violet-300 disabled:opacity-50 disabled:cursor-not-allowed">
-                    <span className="text-[15px] leading-none">{s.icon}</span>
                     <span className="text-[13px] font-bold text-slate-700 whitespace-nowrap">{s.name}</span>
+                    {s.menu !== s.name && <span className="text-[11.5px] text-slate-400 whitespace-nowrap" data-flow-sub-menu>{s.menu}</span>}
                     {s.badges.map((b) => (
                       <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[10.5px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>{b.t} <b className="font-mono">{nf(b.n)}</b></span>
                     ))}
@@ -172,8 +170,8 @@ export default function WorkFlow() {
       </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-        <Hand title="⬅ 다른 부서에서 넘어온 일" sub="내가 받아서 처리할 것" rows={f.inbox} empty="넘어온 일이 없습니다" />
-        <Hand title="➡ 내가 넘긴 일 · 상대 처리 대기" sub="상대 부서가 아직 처리하지 않은 것" rows={f.outbox} empty="기다리는 일이 없습니다" />
+        <Hand title="다른 부서에서 넘어온 일" sub="내가 받아서 처리할 것 — 왼쪽은 보낸 부서" rows={f.inbox} empty="넘어온 일이 없습니다" />
+        <Hand title="내가 넘긴 일 · 상대 처리 대기" sub="상대 부서가 아직 처리하지 않은 것 — 왼쪽은 처리할 부서" rows={f.outbox} empty="기다리는 일이 없습니다" />
       </div>
     </div>
   )

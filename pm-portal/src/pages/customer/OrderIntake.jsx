@@ -153,13 +153,41 @@ function CustCell({ o }) {
   )
 }
 
+// 회신 칸 — 조건부 · 불가는 사유를 누구 화면이든 결론 바로 아래에 크게 (v4.93.2: 구매자재 화면에서 사유가 안 보이던 것)
+//   가능 메모는 memo 일 때만 (영업 화면 · PO 상세)
 function ReplyCell({ l, memo }) {
   if (!l.reply) return <span className="text-[11px] text-slate-300">—</span>
+  const risk = l.reply !== '가능'
   return (
     <div className="min-w-0" title={l.reply_memo || ''}>
       <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${REPLY[l.reply][0]}`}>{REPLY[l.reply][1]}</span>
       {l.reply_date && <span className="ml-1 text-[11px] text-slate-500">준비 {md(l.reply_date)}</span>}
-      {memo && l.reply_memo && <div className="text-[10.5px] text-slate-400 mt-0.5 truncate">{l.reply_memo}</div>}
+      {risk && l.reply_memo && <div className={`mt-0.5 text-[11.5px] font-semibold leading-snug break-words ${l.reply === '불가' ? 'text-red-600' : 'text-amber-700'}`} data-reply-reason>사유: {l.reply_memo}</div>}
+      {!risk && memo && l.reply_memo && <div className="text-[10.5px] text-slate-400 mt-0.5 truncate">{l.reply_memo}</div>}
+      {risk && (l.replied_name || l.replied_at) && <div className="text-[10px] text-slate-400 mt-0.5">{[l.replied_name, l.replied_at && md(String(l.replied_at).slice(0, 10))].filter(Boolean).join(' · ')}</div>}
+    </div>
+  )
+}
+
+// PO 상세 맨 위 — 조건부 · 불가 줄과 사유를 모아서 (v4.93.2)
+function RiskBanner({ ls }) {
+  const risk = ls.filter((l) => !l.st.cancelled && l.reply && l.reply !== '가능')
+  if (!risk.length) return null
+  return (
+    <div className="rounded-xl border border-red-200 bg-red-50/60 px-4 py-3" data-risk-banner>
+      <div className="text-xs font-extrabold text-red-700">조건부 · 불가 {risk.length}품목 — 고객사 납기 협의 필요</div>
+      <div className="mt-1.5 space-y-1">
+        {risk.map((l) => (
+          <div key={l.id} className="flex flex-wrap items-baseline gap-x-2 text-[12px]" data-risk-line={`${l.line_no}/${l.del_line}`}>
+            <span className={`px-1.5 py-[1px] rounded-full text-[10.5px] font-bold ${REPLY[l.reply][0]}`}>{l.reply}</span>
+            <span className="font-mono font-bold text-slate-700">{l.items?.std_code || l.raw_pn || '품번 없음'}</span>
+            <span className="text-slate-400">Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</span>
+            <span className={`font-semibold ${l.reply === '불가' ? 'text-red-600' : 'text-amber-700'}`}>{l.reply_memo || '사유 없음'}</span>
+            {l.reply_date && <span className="text-slate-500">준비 {md(l.reply_date)}</span>}
+            <span className="text-[10.5px] text-slate-400">{[l.replied_name, l.replied_at && md(String(l.replied_at).slice(0, 10))].filter(Boolean).join(' · ')}</span>
+          </div>
+        ))}
+      </div>
     </div>
   )
 }
@@ -191,7 +219,10 @@ function ReplyForm({ count, onSave, busy, unit = '건' }) {
 export default function OrderIntake() {
   const qc = useQueryClient()
   const { data: profile, isLoading: pLoading } = useMyProfile()
-  const isBuy = !pLoading && isPurchasing(profile)
+  // 관리자는 「영업 화면으로 보기」로 영업 · 타부서가 보는 화면을 그대로 미리 볼 수 있다 (v4.93.2)
+  const isAdmin = profile?.role === 'admin'
+  const [asSales, setAsSales] = useState(false)
+  const isBuy = !pLoading && isPurchasing(profile) && !asSales
   const editable = !!profile && canEdit(profile)
   const meName = (profile?.name || '').trim() || profile?.email || ''
 
@@ -395,7 +426,14 @@ export default function OrderIntake() {
           전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
           {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}
         </p>
-        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
+        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`} data-view-badge>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
+        {isAdmin && isPurchasing(profile) && (
+          <button type="button" onClick={() => { setAsSales((v) => !v); setChecked(new Set()) }} data-as-sales
+            title="영업 · 타부서 계정이 보는 화면을 미리 봅니다 (관리자만)"
+            className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border ${asSales ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
+            {asSales ? '구매자재 화면으로 돌아가기' : '영업 화면으로 보기'}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
@@ -789,6 +827,7 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
           {o.file_name && <div className="mt-2 text-[11px] text-slate-400">📄 {o.file_name}</div>}
         </div>
         <div className="p-3 md:p-6 space-y-4">
+          <RiskBanner ls={ls} />
           {isBuy && (
             <div className="rounded-xl border border-violet-200 bg-white p-4 space-y-2.5" data-po-reply>
               <div className="flex items-center gap-2">
