@@ -94,9 +94,10 @@ export function customerOf(L, kind) {
 
 // 납품처 — 발주서의 「납품처 · Deliver to · SHIP-TO · 납품장소」 칸 근처에서 사업장 이름을 찾는다 (v4.89.0)
 //   Edwards · CSK 는 사업장이 여러 곳이다 (아산 공장 · 안성 7401 · 평택 등). 우리 주소(천안)와 고객사 본사(용인 · 화성)는 빼고 본다.
+// 납품처는 지역으로 짧게 — Edwards · CSK 는 아산(아산 공장) / 안성(물류창고 · plant 7401 · 7035) / 평택 (v4.90.0)
 const SITES = [
-  [/MFK/, '평택 MFK'], [/아산/, '아산 공장'], [/안성|Plant 7401/i, '안성 7401'], [/평택|Pyeongtaek/i, '평택'],
-  [/호법|이천/, '이천 호법창고'], [/BEVERLY/i, 'Beverly (미국)'],
+  [/MFK/, '평택 MFK'], [/아산/, '아산'], [/안성|Plant 7401|plant 7035/i, '안성'], [/평택|Pyeongtaek/i, '평택'],
+  [/호법|이천/, '이천 호법창고'], [/BEVERLY/i, '미국 Beverly'],
 ]
 export function shipToOf(L) {
   const t = L.map((l) => l.t)
@@ -151,6 +152,12 @@ function parseAX(L) {
   return { po_no, order_date, ccn, currency: items.some((i) => i.usd) ? 'USD' : 'KRW', total: null, lines, extraWarn: splitWarn }
 }
 
+// 줄 아래 글 속 7~10자리 숫자 — CSK 「발주 예정」의 Plnd order number · Prod order number 를 찾을 때 쓴다 (v4.90.0)
+//   알려진 발주 예정 번호와 같은 것만 짝지으므로 전화번호 같은 엉뚱한 숫자는 걸리지 않는다
+export function refNums(x, poNo) {
+  return (String(x).match(/(?<![\d.,-])\d{7,10}(?![\d.,-])/g) || []).filter((n) => n !== String(poNo || ''))
+}
+
 function parseSAP(L) {
   const t = L.map((l) => l.t)
   const po_no = lastCell(t.find((x) => /발주번호 \|/.test(x)))
@@ -160,9 +167,10 @@ function parseSAP(L) {
   t.forEach((x) => {
     const c = cells(x)
     if (/^\d{5}$/.test(c[0]) && dEU(c[5] || '')) {
-      cur = { line_no: c[0], del_line: '1', pn: c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dEU(c[5]), price: num(c[6]), delivered: 0, note: '' }
+      cur = { line_no: c[0], del_line: '1', pn: c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dEU(c[5]), price: num(c[6]), delivered: 0, note: '', refs: refNums(x, po_no) }
       lines.push(cur); return
     }
+    if (cur) cur.refs.push(...refNums(x, po_no))
     const mr = x.match(/^Material Revision:\s*(\S+)/)
     if (mr && cur) { cur.rev = mr[1]; return }
     const ms = x.match(/^Specifications?:\s*(.+)$/)
@@ -184,9 +192,10 @@ function parseLN(L) {
   t.forEach((x) => {
     const c = cells(x)
     if (/^\d{5}$/.test(c[0]) && dMON(c[5] || '')) {
-      cur = { line_no: c[0], del_line: '1', pn: c[1] === 'Non-inventory Item' ? null : c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dMON(c[5]), price: num(c[6]), delivered: 0, note: '' }
+      cur = { line_no: c[0], del_line: '1', pn: c[1] === 'Non-inventory Item' ? null : c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dMON(c[5]), price: num(c[6]), delivered: 0, note: '', refs: refNums(x, po_no) }
       lines.push(cur); return
     }
+    if (cur) cur.refs.push(...refNums(x, po_no))
     if (cur && c.length === 1 && /^[A-Z0-9][A-Z0-9-]{5,}$/i.test(c[0])) { cur.spec = c[0]; cur = null }
     if (/^=+$/.test(x)) cur = null
   })
@@ -248,7 +257,7 @@ export function parsePO(L) {
   const P = PARSERS[kind]
   if (!P) { const r = { kind: null, customer: null, po_no: null, lines: [] }; return { ...r, warns: checkPO(r) } }
   const { extraWarn = [], ...r } = P(L)
-  const out = { kind, ...r, customer: customerOf(L, kind), ship_to: shipToOf(L) }
+  const out = { kind, ...r, customer: customerOf(L, kind), ship_to: shipToOf(L), refs: [...new Set(L.flatMap((l) => refNums(l.t, r.po_no)))] }
   out.warns = [...checkPO(out), ...extraWarn]
   return out
 }

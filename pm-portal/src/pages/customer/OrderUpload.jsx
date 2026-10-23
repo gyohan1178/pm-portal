@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import ItemPicker from '../../components/ItemPicker'
 import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
-import { ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL } from '../../lib/orderIntake'
+import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel } from '../../lib/orderIntake'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
@@ -13,13 +13,14 @@ async function readFile(file, readLines = pdfLines) {
   try {
     const po = parsePO(await readLines(file))
     let lines = po.lines.map((l) => ({ ...l }))
-    let existing = null, diff = null
+    let existing = null, diff = null, planned = []
     if (po.customer && po.po_no) {
       lines = await matchLines(po.customer, lines)
       existing = await loadOrderByNo(po.customer, po.po_no)
       if (existing) diff = diffOrder(existing.pm_order_line || [], lines)
+      else { planned = await fetchPlanned(po.customer); lines = linkPlanned(po, lines, planned) }
     }
-    return { name: file.name, po, lines, existing, diff, ok: true }
+    return { name: file.name, po, lines, existing, diff, planned, ok: true }
   } catch (e) {
     return { name: file.name, po: { kind: null, lines: [], warns: [`읽기 실패 — ${e.message}`] }, lines: [], ok: false }
   }
@@ -52,7 +53,8 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w)) }
     const lines = await matchLines(code, cur.po.lines.map((l) => ({ ...l })))
     const existing = po.po_no ? await loadOrderByNo(code, po.po_no) : null
-    setCur({ po, lines, existing, diff: existing ? diffOrder(existing.pm_order_line || [], lines) : null })
+    const planned = existing ? [] : await fetchPlanned(code)
+    setCur({ po, lines: existing ? lines : linkPlanned(po, lines, planned), existing, planned, diff: existing ? diffOrder(existing.pm_order_line || [], lines) : null })
     setBusy(false)
   }
 
@@ -67,7 +69,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   }
   async function saveOne() {
     setBusy(true)
-    try { const r = await save(cur, sel); toastSuccess(r.created ? `${cur.po.po_no} 등록 — ${r.lines}줄` : `${cur.po.po_no} 변경 ${r.changed}건 반영`); onSaved?.() }
+    try { const r = await save(cur, sel); toastSuccess(r.created ? `${cur.po.po_no} 등록 — 품목 ${r.lines}${r.linked ? ` (발주 예정 ${r.linked}건 확정)` : ''}` : `${cur.po.po_no} 변경 ${r.changed}건 반영`); onSaved?.() }
     catch (e) { toastError('등록 실패: ' + e.message) }
     setBusy(false)
   }
@@ -84,6 +86,15 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   const okCount = files.filter((f) => canSave(f) && !f.po.warns.length).length
   const cust = cur?.po.customer ? ORDER_CUSTOMERS[cur.po.customer] : null
   const unmatched = cur ? cur.lines.filter((l) => !l.item).length : 0
+  const showPlan = !!cur && !cur.existing && (cur.planned?.length > 0)
+  const linkedN = cur ? cur.lines.filter((l) => l.plan).length : 0
+  // 발주 예정 고르기 후보 — 같은 품목 먼저, 이 파일의 다른 줄이 이미 고른 것은 빼고
+  const planOpts = (l) => {
+    const taken = new Set(cur.lines.filter((x) => x !== l && x.plan).map((x) => x.plan.id))
+    const all = (cur.planned || []).filter((p) => !taken.has(p.id))
+    const same = l.item ? all.filter((p) => p.item_id === l.item.id) : []
+    return (same.length ? same : all).slice().sort((a, b) => String(a.due_date || '9').localeCompare(String(b.due_date || '9')))
+  }
 
   return (
     <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 overflow-y-auto" data-order-upload>
@@ -117,7 +128,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left text-xs ${i === sel ? 'border-violet-500 ring-2 ring-violet-100' : 'border-slate-200'} ${!f.po.kind ? 'bg-red-50/40' : 'bg-white'}`}>
                   <span className="font-mono font-bold text-slate-700 truncate flex-1" title={f.name}>{f.name}</span>
                   {c && <span className={`px-2 py-0.5 rounded-full font-bold ${c.badge}`}>{c.name}</span>}
-                  <span className="text-slate-400 whitespace-nowrap">{f.lines.length}줄</span>
+                  <span className="text-slate-400 whitespace-nowrap">{f.lines.length}품목</span>
                   <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${tag[0]}`}>{tag[1]}</span>
                 </button>
               )
@@ -187,6 +198,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                         <th className="px-2 py-2 text-left">줄</th><th className="px-2 text-left">발주서 품번 · 품명</th><th className="px-2 text-left">포털 품목</th>
                         <th className="px-2 text-left">Rev</th><th className="px-2 text-right">수량</th><th className="px-2 text-right">단가</th><th className="px-2 text-left">납기</th>
                         {cur.po.customer === 'AX' && <th className="px-2 text-left">구분</th>}
+                        {showPlan && <th className="px-2 text-left" title="실제 발주가 오면 Plnd order number 로 「발주 예정」 줄을 찾아 이 PO 로 옮깁니다">발주 예정 연결</th>}
                         {!cur.existing && <th className="px-2 text-center">이미 납품</th>}
                       </tr></thead>
                       <tbody>
@@ -210,10 +222,22 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                               )}
                             </td>
                             <td className="px-2 py-1.5">{l.rev || '—'}</td>
-                            <td className="px-2 py-1.5 text-right font-mono">{fmt(l.qty)}{l.delivered > 0 ? <div className="text-[10px] text-emerald-600">납품 {fmt(l.delivered)}</div> : null}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">{fmt(l.qty)}{packOf(l) && <div className="text-[10px] font-bold text-amber-700 whitespace-nowrap" data-pack>⚠ PK{packOf(l)} · 실제 {fmt((+l.qty || 0) * packOf(l))}개</div>}{l.delivered > 0 ? <div className="text-[10px] text-emerald-600">납품 {fmt(l.delivered)}</div> : null}</td>
                             <td className="px-2 py-1.5 text-right font-mono">{fmt(l.price)}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{l.due || '—'}</td>
                             {cur.po.customer === 'AX' && <td className="px-2 py-1.5">{l.division}</td>}
+                            {showPlan && (
+                              <td className="px-2 py-1.5 min-w-[230px]" data-plan-cell={i}>
+                                <select value={l.plan?.id || ''} disabled={!!cur.saved} data-plan={i}
+                                  onChange={(e) => { const p = (cur.planned || []).find((x) => String(x.id) === e.target.value) || null; setLine(i, { plan: p, planHow: p ? '직접' : null }) }}
+                                  className={`w-full text-[11px] border rounded-lg px-1.5 py-1 ${l.plan ? 'border-violet-300 bg-violet-50 text-violet-700 font-bold' : 'border-slate-200 text-slate-500'}`}>
+                                  <option value="">— 새 품목으로 —</option>
+                                  {l.plan && !planOpts(l).some((p) => p.id === l.plan.id) && <option value={l.plan.id}>{planLabel(l.plan)}</option>}
+                                  {planOpts(l).map((p) => <option key={p.id} value={p.id}>{planLabel(p)}</option>)}
+                                </select>
+                                {l.plan && <div className="text-[10px] text-violet-500 mt-0.5">{l.planHow === '자동' ? 'Plnd 번호로 자동 연결' : '직접 연결'}</div>}
+                              </td>
+                            )}
                             {!cur.existing && <td className="px-2 py-1.5 text-center"><input type="checkbox" disabled={!!cur.saved} checked={!!(l.deliveredAll || cur.allDelivered)} onChange={(e) => setLine(i, { deliveredAll: e.target.checked })} data-delivered={i} /></td>}
                           </tr>
                         ))}
@@ -224,7 +248,8 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
 
                 <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60">
                   <span className="text-xs text-slate-500">
-                    {cur.lines.length}줄 · 품목 찾음 {cur.lines.length - unmatched}{unmatched ? <b className="text-amber-700"> · 미등록 {unmatched}</b> : ''}
+                    품목 {cur.lines.length} · 찾음 {cur.lines.length - unmatched}{unmatched ? <b className="text-amber-700"> · 미등록 {unmatched}</b> : ''}
+                    {linkedN > 0 && <b className="text-violet-700" data-linked> · 발주 예정 {linkedN}건 확정</b>}
                     {cust ? ` · ${cust.name}` : ''}
                   </span>
                   {!cur.existing && cur.lines.length > 0 && !cur.saved && (
