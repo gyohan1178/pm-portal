@@ -6,7 +6,7 @@
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
-import { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
@@ -79,13 +79,28 @@ function Th({ k, rz, className = '', children }) {
 function ColGroup({ cols, rz }) { return <colgroup>{cols.map(([k, d]) => <col key={k} style={{ width: (rz.widths[k] || d) + 'px' }} />)}</colgroup> }
 const tableStyle = (cols, rz) => ({ tableLayout: 'fixed', width: cols.reduce((a, [k, d]) => a + (rz.widths[k] || d), 0) + 'px', minWidth: '100%' })
 
+// 휴대폰 폭(768px 미만)이면 표 대신 카드로 (v4.90.7)
+const NARROW_Q = '(max-width: 767px)'
+function useNarrow() {
+  const get = () => typeof window !== 'undefined' && !!window.matchMedia && window.matchMedia(NARROW_Q).matches
+  const [n, setN] = useState(get)
+  useEffect(() => {
+    if (!window.matchMedia) return
+    const mq = window.matchMedia(NARROW_Q)
+    const on = () => setN(mq.matches)
+    on(); mq.addEventListener ? mq.addEventListener('change', on) : mq.addListener(on)
+    return () => { mq.removeEventListener ? mq.removeEventListener('change', on) : mq.removeListener(on) }
+  }, [])
+  return n
+}
+
 function Kpi({ tone, label, value, sub, on, onClick }) {
   const [box, num] = KPI_TONE[tone]
   return (
     <button type="button" onClick={onClick} data-kpi={label}
-      className={`text-left rounded-xl border px-4 py-3 transition ${box} ${on ? 'ring-2 ring-violet-400' : 'hover:shadow-sm'}`}>
+      className={`min-w-0 text-left rounded-xl border px-3 md:px-4 py-3 transition ${box} ${on ? 'ring-2 ring-violet-400' : 'hover:shadow-sm'}`}>
       <div className="text-[12px] text-slate-500">{label}</div>
-      <div className={`text-[28px] font-extrabold leading-tight tabular-nums ${num}`}>{value.toLocaleString('ko-KR')}</div>
+      <div className={`text-[24px] md:text-[28px] font-extrabold leading-tight tabular-nums ${num}`}>{value.toLocaleString('ko-KR')}</div>
       <div className="text-[11px] text-slate-500 truncate">{sub}</div>
     </button>
   )
@@ -183,14 +198,25 @@ export default function OrderIntake() {
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
   const refresh = () => qc.invalidateQueries({ queryKey: ['orderIntake'] })
+  // 작은 작업(회신 · 납품 · 불출일 · 납품처 · 확인 · 삭제) 뒤에는 1만 줄을 다시 받지 않고 화면 데이터만 고친다 (v4.90.6 속도)
+  //   PDF 등록 · AX 엑셀 반영처럼 줄이 생기는 작업만 전체를 다시 받는다
+  const patchLocal = (fnOrder) => qc.setQueryData(['orderIntake'], (prev) => (prev ? fnOrder(prev) : prev))
+  const patchLines = (patchOf) => patchLocal((os) => os.map((o) => {
+    let hit = false
+    const lines = o.lines.map((l) => { const p = patchOf(l); if (!p) return l; hit = true; return { ...l, ...p } })
+    return hit ? { ...o, lines } : o
+  }))
+  const patchHead = (ids, p) => { const set = new Set(ids); patchLocal((os) => os.map((o) => (set.has(o.id) ? { ...o, ...p(o) } : o))) }
   const lineRz = useResizableColumns('orderIntake_line_cols', Object.fromEntries(LINE_COLS))
   const poRz = useResizableColumns('orderIntake_po_cols', Object.fromEntries(PO_COLS))
   const lineCols = isBuy ? LINE_COLS : LINE_COLS.filter(([k]) => k !== 'chk')
+  const narrow = useNarrow()
 
   // 줄 펼치기 — 고객사 · 구분 상관없이 전체 (v4.90.4 「AX 전장만」 없앰)
   const allLines = useMemo(() => orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) }))), [orders])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
-  const k = q.trim().toUpperCase()
+  const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
+  const k = qd.trim().toUpperCase()
   const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -236,13 +262,14 @@ export default function OrderIntake() {
     return [...r].sort(cmp)
   }, [scoped, kpis, kpi, view, sort])
 
+  // PO별 묶기 — PO 마다 전체 줄을 다시 거르면 PO 수 × 줄 수로 느려진다 → 한 번에 묶는다 (v4.90.6)
   const poRows = useMemo(() => {
-    const ids = [...new Set(lines.map((l) => l.order_id))]
-    return ids.map((id) => byOrder.get(id)).filter(Boolean).map((o) => {
-      const ls = lines.filter((l) => l.order_id === o.id)
-      return { o, ls, s: stageOf(o), amount: ls.filter((l) => !l.st.cancelled).reduce((a, l) => a + amountOf(l), 0) }
-    })
-  }, [lines, byOrder])
+    if (mode !== 'po') return []
+    const by = new Map()
+    lines.forEach((l) => { if (!by.has(l.order_id)) by.set(l.order_id, []); by.get(l.order_id).push(l) })
+    return [...by].map(([id, ls]) => ({ o: byOrder.get(id), ls })).filter((x) => x.o)
+      .map(({ o, ls }) => ({ o, ls, s: stageOf(o), amount: ls.filter((l) => !l.st.cancelled).reduce((a, l) => a + amountOf(l), 0) }))
+  }, [lines, byOrder, mode])
 
   // 고객사 버튼 숫자 = 진행 중 PO 수
   // 고객사 버튼 숫자 = 지금 보는 목록과 같은 기준 (v4.90.4)
@@ -260,17 +287,22 @@ export default function OrderIntake() {
   // ── 구매자재 동작 ──
   const replyMut = useMutation({
     mutationFn: ({ ls, form }) => replyLines(ls, form, meName),
-    onSuccess: (r) => { setChecked(new Set()); refresh(); toastSuccess(`${r.lines}건 회신 저장 → 영업 화면에 표시`) },
+    onSuccess: (r) => {
+      const ids = new Set(r.ids)
+      patchLines((l) => (ids.has(l.id) ? r.patch : null))
+      patchHead(r.orderIds, (o) => (o.confirmed_at ? {} : r.head))
+      setChecked(new Set()); toastSuccess(`${r.lines}건 회신 저장 → 영업 화면에 표시`)
+    },
     onError: (e) => toastError(e.message),
   })
   const dlvMut = useMutation({
     mutationFn: ({ ls, on }) => markDelivered(ls, on, meName),
-    onSuccess: () => { setChecked(new Set()); refresh() },
+    onSuccess: (r) => { patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set()) },
     onError: (e) => toastError('저장 실패: ' + e.message),
   })
   const relMut = useMutation({
     mutationFn: ({ ls, date }) => setReleaseDate(ls, date, meName),
-    onSuccess: () => { refresh(); toastSuccess('협력사 불출일 저장') },
+    onSuccess: (r) => { const ids = new Set(r.ids); patchLines((l) => (ids.has(l.id) ? r.patch : null)); toastSuccess('협력사 불출일 저장') },
     onError: (e) => toastError(/release_date/.test(e.message || '') ? '불출일 칸이 아직 없습니다 — 수주대장_에드워드납기_반영_261023.sql 을 먼저 실행하세요' : '저장 실패: ' + e.message),
   })
   const [relDate, setRelDate] = useState('')
@@ -278,14 +310,15 @@ export default function OrderIntake() {
     mutationFn: async ({ id, patch, log }) => {
       const { error } = await supabase.from('pm_order').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
       if (error) throw error
-      if (log) await supabase.from('pm_order_change').insert({ order_id: id, source: 'manual', changed_name: meName, ...log })
+      if (log) { const { error: e2 } = await supabase.from('pm_order_change').insert({ order_id: id, source: 'manual', changed_name: meName, ...log }); if (e2) throw e2 }
+      return { id, patch }
     },
-    onSuccess: () => { refresh(); toastSuccess('저장했습니다') },
+    onSuccess: (r) => { patchHead([r.id], () => ({ ...r.patch, updated_at: new Date().toISOString() })); toastSuccess('저장했습니다') },
     onError: (e) => toastError(/ship_to/.test(e.message || '') ? '납품처 칸이 아직 없습니다 — 수주대장_납품처_261023.sql 을 먼저 실행하세요' : '저장 실패: ' + e.message),
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error },
-    onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, ORDER_CUSTOMERS[o.customer_code]?.name); setPoOpen(null); refresh(); toastSuccess('삭제했습니다') },
+    onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, ORDER_CUSTOMERS[o.customer_code]?.name); setPoOpen(null); patchLocal((os) => os.filter((x) => x.id !== id)); toastSuccess('삭제했습니다') },
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
 
@@ -338,13 +371,13 @@ export default function OrderIntake() {
   const sel = 'text-xs font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-600'
 
   return (
-    <div className="space-y-4" data-order-intake data-view={isBuy ? 'buy' : 'sales'}>
+    <div className="space-y-4 min-w-0" data-order-intake data-view={isBuy ? 'buy' : 'sales'}>
       <div className="flex items-start gap-3">
         <p className="page-desc text-xs text-slate-400 flex-1 leading-relaxed">
           전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
           {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}
         </p>
-        <span className={`shrink-0 px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
+        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
@@ -356,13 +389,27 @@ export default function OrderIntake() {
       </div>
 
       {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) */}
-      <div className={`rounded-xl border px-5 py-3 flex flex-wrap items-start gap-x-8 gap-y-3 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
-        <div className="min-w-[210px]">
+      <div className={`rounded-xl border px-4 md:px-5 py-3 flex flex-wrap items-start gap-x-8 gap-y-3 min-w-0 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
+        <div className="min-w-0 md:min-w-[210px]">
           <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span></div>
-          <div className="text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
+          <div className="text-[22px] md:text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
           <div className="text-[11.5px] text-slate-600 tabular-nums mt-0.5">납품 완료 <b>{won(m.done)}</b> · 납품 예정 <b>{won(m.total - m.done)}</b></div>
         </div>
-        <table className="text-[12px] tabular-nums" data-money-cust>
+        {/* 휴대폰: 고객사마다 두 줄 (합계 / 완료 · 예정) — 큰 금액 4칸이 화면 밖으로 밀리던 것 (v4.90.7) */}
+        <div className="md:hidden w-full divide-y divide-emerald-100 text-[12px] tabular-nums" data-money-cust-m>
+          {Object.entries(ORDER_CUSTOMERS).filter(([k2]) => m.byCust[k2]).map(([k2, v]) => (
+            <div key={k2} className="py-1.5" data-money-row-m={k2}>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-600 whitespace-nowrap"><span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: v.color }} />{v.name}</span>
+                <b className="text-slate-800">{won(m.byCust[k2].total)}</b>
+              </div>
+              <div className="flex justify-end flex-wrap gap-x-3 text-[11px] text-slate-500">
+                <span>완료 {won(m.byCust[k2].done)}</span><span className="text-emerald-700 font-semibold">예정 {won(m.byCust[k2].total - m.byCust[k2].done)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+        <table className="hidden md:table text-[12px] tabular-nums" data-money-cust>
           <thead><tr className="text-[11px] text-slate-400">
             <th className="text-left font-semibold pr-5 pb-1">고객사</th><th className="text-right font-semibold px-3 pb-1">합계</th>
             <th className="text-right font-semibold px-3 pb-1">납품 완료</th><th className="text-right font-semibold pl-3 pb-1">납품 예정</th>
@@ -378,7 +425,7 @@ export default function OrderIntake() {
             ))}
           </tbody>
         </table>
-        <div className="ml-auto text-[10.5px] text-slate-400 tabular-nums space-y-1 text-right">
+        <div className="w-full md:w-auto md:ml-auto text-[10.5px] text-slate-400 tabular-nums space-y-1 text-right">
           {m.usd > 0 && (
             <div className="flex items-center justify-end gap-1">달러 ${fmt(Math.round(m.usd))} × 환율
               <input value={fxIn} onChange={(e) => setFxIn(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(qcfg?.sellRate || 1400)} title="달러(CCN B) PO 환율 — 비우면 매출견적 기준 판매환율" data-fx className="w-14 px-1 py-0.5 text-[10.5px] border border-emerald-200 rounded bg-white" /></div>
@@ -404,7 +451,7 @@ export default function OrderIntake() {
           {[['all', '전체'], ...Object.entries(ORDER_CUSTOMERS).map(([k2, v]) => [k2, v.name])].map(([k2, l]) => (
             <button key={k2} type="button" onClick={() => setCust(k2)} data-cust={k2}
               className={`px-3 py-1.5 rounded-full text-xs font-bold border ${cust === k2 ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
-              {k2 !== 'all' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: ORDER_CUSTOMERS[k2].color }} />}{l}<span className={`ml-1 ${cust === k2 ? 'text-slate-300' : 'text-slate-400'}`}>{counts[k2] || 0}</span>
+              {k2 !== 'all' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: ORDER_CUSTOMERS[k2].color }} />}{l}<span className={`ml-1 ${cust === k2 ? 'text-slate-300' : 'text-slate-400'}`}>{(counts[k2] || 0).toLocaleString('ko-KR')}</span>
             </button>
           ))}
           <span className="text-[11px] text-slate-400" data-count-unit>숫자 = {mode === 'line' ? '품목 줄 수' : 'PO 수'}</span>
@@ -419,7 +466,7 @@ export default function OrderIntake() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 PO번호 · 품번 · 품명 · 납품처 · 관리번호 · Plnd 번호 검색" data-search
-            className="flex-1 min-w-[240px] px-3 py-2 text-xs border border-slate-200 rounded-lg" />
+            className="flex-1 min-w-0 basis-full md:basis-auto md:min-w-[240px] px-3 py-2 text-xs border border-slate-200 rounded-lg" />
           <select value={view} onChange={(e) => { setView(e.target.value); setKpi(null) }} className={sel} data-viewsel>
             <option value="live">진행 중 (전체)</option><option value="po">진행 중 · 발주 확정만</option><option value="plan">발주 예정만</option><option value="done">납품 완료</option><option value="all">전체</option>
           </select>
@@ -483,6 +530,22 @@ export default function OrderIntake() {
         </div>
       )}
 
+      {narrow ? (
+        <div className="space-y-2" data-mobile-list>
+          {isLoading && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">불러오는 중…</div>}
+          {mode === 'line' && <>
+            {!isLoading && !lines.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다'}</div>}
+            {isBuy && liveVisible.length > 0 && (
+              <label className="flex items-center gap-2 px-1 text-[11px] font-bold text-slate-500"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all-m />보이는 품목 전체 선택</label>
+            )}
+            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} />)}
+          </>}
+          {mode === 'po' && <>
+            {!isLoading && !poRows.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">조건에 맞는 PO 가 없습니다</div>}
+            {shownPos.map((r) => <PoCard key={r.o.id} {...r} onOpen={() => setPoOpen(r.o.id)} />)}
+          </>}
+        </div>
+      ) : (
       <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
         {mode === 'line' ? (
           <table className="text-xs" style={tableStyle(lineCols, lineRz)} data-line-table>
@@ -568,15 +631,16 @@ export default function OrderIntake() {
           </table>
         )}
       </div>
+      )}
 
       {totalN > limit && (
-        <div className="-mt-2 flex items-center justify-center gap-2 py-2" data-more>
+        <div className="-mt-2 flex flex-wrap items-center justify-center gap-2 py-2" data-more>
           <span className="text-xs text-slate-500 tabular-nums">{limit.toLocaleString('ko-KR')} / {totalN.toLocaleString('ko-KR')}{mode === 'line' ? '품목' : '건'} 표시</span>
           <button type="button" onClick={() => setLimit((n) => n + PAGE)} data-more-btn className="px-4 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700 hover:bg-slate-50">더 보기 (+{Math.min(PAGE, totalN - limit)})</button>
           <button type="button" onClick={() => setLimit(totalN)} data-more-all className="px-3 py-1.5 rounded-lg text-xs font-bold text-slate-500 hover:text-slate-800">전체 보기</button>
         </div>
       )}
-      <div className="-mt-2 flex items-center gap-2 px-1 text-[11px] text-slate-400">
+      <div className="-mt-2 hidden md:flex items-center gap-2 px-1 text-[11px] text-slate-400">
         <span>💡 열 머리글 오른쪽 끝을 끌면 너비를 바꿀 수 있습니다 (이 브라우저에 기억)</span>
         <button type="button" onClick={() => (mode === 'line' ? lineRz : poRz).resetWidths()} data-reset-cols className="ml-auto hover:text-slate-600 underline-offset-2 hover:underline">열 너비 초기화</button>
       </div>
@@ -592,6 +656,68 @@ export default function OrderIntake() {
       )}
       {upload && <OrderUpload meName={meName} onClose={() => setUpload(false)} onSaved={refresh} />}
     </div>
+  )
+}
+
+// 휴대폰 카드 — 품번별 한 줄 (v4.90.7)
+function LineCard({ l, isBuy, checked, onToggle, onOpen }) {
+  const [stLabel, stCls] = statusOf(l)
+  const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
+  const c = ORDER_CUSTOMERS[l.o.customer_code]
+  return (
+    <div className={`bg-white border rounded-xl p-3 ${checked ? 'border-violet-300 bg-violet-50/40' : 'border-slate-200'} ${l.st.cancelled ? 'opacity-50' : ''}`} data-mcard={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
+      <div className="flex items-start gap-2">
+        {isBuy && <div className="pt-0.5 w-5 shrink-0">{!l.st.cancelled && <input type="checkbox" className="w-4 h-4" checked={checked} onChange={onToggle} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</div>}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
+            <button type="button" onClick={onOpen} className={`font-mono font-bold text-[13px] ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button>
+            <span className="text-[10.5px] text-slate-400">{l.o.planned ? (l.plnd_no ? `Plnd ${l.plnd_no}` : '') : `Line ${l.line_no}${l.del_line !== '1' ? `/${l.del_line}` : ''}`}</span>
+          </div>
+          <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+            {l.items ? <span className="font-mono font-bold text-[12px] text-slate-800 break-all">{l.items.std_code}</span> : <span className="font-mono text-[12px] text-slate-500 break-all">{l.raw_pn || '품번 없음'}</span>}
+            {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
+            {l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}
+          </div>
+          <div className="text-[11.5px] text-slate-500 truncate">{l.items?.name || l.raw_desc || '—'}</div>
+          {(l.o.ship_to || mgmtNoOf(l)) && <div className="text-[10.5px] text-slate-400 truncate">{[l.o.ship_to, mgmtNoOf(l)].filter(Boolean).join(' · ')}</div>}
+        </div>
+        <div className="shrink-0 text-right">
+          <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] font-bold whitespace-nowrap ${stCls}`} data-status>{stLabel}</span>
+          {late && <div className="text-[10px] text-red-500 mt-0.5 whitespace-nowrap">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
+        </div>
+      </div>
+      <div className={`mt-2 pt-2 border-t border-slate-100 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 text-xs ${isBuy ? 'pl-7' : ''}`}>
+        <div className="min-w-0"><div className="text-[10px] text-slate-400">납기</div><DueCell l={l} /></div>
+        <div className="text-right font-mono tabular-nums min-w-0"><div className="text-[10px] text-slate-400 font-sans">수량</div><div className="text-slate-800">{fmt(l.qty)}</div><PackNote l={l} />{+l.delivered_qty > 0 && <div className="text-[10.5px] text-emerald-600">납품 {fmt(l.delivered_qty)}</div>}</div>
+        <div className="text-right font-mono tabular-nums min-w-0"><div className="text-[10px] text-slate-400 font-sans">금액</div><div className="text-slate-800 whitespace-nowrap">{+l.unit_price ? money(l.o, amountOf(l)) : '—'}</div>{+l.unit_price > 0 && <div className="text-[10px] text-slate-400">@ {isUsd(l.o) ? '$' : ''}{fmt(l.unit_price)}</div>}</div>
+      </div>
+      {l.reply && <div className={`mt-2 ${isBuy ? 'pl-7' : ''}`}><ReplyCell l={l} memo /></div>}
+    </div>
+  )
+}
+
+// 휴대폰 카드 — PO별 (v4.90.7)
+function PoCard({ o, ls, amount, onOpen }) {
+  const c = ORDER_CUSTOMERS[o.customer_code]
+  const rp = ls.filter((l) => !l.st.cancelled)
+  const replied = rp.filter((l) => l.reply).length
+  const liveL = rp.filter((l) => l.st.live)
+  const first = { ...liveL.slice().sort((a, b) => String(a.due_date || '9').localeCompare(String(b.due_date || '9')))[0], st: { live: true } }
+  return (
+    <button type="button" onClick={onOpen} className="w-full text-left bg-white border border-slate-200 rounded-xl p-3" data-order={o.po_no}>
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
+        <span className={`font-mono font-bold text-[13px] ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}</span>
+        {o.ship_to && <span className="text-[10.5px] text-slate-400">{o.ship_to}</span>}
+        <span className="ml-auto text-[11px] text-slate-500">{replied ? `회신 ${replied}/${rp.length}` : '회신 전'}</span>
+      </div>
+      <div className="mt-1 text-[11px] text-slate-500 truncate"><b className="text-slate-700">{rp.length}품목</b> · {rp.slice(0, 3).map((l) => `${l.items?.std_code || l.raw_pn || l.raw_desc} ×${fmt(l.qty)}`).join(' · ')}</div>
+      <div className="mt-2 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
+        <div><div className="text-[10px] text-slate-400">가장 빠른 납기</div>{liveL.length ? <DueCell l={first} /> : <span className="text-slate-400">납품 완료</span>}</div>
+        <div className="text-right font-mono tabular-nums"><div className="text-[10px] text-slate-400 font-sans">금액</div>{amount ? money(o, amount) : '—'}</div>
+      </div>
+    </button>
   )
 }
 
@@ -635,7 +761,7 @@ function PoDrawer({ o, isBuy, fx, onClose, onReply, replyBusy, onDlv, dlvBusy, o
           </div>
           {o.file_name && <div className="mt-2 text-[11px] text-slate-400">📄 {o.file_name}</div>}
         </div>
-        <div className="p-6 space-y-4">
+        <div className="p-3 md:p-6 space-y-4">
           {isBuy && (
             <div className="rounded-xl border border-violet-200 bg-white p-4 space-y-2.5" data-po-reply>
               <div className="flex items-center gap-2">
@@ -646,9 +772,9 @@ function PoDrawer({ o, isBuy, fx, onClose, onReply, replyBusy, onDlv, dlvBusy, o
               <p className="text-[10.5px] text-slate-400">품번마다 다르게 답하려면 목록(품번별)에서 체크해 회신하세요. 자재 가용성 자동 계산은 다음 단계에서 붙습니다.</p>
             </div>
           )}
-          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
-            <table className="w-full text-xs">
-              <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left">
+          <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto" data-dline-wrap>
+            <table className="w-full min-w-[760px] text-xs">
+              <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left whitespace-nowrap">
                 <th className="px-3 py-2 font-bold">{o.planned ? 'Plnd 번호' : 'Line'}</th><th className="px-3 font-bold">품번 · 품명</th>
                 <th className="px-3 font-bold text-right">수량</th><th className="px-3 font-bold text-right">단가</th><th className="px-3 font-bold">납기</th>
                 <th className="px-3 font-bold" title="협력사에 자재를 내줘야 하는 날">협력사 불출</th>

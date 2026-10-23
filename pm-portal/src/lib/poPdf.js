@@ -118,9 +118,12 @@ export const axDivision = (pn) => (String(pn).startsWith('16') ? '하네스' : S
 
 function parseAX(L) {
   const t = L.map((l) => l.t)
-  const po_no = lastCell(t[t.findIndex((x) => /PURCHASE ORDER NO\./.test(x)) + 1])
+  // 머리글을 못 찾으면 첫 줄을 PO번호로 읽던 것 — 못 찾으면 비워 두고 「PO번호를 못 읽음」 경고로 (v4.90.6)
+  const iPo = t.findIndex((x) => /PURCHASE ORDER NO\./.test(x))
+  const po_no = iPo >= 0 ? lastCell(t[iPo + 1]) || null : null
   const ccn = (t.find((x) => /PAGE 1 of/.test(x)) || '').match(/\| ([A-Z]) \|/)?.[1] || null
-  const order_date = dUS(t[t.findIndex((x) => /^ORDER DATE/.test(x)) + 1] || '')
+  const iDate = t.findIndex((x) => /^ORDER DATE/.test(x))
+  const order_date = iDate >= 0 ? dUS(t[iDate + 1] || '') : null
   const items = []
   let cur = null, head = false
   t.forEach((x) => {

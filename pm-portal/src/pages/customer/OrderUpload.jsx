@@ -8,18 +8,27 @@ import { toastError, toastSuccess } from '../../lib/toast'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 
+// 품목 맞추기 · 이미 있는 PO 찾기 · 발주 예정 연결 (새 PO = 모든 줄, 이미 있는 PO = 새로 생긴 줄만, v4.90.6)
+async function prepare(po, raw) {
+  let lines = await matchLines(po.customer, raw)
+  const existing = await loadOrderByNo(po.customer, po.po_no)
+  const planned = await fetchPlanned(po.customer)
+  let diff = null
+  if (existing) {
+    const added = new Set(diffOrder(existing.pm_order_line || [], lines).added)
+    lines = linkPlanned(po, lines, planned, (l) => added.has(l))
+    diff = diffOrder(existing.pm_order_line || [], lines)
+  } else lines = linkPlanned(po, lines, planned)
+  return { lines, existing, diff, planned }
+}
+
 // 파일 하나 읽기 — 실패해도 목록에는 남겨 알림을 보여준다
 async function readFile(file, readLines = pdfLines) {
   try {
     const po = parsePO(await readLines(file))
     let lines = po.lines.map((l) => ({ ...l }))
     let existing = null, diff = null, planned = []
-    if (po.customer && po.po_no) {
-      lines = await matchLines(po.customer, lines)
-      existing = await loadOrderByNo(po.customer, po.po_no)
-      if (existing) diff = diffOrder(existing.pm_order_line || [], lines)
-      else { planned = await fetchPlanned(po.customer); lines = linkPlanned(po, lines, planned) }
-    }
+    if (po.customer && po.po_no) ({ lines, existing, diff, planned } = await prepare(po, lines))
     return { name: file.name, po, lines, existing, diff, planned, ok: true }
   } catch (e) {
     return { name: file.name, po: { kind: null, lines: [], warns: [`읽기 실패 — ${e.message}`] }, lines: [], ok: false }
@@ -50,12 +59,12 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
 
   async function changeCustomer(code) {
     setBusy(true)
-    const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w)) }
-    const lines = await matchLines(code, cur.po.lines.map((l) => ({ ...l })))
-    const existing = po.po_no ? await loadOrderByNo(code, po.po_no) : null
-    const planned = existing ? [] : await fetchPlanned(code)
-    setCur({ po, lines: existing ? lines : linkPlanned(po, lines, planned), existing, planned, diff: existing ? diffOrder(existing.pm_order_line || [], lines) : null })
-    setBusy(false)
+    try {
+      const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w)) }
+      const r = po.po_no ? await prepare(po, cur.po.lines.map((l) => ({ ...l }))) : { lines: await matchLines(code, cur.po.lines.map((l) => ({ ...l }))), existing: null, diff: null, planned: [] }
+      setCur({ po, ...r })
+    } catch (e) { toastError('고객사 바꾸기 실패: ' + e.message) }
+    finally { setBusy(false) }   // 실패해도 「읽는 중」에 멈추지 않게 (v4.90.6)
   }
 
   const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || (f.po.warns.length > 0 && !f.force)
@@ -99,12 +108,15 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     }
     if (n) { toastSuccess(`점검 통과 ${n}건 등록${bad.length ? ` · 실패 ${bad.length}건` : ''}`); onSaved?.() }
     if (bad.length) toastError(`등록 실패 ${bad.length}건 — ${bad.slice(0, 3).join(' / ')}`)
+    setBusy(false)   // v4.90.5 에서 빠졌던 것 — 등록 뒤 「읽는 중」에 멈춰 있던 문제
   }
 
   const okCount = files.filter((f) => canSave(f) && !f.po.warns.length).length
   const cust = cur?.po.customer ? ORDER_CUSTOMERS[cur.po.customer] : null
   const unmatched = cur ? cur.lines.filter((l) => !l.item).length : 0
-  const showPlan = !!cur && !cur.existing && (cur.planned?.length > 0)
+  const addedKeys = new Set((cur?.diff?.added || []).map(lineKey))
+  const planOk = (l) => !cur.existing || addedKeys.has(lineKey(l))      // 이미 있는 PO 는 새로 생긴 줄만 발주 예정 연결
+  const showPlan = !!cur && (cur.planned?.length > 0) && (!cur.existing || addedKeys.size > 0)
   const linkedN = cur ? cur.lines.filter((l) => l.plan).length : 0
   // 발주 예정 고르기 후보 — 같은 품목 먼저, 이 파일의 다른 줄이 이미 고른 것은 빼고
   const planOpts = (l) => {
@@ -115,18 +127,18 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-4 overflow-y-auto" data-order-upload>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-[1400px] my-4">
-        <div className="flex items-center gap-3 px-6 py-4 border-b border-slate-100">
-          <div>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-start justify-center p-2 md:p-4 overflow-y-auto" data-order-upload>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-[1400px] my-2 md:my-4 min-w-0">
+        <div className="flex items-start gap-3 px-4 md:px-6 py-4 border-b border-slate-100">
+          <div className="min-w-0">
             <h2 className="text-lg font-extrabold text-slate-800">📄 발주서 PDF 올리기</h2>
             <p className="text-xs text-slate-400">고객사 발주서 PDF 를 그대로 올리면 양식 · 고객사를 구분하고 품목 줄을 읽습니다. 같은 PO 를 다시 올리면 바뀐 것만 반영하고 변경 이력을 남깁니다.</p>
           </div>
-          <button type="button" onClick={onClose} className="ml-auto px-3 py-1.5 text-sm font-bold text-slate-500 hover:text-slate-800">✕ 닫기</button>
+          <button type="button" onClick={onClose} className="ml-auto shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-bold text-slate-500 hover:text-slate-800">✕ 닫기</button>
         </div>
-        <div className="flex gap-4 p-5">
-          {/* 왼쪽 — 파일 목록 */}
-          <div className="w-[400px] shrink-0 space-y-2">
+        <div className="flex flex-col lg:flex-row gap-4 p-3 md:p-5">
+          {/* 왼쪽 — 파일 목록 (휴대폰 · 좁은 화면은 위아래로, v4.90.7) */}
+          <div className="w-full lg:w-[400px] shrink-0 space-y-2 min-w-0">
             <div onDragOver={(e) => { e.preventDefault(); setDrag(true) }} onDragLeave={() => setDrag(false)}
               onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files) }}
               onClick={() => inp.current?.click()}
@@ -169,7 +181,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
           {/* 오른쪽 — 미리보기 */}
           <div className="flex-1 min-w-0">
             {!cur ? (
-              <div className="h-full min-h-[300px] flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-xl">왼쪽에 발주서 PDF 를 올리면 여기에 읽은 내용이 나옵니다</div>
+              <div className="h-full min-h-[300px] hidden lg:flex items-center justify-center text-sm text-slate-400 border border-dashed border-slate-200 rounded-xl">왼쪽에 발주서 PDF 를 올리면 여기에 읽은 내용이 나옵니다</div>
             ) : (
               <div className="border border-slate-200 rounded-xl overflow-hidden" data-preview>
                 <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-slate-100">
@@ -252,6 +264,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                             {cur.po.customer === 'AX' && <td className="px-2 py-1.5">{l.division}</td>}
                             {showPlan && (
                               <td className="px-2 py-1.5 min-w-[230px]" data-plan-cell={i}>
+                                {!planOk(l) ? <span className="text-slate-300">—</span> : <>
                                 <select value={l.plan?.id || ''} disabled={!!cur.saved} data-plan={i}
                                   onChange={(e) => { const p = (cur.planned || []).find((x) => String(x.id) === e.target.value) || null; setLine(i, { plan: p, planHow: p ? '직접' : null }) }}
                                   className={`w-full text-[11px] border rounded-lg px-1.5 py-1 ${l.plan ? 'border-violet-300 bg-violet-50 text-violet-700 font-bold' : 'border-slate-200 text-slate-500'}`}>
@@ -260,6 +273,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                                   {planOpts(l).map((p) => <option key={p.id} value={p.id}>{planLabel(p)}</option>)}
                                 </select>
                                 {l.plan && <div className="text-[10px] text-violet-500 mt-0.5">{l.planHow === '자동' ? 'Plnd 번호로 자동 연결' : '직접 연결'}</div>}
+                                </>}
                               </td>
                             )}
                             {!cur.existing && <td className="px-2 py-1.5 text-center"><input type="checkbox" disabled={!!cur.saved} checked={!!(l.deliveredAll || cur.allDelivered)} onChange={(e) => setLine(i, { deliveredAll: e.target.checked })} data-delivered={i} /></td>}

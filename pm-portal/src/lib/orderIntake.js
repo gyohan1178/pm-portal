@@ -7,6 +7,15 @@ import { fetchAll } from './paginate'
 import { logActivity } from './activityLog'
 import { divisionOf } from './axPoFile'
 
+// 여러 건을 20개씩 동시에 저장 — 하나라도 실패하면 멈춘다
+async function pool(arr, fn, n = 20) {
+  for (let i = 0; i < arr.length; i += n) {
+    const res = await Promise.all(arr.slice(i, i + n).map(fn))
+    const bad = res.find((r) => r?.error)
+    if (bad) throw bad.error
+  }
+}
+
 export const ORDER_CUSTOMERS = {
   AX:  { name: 'AXCELIS', prefix: 'AX-', color: '#8b5cf6', badge: 'bg-violet-50 text-violet-700' },
   ED:  { name: 'Edwards', prefix: 'ED-', color: '#3b82f6', badge: 'bg-blue-50 text-blue-700' },
@@ -94,7 +103,7 @@ export function pairLines(oldLines, newLines) {
   const used = new Set()
   const known = (x) => !!(idOf(x) || pnOf(x))
   // ① 번호가 같고 품목도 같은(또는 어느 한쪽 품목을 모르는) 줄
-  newLines.forEach((n, i) => { const o = om.get(lineKey(n)); if (o && (!known(o) || !known(n) || sameItem(o, n))) { pair.set(i, o); used.add(o) } })
+  newLines.forEach((n, i) => { const o = om.get(lineKey(n)); if (o && !used.has(o) && (!known(o) || !known(n) || sameItem(o, n))) { pair.set(i, o); used.add(o) } })   // 한 발주서에 같은 번호가 두 번이면 앞 줄만 (v4.90.6)
   // ② 번호가 달라도 같은 품목
   newLines.forEach((n, i) => {
     if (pair.has(i)) return
@@ -120,10 +129,15 @@ export function diffOrder(oldLines, newLines) {
       if (field === 'item' && (!n.item || !o.item_id)) return     // 품목을 못 찾은 쪽은 비교하지 않는다
       if (field === 'rev' && !before) return                       // 비어 있던 Rev 를 채우는 것은 변경이 아니다 (저장은 함)
       if (field === 'unit_price' && !before) return                // 비어 있던 단가를 채우는 것도 「빈 칸 채우기」 (v4.90.1)
+      if (field !== 'item' && after === '') return                 // 새 발주서에서 못 읽은 칸은 「변경 없음」 — 기존 값을 지우지 않는다 (v4.90.6)
       if (before !== after) changes.push({ line_key: lineKey(n), field, before_val: before, after_val: after })
     })
+    // 취소됐던 줄이 새 발주서에 다시 있음 → 되살림 (조용히 되살아나지 않게 변경으로 보인다)
+    if (o.cancelled) changes.push({ line_key: lineKey(n), field: 'revive', before_val: '취소', after_val: '다시 발주서에 있음' })
   })
-  oldLines.forEach((o) => { if (!used.has(o) && !o.cancelled) removed.push(o) })
+  // 새 발주서에서 빠진 줄 — 납품이 끝난 줄은 취소하지 않는다 (마감된 줄을 빼고 오는 변경본 대비, v4.90.6)
+  const doneLine = (o) => +o.qty > 0 && (+o.delivered_qty || 0) >= +o.qty
+  oldLines.forEach((o) => { if (!used.has(o) && !o.cancelled && !doneLine(o)) removed.push(o) })
   return { changes, added, removed, same: !changes.length && !added.length && !removed.length, pair }
 }
 
@@ -198,13 +212,15 @@ export async function fetchPlanned(cust) {
 
 // 발주서 줄 ↔ 발주 예정 줄 — 줄 아래 글에 그 줄의 Plnd · Prod 번호가 있으면 짝.
 //   줄이 하나뿐인 발주서는 발주서 어디에 있어도 짝 (번호 위치를 모르는 양식 대비)
-export function linkPlanned(po, lines, planned) {
+//   only: 이 조건에 맞는 줄만 연결 (이미 있는 PO 를 다시 올릴 때 = 새로 생긴 줄만, v4.90.6)
+export function linkPlanned(po, lines, planned, only = null) {
   if (!planned?.length) return lines
   const used = new Set()
   const byNo = new Map()
   planned.forEach((p) => [p.plnd_no, p.prod_no].filter(Boolean).forEach((n) => byNo.set(String(n), p)))
   return lines.map((l) => {
     if (l.plan) { used.add(l.plan.id); return l }
+    if (only && !only(l)) return l
     const refs = [...(l.refs || []), ...(lines.length === 1 ? po.refs || [] : [])]
     const p = refs.map((n) => byNo.get(String(n))).find((x) => x && !used.has(x.id))
     if (!p) return l
@@ -226,8 +242,16 @@ async function movePlanned(orderId, poNo, n, meName, source) {
   }
   const reset = p.reply && ((+patch.qty > +p.qty) || (patch.due_date && p.due_date && patch.due_date < p.due_date))
   if (reset) Object.assign(patch, REPLY_CLEAR)
-  const { error } = await supabase.from('pm_order_line').update(patch).eq('id', p.id)
+  // 지금도 발주 예정 머리 아래에 있을 때만 옮긴다 — 같은 Plnd 를 가진 다른 발주서가 먼저 가져갔거나
+  //   다른 사람이 먼저 옮긴 줄을 또 옮기지 않게 (v4.90.6). 못 옮기면 새 줄로 넣는다.
+  const { data: moved, error } = await supabase.from('pm_order_line').update(patch).eq('id', p.id).eq('order_id', p.order_id).select('id')
   if (error) throw error
+  if (!moved || !moved.length) {
+    const { error: e3 } = await supabase.from('pm_order_line').insert(lineRow(orderId, { ...n, plan: null }))
+    if (e3) throw e3
+    await supabase.from('pm_order_change').insert({ order_id: orderId, line_key: lineKey(n), field: 'line_add', before_val: null, after_val: `${n.item?.std_code || n.pn || ''} ×${n.qty} (발주 예정 ${planLabel({ ...p, due_date: null })} 은 이미 다른 PO 로 옮겨짐)`, source, changed_name: meName || null })
+    return 0
+  }
   const from = planLabel({ ...p, due_date: null }) || '발주 예정'
   const logs = [
     { order_id: orderId, line_key: lineKey(n), field: 'plan_link', before_val: from, after_val: `PO ${poNo} 발주 확정`, source, changed_name: meName || null },
@@ -285,29 +309,52 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   const fillBy = new Map(fp.lines.map((x) => [x.id, x.patch]))
   const now = new Date().toISOString()
   const resetLogs = []
+  const upd = []                 // [{ o, n, patch }]
   for (const [i, n] of lines.entries()) {
     const o = d.pair.get(i)
     if (!o) continue
     const patch = { ...(fillBy.get(o.id) || {}) }
     // 번호가 달랐던 줄(엑셀 이관 등)은 발주서 번호로 맞춘다
     if (lineKey(o) !== lineKey(n)) { patch.line_no = String(n.line_no); patch.del_line = String(n.del_line || '1') }
-    if (+o.qty !== +(n.qty || 0)) patch.qty = Number(n.qty) || 0
-    if ((o.due_date || '') !== (n.due || '')) patch.due_date = n.due || null
-    if ((o.unit_price == null ? '' : +o.unit_price) !== (n.price == null ? '' : +n.price)) patch.unit_price = n.price ?? null
-    if ((o.rev || '') !== (n.rev || '')) patch.rev = n.rev || null
+    // 새 발주서에서 못 읽은 칸(비어 있음)은 기존 값을 그대로 둔다 (v4.90.6)
+    if (n.qty != null && n.qty !== '' && +o.qty !== +n.qty) {
+      patch.qty = Number(n.qty) || 0
+      if ((+o.delivered_qty || 0) > patch.qty) patch.delivered_qty = patch.qty   // 납품 수량이 수량을 넘지 않게
+    }
+    if (n.due && (o.due_date || '') !== n.due) patch.due_date = n.due
+    if (n.price != null && n.price !== '' && (o.unit_price == null ? '' : +o.unit_price) !== +n.price) patch.unit_price = n.price
+    if (n.rev && (o.rev || '') !== n.rev) patch.rev = n.rev
     if (n.item?.id && n.item.id !== o.item_id) patch.item_id = n.item.id
     if (o.cancelled) patch.cancelled = false
-    // 납기 · 수량 · Rev · 품목이 바뀐 줄은 회신을 다시 받는다 (단가만 바뀐 것은 그대로)
-    if (o.reply && ('qty' in patch || 'due_date' in patch || ('item_id' in patch && o.item_id) || ('rev' in patch && o.rev))) {
+    // 납기 · 수량 · Rev · 품목이 바뀐 줄 · 취소됐다 되살아난 줄은 회신을 다시 받는다 (단가만 바뀐 것은 그대로)
+    if (o.reply && ('qty' in patch || 'due_date' in patch || ('item_id' in patch && o.item_id) || ('rev' in patch && o.rev) || o.cancelled)) {
       Object.assign(patch, REPLY_CLEAR)
-      resetLogs.push({ line_key: lineKey(o), field: 'reply_reset', before_val: replyText(o), after_val: '변경으로 재회신 필요' })
+      resetLogs.push({ line_key: lineKey(n), field: 'reply_reset', before_val: replyText(o), after_val: '변경으로 재회신 필요' })
     }
-    if (Object.keys(patch).length) {
-      const { error } = await supabase.from('pm_order_line').update({ ...patch, updated_at: now }).eq('id', o.id)
-      if (error) throw error
-    }
+    if (Object.keys(patch).length) upd.push({ o, n, patch })
   }
   const addNew = d.added.filter((l) => !l.plan)
+  const hist = [
+    ...d.changes.map((c) => ({ ...c })),
+    ...addNew.map((l) => ({ line_key: lineKey(l), field: 'line_add', before_val: null, after_val: `${l.item?.std_code || l.pn || l.desc || ''} ×${l.qty}` })),
+    ...d.removed.map((o) => ({ line_key: lineKey(o), field: 'line_del', before_val: `${o.items?.std_code || o.raw_pn || o.raw_desc || ''} ×${o.qty}`, after_val: null })),
+    ...resetLogs,
+  ].map((h) => ({ ...h, order_id: existing.id, source, changed_name: meName || null }))
+  if (fp.any) hist.push({ line_key: null, field: 'fill', before_val: null, after_val: fp.labels.join(' · '), order_id: existing.id, source, changed_name: meName || null })
+  // 이력을 먼저 남긴다 — 중간에 끊겨도 「무엇을 바꾸려 했는지」는 남고, 같은 파일을 다시 올리면 남은 것만 다시 반영된다 (v4.90.6)
+  if (hist.length) {
+    const { error } = await supabase.from('pm_order_change').insert(hist)
+    if (error) throw error
+  }
+  // 줄 번호 바꾸기 — 번호를 맞바꾸거나(1↔2) 빠진 줄 · 취소 줄이 그 번호를 쥐고 있으면 unique(PO·라인·분할)에 걸린다.
+  //   ① 번호를 바꿀 줄은 임시 번호로 비켜 두고 ② 짝 없는 줄이 쓸 번호를 쥐고 있으면 옆으로 비킨 뒤 ③ 제 번호로 (v4.90.6)
+  const renum = upd.filter((u) => 'line_no' in u.patch)
+  const targets = new Set([...renum.map((u) => lineKey(u.n)), ...d.added.map((l) => lineKey(l))])
+  const pairedIds = new Set([...d.pair.values()].map((o) => o.id))
+  const blockers = (existing.pm_order_line || []).filter((o) => !pairedIds.has(o.id) && targets.has(lineKey(o)))
+  await pool(renum, (u) => supabase.from('pm_order_line').update({ line_no: `~${u.o.id}` }).eq('id', u.o.id))
+  await pool(blockers, (o) => supabase.from('pm_order_line').update({ line_no: `${o.line_no}~${String(o.id).slice(0, 6)}`, updated_at: now }).eq('id', o.id))
+  await pool(upd, (u) => supabase.from('pm_order_line').update({ ...u.patch, updated_at: now }).eq('id', u.o.id))
   if (addNew.length) {
     const { error } = await supabase.from('pm_order_line').insert(addNew.map((l) => lineRow(existing.id, l)))
     if (error) throw error
@@ -318,19 +365,8 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     const { error } = await supabase.from('pm_order_line').update({ cancelled: true, updated_at: now }).in('id', d.removed.map((o) => o.id))
     if (error) throw error
   }
-  const hist = [
-    ...d.changes.map((c) => ({ ...c })),
-    ...d.added.filter((l) => !l.plan).map((l) => ({ line_key: lineKey(l), field: 'line_add', before_val: null, after_val: `${l.item?.std_code || l.pn || l.desc || ''} ×${l.qty}` })),
-    ...d.removed.map((o) => ({ line_key: lineKey(o), field: 'line_del', before_val: `${o.items?.std_code || o.raw_pn || o.raw_desc || ''} ×${o.qty}`, after_val: null })),
-    ...resetLogs,
-  ].map((h) => ({ ...h, order_id: existing.id, source, changed_name: meName || null }))
   const head = { updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total, ...fp.head }
   // 납품처가 이미 있으면 그대로 둔다 — 구매자재가 고친 값일 수 있음 (빈 칸만 채움)
-  if (fp.any) hist.push({ line_key: null, field: 'fill', before_val: null, after_val: fp.labels.join(' · '), order_id: existing.id, source, changed_name: meName || null })
-  if (hist.length) {
-    const { error } = await supabase.from('pm_order_change').insert(hist)
-    if (error) throw error
-  }
   let { error } = await supabase.from('pm_order').update(head).eq('id', existing.id)
   if (error && /ship_to/.test(error.message || '') && head.ship_to) { delete head.ship_to; ({ error } = await supabase.from('pm_order').update(head).eq('id', existing.id)) }
   if (error) throw error
@@ -365,7 +401,7 @@ async function axRowsOfFile(fileRows) {
     return {
       id: `f${i}`, po_number: r.po_number, order_line: r.order_line || '1', del_line: r.del_line || '1',
       item_id: it?.id || null, items: it ? { std_code: it.std_code, name: it.name } : null, raw_pn: r.pn, raw_desc: r.desc || null,
-      item_rev: r.item_rev || null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: null,
+      item_rev: r.item_rev || null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: r.order_date || null,
       division: divisionOf(r.pn), status: r.status, ccn: r.ccn || null,
       issued_at: r.status === '완료' ? r.promise_date : null, fromRcv: r.src === 'rcv',
     }
@@ -383,6 +419,8 @@ export async function axSyncPreview(fileRows) {
     const part = await fetchAll(() => supabase.from('pm_order_line').select('*').in('order_id', hids.slice(i, i + 200)).order('id'))
     lines.push(...part)
   }
+  const linesBy = new Map()
+  lines.forEach((l) => { if (!linesBy.has(l.order_id)) linesBy.set(l.order_id, []); linesBy.get(l.order_id).push(l) })
   const byPo = new Map()
   rows.forEach((r) => { if (!r.po_number) return; if (!byPo.has(r.po_number)) byPo.set(r.po_number, []); byPo.get(r.po_number).push(r) })
   const headByNo = new Map(heads.map((h) => [h.po_no, h]))
@@ -394,7 +432,7 @@ export async function axSyncPreview(fileRows) {
       if (ls.some((l) => l.status !== '취소')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중') })
       continue
     }
-    const mine = new Map(lines.filter((l) => l.order_id === h.id).map((l) => [`${l.line_no}/${l.del_line}`, l]))
+    const mine = new Map((linesBy.get(h.id) || []).map((l) => [`${l.line_no}/${l.del_line}`, l]))
     for (const r of ls) {
       const k = keyOfPo(r)
       const m = mine.get(k)
@@ -407,6 +445,8 @@ export async function axSyncPreview(fileRows) {
       const patch = {}
       const log = (field, before, after) => hist.push({ po_no, order_id: h.id, line_key: k, field, before_val: before == null ? null : String(before), after_val: after == null ? null : String(after) })
       let reset = false
+      // 같은 번호인데 품목이 다름 → 품목 변경으로 기록하고 회신을 다시 받는다 (조용히 덮어쓰지 않게, v4.90.6)
+      if (r.item_id && m.item_id && r.item_id !== m.item_id) { patch.item_id = r.item_id; log('item', m.raw_pn || m.item_id, r.items?.std_code || r.raw_pn); reset = true }
       if ((m.due_date || '') !== (r.promise_date || '')) {
         patch.due_date = r.promise_date || null; log('due_date', m.due_date, r.promise_date)
         if (r.promise_date && m.due_date && r.promise_date < m.due_date) reset = true   // 당겨짐
@@ -419,6 +459,8 @@ export async function axSyncPreview(fileRows) {
       if (r.division && !m.division) patch.division = r.division
       const q = Number(patch.qty ?? m.qty) || 0
       if (r.status === '완료' && (+m.delivered_qty || 0) < q) { patch.delivered_qty = q; patch.delivered_at = (r.issued_at || '').slice(0, 10) || null; log('delivered', m.delivered_qty, q) }
+      // 수량이 줄어 납품 수량이 더 커진 줄 (예: 4개 중 1개가 다른 분할로 빠짐) → 납품 수량을 수량에 맞춘다 (v4.90.6)
+      if ((+m.delivered_qty || 0) > q && !('delivered_qty' in patch)) { patch.delivered_qty = q; log('delivered', m.delivered_qty, q) }
       if (r.status === '취소' && !m.cancelled) { patch.cancelled = true; log('line_del', `${r.items?.std_code || ''} ×${m.qty}`, '고객사 취소') }
       if (Object.keys(patch).length) upd.push({ id: m.id, order_id: h.id, po_no, key: k, patch })
     }
@@ -473,10 +515,7 @@ export async function axSyncRun(pv, meName) {
     created++
   }
   // 2) 기존 PO 고치기
-  for (const u of pv.upd) {
-    const { error } = await supabase.from('pm_order_line').update({ ...u.patch, updated_at: now }).eq('id', u.id)
-    if (error) throw error
-  }
+  await pool(pv.upd, (u) => supabase.from('pm_order_line').update({ ...u.patch, updated_at: now }).eq('id', u.id))   // 20줄씩 동시에 (v4.90.6)
   if (pv.add.length) {
     const { error } = await supabase.from('pm_order_line').insert(pv.add.map((a) => importRow(a.order_id, a.r)))
     if (error) throw error
@@ -493,9 +532,41 @@ export async function axSyncRun(pv, meName) {
 }
 
 // ── 목록 ────────────────────────────────────────────────────
+// 큰 표를 1,000줄씩 「동시에」 받는다 — 예전엔 13,000줄을 14번 차례로 받아 화면 열기 · 작업 뒤마다 오래 걸렸다 (v4.90.6)
+async function fetchParallel(table, cols, { order = 'id', conc = 6, page = 1000 } = {}) {
+  const head = await supabase.from(table).select('id', { count: 'exact', head: true })
+  if (head.error) throw head.error
+  const total = head.count || 0
+  const all = [], seen = new Set()
+  const take = (rows) => rows.forEach((r) => { if (r?.id != null) { if (seen.has(r.id)) return; seen.add(r.id) } all.push(r) })
+  const pages = Math.max(1, Math.ceil(total / page))
+  for (let p = 0; p < pages; p += conc) {
+    const res = await Promise.all(Array.from({ length: Math.min(conc, pages - p) }, (_, k) =>
+      supabase.from(table).select(cols).order(order).range((p + k) * page, (p + k + 1) * page - 1)))
+    const bad = res.find((x) => x.error)
+    if (bad) throw bad.error
+    res.forEach((x) => take(x.data || []))
+  }
+  // 세는 사이에 늘어난 줄 — 마지막 쪽이 가득 찼으면 이어서 더 받는다
+  for (let from = pages * page; ; from += page) {
+    const { data, error } = await supabase.from(table).select(cols).order(order).range(from, from + page - 1)
+    if (error) throw error
+    take(data || [])
+    if (!data || data.length < page) break
+  }
+  return all
+}
+// 목록에 쓰는 칸만 (created_at · replied_at · unit 등 화면에 안 쓰는 칸은 뺌)
+const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,note,plnd_no,prod_no,updated_at'
+
 export async function fetchOrders() {
-  const heads = await fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))
-  const lines = await fetchAll(() => supabase.from('pm_order_line').select(`*, items(${ITEM_COLS})`).order('id'))
+  const headsP = fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))
+  let lines
+  try { lines = await fetchParallel('pm_order_line', `${LINE_LIST_COLS}, items(${ITEM_COLS})`) } catch (e) {
+    if (!/column|does not exist/i.test(e.message || '')) throw e
+    lines = await fetchParallel('pm_order_line', `*, items(${ITEM_COLS})`)      // 칸 추가 SQL 전이면 전부
+  }
+  const heads = await headsP
   const by = new Map(heads.map((h) => [h.id, { ...h, lines: [] }]))
   lines.forEach((l) => by.get(l.order_id)?.lines.push(l))
   by.forEach((o) => o.lines.sort((a, b) => (+a.line_no - +b.line_no) || (+a.del_line - +b.del_line) || String(a.line_no).localeCompare(String(b.line_no))))
@@ -527,7 +598,7 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움' }
+export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림' }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)
 export function lineState(l, o) {
@@ -558,7 +629,8 @@ export async function replyLines(lines, { reply, date, memo }, meName) {
   const { error } = await supabase.from('pm_order').update({ confirmed_at: now, confirmed_name: meName || null, updated_at: now }).in('id', orderIds).is('confirmed_at', null)
   if (error) throw error
   logActivity('update', 'pm_order', poNosOf(lines), `회신 「${reply}」 ${ids.length}품목${date ? ` · 준비일 ${date}` : ''}`, null, custNameOf(lines))
-  return { lines: ids.length, orders: orderIds.length }
+  // 화면은 다시 불러오지 않고 이 값으로 바로 고친다 (v4.90.6 속도)
+  return { lines: ids.length, orders: orderIds.length, ids, patch, orderIds, head: { confirmed_at: now, confirmed_name: meName || null } }
 }
 
 // 활동 이력용 — 고른 줄들의 PO번호 · 고객사 (v4.90.3)
@@ -578,16 +650,28 @@ export async function setReleaseDate(lines, date, meName) {
     .map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'release_date', before_val: l.release_date || null, after_val: date || null, source: 'manual', changed_name: meName || null }))
   if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
   logActivity('update', 'pm_order', poNosOf(lines), `협력사 불출일 ${date || '지움'} · ${lines.length}품목`, null, custNameOf(lines))
+  return { ids, patch: { release_date: date || null, updated_at: now } }
 }
 
 export async function markDelivered(lines, delivered, meName) {
   const now = new Date().toISOString()
-  for (const l of lines) {
-    const patch = delivered ? { delivered_qty: l.qty, delivered_at: now.slice(0, 10), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now }
-    const { error } = await supabase.from('pm_order_line').update(patch).eq('id', l.id)
-    if (error) throw error
+  const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: now.slice(0, 10), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
+  // 예전엔 한 줄씩 차례로 저장해 100줄이면 100번 기다렸다 — 납품 취소는 한 번에, 납품은 20줄씩 동시에 (v4.90.6)
+  if (!delivered) {
+    const ids = lines.map((l) => l.id)
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabase.from('pm_order_line').update(patchOf({})).in('id', ids.slice(i, i + 200))
+      if (error) throw error
+    }
+  } else {
+    for (let i = 0; i < lines.length; i += 20) {
+      const res = await Promise.all(lines.slice(i, i + 20).map((l) => supabase.from('pm_order_line').update(patchOf(l)).eq('id', l.id)))
+      const bad = res.find((x) => x.error)
+      if (bad) throw bad.error
+    }
   }
   const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'delivered', before_val: String(+l.delivered_qty || 0), after_val: String(delivered ? +l.qty : 0), source: 'manual', changed_name: meName || null }))
   if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
   if (lines.length) logActivity('update', 'pm_order', poNosOf(lines), `${delivered ? '납품 표시' : '납품 취소'} ${lines.length}품목`, null, custNameOf(lines))
+  return { patches: new Map(lines.map((l) => [l.id, patchOf(l)])) }
 }
