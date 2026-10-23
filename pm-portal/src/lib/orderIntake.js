@@ -336,8 +336,9 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
 //   그래서 「고객사 PO」 화면에서 PO 파일을 올린 뒤, 여기서 그 내용을 수주대장에 맞춘다.
 //     · 수주대장에 있는 AX PO → 같은 라인/분할의 납기 · 수량 · Rev · 단가 차이를 고치고 변경 이력을 남긴다
 //                             PO 파일이 「완료」면 납품 완료로, 「취소」면 취소로. PO 파일에만 있는 줄은 추가.
-//     · 수주대장에 없는 AX PO → 전장 줄이 있으면 PO 째로 들여온다 (완료 줄은 납품 · 판매입력 완료로)
+//     · 수주대장에 없는 AX PO → PO 째로 들여온다 (완료 줄은 납품 · 판매입력 완료로)
 //       v4.89.0 — 납품이 다 끝난 PO 도 들인다 (예상 매출 · 이력에 납품 완료분이 빠지던 문제)
+//       v4.90.2 — 하네스 · 구매품만 있는 PO 도 들인다 (전체 리스트). 화면의 「AX 전장만」으로 걸러 볼 수 있음
 //   납기가 당겨지거나 수량이 늘면 구매자재 회신을 다시 받는다. 납기가 밀린 것은 기록만.
 const PO_COLS = 'id,po_number,order_line,del_line,item_id,item_rev,qty_ordered,unit_price,promise_date,order_date,division,status,ccn,issued_at, items!purchase_orders_item_id_fkey(std_code,name)'
 const keyOfPo = (r) => `${String(r.order_line || '1')}/${String(r.del_line || '1')}`
@@ -361,7 +362,7 @@ export async function axSyncPreview() {
   for (const [po_no, ls] of byPo) {
     const h = headByNo.get(po_no)
     if (!h) {
-      if (ls.some((l) => l.status !== '취소' && l.division === '전장')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중' && l.division === '전장') })
+      if (ls.some((l) => l.status !== '취소')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중') })
       continue
     }
     const mine = new Map(lines.filter((l) => l.order_id === h.id).map((l) => [`${l.line_no}/${l.del_line}`, l]))

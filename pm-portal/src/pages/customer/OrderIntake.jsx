@@ -165,7 +165,7 @@ export default function OrderIntake() {
   const [view, setView] = useState('live')       // live 진행 중 · done 납품 완료 · all
   const [kpi, setKpi] = useState(null)
   const [sort, setSort] = useState('due')
-  const [axOnlyElec, setAxOnlyElec] = useState(true)
+  const [axOnlyElec, setAxOnlyElec] = useState(false)   // v4.90.2 기본은 전체 (하네스 · 구매품 포함)
   const [checked, setChecked] = useState(() => new Set())
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
@@ -193,14 +193,19 @@ export default function OrderIntake() {
     const late = liveAll.filter((l) => l.due_date && l.due_date < today)
     const monthPos = orders.filter((o) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source) && (cust === 'all' || o.customer_code === cust))
     // 예상 매출 — 취소 빼고 납품 완료 포함. 달러(CCN B)는 환율을 곱한다
-    const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0 }
+    // 올해 납기(납품일) 줄만 — 엑셀 매출 결산과 같은 기준. 내년 이후 · 납기 없음은 따로 (v4.90.2)
+    const yr = today.slice(0, 4)
+    const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0 }
     scoped.filter((l) => !l.st.cancelled).forEach((l) => {
+      const y = String(l.due_date || '').slice(0, 4)
+      if (y !== yr) { const a = amountOf(l) * (isUsd(l.o) ? fx : 1); if (!y) m.noDue += a; else if (y > yr) m.later += a; return }
       const a = amountOf(l), d = Math.min(+l.delivered_qty || 0, +l.qty || 0) * (+l.unit_price || 0)
       if (isUsd(l.o)) { m.usd += a; m.doneUsd += d } else { m.krw += a; m.doneKrw += d }
     })
     m.total = m.krw + m.usd * fx
     m.done = m.doneKrw + m.doneUsd * fx
-    m.noPrice = scoped.filter((l) => !l.st.cancelled && !(+l.unit_price > 0)).length
+    m.noPrice = scoped.filter((l) => !l.st.cancelled && !(+l.unit_price > 0) && String(l.due_date || '').slice(0, 4) === yr).length
+    m.yr = yr
     return { unconfirmed, waiting, risk, late, monthPos, money: m, pos }
   }, [scoped, orders, month, today, cust, fx])
 
@@ -317,13 +322,14 @@ export default function OrderIntake() {
         <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} />
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} />
         <div className={`rounded-xl border px-4 py-3 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
-          <div className="text-[12px] text-slate-500">예상 매출 <span className="text-[10.5px] text-slate-400">· 발주 단가 · 납품 포함</span></div>
+          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 납품 포함</span></div>
           <div className="text-[22px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
           <div className="text-[11px] text-slate-500 tabular-nums">납품 {won(m.done)} · 남은 {won(m.total - m.done)}</div>
           {m.usd > 0 && (
             <div className="text-[10.5px] text-slate-400 flex items-center gap-1 tabular-nums">달러 ${fmt(Math.round(m.usd))} × 환율
               <input value={fxIn} onChange={(e) => setFxIn(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(qcfg?.sellRate || 1400)} title="달러(CCN B) PO 환율 — 비우면 매출견적 기준 판매환율" data-fx className="w-14 px-1 py-0.5 text-[10.5px] border border-emerald-200 rounded bg-white" /></div>
           )}
+          {m.later > 0 && <div className="text-[10.5px] text-slate-400 tabular-nums" data-money-later>내년 이후 납기 {won(m.later)} 별도</div>}
           {m.noPrice > 0 && <div className="text-[10.5px] text-amber-600">단가 없는 품목 {m.noPrice} (합계 제외)</div>}
         </div>
       </div>
