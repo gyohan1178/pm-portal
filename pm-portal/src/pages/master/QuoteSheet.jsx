@@ -1,5 +1,5 @@
 import { codeCandidates } from '../../lib/custPrefix'
-import { useState, useMemo, useEffect } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
 import { supabase } from '../../lib/supabase'
@@ -117,7 +117,7 @@ export function nextRevNo(base, existing) {
   return `${base}-R${max + 1}`
 }
 
-export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind, reviseReq, onReviseLoaded }) {
+export default function QuoteSheet({ customerId, customerName, initialLine, cfg = DEFAULT_CFG, onClose, fixedKind, reviseReq, onReviseLoaded, prefill, onPrefillDone }) {
   // ★ 매출견적(고객사 제출) / 매입견적(업체 수령) — 섞이면 안 되는 구분
   // fixedKind 가 주어지면 탭 자체가 한 종류 전용이므로 전환 버튼을 숨긴다.
   const [quoteKind, setQuoteKind] = useState(fixedKind || 'sales')
@@ -242,8 +242,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   }, [codeKey, quoteKind])
 
   // ── 라인 추가: 어셈블리면 BOM 전개 원가 + 최신 작업비, 아니면 단품 매입가 ──
-  async function addByCode() {
-    const raw = String(addCode || '').trim()
+  // codeArg · qtyArg — 견적 접수에서 「견적 작성 →」으로 품목을 한꺼번에 넣을 때 (v4.92.0). 없으면 입력칸 값
+  async function addByCode(codeArg, qtyArg) {
+    const raw = String(codeArg ?? addCode ?? '').trim()
+    const q0 = Number(qtyArg) > 0 ? Number(qtyArg) : 1
     if (!raw) return
     setAdding(true); setErr('')
     try {
@@ -311,7 +313,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         const nl = newLine({
           kind: 'assy',
           std_code: proj.code, description: proj.name || '', rev: proj.rev || '',
-          unit: 'EA', qty: 1,
+          unit: 'EA', qty: q0,
           materialKrw: round100(c.totalBuyKrw), laborKrw, laborSrc,
           origin: c.impKrw > c.domKrw ? 'imp' : 'dom',
           noPrice, partCount: c.items.length,
@@ -337,7 +339,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       const nl = newLine({
         kind: 'item',
         std_code: data.std_code, description: data.name || '',
-        unit: data.unit || 'EA', qty: 1,
+        unit: data.unit || 'EA', qty: q0,
         materialKrw: mat, vendor: data.vendors?.name || '',
         noPrice: mat > 0 ? 0 : 1, partCount: 1,
         lt: data.lt_weeks ?? null, moq: data.moq ?? null,
@@ -547,6 +549,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       setErr('지난 견적 불러오기 실패: ' + e.message)
     } finally { setRevLoading(false) }
   }
+  // 견적 접수 → 「견적 작성 →」: 그 접수의 품목을 차례로 넣는다 (고객사가 바뀌어 customerId 가 맞을 때 한 번만)
+  const prefillDone = useRef('')
+  const prefillKey = prefill ? String(prefill.n) : ''
+  useEffect(() => {
+    if (!prefill || !customerId || prefillDone.current === prefillKey) return
+    if (prefill.customerId && prefill.customerId !== customerId) return
+    prefillDone.current = prefillKey
+    ;(async () => {
+      setLines([]); setRevOf(null); setSavedNo('')
+      if (prefill.title) setProjectName(prefill.title)
+      for (const l of prefill.lines || []) await addByCode(l.pn, l.qty)
+      onPrefillDone?.()
+    })()
+  }, [prefillKey, customerId])   // eslint-disable-line react-hooks/exhaustive-deps
+
   const reviseKey = reviseReq ? `${reviseReq.id}:${reviseReq.n}` : ''
   useEffect(() => {
     if (reviseReq?.id) loadRevision(reviseReq.id)
@@ -830,7 +847,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           onKeyDown={(e) => e.key === 'Enter' && addByCode()}
           placeholder="품번 입력 (ASSY·단품 자동 판별)"
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
-        <button onClick={addByCode} disabled={adding}
+        <button onClick={() => addByCode()} disabled={adding}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
           {adding ? '조회 중…' : '+ 추가'}
         </button>

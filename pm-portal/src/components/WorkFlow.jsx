@@ -89,49 +89,85 @@ export default function WorkFlow() {
         </span>
       </div>
 
-      <section className="bg-white border border-slate-200 rounded-xl p-4">
-        <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 mb-3">
-          <h2 className="text-[15px] font-extrabold text-slate-800">{f.title}</h2>
-          <span className="text-[12px] text-slate-400">{f.desc}</span>
+      <section className="bg-white border border-slate-200 rounded-xl p-4 md:p-5">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 mb-4">
+          <h2 className="text-[16px] font-extrabold text-slate-800">{f.title}</h2>
+          <span className="text-[12.5px] text-slate-500" data-flow-desc>{f.desc}</span>
         </div>
-        <div className="flex flex-wrap items-stretch gap-y-2">
+
+        {/* 주업무 — 같은 너비로 한 줄 · 단계 사이 화살표 (휴대폰은 위아래로) */}
+        <div className="grid grid-cols-1 gap-3 sm:gap-6 sm:[grid-template-columns:var(--flow-cols)]" style={{ '--flow-cols': `repeat(${f.steps.length}, minmax(0, 1fr))` }} data-flow-main>
           {f.steps.map((s, i) => {
             const ok = can(s.path)
             return (
-              <div key={i} className="flex items-stretch w-full sm:w-auto">
+              <div key={i} className={`relative flex flex-col rounded-xl transition ${
+                !ok ? 'bg-slate-50 border border-slate-200 opacity-60'
+                : s.other ? 'bg-slate-50 border border-dashed border-slate-300'
+                : s.hot ? 'bg-white border border-red-200 shadow-[inset_0_3px_0_#e0505f] hover:shadow-md'
+                : 'bg-white border border-slate-200 hover:border-violet-300 hover:shadow-md'}`}>
                 <button type="button" onClick={() => go(s.path)} disabled={!ok} data-flow-step={s.name}
                   title={ok ? `${s.where} 으로 이동` : '이 메뉴 권한이 없습니다'}
-                  className={`w-full sm:w-[168px] sm:min-h-[138px] flex flex-col gap-1 text-left px-3 py-2.5 rounded-xl transition ${
-                    !ok ? 'bg-slate-50 border border-slate-200 opacity-60 cursor-not-allowed'
-                    : s.other ? 'bg-slate-50 border border-dashed border-slate-300 hover:bg-white'
-                    : s.hot ? 'bg-white border border-red-200 shadow-[inset_0_3px_0_#e0505f] hover:shadow-md'
-                    : 'bg-white border border-slate-200 hover:border-violet-300 hover:shadow-md'}`}>
-                  <span className="flex items-center gap-1.5">
-                    <span className="font-mono text-[11px] font-semibold text-slate-400">{s.no}</span>
-                    <span className="text-[17px] leading-none">{s.icon}</span>
+                  className={`flex-1 flex flex-col gap-1.5 text-left px-3.5 pt-3 pb-2.5 rounded-xl ${ok ? '' : 'cursor-not-allowed'}`}>
+                  <span className="flex items-center gap-2">
+                    <span className={`w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-extrabold font-mono ${s.other ? 'bg-slate-200 text-slate-500' : 'bg-violet-50 text-violet-700'}`}>{i + 1}</span>
+                    <span className="text-[18px] leading-none">{s.icon}</span>
                     {s.other && <span className="ml-auto px-1.5 py-[1px] rounded-full bg-slate-200/70 text-slate-600 text-[10px] font-bold">{s.other}</span>}
                   </span>
-                  <span className="text-[13.5px] font-extrabold text-slate-800">{s.name}</span>
-                  <span className="text-[11px] text-slate-400 leading-snug">{s.where}</span>
+                  <span className="text-[15px] font-extrabold text-slate-800 leading-snug">{s.name}</span>
+                  <span className="text-[11.5px] text-slate-400 leading-snug">{s.where}</span>
                   <span className="flex flex-wrap gap-1 mt-auto pt-1">
                     {s.soon && <span className="px-1.5 py-[1px] rounded-full border border-violet-200 bg-violet-50 text-violet-700 text-[10.5px] font-bold">{s.soon}</span>}
                     {s.badges.map((b) => (
-                      <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[10.5px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>
+                      <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[11px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>
                         {b.t} <b className="font-mono">{nf(b.n)}</b>
                       </span>
                     ))}
                   </span>
-                  <span className={`text-[11.5px] font-bold ${ok ? 'text-[#5b6ee8]' : 'text-slate-400'}`}>{ok ? '바로가기 →' : '권한 없음'}</span>
+                  {!s.links.length && <span className={`text-[12px] font-bold ${ok ? 'text-[#5b6ee8]' : 'text-slate-400'}`}>{ok ? '바로가기 →' : '권한 없음'}</span>}
                 </button>
+                {s.links.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 px-3.5 pb-3" data-flow-links>
+                    {s.links.map((l) => (
+                      <button key={l.path} type="button" onClick={() => go(l.path)} disabled={!can(l.path)}
+                        className="px-2.5 py-1 rounded-lg border border-violet-200 bg-white text-[12px] font-bold text-[#5b6ee8] hover:bg-violet-50 disabled:opacity-40 disabled:cursor-not-allowed">
+                        {l.label} →
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {i < f.steps.length - 1 && (
-                  <span className="hidden sm:flex items-center px-1 text-slate-300" aria-hidden="true">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
+                  <span className="hidden sm:flex absolute top-1/2 -right-[19px] -translate-y-1/2 w-[14px] justify-center text-slate-300 pointer-events-none" aria-hidden="true">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d="M9 6l6 6-6 6" /></svg>
                   </span>
                 )}
               </div>
             )
           })}
         </div>
+
+        {/* 보조업무 — 순서에 들지 않는 곁일. 흐름 아래 칸에서 따로 들어간다 */}
+        {f.subs.length > 0 && (
+          <div className="mt-4 pt-3 border-t border-dashed border-slate-200" data-flow-subs>
+            <div className="text-[12px] font-bold text-slate-500 mb-2">보조 업무 <span className="font-normal text-slate-400">— 흐름 순서와 상관없이 필요할 때</span></div>
+            <div className="flex flex-wrap gap-2">
+              {f.subs.map((s) => {
+                const ok = can(s.path)
+                return (
+                  <button key={s.name} type="button" onClick={() => go(s.path)} disabled={!ok} data-flow-sub={s.name}
+                    title={ok ? '' : '이 메뉴 권한이 없습니다'}
+                    className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-slate-50/60 text-left hover:bg-white hover:border-violet-300 disabled:opacity-50 disabled:cursor-not-allowed">
+                    <span className="text-[15px] leading-none">{s.icon}</span>
+                    <span className="text-[13px] font-bold text-slate-700 whitespace-nowrap">{s.name}</span>
+                    {s.badges.map((b) => (
+                      <span key={b.t} className={`px-1.5 py-[1px] rounded-full border text-[10.5px] font-bold whitespace-nowrap ${TONE[b.tone]}`} data-flow-badge={b.t}>{b.t} <b className="font-mono">{nf(b.n)}</b></span>
+                    ))}
+                    <span className={`text-[12px] font-bold ${ok ? 'text-[#5b6ee8]' : 'text-slate-400'}`}>{ok ? '→' : '권한 없음'}</span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
         {c === null && <p className="mt-2 text-[11px] text-slate-400" data-flow-nocount>건수는 「업무흐름_반영」 SQL 을 실행하면 나옵니다.</p>}
       </section>
 

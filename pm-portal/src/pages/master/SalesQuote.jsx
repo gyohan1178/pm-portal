@@ -7,6 +7,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { DEFAULT_CFG } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import QuoteHistory from './QuoteHistory'
+import RfqBoard from './RfqBoard'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
@@ -17,7 +18,8 @@ const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 export default function SalesQuote() {
   const { data: profile } = useMyProfile()
   const custList = orderedCustomers(profile)
-  const [tab, setTab] = useState('write')   // write=견적 작성 / history=견적 이력
+  const [tab, setTab] = useState('rfq')     // rfq=견적 접수 현황(v4.92.0) / write=견적 작성 / history=견적 이력
+  const [prefill, setPrefill] = useState(null)   // 견적 접수 → 견적 작성으로 넘길 품목
   const [csCode, setCsCode] = useState(null)
   // 견적 이력 「✏ 수정」 → 작성 탭으로 넘어가 그 견적을 불러온다 (n: 같은 견적을 다시 눌러도 다시 불러오게)
   const [reviseReq, setReviseReq] = useState(null)
@@ -57,22 +59,22 @@ export default function SalesQuote() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
           <p className="page-desc text-xs text-slate-400">
-고객사에 제출할 견적서를 작성하고 지난 견적을 조회합니다. 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
+고객사 견적 요청을 접수해 BOM · 단가를 확인하고, 견적서를 작성해 제출 · 수주 · 실주까지 따라갑니다. 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-            {[['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
+            {[['rfq', '📥 견적 접수 현황'], ['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
               <button key={k} onClick={() => { setTab(k); if (k === 'history') setReviseReq(null) }}
                 className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                 {l}
               </button>
             ))}
           </div>
-          <select value={code} onChange={(e) => setCsCode(e.target.value)}
+          {tab !== 'rfq' && <select value={code} onChange={(e) => setCsCode(e.target.value)}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
             {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+          </select>}
           {tab === 'write' && <Field label="매입환율">
             <input type="number" value={buyRate} onChange={(e) => setBuyRate(e.target.value)}
               className="w-24 px-2 py-1.5 text-sm text-right rounded border border-slate-200" />
@@ -91,7 +93,13 @@ export default function SalesQuote() {
         </div>
       </div>
 
-      {tab === 'history' ? <QuoteHistory onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
+      {tab === 'rfq' ? (
+        <RfqBoard customers={custList} onWrite={(r) => {
+          setCsCode(r.customer_code)
+          setPrefill({ n: Date.now(), customerId: r.customer_id || null, title: r.title, lines: (r.lines || []).map((l) => ({ pn: l.std_code || l.pn, qty: l.qty })) })
+          setTab('write')
+        }} />
+      ) : tab === 'history' ? <QuoteHistory onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
       <QuoteSheet
         fixedKind="sales"
         reviseReq={reviseReq}
@@ -108,6 +116,8 @@ export default function SalesQuote() {
         customerId={cs?.id}
         customerName={custList.find((c) => c.id === code)?.name || ''}
         cfg={cfg}
+        prefill={prefill}
+        onPrefillDone={() => setPrefill(null)}
       />
       )}
 
