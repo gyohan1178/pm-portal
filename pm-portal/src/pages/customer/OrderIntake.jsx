@@ -6,8 +6,9 @@
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
-import { useState, useMemo, useEffect, useRef, useDeferredValue } from 'react'
+import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
@@ -21,6 +22,10 @@ import {
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
+import OrderEntry, { downloadTemplate } from './OrderEntry'
+import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, setSlipNo } from '../../lib/orderEntry'
+const EcountMatch = lazy(() => import('./EcountMatch'))
+const OrderCleanup = lazy(() => import('./OrderCleanup'))
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 const won = (v) => `₩${Math.round(v || 0).toLocaleString('ko-KR')}`
@@ -62,7 +67,8 @@ const KPI_PICK = {
   odd: (l) => l.st.live && !!l.odd,
 }
 const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.live && !l.st.planned
-  : view === 'plan' ? l.st.live && l.st.planned : view === 'done' ? l.st.delivered && !l.st.cancelled : true)
+  : view === 'plan' ? l.st.live && l.st.planned : view === 'temp' ? l.st.live && isTempPo(l.o)
+  : view === 'done' ? l.st.delivered && !l.st.cancelled : view === 'cancel' ? l.st.cancelled : true)
 const isMonthPo = (o, month) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
 
 // 열 너비 — 머리글 오른쪽 끝을 끌어 조절 (사람마다 이 브라우저에 기억) · 다른 화면 표와 같은 방식
@@ -155,6 +161,13 @@ function CustCell({ o }) {
 
 // 회신 칸 — 조건부 · 불가는 사유를 누구 화면이든 결론 바로 아래에 크게 (v4.93.2: 구매자재 화면에서 사유가 안 보이던 것)
 //   가능 메모는 memo 일 때만 (영업 화면 · PO 상세)
+// 구두 발주 · 선진행 표시 (정식 PO · 발주 예정은 표시 안 함 — 발주 예정은 보라 글자로 이미 구분) (v4.94.0)
+function KindBadge({ o }) {
+  const k = kindOf(o)
+  if (k !== 'verbal' && k !== 'advance') return null
+  return <span className={`ml-1 px-1.5 py-[1px] rounded text-[10px] font-bold align-middle ${KIND_TONE[k]}`} data-kind-badge={k} title={[KINDS[k], o.req_person, o.po_due && `정식 PO 받을 날 ${o.po_due}`].filter(Boolean).join(' · ')}>{KIND_SHORT[k]}</span>
+}
+
 function ReplyCell({ l, memo }) {
   if (!l.reply) return <span className="text-[11px] text-slate-300">—</span>
   const risk = l.reply !== '가능'
@@ -240,6 +253,10 @@ export default function OrderIntake() {
   const [checked, setChecked] = useState(() => new Set())
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
+  const [entry, setEntry] = useState(null)       // 'one' 직접 등록 · 'excel' 엑셀로 여러 건 (v4.94.0)
+  const [sp, setSp] = useSearchParams()
+  const tab = ['ecount', 'cleanup'].includes(sp.get('tab')) ? sp.get('tab') : 'list'
+  const goTab = (t) => { const n = new URLSearchParams(sp); if (t === 'list') n.delete('tab'); else n.set('tab', t); setSp(n, { replace: true }) }
   const refresh = () => qc.invalidateQueries({ queryKey: ['orderIntake'] })
   // 작은 작업(회신 · 납품 · 불출일 · 납품처 · 확인 · 삭제) 뒤에는 1만 줄을 다시 받지 않고 화면 데이터만 고친다 (v4.90.6 속도)
   //   PDF 등록 · AX 엑셀 반영처럼 줄이 생기는 작업만 전체를 다시 받는다
@@ -263,6 +280,8 @@ export default function OrderIntake() {
     return { allLines: ls, oddMap: odd }
   }, [orders])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
+  // 코드 없는 고객사 품번 수 (진행 중 줄) — 「코드 · BOM 정리」 탭 숫자
+  const unregCount = useMemo(() => new Set(allLines.filter((l) => l.st.live && !l.item_id && String(l.raw_pn || '').trim()).map((l) => `${l.o.customer_code}|${String(l.raw_pn).trim().toUpperCase()}`)).size, [allLines])
   const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
   const k = qd.trim().toUpperCase()
   const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
@@ -371,6 +390,28 @@ export default function OrderIntake() {
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
 
+  // 줄 취소 · 되돌리기 · 정식 PO 번호 · 명세서번호 — 편집 권한이면 누구나 (v4.94.0)
+  const cancelMut = useMutation({
+    mutationFn: ({ ls, reason, memo }) => cancelLines(ls, reason, memo, meName),
+    onSuccess: (r) => { const ids = new Set(r.ids); patchLines((l) => (ids.has(l.id) ? r.patch : null)); toastSuccess(`${r.ids.length}품목 취소 — 변경 이력에 남았습니다`) },
+    onError: (e) => toastError(e.message),
+  })
+  const uncancelMut = useMutation({
+    mutationFn: (ls) => uncancelLines(ls, meName),
+    onSuccess: (r) => { const ids = new Set(r.ids); patchLines((l) => (ids.has(l.id) ? r.patch : null)); toastSuccess('취소를 되돌렸습니다') },
+    onError: (e) => toastError(e.message),
+  })
+  const promoteMut = useMutation({
+    mutationFn: ({ o, no }) => promotePo(o, no, meName),
+    onSuccess: (r) => { patchHead([r.id], () => r.patch); toastSuccess(`정식 PO ${r.patch.po_no} 로 바꿨습니다`) },
+    onError: (e) => toastError(e.message),
+  })
+  const slipMut = useMutation({
+    mutationFn: ({ o, slip }) => setSlipNo(o, slip, meName),
+    onSuccess: (r) => { patchHead([r.id], () => r.patch); toastSuccess('명세서번호 저장') },
+    onError: (e) => toastError(e.message),
+  })
+
   const [axPrev, setAxPrev] = useState(null)
   const [axBusy, setAxBusy] = useState(false)
   const axFileRef = useRef(null)
@@ -436,6 +477,21 @@ export default function OrderIntake() {
         )}
       </div>
 
+      <nav className="flex gap-1 border-b border-slate-200 overflow-x-auto" aria-label="수주대장 탭" data-oi-tabs>
+        {[['list', '수주 목록'], ['ecount', '이카운트 대조'], ['cleanup', '코드 · BOM 정리']].map(([k, l]) => (
+          <button key={k} type="button" onClick={() => goTab(k)} data-oi-tab={k}
+            className={`px-4 py-2.5 text-[13.5px] whitespace-nowrap -mb-px border-b-2 ${tab === k ? 'font-extrabold text-violet-700 border-violet-600' : 'font-bold text-slate-500 border-transparent hover:text-slate-700'}`}>
+            {l}{k === 'cleanup' && unregCount > 0 && <span className="ml-1.5 px-1.5 py-[1px] rounded-full bg-red-50 text-red-600 text-[10.5px] font-bold" data-unreg-count>미등록 {unregCount.toLocaleString('ko-KR')}</span>}
+          </button>
+        ))}
+      </nav>
+      {tab !== 'list' && (
+        <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">불러오는 중…</div>}>
+          {tab === 'ecount' ? <EcountMatch orders={orders} editable={editable} meName={meName} onChanged={refresh} />
+            : <OrderCleanup orders={orders} editable={editable} meName={meName} onChanged={refresh} />}
+        </Suspense>
+      )}
+      {tab === 'list' && <>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
         <Kpi tone="red" label="미확인" value={kpis.unconfirmed.length} sub={`PO ${pos(kpis.unconfirmed)}건 · 등록 1영업일 넘게 확인 없음`} {...kpiBtn('unconfirmed')} />
         <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} />
@@ -511,20 +567,25 @@ export default function OrderIntake() {
             </button>
           ))}
           <span className="text-[11px] text-slate-400" data-count-unit>숫자 = {mode === 'line' ? '품목 줄 수' : 'PO 수'}</span>
-          <div className="ml-auto flex gap-2">
-            {isBuy && <>
+          <div className="ml-auto flex flex-wrap gap-2">
+            {editable && <>
               <button type="button" onClick={() => axFileRef.current?.click()} disabled={axBusy} data-ax-import title="「고객사 PO」에 올리는 AXCELIS PO 관리 엑셀을 고르세요 (Current Data · Received 시트)"
                 className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">{axBusy ? '읽는 중…' : '🔁 AX PO 엑셀 반영'}</button>
               <input ref={axFileRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" data-ax-file onChange={(e) => { axPreview(e.target.files?.[0]); e.target.value = '' }} />
             </>}
-            {editable && <button type="button" onClick={() => setUpload(true)} data-open-upload className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700">📄 PDF 올리기</button>}
+            {editable && <>
+              <button type="button" onClick={downloadTemplate} data-entry-template title="구두 발주 · 선진행 · 발주 예정 · PDF 없는 PO 를 엑셀로 여러 건 올리는 양식" className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">엑셀 양식 받기</button>
+              <button type="button" onClick={() => setEntry('excel')} data-open-entry-excel className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">엑셀로 여러 건</button>
+              <button type="button" onClick={() => setEntry('one')} data-open-entry className="px-3 py-2 rounded-lg text-xs font-bold bg-violet-50 border border-violet-200 text-violet-700 hover:bg-violet-100">직접 등록</button>
+              <button type="button" onClick={() => setUpload(true)} data-open-upload className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700">📄 PDF 올리기</button>
+            </>}
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 PO번호 · 품번 · 품명 · 납품처 · 관리번호 · Plnd 번호 검색" data-search
             className="flex-1 min-w-0 basis-full md:basis-auto md:min-w-[240px] px-3 py-2 text-xs border border-slate-200 rounded-lg" />
           <select value={view} onChange={(e) => { setView(e.target.value); setKpi(null) }} className={sel} data-viewsel>
-            <option value="live">진행 중 (전체)</option><option value="po">진행 중 · 발주 확정만</option><option value="plan">발주 예정만</option><option value="done">납품 완료</option><option value="all">전체</option>
+            <option value="live">진행 중 (전체)</option><option value="po">진행 중 · 발주 확정만</option><option value="temp">구두 발주 · 선진행만</option><option value="plan">발주 예정만</option><option value="done">납품 완료</option><option value="cancel">취소된 줄</option><option value="all">전체</option>
           </select>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className={sel} data-sort>
             <option value="due">납기 빠른 순</option><option value="reg">최근 접수 순</option><option value="cust">고객사 순</option>
@@ -631,7 +692,7 @@ export default function OrderIntake() {
                     <td className="px-3 py-3"><DueCell l={l} /></td>
                     <td className="px-3 py-3"><CustCell o={l.o} /></td>
                     <td className="px-3 py-3 whitespace-nowrap overflow-hidden">
-                      <button type="button" onClick={() => setPoOpen(l.order_id)} className={`font-mono font-bold hover:underline ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button>
+                      <button type="button" onClick={() => setPoOpen(l.order_id)} className={`font-mono font-bold hover:underline ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button><KindBadge o={l.o} />
                       {l.o.planned
                         ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}</div>
                         : <div className="text-[11px] text-slate-400 mt-0.5 truncate">Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
@@ -656,8 +717,9 @@ export default function OrderIntake() {
                       {+l.unit_price > 0 && <div className="text-[10.5px] text-slate-400">@ {isUsd(l.o) ? '$' : ''}{fmt(l.unit_price)}</div>}
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${stCls}`} data-status>{stLabel}</span>
+                      <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${stCls}`} data-status title={l.cancel_reason || ''}>{stLabel}</span>
                       {late && <div className="text-[10.5px] text-red-500 mt-0.5">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
+                      {l.st.cancelled && l.cancel_reason && <div className="text-[10.5px] text-slate-500 mt-0.5 whitespace-normal" data-cancel-reason>{l.cancel_reason}</div>}
                     </td>
                     <td className="px-3 py-3"><ReplyCell l={l} memo={!isBuy} /></td>
                   </tr>
@@ -681,7 +743,7 @@ export default function OrderIntake() {
                 const first = { ...liveL.slice().sort((a, b) => String(a.due_date || '9').localeCompare(String(b.due_date || '9')))[0], st: { live: true } }
                 return (
                   <tr key={o.id} onClick={() => setPoOpen(o.id)} className="border-t border-slate-100 align-top cursor-pointer hover:bg-slate-50/70" data-order={o.po_no}>
-                    <td className="px-4 py-3 whitespace-nowrap overflow-hidden"><div className={`font-mono font-bold ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}</div><div className="text-[11px] text-slate-400 mt-0.5">{o.planned ? '실제 발주 오면 PO 로 옮겨짐' : `접수 ${md(String(o.registered_at).slice(0, 10))}${o.migrated ? ' · 이관' : ''}`}</div></td>
+                    <td className="px-4 py-3 whitespace-nowrap overflow-hidden"><div className={`font-mono font-bold ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}<KindBadge o={o} /></div><div className="text-[11px] text-slate-400 mt-0.5">{o.planned ? '실제 발주 오면 PO 로 옮겨짐' : `접수 ${md(String(o.registered_at).slice(0, 10))}${o.migrated ? ' · 이관' : ''}`}</div></td>
                     <td className="px-3 py-3"><CustCell o={o} /></td>
                     <td className="px-3 py-3 overflow-hidden"><div className="font-bold text-slate-700">{rp.length}품목</div><div className="text-[11px] text-slate-400 truncate">{rp.slice(0, 3).map((l) => `${l.items?.std_code || l.raw_pn || l.raw_desc} ×${fmt(l.qty)}`).join(' · ')}</div></td>
                     <td className="px-3 py-3">{liveL.length ? <DueCell l={first} /> : <span className="text-slate-400">납품 완료</span>}</td>
@@ -710,7 +772,11 @@ export default function OrderIntake() {
       </div>
 
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} fx={fx} oddMap={oddMap} onClose={() => setPoOpen(null)}
+        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} onClose={() => setPoOpen(null)}
+          onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
+          onUncancel={(ls) => uncancelMut.mutate(ls)}
+          onPromote={(o, no) => promoteMut.mutate({ o, no })} promoteBusy={promoteMut.isPending}
+          onSlip={(o, slip) => slipMut.mutate({ o, slip })}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
@@ -719,6 +785,8 @@ export default function OrderIntake() {
           onDelete={(o) => { if (window.confirm(`${o.po_no} 를 수주대장에서 지울까요? (품목 · 변경 이력도 함께 지워집니다)`)) delMut.mutate(o.id) }} />
       )}
       {upload && <OrderUpload meName={meName} onClose={() => setUpload(false)} onSaved={refresh} />}
+      {entry && <OrderEntry mode={entry} meName={meName} onClose={() => setEntry(null)} onSaved={refresh} />}
+      </>}
     </div>
   )
 }
@@ -787,7 +855,8 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete }) {
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
+  onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
     queryFn: async () => {
@@ -797,8 +866,18 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
     },
   })
   const [ship, setShip] = useState(o.ship_to || '')
+  const [slip, setSlip] = useState(o.slip_no || '')
+  const [newNo, setNewNo] = useState('')
+  const [pick, setPick] = useState(() => new Set())      // 취소할 줄
+  const [why, setWhy] = useState('')
+  const [whyMemo, setWhyMemo] = useState('')
   const c = ORDER_CUSTOMERS[o.customer_code]
+  const k = kindOf(o)
   const ls = o.lines.map((l) => ({ ...l, o, st: lineState(l, o) }))
+  const cancellable = (l) => !l.st.cancelled && !(+l.delivered_qty > 0)
+  const picked = ls.filter((l) => pick.has(l.id) && cancellable(l))
+  const togglePick = (id) => setPick((x) => { const n = new Set(x); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const waitDays = isTempPo(o) && o.registered_at ? Math.max(0, Math.round((Date.now() - new Date(o.registered_at)) / 86400000)) : 0
   const live = ls.filter((l) => l.st.live)
   const amount = ls.filter((l) => !l.st.cancelled).reduce((a, l) => a + amountOf(l), 0)
   const usd = isUsd(o)
@@ -811,6 +890,7 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
             <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${c.badge}`}>{c.name}</span>
             <b className="font-mono text-lg text-slate-800">{o.po_no}</b>
             {o.migrated && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">이관</span>}
+            {k !== 'po' && <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-bold ${KIND_TONE[k]}`} data-drawer-kind={k}>{KINDS[k]}</span>}
             <button type="button" onClick={onClose} className="ml-auto text-sm font-bold text-slate-400 hover:text-slate-700">✕ 닫기</button>
           </div>
           <div className="mt-3 grid grid-cols-3 md:grid-cols-6 gap-3">
@@ -824,10 +904,32 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
             <Info k="등록">{o.registered_name || SOURCE_LABEL[o.source] || '—'} · {md(String(o.registered_at).slice(0, 10))}</Info>
             <Info k="확인">{o.confirmed_at ? [o.confirmed_name, md(String(o.confirmed_at).slice(0, 10))].filter(Boolean).join(' · ') : <span className="text-red-500">확인 전</span>}</Info>
           </div>
+          {!o.planned && (
+            <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
+              <span className="flex items-center gap-1.5"><span className="text-[10.5px] text-slate-400">이카운트 명세서번호</span>
+                {editable ? <>
+                  <input value={slip} onChange={(e) => setSlip(e.target.value)} placeholder="예: 2026/10/23-4" data-slip-input className="w-36 px-1.5 py-0.5 text-xs font-mono border border-slate-200 rounded" />
+                  {slip.trim() !== (o.slip_no || '') && <button type="button" onClick={() => onSlip(o, slip)} data-slip-save className="text-[11px] text-violet-600 font-bold">저장</button>}
+                </> : <b className="font-mono text-slate-700">{o.slip_no || '—'}</b>}
+              </span>
+              {(o.req_channel || o.req_person) && <span className="text-slate-600"><span className="text-[10.5px] text-slate-400 mr-1">받은 경로</span>{[o.req_channel, o.req_person].filter(Boolean).join(' · ')}</span>}
+              {o.po_due && <span className={o.po_due < todayISO() && isTempPo(o) ? 'text-red-600 font-bold' : 'text-slate-600'}><span className="text-[10.5px] text-slate-400 mr-1">정식 PO 받을 날</span>{o.po_due}</span>}
+            </div>
+          )}
           {o.file_name && <div className="mt-2 text-[11px] text-slate-400">📄 {o.file_name}</div>}
         </div>
         <div className="p-3 md:p-6 space-y-4">
           <RiskBanner ls={ls} />
+          {isTempPo(o) && editable && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-4 py-3" data-promote>
+              <div className="text-xs font-extrabold text-amber-800">{KINDS[k]} · 정식 PO 대기 {waitDays}일째</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <input value={newNo} onChange={(e) => setNewNo(e.target.value)} placeholder="정식 PO 번호" data-promote-input className="w-48 h-8 px-2 text-xs font-mono border border-slate-200 rounded-lg bg-white" />
+                <button type="button" disabled={!newNo.trim() || promoteBusy} onClick={() => onPromote(o, newNo)} data-promote-save className="h-8 px-3 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40">정식 PO 번호로 바꾸기</button>
+                <span className="text-[11px] text-slate-500">회신 · 명세서번호 · 이력은 그대로 이어집니다. 정식 발주서 PDF 가 이미 따로 등록됐으면 이 줄들은 「새 PO 로 재발행」으로 취소하세요.</span>
+              </div>
+            </div>
+          )}
           {isBuy && (
             <div className="rounded-xl border border-violet-200 bg-white p-4 space-y-2.5" data-po-reply>
               <div className="flex items-center gap-2">
@@ -841,6 +943,7 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
           <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto" data-dline-wrap>
             <table className="w-full min-w-[760px] text-xs">
               <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left whitespace-nowrap">
+                {editable && <th className="pl-3 py-2 w-6" title="취소할 줄 고르기" />}
                 <th className="px-3 py-2 font-bold">{o.planned ? 'Plnd 번호' : 'Line'}</th><th className="px-3 font-bold">품번 · 품명</th>
                 <th className="px-3 font-bold text-right">수량</th><th className="px-3 font-bold text-right">단가</th><th className="px-3 font-bold">납기</th>
                 <th className="px-3 font-bold" title="협력사에 자재를 내줘야 하는 날">협력사 불출</th>
@@ -850,7 +953,8 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
               </tr></thead>
               <tbody>
                 {ls.map((l) => (
-                  <tr key={l.id} className={`border-t border-slate-100 align-top ${l.st.cancelled ? 'opacity-40 line-through' : ''}`} data-dline={`${l.line_no}/${l.del_line}`}>
+                  <tr key={l.id} className={`border-t border-slate-100 align-top ${l.st.cancelled ? 'bg-slate-50/80' : ''}`} data-dline={`${l.line_no}/${l.del_line}`}>
+                    {editable && <td className="pl-3 py-2">{cancellable(l) && <input type="checkbox" checked={pick.has(l.id)} onChange={() => togglePick(l.id)} data-pick={`${l.line_no}/${l.del_line}`} />}</td>}
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}{l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}<OddBadges odd={oddMap?.get(l.id)} /></div>
@@ -866,13 +970,35 @@ function PoDrawer({ o, isBuy, fx, oddMap, onClose, onReply, replyBusy, onDlv, dl
                           className={`px-1.5 py-0.5 text-[11px] border rounded ${l.st.live && l.release_date && l.release_date < todayISO() ? 'border-red-300 text-red-600' : 'border-slate-200'}`} />
                       : <span className="text-slate-600">{l.release_date || '—'}</span>}</td>
                     {o.customer_code === 'AX' && <td className="px-3 py-2 text-slate-500">{l.division}</td>}
-                    <td className="px-3 py-2"><ReplyCell l={l} memo /></td>
+                    <td className="px-3 py-2">{l.st.cancelled
+                      ? <div className="text-[11px] min-w-[140px]" data-dline-cancel>
+                          <span className="px-1.5 py-[1px] rounded-full bg-slate-200 text-slate-600 font-bold text-[10.5px]">취소</span>
+                          {l.cancel_reason && <div className="text-slate-600 mt-0.5">{l.cancel_reason}</div>}
+                          {(l.cancelled_name || l.cancelled_at) && <div className="text-[10px] text-slate-400">{[l.cancelled_name, l.cancelled_at && md(String(l.cancelled_at).slice(0, 10))].filter(Boolean).join(' · ')}</div>}
+                          {editable && <button type="button" onClick={() => onUncancel([l])} data-uncancel={`${l.line_no}/${l.del_line}`} className="mt-0.5 text-[10.5px] text-violet-600 font-bold hover:underline">취소 되돌리기</button>}
+                        </div>
+                      : <ReplyCell l={l} memo />}</td>
                     {isBuy && <td className="px-3 py-2 text-center">{!l.st.cancelled && <input type="checkbox" checked={l.st.delivered} disabled={dlvBusy} onChange={(e) => onDlv([l], e.target.checked)} data-dlv={`${l.line_no}/${l.del_line}`} />}</td>}
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          {editable && picked.length > 0 && (
+            <div className="bg-white border border-red-200 rounded-xl px-4 py-3 space-y-2" data-cancel-panel>
+              <div className="text-xs font-extrabold text-slate-800">고른 {picked.length}품목 취소 <span className="font-normal text-slate-500">— 지우지 않고 「취소」 표시 · 변경 이력에 남음 · 「취소 되돌리기」 가능</span></div>
+              <div className="flex flex-wrap gap-1.5">
+                {CANCEL_REASONS.map((r) => <button key={r} type="button" onClick={() => setWhy(r)} data-cancel-why={r} className={`px-3 py-1 rounded-full text-[12px] font-bold border ${why === r ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200'}`}>{r}</button>)}
+              </div>
+              <div className="flex gap-2">
+                <input value={whyMemo} onChange={(e) => setWhyMemo(e.target.value)} placeholder="사유 (필수) — 예: 회신 불가 납기지연, 고객사 협의 후 취소" data-cancel-memo className="flex-1 min-w-0 h-8 px-2.5 text-xs border border-slate-200 rounded-lg" />
+                <button type="button" disabled={!why || !whyMemo.trim() || cancelBusy} data-cancel-run
+                  onClick={() => onCancel(picked, why, whyMemo, () => { setPick(new Set()); setWhy(''); setWhyMemo('') })}
+                  className="h-8 px-3.5 rounded-lg text-xs font-bold bg-red-500 text-white disabled:opacity-40 whitespace-nowrap">{picked.length}품목 취소</button>
+              </div>
+              <p className="text-[10.5px] text-slate-400">납품이 있는 줄은 고를 수 없습니다.</p>
+            </div>
+          )}
           <div className="bg-white border border-slate-200 rounded-xl px-4 py-3" data-changes>
             <div className="text-xs font-bold text-slate-700 mb-1.5">변경 이력 <span className="text-slate-400 font-normal">{changes.length}</span></div>
             {!changes.length && <div className="text-[11px] text-slate-400">아직 없습니다</div>}

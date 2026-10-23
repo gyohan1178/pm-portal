@@ -195,6 +195,7 @@ const lineRow = (orderId, l) => {
     delivered_at: delivered > 0 ? (l.delivered_at || null) : null,
     sales_done_at: q > 0 && delivered >= q ? new Date().toISOString() : null,
     note: l.note || null,
+    ...(l.plnd ? { plnd_no: String(l.plnd) } : {}),
   }
 }
 
@@ -284,6 +285,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       customer_code: cust, po_no: po.po_no, order_date: po.order_date || null, currency: po.currency || 'KRW', ccn: po.ccn || null,
       total: po.total ?? null, source, file_name: fileName || null, migrated: !!migrated, registered_name: meName || null,
       ...(po.ship_to ? { ship_to: po.ship_to } : {}),
+      ...(po.extra || {}),          // 직접 등록 — 구분(kind) · 명세서번호 · 받은 경로 등 (v4.94.0)
     }
     let { data: o, error } = await supabase.from('pm_order').insert(head).select('id').single()
     // 납품처 칸을 만드는 SQL 을 아직 안 돌렸으면 납품처 없이 등록
@@ -291,6 +293,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       delete head.ship_to;
       ({ data: o, error } = await supabase.from('pm_order').insert(head).select('id').single())
     }
+    if (error && po.extra && /kind|slip_no|req_channel|req_person|po_due/.test(error.message || '')) throw new Error('구분 · 명세서번호 칸이 아직 없습니다 — 수주대장_직접등록_반영_261023.sql 을 먼저 실행하세요')
     if (error) {
       if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${po.po_no} 는 이미 수주대장에 있습니다 — 파일을 다시 올려 비교하세요`)
       throw error
@@ -559,7 +562,7 @@ async function fetchParallel(table, cols, { order = 'id', conc = 6, page = 1000 
   return all
 }
 // 목록에 쓰는 칸만 (created_at · replied_at · unit 등 화면에 안 쓰는 칸은 뺌)
-const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,replied_at,note,plnd_no,prod_no,updated_at'
+const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,replied_at,note,plnd_no,prod_no,updated_at,cancel_reason,cancelled_name,cancelled_at'
 
 export async function fetchOrders() {
   const headsP = fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))
@@ -600,7 +603,7 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림' }
+export const FIELD_LABEL = { po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림' }
 
 // 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
 //   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })

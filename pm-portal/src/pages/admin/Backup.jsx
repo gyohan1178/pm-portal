@@ -33,7 +33,7 @@ export const BACKUP_TABLES = [
     ['pm_ed_demand', 'Edwards 소요', null], ['pm_cell_aux', '셀 보조 정보'], ['pm_cell_check', '셀 점검'],
   ]),
   ...G('영업', [
-    ['pm_order', '수주대장 PO'], ['pm_order_line', '수주대장 품목'], ['pm_order_change', '수주대장 변경 이력'], ['pm_order_alias', '수주대장 품명 기억', ['customer_code', 'alias_key']], ['pm_rfq', '견적 접수'], ['pm_rfq_line', '견적 접수 품목'],
+    ['pm_order', '수주대장 PO'], ['pm_order_line', '수주대장 품목'], ['pm_order_change', '수주대장 변경 이력'], ['pm_order_alias', '수주대장 품명 기억', ['customer_code', 'alias_key']], ['pm_order_pn_flag', '수주대장 비품목 표시'], ['pm_bom_need', 'BOM 필요 · 요청', ['item_id']], ['pm_rfq', '견적 접수'], ['pm_rfq_line', '견적 접수 품목'],
     ['pm_quotes', '견적'], ['pm_quote_items', '견적 품목'], ['pm_quote_drafts', '견적 임시저장'], ['quotes', '견적 (예전)'], ['pm_sales', '매출'],
   ]),
   ...G('품질 · 도면', [

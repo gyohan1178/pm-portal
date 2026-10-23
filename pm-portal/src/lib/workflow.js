@@ -21,6 +21,8 @@ export const DEPT_LABEL = {
 //   업무 흐름의 이동 버튼은 이 이름으로만 나온다. 사이드바 이름을 바꾸면 여기도 같이 바꾼다 (테스트가 확인)
 export const MENU = {
   '/orders': '수주대장',
+  '/orders?tab=cleanup': '수주대장 · 코드 · BOM 정리',
+  '/orders?tab=ecount': '수주대장 · 이카운트 대조',
   '/sales-quote': '매출견적',
   '/drawings': '도면 조회',
   '/inbound': '입고',
@@ -71,8 +73,8 @@ const F = {
     desc: '견적 → BOM 확인 → 수주 등록 → 도면 Rev 확인 → 구매자재 회신 → 납기 협의',
     steps: [
       { name: '견적 접수 · 작성', note: '견적 접수 현황 탭에서 접수 · 점검 후 견적 작성', go: () => ['/sales-quote'], badges: (c) => [['작성 가능', c?.rfq_ready, 'violet'], ['회신 D-3', c?.rfq_due, 'red']] },
-      { name: 'BOM 확인', note: '견적 품목에 BOM 이 없으면 고객 BOM 을 올림', go: (pcs) => [cs(pcs, 'bom')], badges: (c) => [['BOM 필요', c?.rfq_bom, 'red']] },
-      { name: '수주 등록', note: 'PDF 올리기 · 직접 등록', go: () => ['/orders'], badges: (c) => [['이번 달 접수', c?.ord_month, 'gray']] },
+      { name: 'BOM 확인', note: '견적 · 수주 품목에 BOM 이 없으면 고객사에 요청해 올림', go: (pcs) => [cs(pcs, 'bom'), '/orders?tab=cleanup'], badges: (c) => [['BOM 필요', c?.rfq_bom, 'red'], ['BOM 요청', c?.bom_req, 'amber']] },
+      { name: '수주 등록', note: 'PDF 올리기 · 직접 등록 (구두 발주 · 선진행 · 발주 예정)', go: () => ['/orders'], badges: (c) => [['이번 달 접수', c?.ord_month, 'gray'], ['정식 PO 대기 지남', c?.po_wait, 'red']] },
       { name: '도면 확인', note: 'PO Rev 와 도면 Rev 비교 — 다르면 받은 새 도면을 생산기술에 공유', go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
       { name: '구매자재 회신', note: '구매자재가 처리 — 기다리는 단계', other: '구매자재', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']] },
       { name: '회신 확인 · 납기 협의', note: '조건부 · 불가는 사유를 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
@@ -81,9 +83,13 @@ const F = {
       { name: '고객사 PO', go: (pcs) => [cs(pcs, 'cpo')], badges: () => [] },
       { name: '포캐스트', go: (pcs) => [cs(pcs, 'forecast')], badges: () => [] },
     ],
-    inbox: [{ from: '구매자재', text: '수주대장 회신 — 조건부 · 불가 (고객사 납기 협의)', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' }],
+    inbox: [
+      { from: '구매자재', text: '수주대장 회신 — 조건부 · 불가 (고객사 납기 협의)', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' },
+      { from: '구매자재', text: 'BOM 요청 — 고객사에 BOM 받아 올리기', n: (c) => c?.bom_req, tone: 'amber', path: '/orders?tab=cleanup' },
+    ],
     outbox: [
       { from: '구매자재', text: '새 PO 확인 대기 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
+      { from: '고객사', text: '구두 발주 · 선진행 — 정식 PO 받을 날 지남', n: (c) => c?.po_wait, tone: 'red', path: '/orders' },
       { from: '구매자재', text: '견적 단가 요청 — 단가 없는 부품', n: (c) => c?.rfq_price, tone: 'amber', path: '/sales-quote' },
       { from: '생산기술', text: '새 Rev 도면 공유 — 사내 배포 대기', n: (c) => c?.dwg_shared, tone: 'violet', path: '/quality/drawing-dist?tab=int' },
     ],
