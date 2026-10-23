@@ -51,6 +51,18 @@ function statusOf(l) {
   return ['확인 대기', 'bg-red-50 text-red-600']
 }
 
+// 지표 · 보기 조건 — 지표 숫자 · 목록 · 고객사 버튼 숫자가 같은 기준을 쓰도록 한 곳에 (v4.90.4)
+const KPI_PICK = {
+  unconfirmed: (l) => l.st.live && !l.o.migrated && !l.o.planned && !l.st.confirmed && bizDaysSince(l.o.registered_at) >= 1,
+  waiting: (l) => l.st.live && !l.reply,
+  risk: (l) => l.st.live && (l.reply === '조건부' || l.reply === '불가'),
+  late: (l, today) => l.st.live && !!l.due_date && l.due_date < today,
+  noPrice: (l) => !l.st.cancelled && !(+l.unit_price > 0),
+}
+const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.live && !l.st.planned
+  : view === 'plan' ? l.st.live && l.st.planned : view === 'done' ? l.st.delivered && !l.st.cancelled : true)
+const isMonthPo = (o, month) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
+
 // 열 너비 — 머리글 오른쪽 끝을 끌어 조절 (사람마다 이 브라우저에 기억) · 다른 화면 표와 같은 방식
 const LINE_COLS = [['chk', 40], ['due', 112], ['cust', 160], ['po', 170], ['pn', 320], ['qty', 80], ['amt', 130], ['st', 110], ['reply', 230]]
 const PO_COLS = [['po', 180], ['cust', 170], ['items', 340], ['due', 130], ['amt', 140], ['reply', 160], ['reg', 120]]
@@ -166,7 +178,6 @@ export default function OrderIntake() {
   const [view, setView] = useState('live')       // live 진행 중 · done 납품 완료 · all
   const [kpi, setKpi] = useState(null)
   const [sort, setSort] = useState('due')
-  const [axOnlyElec, setAxOnlyElec] = useState(false)   // v4.90.2 기본은 전체 (하네스 · 구매품 포함)
   const [checked, setChecked] = useState(() => new Set())
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
@@ -175,9 +186,8 @@ export default function OrderIntake() {
   const poRz = useResizableColumns('orderIntake_po_cols', Object.fromEntries(PO_COLS))
   const lineCols = isBuy ? LINE_COLS : LINE_COLS.filter(([k]) => k !== 'chk')
 
-  // 줄 펼치기 — AX 전장만이면 하네스 · 구매품 줄은 뺀다(PO 가 아니라 줄 단위로)
-  const allLines = useMemo(() => orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) })))
-    .filter((l) => !axOnlyElec || l.o.customer_code !== 'AX' || !l.division || l.division === '전장'), [orders, axOnlyElec])
+  // 줄 펼치기 — 고객사 · 구분 상관없이 전체 (v4.90.4 「AX 전장만」 없앰)
+  const allLines = useMemo(() => orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) }))), [orders])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
   const k = q.trim().toUpperCase()
   const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
@@ -186,13 +196,12 @@ export default function OrderIntake() {
   const today = todayISO()
   const month = today.slice(0, 7)
   const kpis = useMemo(() => {
-    const liveAll = scoped.filter((l) => l.st.live)
     const pos = (ls) => new Set(ls.map((l) => l.order_id)).size
-    const unconfirmed = liveAll.filter((l) => !l.o.migrated && !l.o.planned && !l.st.confirmed && bizDaysSince(l.o.registered_at) >= 1)
-    const waiting = liveAll.filter((l) => !l.reply)
-    const risk = liveAll.filter((l) => l.reply === '조건부' || l.reply === '불가')
-    const late = liveAll.filter((l) => l.due_date && l.due_date < today)
-    const monthPos = orders.filter((o) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source) && (cust === 'all' || o.customer_code === cust))
+    const unconfirmed = scoped.filter((l) => KPI_PICK.unconfirmed(l))
+    const waiting = scoped.filter((l) => KPI_PICK.waiting(l))
+    const risk = scoped.filter((l) => KPI_PICK.risk(l))
+    const late = scoped.filter((l) => KPI_PICK.late(l, today))
+    const monthPos = orders.filter((o) => isMonthPo(o, month) && (cust === 'all' || o.customer_code === cust))
     // 예상 매출 — 취소 빼고 납품 완료 포함. 달러(CCN B)는 환율을 곱한다
     // 올해 납기(납품일) 줄만 — 엑셀 매출 결산과 같은 기준. 내년 이후 · 납기 없음은 따로 (v4.90.2)
     const yr = today.slice(0, 4)
@@ -202,23 +211,20 @@ export default function OrderIntake() {
       if (y !== yr) { const a = amountOf(l) * (isUsd(l.o) ? fx : 1); if (!y) m.noDue += a; else if (y > yr) m.later += a; return }
       const a = amountOf(l), d = Math.min(+l.delivered_qty || 0, +l.qty || 0) * (+l.unit_price || 0)
       if (isUsd(l.o)) { m.usd += a; m.doneUsd += d } else { m.krw += a; m.doneKrw += d }
-      m.byCust[l.o.customer_code] = (m.byCust[l.o.customer_code] || 0) + a * (isUsd(l.o) ? fx : 1)
+      const c = (m.byCust[l.o.customer_code] ||= { total: 0, done: 0 }), k = isUsd(l.o) ? fx : 1
+      c.total += a * k; c.done += d * k
     })
     m.total = m.krw + m.usd * fx
     m.done = m.doneKrw + m.doneUsd * fx
-    m.noPrice = scoped.filter((l) => !l.st.cancelled && !(+l.unit_price > 0) && String(l.due_date || '').slice(0, 4) === yr).length
+    // 단가 없는 품목 — 연도 상관없이 (금액 합계에서 빠지는 줄). 눌러서 목록으로 본다 (v4.90.4)
+    const noPrice = scoped.filter((l) => KPI_PICK.noPrice(l))
     m.yr = yr
-    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos }
+    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice }
   }, [scoped, orders, month, today, cust, fx])
 
   const lines = useMemo(() => {
     let r = kpi && kpi !== 'month' ? kpis[kpi] : scoped
-    if (!kpi) {
-      if (view === 'live') r = r.filter((l) => l.st.live)
-      else if (view === 'po') r = r.filter((l) => l.st.live && !l.st.planned)
-      else if (view === 'plan') r = r.filter((l) => l.st.live && l.st.planned)
-      else if (view === 'done') r = r.filter((l) => l.st.delivered && !l.st.cancelled)
-    }
+    if (!kpi) r = r.filter((l) => inView(view, l))
     if (kpi === 'month') { const ids = new Set(kpis.monthPos.map((o) => o.id)); r = scoped.filter((l) => ids.has(l.order_id)) }
     const due = (l) => l.due_date || '9999'
     const cmp = {
@@ -238,11 +244,17 @@ export default function OrderIntake() {
   }, [lines, byOrder])
 
   // 고객사 버튼 숫자 = 진행 중 PO 수
+  // 고객사 버튼 숫자 = 지금 보는 목록과 같은 기준 (v4.90.4)
+  //   품번별 → 품목 줄 수 · PO별 → PO 수 · 보기(진행 중/납품 완료/…) · 검색 · 지표 거르기를 그대로 따른다
   const counts = useMemo(() => {
+    let base = allLines.filter(hit)
+    if (kpi === 'month') base = base.filter((l) => isMonthPo(l.o, month))
+    else if (kpi) base = base.filter((l) => KPI_PICK[kpi](l, today))
+    else base = base.filter((l) => inView(view, l))
     const c = { all: new Set() }
-    allLines.filter((l) => l.st.live && hit(l)).forEach((l) => { c.all.add(l.order_id); (c[l.o.customer_code] ||= new Set()).add(l.order_id) })
+    base.forEach((l) => { const id = mode === 'line' ? l.id : l.order_id; c.all.add(id); (c[l.o.customer_code] ||= new Set()).add(id) })
     return Object.fromEntries(Object.entries(c).map(([k2, v]) => [k2, v.size]))
-  }, [allLines, k]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allLines, k, mode, view, kpi, month, today]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 구매자재 동작 ──
   const replyMut = useMutation({
@@ -292,7 +304,7 @@ export default function OrderIntake() {
   // 목록이 길면 화면이 무거움 — 100건씩 펼치고 「더 보기」 (v4.90.3)
   const PAGE = 100
   const [limit, setLimit] = useState(PAGE)
-  useEffect(() => { setLimit(PAGE) }, [mode, cust, q, view, kpi, sort, axOnlyElec])
+  useEffect(() => { setLimit(PAGE) }, [mode, cust, q, view, kpi, sort])
   const shownLines = useMemo(() => lines.slice(0, limit), [lines, limit])
   const shownPos = useMemo(() => poRows.slice(0, limit), [poRows, limit])
   const totalN = mode === 'line' ? lines.length : poRows.length
@@ -332,28 +344,41 @@ export default function OrderIntake() {
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} />
       </div>
 
-      {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) */}
-      <div className={`rounded-xl border px-5 py-3 flex flex-wrap items-center gap-x-8 gap-y-2 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
-        <div>
-          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가 · 납품 포함</span></div>
+      {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) */}
+      <div className={`rounded-xl border px-5 py-3 flex flex-wrap items-start gap-x-8 gap-y-3 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
+        <div className="min-w-[210px]">
+          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span></div>
           <div className="text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
+          <div className="text-[11.5px] text-slate-600 tabular-nums mt-0.5">납품 완료 <b>{won(m.done)}</b> · 납품 예정 <b>{won(m.total - m.done)}</b></div>
         </div>
-        <div className="text-[12px] text-slate-600 tabular-nums leading-relaxed">
-          <div>납품 <b>{won(m.done)}</b></div>
-          <div>남은 <b>{won(m.total - m.done)}</b></div>
-        </div>
-        <div className="flex flex-wrap gap-x-5 gap-y-1 text-[12px] tabular-nums" data-money-cust>
-          {Object.entries(ORDER_CUSTOMERS).filter(([k2]) => m.byCust[k2]).map(([k2, v]) => (
-            <div key={k2} className="whitespace-nowrap"><span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: v.color }} /><span className="text-slate-500">{v.name}</span> <b className="text-slate-700">{won(m.byCust[k2])}</b></div>
-          ))}
-        </div>
-        <div className="ml-auto text-[10.5px] text-slate-400 tabular-nums space-y-0.5 text-right">
+        <table className="text-[12px] tabular-nums" data-money-cust>
+          <thead><tr className="text-[11px] text-slate-400">
+            <th className="text-left font-semibold pr-5 pb-1">고객사</th><th className="text-right font-semibold px-3 pb-1">합계</th>
+            <th className="text-right font-semibold px-3 pb-1">납품 완료</th><th className="text-right font-semibold pl-3 pb-1">납품 예정</th>
+          </tr></thead>
+          <tbody>
+            {Object.entries(ORDER_CUSTOMERS).filter(([k2]) => m.byCust[k2]).map(([k2, v]) => (
+              <tr key={k2} data-money-row={k2}>
+                <td className="pr-5 py-0.5 whitespace-nowrap"><span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: v.color }} /><span className="text-slate-600">{v.name}</span></td>
+                <td className="text-right px-3 font-bold text-slate-800">{won(m.byCust[k2].total)}</td>
+                <td className="text-right px-3 text-slate-600">{won(m.byCust[k2].done)}</td>
+                <td className="text-right pl-3 text-emerald-700 font-semibold">{won(m.byCust[k2].total - m.byCust[k2].done)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <div className="ml-auto text-[10.5px] text-slate-400 tabular-nums space-y-1 text-right">
           {m.usd > 0 && (
             <div className="flex items-center justify-end gap-1">달러 ${fmt(Math.round(m.usd))} × 환율
               <input value={fxIn} onChange={(e) => setFxIn(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(qcfg?.sellRate || 1400)} title="달러(CCN B) PO 환율 — 비우면 매출견적 기준 판매환율" data-fx className="w-14 px-1 py-0.5 text-[10.5px] border border-emerald-200 rounded bg-white" /></div>
           )}
           {m.later > 0 && <div data-money-later>내년 이후 납기 {won(m.later)} 별도</div>}
-          {m.noPrice > 0 && <div className="text-amber-600">단가 없는 품목 {m.noPrice} (합계 제외)</div>}
+          {kpis.noPrice.length > 0 && (
+            <button type="button" onClick={() => { setKpi(kpi === 'noPrice' ? null : 'noPrice'); setMode('line') }} data-noprice
+              className={`px-2 py-1 rounded-lg font-bold border ${kpi === 'noPrice' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'}`}>
+              단가 없는 품목 {kpis.noPrice.length.toLocaleString('ko-KR')} (합계 제외) {kpi === 'noPrice' ? '✕' : '보기 →'}
+            </button>
+          )}
         </div>
       </div>
 
@@ -371,6 +396,7 @@ export default function OrderIntake() {
               {k2 !== 'all' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: ORDER_CUSTOMERS[k2].color }} />}{l}<span className={`ml-1 ${cust === k2 ? 'text-slate-300' : 'text-slate-400'}`}>{counts[k2] || 0}</span>
             </button>
           ))}
+          <span className="text-[11px] text-slate-400" data-count-unit>숫자 = {mode === 'line' ? '품목 줄 수' : 'PO 수'}</span>
           <div className="ml-auto flex gap-2">
             {isBuy && <button type="button" onClick={axPreview} disabled={axBusy} data-ax-import className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">🔁 AX PO 파일 반영</button>}
             {editable && <button type="button" onClick={() => setUpload(true)} data-open-upload className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700">📄 PDF 올리기</button>}
@@ -385,9 +411,6 @@ export default function OrderIntake() {
           <select value={sort} onChange={(e) => setSort(e.target.value)} className={sel} data-sort>
             <option value="due">납기 빠른 순</option><option value="reg">최근 접수 순</option><option value="cust">고객사 순</option>
           </select>
-          <label className="flex items-center gap-1.5 text-xs text-slate-500 px-1" title="AXCELIS 하네스 · 구매품 품목을 숨깁니다">
-            <input type="checkbox" checked={axOnlyElec} onChange={(e) => setAxOnlyElec(e.target.checked)} data-ax-elec /> AX 전장만
-          </label>
           {kpi && <button type="button" onClick={() => setKpi(null)} className="text-xs text-violet-600 font-bold">지표 거르기 해제 ✕</button>}
         </div>
       </div>
@@ -398,11 +421,12 @@ export default function OrderIntake() {
         return (
           <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-sm" data-ax-preview>
             <b>AXCELIS PO 파일 → 수주대장 반영</b>
-            <span className="text-xs text-slate-500"> — 「고객사 PO」에서 올린 최신 PO 파일 내용으로 납기 · 수량 · Rev · 단가 · 완료 · 취소를 맞춥니다.</span>
+            <span className="text-xs text-slate-500"> — 「고객사 PO」에서 올린 최신 PO 파일(진행 중 · 실적) 내용으로 납기 · 수량 · Rev · 단가 · 완료 · 취소를 맞춥니다.</span>
             {nothing ? <div className="mt-2 text-xs text-slate-600">바뀐 것이 없습니다.</div> : (
               <div className="mt-2 text-xs text-slate-700 space-y-1">
                 {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
                 {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · Rev {s.rev} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
+                {s.fromSales > 0 && <div>· 그중 실적(Received)에서 납품 {s.fromSales}줄 — PO 파일에 없는 지난 납품분 (매출 대시보드와 같은 기준)</div>}
                 {s.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>재회신 필요</b> {s.resets}건</div>}
                 {axPrev.hist.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto bg-white rounded-lg border border-violet-100 p-2 font-mono text-[11px]">

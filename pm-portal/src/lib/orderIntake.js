@@ -348,9 +348,45 @@ const PO_COLS = 'id,po_number,order_line,del_line,item_id,item_rev,qty_ordered,u
 const keyOfPo = (r) => `${String(r.order_line || '1')}/${String(r.del_line || '1')}`
 const numEq = (a, b) => (a == null || a === '' ? null : +a) === (b == null || b === '' ? null : +b)
 
+// 「실적 업로드」(PO 파일의 Received 시트 → pm_sales) 줄 — PO 파일(진행 중 시트)에는 6월 이후 것만 있고
+//   이미 납품이 끝나 빠진 줄도 있어서, 매출 대시보드와 맞추려면 실적도 함께 들여야 한다 (v4.90.4)
+//   올해 납기 이후만 · 발주 취소 제외 · PO 파일에 같은 PO/라인/분할이 있으면 PO 파일이 우선
+async function salesRowsAX(poRows) {
+  const from = `${new Date().getFullYear()}-01-01`
+  let sales
+  try {
+    sales = await fetchAll(() => supabase.from('pm_sales').select('id,part_no,po_number,order_line,del_line,item_desc,qty,unit_price,ccn,promise_date,status_note,customer_code')
+      .gte('promise_date', from).order('id'))
+  } catch { return [] }                          // 실적 표를 못 읽으면 PO 파일만
+  const have = new Set(poRows.map((r) => `${r.po_number}|${keyOfPo(r)}`))
+  const divByItem = new Map()
+  poRows.forEach((r) => { if (r.item_id && r.division && !divByItem.has(r.item_id)) divByItem.set(r.item_id, r.division) })
+  const use = sales.filter((r) => r.po_number && (r.customer_code || 'AX') === 'AX' && r.status_note !== '발주 취소'
+    && !have.has(`${r.po_number}|${String(r.order_line || '1')}/${String(r.del_line || '1')}`))
+  const codes = [...new Set(use.map((r) => r.part_no && `AX-${String(r.part_no).trim()}`).filter(Boolean))]
+  const byCode = new Map()
+  for (let i = 0; i < codes.length; i += 150) {
+    const { data } = await supabase.from('items').select(ITEM_COLS).in('std_code', codes.slice(i, i + 150))
+    ;(data || []).forEach((x) => byCode.set(x.std_code, x))
+  }
+  return use.map((r) => {
+    const it = byCode.get(`AX-${String(r.part_no || '').trim()}`) || null
+    const done = /완료/.test(r.status_note || '')
+    return {
+      id: `s${r.id}`, po_number: r.po_number, order_line: r.order_line, del_line: r.del_line || '1', item_id: it?.id || null,
+      items: it ? { std_code: it.std_code, name: it.name } : null, raw_pn: r.part_no || null, raw_desc: r.item_desc || null,
+      item_rev: null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: null,
+      division: (it && divByItem.get(it.id)) || null, status: done ? '완료' : '진행중', ccn: r.ccn || null,
+      issued_at: done ? r.promise_date : null, fromSales: true,
+    }
+  })
+}
+
 export async function axSyncPreview() {
-  const rows = await fetchAll(() => supabase.from('purchase_orders').select(PO_COLS)
+  const poRows = await fetchAll(() => supabase.from('purchase_orders').select(PO_COLS)
     .eq('order_type', 'customer_po').eq('customer_id', AX_CUSTOMER_ID).order('id'))
+  const salesRows = await salesRowsAX(poRows)
+  const rows = [...poRows, ...salesRows]
   const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
   const hids = heads.map((h) => h.id)
   const lines = []
@@ -405,6 +441,7 @@ export async function axSyncPreview() {
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
       newLive: newPos.filter((p) => p.live).length, newDone: newPos.filter((p) => !p.live).length,
+      fromSales: newPos.reduce((a, p) => a + p.lines.filter((l) => l.fromSales).length, 0) + add.filter((x) => x.r.fromSales).length,
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), price: cnt('unit_price'),
       delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
@@ -416,10 +453,10 @@ const importRow = (orderId, l) => {
   const done = l.status === '완료'
   return {
     order_id: orderId, line_no: String(l.order_line || '1'), del_line: String(l.del_line || '1'), item_id: l.item_id || null,
-    raw_pn: l.items?.std_code?.replace(/^AX-/, '') || null, raw_desc: l.items?.name || null, rev: l.item_rev || null,
+    raw_pn: l.items?.std_code?.replace(/^AX-/, '') || l.raw_pn || null, raw_desc: l.items?.name || l.raw_desc || null, rev: l.item_rev || null,
     qty: Number(l.qty_ordered) || 0, unit_price: l.unit_price ?? null, due_date: l.promise_date || null, division: l.division || null,
     delivered_qty: done ? Number(l.qty_ordered) || 0 : 0, delivered_at: done ? (l.issued_at || '').slice(0, 10) || null : null,
-    sales_done_at: null, cancelled: l.status === '취소',
+    sales_done_at: l.fromSales && done ? new Date().toISOString() : null, cancelled: l.status === '취소',   // 실적에서 온 납품 줄은 지난 일 → 판매입력도 끝난 것으로
   }
 }
 

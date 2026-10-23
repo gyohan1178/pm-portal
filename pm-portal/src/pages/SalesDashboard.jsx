@@ -22,7 +22,8 @@ async function fetchSales() {
   ])
   const csMap = Object.fromEntries((css||[]).map(c=>[c.id,c.name]))
   // 진행중 PO (예정 매출) — pm_sales에 실적이 있으니 완료건 중복 피하려 '완료' 아닌 것만
-  const poRows = (pos||[]).filter(p=>p.status!=='완료').map(p=>({
+  //   v4.90.4 — 취소된 PO 는 예정 매출에서 뺀다 (고객사가 취소한 줄이 예정으로 잡히던 문제)
+  const poRows = (pos||[]).filter(p=>p.status!=='완료' && p.status!=='취소').map(p=>({
     csName: csMap[p.customer_id]||'기타',
     month: (p.promise_date||p.order_date||'').slice(0,7),
     isUsd: (p.ccn||'').trim().toUpperCase() === 'B',
