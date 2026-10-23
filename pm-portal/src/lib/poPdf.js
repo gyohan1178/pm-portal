@@ -92,6 +92,23 @@ export function customerOf(L, kind) {
   return hit.length === 1 ? BIZ_NO[hit[0]] : null
 }
 
+// 납품처 — 발주서의 「납품처 · Deliver to · SHIP-TO · 납품장소」 칸 근처에서 사업장 이름을 찾는다 (v4.89.0)
+//   Edwards · CSK 는 사업장이 여러 곳이다 (아산 공장 · 안성 7401 · 평택 등). 우리 주소(천안)와 고객사 본사(용인 · 화성)는 빼고 본다.
+const SITES = [
+  [/MFK/, '평택 MFK'], [/아산/, '아산 공장'], [/안성|Plant 7401/i, '안성 7401'], [/평택|Pyeongtaek/i, '평택'],
+  [/호법|이천/, '이천 호법창고'], [/BEVERLY/i, 'Beverly (미국)'],
+]
+export function shipToOf(L) {
+  const t = L.map((l) => l.t)
+  const i = t.findIndex((x) => /납품처|Deliver to|SHIP-TO SEQ|납품장소/i.test(x))
+  if (i < 0) return null
+  const block = t.slice(i, i + 12).join(' ')
+  const hit = SITES.find(([re]) => re.test(block))
+  if (hit) return hit[1]
+  const m = block.match(/납품장소:\s*([^|]+)/)
+  return m ? m[1].trim().slice(0, 40) : null
+}
+
 // AXCELIS 구분 — PO 파일 업로드와 같은 규칙 (11 = 전장, 16 = 하네스, 그 밖 = 구매품)
 export const axDivision = (pn) => (String(pn).startsWith('16') ? '하네스' : String(pn).startsWith('11') ? '전장' : '구매품')
 
@@ -231,7 +248,7 @@ export function parsePO(L) {
   const P = PARSERS[kind]
   if (!P) { const r = { kind: null, customer: null, po_no: null, lines: [] }; return { ...r, warns: checkPO(r) } }
   const { extraWarn = [], ...r } = P(L)
-  const out = { kind, ...r, customer: customerOf(L, kind) }
+  const out = { kind, ...r, customer: customerOf(L, kind), ship_to: shipToOf(L) }
   out.warns = [...checkPO(out), ...extraWarn]
   return out
 }

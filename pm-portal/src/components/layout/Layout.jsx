@@ -51,6 +51,7 @@ const PATH_LABELS = {
   'payment-plan':     ['구매', '결제 계획'],
   'production/harness-release': ['영업', '하네스 출도·불출'],
   'sales-quote':      ['영업', '매출견적'],
+  orders:             ['영업', '수주대장'],
   'material-request': ['현장', '자재 요청'],
   'field-search':     ['현장', '현장 검색'],
   drawings:           ['현장', '도면 조회'],

@@ -155,8 +155,14 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     const head = {
       customer_code: cust, po_no: po.po_no, order_date: po.order_date || null, currency: po.currency || 'KRW', ccn: po.ccn || null,
       total: po.total ?? null, source, file_name: fileName || null, migrated: !!migrated, registered_name: meName || null,
+      ...(po.ship_to ? { ship_to: po.ship_to } : {}),
     }
-    const { data: o, error } = await supabase.from('pm_order').insert(head).select('id').single()
+    let { data: o, error } = await supabase.from('pm_order').insert(head).select('id').single()
+    // 납품처 칸을 만드는 SQL 을 아직 안 돌렸으면 납품처 없이 등록
+    if (error && /ship_to/.test(error.message || '') && head.ship_to) {
+      delete head.ship_to;
+      ({ data: o, error } = await supabase.from('pm_order').insert(head).select('id').single())
+    }
     if (error) throw error
     const rows = lines.map((l) => lineRow(o.id, l))
     for (let i = 0; i < rows.length; i += 500) {
@@ -209,7 +215,10 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     const { error } = await supabase.from('pm_order_change').insert(hist)
     if (error) throw error
   }
-  const { error } = await supabase.from('pm_order').update({ updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total }).eq('id', existing.id)
+  const head = { updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total }
+  if (po.ship_to && po.ship_to !== existing.ship_to) head.ship_to = po.ship_to
+  let { error } = await supabase.from('pm_order').update(head).eq('id', existing.id)
+  if (error && /ship_to/.test(error.message || '') && head.ship_to) { delete head.ship_to; ({ error } = await supabase.from('pm_order').update(head).eq('id', existing.id)) }
   if (error) throw error
   return { id: existing.id, created: false, changed: hist.length - resetLogs.length, resets: resetLogs.length, diff: d }
 }
@@ -219,7 +228,8 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
 //   그래서 「고객사 PO」 화면에서 PO 파일을 올린 뒤, 여기서 그 내용을 수주대장에 맞춘다.
 //     · 수주대장에 있는 AX PO → 같은 라인/분할의 납기 · 수량 · Rev · 단가 차이를 고치고 변경 이력을 남긴다
 //                             PO 파일이 「완료」면 납품 완료로, 「취소」면 취소로. PO 파일에만 있는 줄은 추가.
-//     · 수주대장에 없는 AX PO → 진행 중 전장 줄이 있으면 PO 째로 들여온다 (완료 줄은 납품 · 판매입력 완료로)
+//     · 수주대장에 없는 AX PO → 전장 줄이 있으면 PO 째로 들여온다 (완료 줄은 납품 · 판매입력 완료로)
+//       v4.89.0 — 납품이 다 끝난 PO 도 들인다 (예상 매출 · 이력에 납품 완료분이 빠지던 문제)
 //   납기가 당겨지거나 수량이 늘면 구매자재 회신을 다시 받는다. 납기가 밀린 것은 기록만.
 const PO_COLS = 'id,po_number,order_line,del_line,item_id,item_rev,qty_ordered,unit_price,promise_date,order_date,division,status,ccn,issued_at, items!purchase_orders_item_id_fkey(std_code,name)'
 const keyOfPo = (r) => `${String(r.order_line || '1')}/${String(r.del_line || '1')}`
@@ -243,7 +253,7 @@ export async function axSyncPreview() {
   for (const [po_no, ls] of byPo) {
     const h = headByNo.get(po_no)
     if (!h) {
-      if (ls.some((l) => l.status === '진행중' && l.division === '전장')) newPos.push({ po_no, lines: ls })
+      if (ls.some((l) => l.status !== '취소' && l.division === '전장')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중' && l.division === '전장') })
       continue
     }
     const mine = new Map(lines.filter((l) => l.order_id === h.id).map((l) => [`${l.line_no}/${l.del_line}`, l]))
@@ -281,6 +291,7 @@ export async function axSyncPreview() {
     newPos, upd, add, hist,
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
+      newLive: newPos.filter((p) => p.live).length, newDone: newPos.filter((p) => !p.live).length,
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), price: cnt('unit_price'),
       delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
@@ -301,7 +312,7 @@ const importRow = (orderId, l) => {
 
 export async function axSyncRun(pv, meName) {
   const now = new Date().toISOString()
-  // 1) 새 PO — 진행 중 PO 를 처음 들일 때 이미 완료된 줄은 지난 일이라 판매입력도 끝난 것으로 본다
+  // 1) 새 PO — 처음 들일 때 이미 완료된 줄은 지난 일이라 판매입력도 끝난 것으로 본다
   let created = 0
   for (const p of pv.newPos) {
     const f = p.lines[0]
@@ -370,7 +381,7 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신' }
+export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처' }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)
 export function lineState(l, o) {
