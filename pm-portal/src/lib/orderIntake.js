@@ -117,11 +117,45 @@ export function diffOrder(oldLines, newLines) {
       const after = field === 'item' ? (n.item?.std_code || n.pn || '') : f(n[nk])
       if (field === 'item' && (!n.item || !o.item_id)) return     // 품목을 못 찾은 쪽은 비교하지 않는다
       if (field === 'rev' && !before) return                       // 비어 있던 Rev 를 채우는 것은 변경이 아니다 (저장은 함)
+      if (field === 'unit_price' && !before) return                // 비어 있던 단가를 채우는 것도 「빈 칸 채우기」 (v4.90.1)
       if (before !== after) changes.push({ line_key: lineKey(n), field, before_val: before, after_val: after })
     })
   })
   oldLines.forEach((o) => { if (!used.has(o) && !o.cancelled) removed.push(o) })
   return { changes, added, removed, same: !changes.length && !added.length && !removed.length, pair }
+}
+
+// 빈 칸 채우기 (v4.90.1) — 이미 있는 PO 에 발주서 PDF 를 다시 올리면, 비어 있던 칸만 PDF 값으로 채운다.
+//   엑셀 이관 · AX PO 파일로 들어온 PO 는 납품처 · 발주일 · Rev · 품명 · 품목 연결이 비어 있다.
+//   값이 이미 있는 칸은 건드리지 않는다 (사람이 고친 값 보호). 바뀐 것(수량 · 납기 등)이 없어도 저장할 수 있다.
+//   pair: diffOrder 의 짝 (새 줄 index → 이전 줄)
+export function fillPlan(existing, po, newLines, pair) {
+  const head = {}, labels = []
+  if (po.ship_to && !existing.ship_to) { head.ship_to = po.ship_to; labels.push(`납품처 ${po.ship_to}`) }
+  if (po.order_date && !existing.order_date) { head.order_date = po.order_date; labels.push('발주일') }
+  if (po.ccn && !existing.ccn) { head.ccn = po.ccn; labels.push(`CCN ${po.ccn}`) }
+  if (po.total != null && existing.total == null) { head.total = po.total; labels.push('발주 합계') }
+  const lines = [], cnt = { rev: 0, item: 0, price: 0, desc: 0, spec: 0, renum: 0, etc: 0 }
+  newLines.forEach((n, i) => {
+    const o = pair?.get(i)
+    if (!o) return
+    const p = {}
+    if (lineKey(o) !== lineKey(n)) { p.line_no = String(n.line_no); p.del_line = String(n.del_line || '1'); cnt.renum++ }
+    if (!o.rev && n.rev) { p.rev = n.rev; cnt.rev++ }
+    if (!o.item_id && n.item?.id) { p.item_id = n.item.id; cnt.item++ }
+    if (o.unit_price == null && n.price != null) { p.unit_price = n.price; cnt.price++ }
+    if (!o.raw_desc && n.desc) { p.raw_desc = n.desc; cnt.desc++ }
+    if (!o.spec && n.spec) { p.spec = n.spec; cnt.spec++ }
+    const before = Object.keys(p).length
+    if (!o.raw_pn && n.pn) p.raw_pn = n.pn
+    if (!o.unit && n.unit) p.unit = n.unit
+    if (Object.keys(p).length > before && !before) cnt.etc++
+    if (Object.keys(p).length) lines.push({ id: o.id, key: lineKey(o), patch: p })
+  })
+  ;[['item', '품목 연결'], ['rev', 'Rev'], ['price', '단가'], ['desc', '품명'], ['spec', '사양'], ['renum', '줄 번호 맞춤']]
+    .forEach(([k, l]) => { if (cnt[k]) labels.push(`${l} ${cnt[k]}`) })
+  if (!labels.length && cnt.etc) labels.push(`품번 · 단위 ${cnt.etc}`)
+  return { head, lines, labels, any: Object.keys(head).length > 0 || lines.length > 0 }
 }
 
 export async function loadOrderByNo(cust, poNo) {
@@ -241,12 +275,14 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   }
   // 같은 PO — 바뀐 줄만 고치고 이력 남김
   const d = diffOrder(existing.pm_order_line || [], lines)
+  const fp = fillPlan(existing, po, lines, d.pair)
+  const fillBy = new Map(fp.lines.map((x) => [x.id, x.patch]))
   const now = new Date().toISOString()
   const resetLogs = []
   for (const [i, n] of lines.entries()) {
     const o = d.pair.get(i)
     if (!o) continue
-    const patch = {}
+    const patch = { ...(fillBy.get(o.id) || {}) }
     // 번호가 달랐던 줄(엑셀 이관 등)은 발주서 번호로 맞춘다
     if (lineKey(o) !== lineKey(n)) { patch.line_no = String(n.line_no); patch.del_line = String(n.del_line || '1') }
     if (+o.qty !== +(n.qty || 0)) patch.qty = Number(n.qty) || 0
@@ -256,7 +292,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     if (n.item?.id && n.item.id !== o.item_id) patch.item_id = n.item.id
     if (o.cancelled) patch.cancelled = false
     // 납기 · 수량 · Rev · 품목이 바뀐 줄은 회신을 다시 받는다 (단가만 바뀐 것은 그대로)
-    if (o.reply && (['qty', 'due_date', 'item_id'].some((k) => k in patch) || ('rev' in patch && o.rev))) {
+    if (o.reply && ('qty' in patch || 'due_date' in patch || ('item_id' in patch && o.item_id) || ('rev' in patch && o.rev))) {
       Object.assign(patch, REPLY_CLEAR)
       resetLogs.push({ line_key: lineKey(o), field: 'reply_reset', before_val: replyText(o), after_val: '변경으로 재회신 필요' })
     }
@@ -282,16 +318,17 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     ...d.removed.map((o) => ({ line_key: lineKey(o), field: 'line_del', before_val: `${o.items?.std_code || o.raw_pn || o.raw_desc || ''} ×${o.qty}`, after_val: null })),
     ...resetLogs,
   ].map((h) => ({ ...h, order_id: existing.id, source, changed_name: meName || null }))
+  const head = { updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total, ...fp.head }
+  // 납품처가 이미 있으면 그대로 둔다 — 구매자재가 고친 값일 수 있음 (빈 칸만 채움)
+  if (fp.any) hist.push({ line_key: null, field: 'fill', before_val: null, after_val: fp.labels.join(' · '), order_id: existing.id, source, changed_name: meName || null })
   if (hist.length) {
     const { error } = await supabase.from('pm_order_change').insert(hist)
     if (error) throw error
   }
-  const head = { updated_at: now, file_name: fileName || existing.file_name, total: po.total ?? existing.total }
-  if (po.ship_to && po.ship_to !== existing.ship_to) head.ship_to = po.ship_to
   let { error } = await supabase.from('pm_order').update(head).eq('id', existing.id)
   if (error && /ship_to/.test(error.message || '') && head.ship_to) { delete head.ship_to; ({ error } = await supabase.from('pm_order').update(head).eq('id', existing.id)) }
   if (error) throw error
-  return { id: existing.id, created: false, changed: hist.length - resetLogs.length + linked, resets: resetLogs.length, linked, diff: d }
+  return { id: existing.id, created: false, changed: d.changes.length + d.added.length + d.removed.length + linked, resets: resetLogs.length, linked, fills: fp.labels, diff: d }
 }
 
 // ── AXCELIS PO 파일 반영 (고객 PO 표 → 수주대장) ─────────────────
@@ -452,7 +489,7 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일' }
+export const FIELD_LABEL = { qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움' }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)
 export function lineState(l, o) {

@@ -3,7 +3,7 @@
 import { useState, useRef } from 'react'
 import ItemPicker from '../../components/ItemPicker'
 import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
-import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel } from '../../lib/orderIntake'
+import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan } from '../../lib/orderIntake'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
@@ -59,17 +59,25 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   }
 
   const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || (f.po.warns.length > 0 && !f.force)
-  const canSave = (f) => f && !f.saved && !blocked(f) && !(f.existing && f.diff?.same)
+  // 이미 있는 PO — 바뀐 것이 없어도 빈 칸(납품처 · Rev · 품목 연결 …)을 채울 것이 있으면 저장 가능 (v4.90.1)
+  const fillOf = (f) => (f?.existing && f.diff ? fillPlan(f.existing, f.po, f.lines, f.diff.pair) : null)
+  const canSave = (f) => f && !f.saved && !blocked(f) && !(f.existing && f.diff?.same && !fillOf(f)?.any)
 
   async function save(f, idx) {
     const lines = f.lines.map((l) => ({ ...l, deliveredAll: l.deliveredAll || f.allDelivered }))
     const r = await saveOrder({ po: f.po, lines, existing: f.existing, fileName: f.name, migrated: !!f.allDelivered || lines.some((l) => l.deliveredAll), meName })
-    setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: r.created ? '등록됨' : `변경 ${r.changed}건 반영` } : x)))
+    const label = r.created ? '등록됨' : [r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? '빈 칸 채움' : ''].filter(Boolean).join(' · ')
+    setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label } : x)))
     return r
   }
   async function saveOne() {
     setBusy(true)
-    try { const r = await save(cur, sel); toastSuccess(r.created ? `${cur.po.po_no} 등록 — 품목 ${r.lines}${r.linked ? ` (발주 예정 ${r.linked}건 확정)` : ''}` : `${cur.po.po_no} 변경 ${r.changed}건 반영`); onSaved?.() }
+    try {
+      const r = await save(cur, sel)
+      toastSuccess(r.created ? `${cur.po.po_no} 등록 — 품목 ${r.lines}${r.linked ? ` (발주 예정 ${r.linked}건 확정)` : ''}`
+        : [`${cur.po.po_no}`, r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? `빈 칸 채움: ${r.fills.join(' · ')}` : ''].filter(Boolean).join(' — '))
+      onSaved?.()
+    }
     catch (e) { toastError('등록 실패: ' + e.message) }
     setBusy(false)
   }
@@ -121,7 +129,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
               const tag = f.saved ? ['bg-emerald-50 text-emerald-700', `✓ ${f.saved}`]
                 : !f.po.kind ? ['bg-red-50 text-red-600', '⚠ 모르는 양식']
                 : f.po.warns.length ? ['bg-amber-50 text-amber-700', `⚠ 확인 ${f.po.warns.length}`]
-                : f.existing ? (f.diff?.same ? ['bg-slate-100 text-slate-500', '변경 없음'] : ['bg-blue-50 text-blue-700', `변경 ${f.diff.changes.length + f.diff.added.length + f.diff.removed.length}`])
+                : f.existing ? (f.diff?.same ? (fillOf(f)?.any ? ['bg-violet-50 text-violet-700', '빈 칸 채우기'] : ['bg-slate-100 text-slate-500', '변경 없음']) : ['bg-blue-50 text-blue-700', `변경 ${f.diff.changes.length + f.diff.added.length + f.diff.removed.length}`])
                 : ['bg-emerald-50 text-emerald-700', '✓ 점검 통과']
               return (
                 <button key={i} type="button" onClick={() => setSel(i)} data-file-row={i}
@@ -187,6 +195,12 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                           {cur.diff.removed.map((o, i) => <div key={'r' + i} className="text-red-600">{lineKey(o)} 줄 빠짐: {o.items?.std_code || o.raw_pn || o.raw_desc} ×{o.qty}</div>)}
                         </div>
                       </>
+                    )}
+                    {fillOf(cur)?.any && !cur.saved && (
+                      <div className="mt-2 px-3 py-2 rounded-lg bg-violet-50 text-violet-700" data-fill>
+                        <b>빈 칸 채우기</b> — {fillOf(cur).labels.join(' · ')}
+                        <div className="text-[10.5px] text-violet-500 mt-0.5">비어 있던 칸만 발주서 값으로 채웁니다. 이미 있는 값(구매자재가 고친 납품처 등)은 그대로 둡니다. 회신은 다시 받지 않습니다.</div>
+                      </div>
                     )}
                   </div>
                 )}
@@ -259,7 +273,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   )}
                   <button type="button" disabled={busy || !canSave(cur)} onClick={saveOne} data-save
                     className="ml-auto px-5 py-2 rounded-xl text-sm font-bold bg-violet-600 text-white disabled:opacity-40">
-                    {cur.saved ? `✓ ${cur.saved}` : cur.existing ? (cur.diff?.same ? '바뀐 것 없음' : '변경 반영 → 구매자재에 알림') : '등록 → 구매자재에 알림'}
+                    {cur.saved ? `✓ ${cur.saved}` : cur.existing ? (cur.diff?.same ? (fillOf(cur)?.any ? '빈 칸 채우기' : '바뀐 것 없음') : '변경 반영 → 구매자재에 알림') : '등록 → 구매자재에 알림'}
                   </button>
                 </div>
               </div>
