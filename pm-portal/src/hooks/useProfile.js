@@ -222,6 +222,10 @@ export function canAccessPath(profile, pathname) {
   // 업무 흐름은 현장 전용 계정 말고 모두 본다 — 부서별로 보이는 흐름은 화면 안에서 가린다 (v4.91.0)
   if (pathname === '/flow') return !isFieldOnly(profile)
 
+  // 도면 배포이력은 여러 부서가 같이 쓴다 — 영업이 새 Rev 도면을 공유하고, 받은 부서가 수령 확인한다 (v4.93.0)
+  //   쓰기(공유 · 배포 · 수령 확인)는 화면 안에서 편집 권한으로 다시 가린다
+  if (pathname === '/quality/drawing-dist') return !isFieldOnly(profile)
+
   // 삭제 기록 복구는 편집 권한자만
   if (pathname === '/restore') return canEdit(profile)
 

@@ -43,7 +43,7 @@ const F = {
       { icon: '📥', name: '견적 접수 · 작성', where: '영업 › 매출견적 › 견적 접수 현황', path: () => '/sales-quote', badges: (c) => [['작성 가능', c?.rfq_ready, 'violet'], ['회신 D-3', c?.rfq_due, 'red']] },
       { icon: '🧬', name: 'BOM 확인', where: '기초자료 › BOM — 견적 품목에 BOM 이 없으면 고객 BOM 을 올림', path: (pcs) => `/customer/${pcs}/bom`, badges: (c) => [['BOM 필요', c?.rfq_bom, 'red']] },
       { icon: '📨', name: '수주 등록', where: '영업 › 수주대장 › PDF 올리기', path: () => '/orders', badges: (c) => [['이번 달 접수', c?.ord_month, 'gray']] },
-      { icon: '📐', name: '도면 확인', where: 'PO Rev 와 도면 Rev 비교 — 다르면 고객사에 요청해 생산기술에 공유', path: () => '/drawings', soon: '도면 공유 준비 중', badges: () => [] },
+      { icon: '📐', name: '도면 확인', where: 'PO Rev 와 도면 Rev 비교 — 다르면 고객사에 요청해 받은 도면을 생산기술에 공유', path: () => '/quality/drawing-dist?tab=int', links: [['도면 조회', '/drawings'], ['📤 생산기술에 공유', '/quality/drawing-dist?tab=int']], badges: () => [] },
       { icon: '💬', name: '구매자재 회신', where: '구매자재가 처리 — 기다리는 단계', other: '구매자재', path: () => '/orders', badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']] },
       { icon: '✅', name: '회신 확인 · 납기 협의', where: '영업 › 수주대장', path: () => '/orders', badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
     ],
@@ -55,6 +55,7 @@ const F = {
     outbox: [
       { from: '→ 구매자재', text: '새 PO 확인 대기 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
       { from: '→ 구매자재', text: '견적 단가 요청 — 단가 없는 부품', n: (c) => c?.rfq_price, tone: 'amber', path: '/sales-quote' },
+      { from: '→ 생산기술', text: '새 Rev 도면 공유 — 사내 배포 대기', n: (c) => c?.dwg_shared, tone: 'violet', path: '/quality/drawing-dist?tab=int' },
     ],
   },
   구매자재: {
@@ -89,21 +90,23 @@ const F = {
       { icon: '🔧', name: '생산', where: '생산 › 생산 관리', path: () => '/production/AX', badges: (c) => [['제작 대기', c?.prod_wait, 'gray'], ['제작 중', c?.prod_making, 'violet']] },
       { icon: '🛡', name: '품질 검수', where: '품질팀이 처리 — 기다리는 단계', other: '품질', path: () => '/production/AX', badges: (c) => [['검수 대기', c?.prod_quality, 'amber']] },
     ],
-    subs: [],
-    inbox: [],
+    subs: [
+      { icon: '📐', name: '도면 수령 확인', path: () => '/quality/drawing-dist?tab=int', badges: (c) => [['수령 대기', c?.dwg_unrcv, 'amber'], ['옛 Rev 반납', c?.dwg_unret, 'red']] },
+    ],
+    inbox: [{ from: '생산기술', text: '사내 배포 도면 — 수령 확인 · 옛 Rev 반납', n: (c) => c?.dwg_unrcv, tone: 'amber', path: '/quality/drawing-dist?tab=int' }],
     outbox: [{ from: '→ 구매자재', text: '자재 요청 — 처리 대기', n: (c) => c?.req_open, tone: 'amber', path: '/material-request' }],
   },
   생산기술: {
     title: '생산기술 — 설계변경 · 새 도면을 현장까지',
     desc: '설계변경 · 영업이 받은 새 Rev 도면 확인 → 사내 배포 → 생산 일정',
     steps: [
-      { icon: '🔁', name: '설계변경 · 새 도면 확인', where: '품질 › 설계변경(CN) 이력 · 영업이 공유한 도면', path: () => '/quality/cn', badges: () => [] },
-      { icon: '📐', name: '사내 도면 배포', where: '품질 › 도면 배포이력 › 사내 배포', path: () => '/quality/drawing-dist', soon: '사내 배포 탭 준비 중', badges: () => [] },
+      { icon: '🔁', name: '설계변경 · 새 도면 확인', where: '설계변경(CN) · 영업이 공유한 새 Rev 도면', path: () => '/quality/drawing-dist?tab=int', links: [['설계변경(CN)', '/quality/cn'], ['영업 공유 도면', '/quality/drawing-dist?tab=int']], badges: (c) => [['영업 공유', c?.dwg_shared, 'violet']] },
+      { icon: '📐', name: '사내 도면 배포', where: '품질 › 도면 배포이력 › 사내 배포', path: () => '/quality/drawing-dist?tab=int', badges: (c) => [['배포 대기', c?.dwg_shared, 'amber'], ['수령 확인 대기', c?.dwg_unrcv, 'gray']] },
       { icon: '🔧', name: '생산 일정', where: '생산 › 생산 관리', path: () => '/production/AX', badges: (c) => [['제작 대기', c?.prod_wait, 'gray']] },
     ],
     subs: [],
-    inbox: [],
-    outbox: [],
+    inbox: [{ from: '영업', text: '새 Rev 도면 공유 — 사내 배포 대기', n: (c) => c?.dwg_shared, tone: 'violet', path: '/quality/drawing-dist?tab=int' }],
+    outbox: [{ from: '→ 제조 · 품질', text: '사내 배포 도면 수령 확인 대기', n: (c) => c?.dwg_unrcv, tone: 'amber', path: '/quality/drawing-dist?tab=int' }],
   },
   품질: {
     title: '품질 — 초도품 · 출하 전 검수',
@@ -115,6 +118,7 @@ const F = {
     ],
     subs: [
       { icon: '🏷', name: '로트 관리', path: () => '/quality/lot', badges: () => [] },
+      { icon: '📐', name: '도면 수령 확인', path: () => '/quality/drawing-dist?tab=int', badges: (c) => [['수령 대기', c?.dwg_unrcv, 'amber']] },
       { icon: '📐', name: '도면 배포 승인', path: () => '/quality/drawing-dist', badges: (c) => [['승인 대기', c?.dist_wait, 'amber']] },
     ],
     inbox: [{ from: '제조', text: '품질 검수 대기', n: (c) => c?.prod_quality, tone: 'amber', path: '/production/AX' }],

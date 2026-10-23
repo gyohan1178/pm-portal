@@ -8,6 +8,8 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
 import FillBox from '../../components/FillBox'
+import { useLocation, useNavigate } from 'react-router-dom'
+import InternalDist from './InternalDist'
 
 // 도면 배포이력대장 — 「외주품 도면 배포 관리 지침」(에드워드 오디트 6.1.2 대응)
 //
@@ -123,7 +125,7 @@ const Chip = ({ on, tone = 'slate', children, ...p }) => (
     : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{children}</button>
 )
 
-export default function DrawingDist() {
+function ExternalDist() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
   const me = useMe()
@@ -715,6 +717,34 @@ function DrawingRows({ list, onChange }) {
         <button onClick={() => onChange([...list, EMPTY_DWG()])} className="text-xs font-bold text-indigo-600 hover:underline">＋ 도면 추가</button>
         {Object.values(dup).some((c) => c > 1) && <span className="text-[11px] text-amber-600">같은 도면·Rev 가 두 번 있습니다 — 저장할 때 하나로 합칩니다</span>}
       </div>
+    </div>
+  )
+}
+
+// 도면 배포이력 — 외주(협력사) · 사내(부서) 두 탭 (v4.93.0)
+//   주소 ?tab=int 로 사내 배포를 바로 연다 (업무 흐름 · 영업 「도면 확인」에서 옴)
+export default function DrawingDist() {
+  const loc = useLocation()
+  const nav = useNavigate()
+  const tab = new URLSearchParams(loc.search).get('tab') === 'int' ? 'int' : 'ext'
+  const go = (t) => nav(t === 'int' ? '?tab=int' : '?', { replace: true })
+  return (
+    <div className="space-y-4">
+      <nav className="flex gap-1 border-b border-slate-200" aria-label="도면 배포이력 탭">
+        {[['ext', '🏭 외주 배포 (협력사)'], ['int', '🏢 사내 배포']].map(([k, l]) => (
+          <button key={k} type="button" onClick={() => go(k)} data-dist-tab={k}
+            className={`px-4 py-2.5 text-[13px] -mb-px border-b-2 ${tab === k ? 'font-extrabold text-violet-700 border-violet-600' : 'font-bold text-slate-500 border-transparent hover:text-slate-700'}`}>{l}</button>
+        ))}
+      </nav>
+      {tab === 'int' ? (
+        <div className="space-y-3">
+          <div>
+            <p className="text-[11px] font-semibold text-slate-400">🧾 품질</p>
+            <h1 className="text-xl font-extrabold text-slate-900">도면 배포이력대장 — 사내 배포</h1>
+          </div>
+          <InternalDist />
+        </div>
+      ) : <ExternalDist />}
     </div>
   )
 }

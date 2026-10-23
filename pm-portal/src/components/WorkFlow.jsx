@@ -53,7 +53,7 @@ export default function WorkFlow() {
   if (!profile || !depts.length) return null
   const pcs = (primaryCsCode(profile) || 'ax').toLowerCase()
   const f = flowOf(cur, { c, ct, pcs })
-  const can = (p) => canAccessPath(profile, p)
+  const can = (p) => canAccessPath(profile, String(p).split('?')[0])
   const go = (p) => { if (can(p)) nav(p) }
 
   const Hand = ({ title, sub, rows, empty }) => (

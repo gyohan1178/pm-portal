@@ -37,7 +37,7 @@ export const BACKUP_TABLES = [
     ['pm_quotes', '견적'], ['pm_quote_items', '견적 품목'], ['pm_quote_drafts', '견적 임시저장'], ['quotes', '견적 (예전)'], ['pm_sales', '매출'],
   ]),
   ...G('품질 · 도면', [
-    ['pm_drawings', '도면'], ['pm_drawing_dist', '도면 배포 이력'], ['pm_cn_docs', 'CN 문서'], ['pm_cn_doc_versions', 'CN 문서 버전'],
+    ['pm_drawings', '도면'], ['pm_drawing_dist', '도면 배포 이력'], ['pm_dwg_int', '사내 도면 배포'], ['pm_dwg_int_rcpt', '사내 도면 배포 부서 수령'], ['pm_cn_docs', 'CN 문서'], ['pm_cn_doc_versions', 'CN 문서 버전'],
     ['pm_fa', '초도품'], ['pm_fa_log', '초도품 이력'], ['pm_fai_review', '초도품 자재 매칭 검토'],
   ]),
   ...G('기타', [
