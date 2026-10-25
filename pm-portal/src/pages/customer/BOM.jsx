@@ -1,4 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef, memo, Fragment } from 'react'
+import PageHead from '../../components/PageHead'
+import { DocRequestButton } from '../../components/DocRequestModal'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { downloadPurchaseHistory } from '../../lib/purchaseHistoryExcel'
@@ -970,6 +972,10 @@ export default function BOM() {
 
   return (
     <div className="space-y-4">
+      <PageHead crumb="기초자료" title="BOM"
+        desc="고객사 어셈블리별 하위 부품 목록입니다. CSV · AXCELIS 리포트로 올리면 안에 든 하위 ASSY 의 BOM 도 같이 만들어집니다.">
+        <DocRequestButton label="📎 BOM 영업에 요청" preset={{ kind: 'BOM', source: 'bom' }} />
+      </PageHead>
       <CustomerTabs />
       {/* 탭 */}
       <div className="flex items-center gap-3 flex-wrap">

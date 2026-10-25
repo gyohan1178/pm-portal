@@ -1,4 +1,6 @@
 import ItemLink from '../../components/ItemLink'
+import PageHead from '../../components/PageHead'
+import { DocRequestButton } from '../../components/DocRequestModal'
 import { useState, useMemo } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
@@ -101,7 +103,7 @@ const COLS = [
   {key:'po_number', label:'PO번호', defaultWidth:100},
   {key:'ccn', label:'CCN', defaultWidth:90},
   {key:'lines', label:'오더/DEL', defaultWidth:80},
-  {key:'division', label:'구분', defaultWidth:60},
+  {key:'division', label:'구분', defaultWidth:68},
   {key:'std_code', label:'기준코드·품명', defaultWidth:160},
   {key:'item_rev', label:'REV 대조 (S/B)', defaultWidth:150},
   {key:'parent', label:'프로젝트', defaultWidth:95},
@@ -382,11 +384,11 @@ export default function CustomerPO() {
     const revChg  = changedPOs.filter(p => p.changes.some(c => c.field === 'item_rev'))
     const askRows = filtered.filter(p => revOf(p) === 'ask')
     return [
-      { label: '전체 PO',  cnt: filtered.length, color: 'slate',  rows: filtered, kind: null },
-      { label: '납기 지연', cnt: delayed.length,  color: 'red',    rows: delayed,  kind: 'delay' },
-      { label: '납기 변경', cnt: dateChg.length,  color: 'amber',  rows: dateChg,  kind: 'date' },
-      { label: 'REV 변경', cnt: revChg.length,   color: 'violet', rows: revChg,   kind: 'rev' },
-      { label: '도면 요청', cnt: askRows.length,  color: 'orange', rows: askRows,  kind: 'ask' },
+      { label: '전체 PO',  cnt: filtered.length, color: 'slate',  rows: filtered, kind: null, note: '지금 조건(구분 · 검색) 기준' },
+      { label: '납기 지연', cnt: delayed.length,  color: 'red',    rows: delayed,  kind: 'delay', note: '약속일 지남 · 아직 진행 중' },
+      { label: '납기 변경', cnt: dateChg.length,  color: 'amber',  rows: dateChg,  kind: 'date', note: 'PO 다시 올릴 때 약속일이 바뀐 줄' },
+      { label: 'REV 변경', cnt: revChg.length,   color: 'violet', rows: revChg,   kind: 'rev', note: 'REV 가 바뀐 줄 · 도면 확인' },
+      { label: '도면 요청', cnt: askRows.length,  color: 'orange', rows: askRows,  kind: 'ask', note: 'PO REV 가 NAS 도면보다 높음' },
     ]
   }, [filtered, changedPOs, revMap])
 
@@ -470,21 +472,8 @@ export default function CustomerPO() {
           </div>
         </div>
       )}
-      <CustomerTabs />
-      <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-          {['전체','전장','하네스','구매품'].map(t=>(
-            <button key={t} onClick={()=>setDivTab(t)}
-              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${divTab===t?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{t}</button>
-          ))}
-        </div>
-        <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold cursor-pointer whitespace-nowrap">
-          <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} /> 완료 포함
-        </label>
-        <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold cursor-pointer whitespace-nowrap">
-          <input type="checkbox" checked={hideIssued} onChange={e=>setHideIssued(e.target.checked)} /> 불출완료 제외
-        </label>
-        <div className="flex-1"/>
+      <PageHead crumb={`${cs?.name || ''} · 영업`} title="고객사 PO"
+        desc="고객사에서 받은 PO 줄을 납기 · REV · 도면과 같이 봅니다. 카드를 누르면 그 건만 따로 보고, 엑셀로 복사할 수 있습니다.">
         {Object.values(picked).some(Boolean) && (
           <button onClick={()=>pickMut.mutate(filtered.filter(p=>picked[p.id]))} disabled={pickMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100 whitespace-nowrap disabled:opacity-40">🧺 장바구니 담기 ({Object.values(picked).filter(Boolean).length})</button>
@@ -495,8 +484,8 @@ export default function CustomerPO() {
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 whitespace-nowrap disabled:opacity-40">📤 PO 업로드</button>}
         <button onClick={()=>{setForm(EMPTY);setEditId(null);setShowForm(!showForm)}}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 whitespace-nowrap">➕ PO 추가</button>
-      </div>
-
+      </PageHead>
+      <CustomerTabs flush />
       {showForm&&(
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-700">{editId?'PO 수정':'고객사 PO 추가'}</p>
@@ -522,9 +511,40 @@ export default function CustomerPO() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-5 gap-2">
+        {cardData.map(c => {
+          const st = CARD_CLS[c.color]
+          return (
+            <button key={c.label}
+              onClick={() => c.cnt > 0 && setDetail(c)}
+              disabled={!c.cnt}
+              className={`rounded-xl border p-3 text-left ${st.box} ${
+                c.cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
+              <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${st.lab}`}>{c.label}</p>
+              <p className={`text-xl font-bold ${st.val}`}>{c.cnt.toLocaleString()}</p>
+              {c.note && <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{c.note}</p>}
+            </button>
+          )
+        })}
+      </div>
+
+
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 flex items-center gap-2 flex-wrap" data-cpo-toolbar>
+        <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+          {['전체','전장','하네스','구매품'].map(t=>(
+            <button key={t} onClick={()=>setDivTab(t)}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-all whitespace-nowrap ${divTab===t?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{t}</button>
+          ))}
+        </div>
+        <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold cursor-pointer whitespace-nowrap">
+          <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} /> 완료 포함
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-slate-500 font-semibold cursor-pointer whitespace-nowrap">
+          <input type="checkbox" checked={hideIssued} onChange={e=>setHideIssued(e.target.checked)} /> 불출완료 제외
+        </label>
         <input value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="PO번호·CCN·기준코드·품명·REV 검색"
+          placeholder="PO번호 · CCN · 기준코드 · 품명 · REV 검색"
           className="w-full sm:w-72 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
         <button onClick={()=>setChgTab(v=>!v)}
           className={`px-3 py-2 text-xs font-bold rounded-lg border ${chgTab?'border-amber-300 bg-amber-50 text-amber-600':'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
@@ -546,23 +566,6 @@ export default function CustomerPO() {
         <span className="text-[11px] text-slate-400 whitespace-nowrap">
           🟢 일치 · 🟠 도면 요청 · 🟡 PO 구버전 · 🔴 도면 없음
         </span>
-      </div>
-
-      {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
-      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-5 gap-2">
-        {cardData.map(c => {
-          const st = CARD_CLS[c.color]
-          return (
-            <button key={c.label}
-              onClick={() => c.cnt > 0 && setDetail(c)}
-              disabled={!c.cnt}
-              className={`rounded-xl border p-3 text-left ${st.box} ${
-                c.cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
-              <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${st.lab}`}>{c.label}</p>
-              <p className={`text-xl font-bold ${st.val}`}>{c.cnt}</p>
-            </button>
-          )
-        })}
       </div>
 
       {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
@@ -597,6 +600,9 @@ export default function CustomerPO() {
                             {st!=='match' && st!=='none' && <span className="opacity-60">→{dw?.rev}</span>}
                           </span>
                           {brev}
+                          {/* 신도면 미수령 — 영업에 도면 요청 (v4.98.0) */}
+                          {st==='ask' && <span className="ml-1"><DocRequestButton small label="📎 요청"
+                            preset={{ kind:'도면', part_no:p.items?.std_code||'', item_id:p.item_id||null, item_name:p.items?.name||'', customer_code:String(csCode||'').toUpperCase(), rev:p.item_rev||'', ref:p.po_number?`PO ${p.po_number}`:'', reason:`PO Rev ${p.item_rev||'-'} > NAS ${dw?.rev||'-'} — 신도면 필요`, source:'cpo' }} /></span>}
                         </span>
                       ) })()}
                   </td>

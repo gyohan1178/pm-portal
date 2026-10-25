@@ -16,6 +16,9 @@ import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
+import PageHead from '../../components/PageHead'
+import PoDueDialog from '../../components/PoDueDialog'
+import VendorScorecard from '../../components/VendorScorecard'
 import { printForeignPO } from '../../lib/foreignPO'
 import { genPoNumber } from '../../lib/poNumber'
 import { createPurchaseOrders, assignPoNumbers, poGroupKey } from '../../lib/createPO'
@@ -38,7 +41,8 @@ async function fetchPurchases(csId) {
     .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code,unit), vendors(name,ecount_code,payment_terms), projects(code,name)')
     .eq('customer_id', csId).eq('order_type','purchase').not('status','in','(완료,취소)')
     .order('promise_date', { ascending: true }).order('id', { ascending: true }))
-  return (data||[]).map(p=>({ ...p, isDelayed: p.promise_date && p.promise_date < today }))
+  // 지연 = 요청 납기 기준 (변경 납기를 적어도 지연은 지연) · 독촉 = 지연 중 변경 납기가 없거나 그것도 지남 (v4.98.0)
+  return (data||[]).map(p=>{ const isDelayed = !!(p.promise_date && p.promise_date < today); return { ...p, isDelayed, isChase: isDelayed && !(p.vendor_date && p.vendor_date >= today) } })
 }
 async function fetchPurchaseHistory(csId, from, to) {
   if (!csId) return []
@@ -122,10 +126,10 @@ function exportEcount(items, vendors, staffCode, revOf = {}) {
 const PO_COLS = [
   {key:'check',         label:'',         defaultWidth:36, sortable:false},
   {key:'po_number',     label:'발주번호', defaultWidth:100},
-  {key:'order_date',     label:'발주일자', defaultWidth:84},
+  {key:'order_date',     label:'발주일자', defaultWidth:96},
   {key:'std_code',      label:'기준코드·품명', defaultWidth:150},
   {key:'mfg',           label:'제조사·품번', defaultWidth:120},
-  {key:'type',          label:'구분',     defaultWidth:55},
+  {key:'type',          label:'구분',     defaultWidth:72},
   {key:'parent',        label:'상위품목', defaultWidth:84},
   {key:'lt',            label:'LT',       defaultWidth:45},
   {key:'qty_ordered',   label:'발주량',   defaultWidth:60},
@@ -133,7 +137,7 @@ const PO_COLS = [
   {key:'qty_remaining', label:'미입고',   defaultWidth:55},
   {key:'unit_price',    label:'단가',     defaultWidth:75},
   {key:'supply',        label:'공급가',   defaultWidth:80},
-  {key:'promise_date',  label:'납기약속일',defaultWidth:84},
+  {key:'promise_date',  label:'요청 납기 · 변경',defaultWidth:140},
   {key:'vendor',        label:'구매처',   defaultWidth:80},
   {key:'memo',          label:'메모',     defaultWidth:110},
   {key:'status',        label:'상태',     defaultWidth:65},
@@ -213,6 +217,8 @@ export default function PurchasePage() {
   const [sort, setSort] = useState({ key:null, dir:'asc' })
   const [bulkOrderDate, setBulkOrderDate] = useState('')
   const [bulkPromiseDate, setBulkPromiseDate] = useState('')
+  const [dueDlg, setDueDlg] = useState(null)        // 납기 바꾸기 창 — 대상 발주들 (v4.98.0)
+  const [showScore, setShowScore] = useState(false) // 협력사 성적표
   const [lines, setLines] = useState([])  // 다품목 담기
   const [showBulk, setShowBulk] = useState(false)
   const [bulkText, setBulkText] = useState('')
@@ -308,7 +314,20 @@ export default function PurchasePage() {
         const cur = must(await supabase.from('purchase_orders').select('qty_received').eq('id', editId).maybeSingle(), '입고량 확인')
         const rec = Number(cur?.qty_received) || 0
         if (payload.qty_ordered < rec) throw new Error(`이미 ${rec.toLocaleString()}개 입고됐습니다. 발주수량을 그보다 적게 할 수 없습니다.`)
-        const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error
+        // 요청 납기를 바꾸면 사유 · 이력을 남긴다 (v4.98.0) — 협력사가 바꾼 날짜는 「변경 납기」로
+        const dueChanged = (data.promise_orig||'') !== (data.promise_date||'')
+        if (dueChanged && !String(data.need_reason||'').trim()) throw new Error('요청 납기를 바꾸면 사유를 넣으세요. 협력사가 바꾼 날짜라면 목록의 「＋ 변경 납기」로 남기세요.')
+        const upd = { ...payload }
+        if (dueChanged) delete upd.promise_date
+        const{error}=await supabase.from('purchase_orders').update(upd).eq('id',editId); if(error) throw error
+        if (dueChanged) {
+          const r = await supabase.rpc('pm_po_set_need_date', { p_ids:[editId], p_date:data.promise_date||null, p_reason:String(data.need_reason).trim() })
+          if (r.error) {
+            // SQL 전이면 예전처럼 바로 고친다 (이력 없음)
+            if (r.error.code==='PGRST202'||r.error.code==='42883') { const r2 = await supabase.from('purchase_orders').update({ promise_date:data.promise_date||null }).eq('id',editId); if (r2.error) throw r2.error }
+            else throw r.error
+          }
+        }
       }
       else await createPurchaseOrders([{ ...payload, customer_id: cs?.id, item_id: selItem?.id }], { log: '구매발주 등록', customerName: cs?.name })
     },
@@ -629,7 +648,7 @@ export default function PurchasePage() {
     }
   }
   function handleEdit(p) {
-    setForm({po_number:p.po_number||'',type:p.type,qty_ordered:p.qty_ordered,order_date:p.order_date||'',promise_date:p.promise_date||'',unit_price:p.unit_price||'',memo:p.memo||''})
+    setForm({po_number:p.po_number||'',type:p.type,qty_ordered:p.qty_ordered,order_date:p.order_date||'',promise_date:p.promise_date||'',unit_price:p.unit_price||'',memo:p.memo||'',promise_orig:p.promise_date||'',need_reason:''})
     setSelVendor(p.vendor_id||''); setVendorSearch(vendors.find(v=>v.id===p.vendor_id)?.name||''); setSelItem(p.items?{id:p.item_id,name:p.items.name,std_code:p.items.std_code}:null)
     setItemSearch(p.items?.name||''); setEditId(p.id); setShowForm(true)
     // 해외 업체 발주는 외화 단가 · 환율을 같이 불러온다. 안 그러면 저장할 때 비어서 지워진다.
@@ -677,6 +696,20 @@ export default function PurchasePage() {
     [typeTab, dq, filterOrderDate, dueFilter, dueFrom, dueTo])
 
   const q = dq.trim().toLowerCase()
+  // 납기 버튼 옆 건수 — 지남 · 7일 (다른 조건은 적용, 납기 조건만 빼고 센다 · v4.96.0)
+  const dueCount = useMemo(() => {
+    const t0 = new Date(); t0.setHours(0,0,0,0)
+    let over = 0, d7 = 0, chase = 0, vchg = 0
+    for (const p of purchases) {
+      if (typeTab !== '전체' && p.type !== typeTab) continue
+      if (filterOrderDate && (p.order_date||'').slice(0,10) !== filterOrderDate) continue
+      const due = (p.promise_date||'').slice(0,10); if (!due) continue
+      if (q) { const it = p.items || {}; if (![p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code].some(x => (x || '').toLowerCase().includes(q))) continue }
+      const days = Math.round((new Date(due) - t0) / 86400000)
+      if (days < 0) { over++; if (p.isChase) chase++; else vchg++ } else if (days <= 7) d7++
+    }
+    return { over, d7, chase, vchg }
+  }, [purchases, typeTab, filterOrderDate, q])
   const filtered = useMemo(() => purchases.filter(p => {
     if (onlyMade) return madeIds.has(p.id)   // 방금 만든 것만 — 다른 조건은 보지 않는다
     if (typeTab !== '전체' && p.type !== typeTab) return false
@@ -690,6 +723,8 @@ export default function PurchasePage() {
       const d = new Date(due)
       const days = Math.round((d - today) / 86400000)
       if (dueFilter === 'over'  && !(days < 0)) return false
+      if (dueFilter === 'chase' && !(days < 0 && p.isChase)) return false
+      if (dueFilter === 'vchg'  && !(days < 0 && !p.isChase)) return false
       if (dueFilter === 'd7'    && !(days >= 0 && days <= 7)) return false
       if (dueFilter === 'd14'   && !(days >= 0 && days <= 14)) return false
       if (dueFilter === 'month') {
@@ -864,77 +899,31 @@ export default function PurchasePage() {
 
   return (
     <div className="space-y-4">
-      <CustomerTabs />
-      <div className="flex items-center gap-3 flex-wrap">
+      <PageHead crumb={`${cs?.name || ''} · 구매`} title="구매발주"
+        desc="발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다.">
+        {tab==='po' && <>
+          <button data-po-excel onClick={exportStatusExcel} title="현재 목록(검색/필터 적용)을 엑셀로 — 구매처 피드백 요청용"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
+            📥 현황 엑셀
+          </button>
+          <button onClick={()=>setShowScore(v=>!v)} data-po-score-btn
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border ${showScore?'border-violet-400 bg-violet-50 text-violet-700':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+            📊 협력사 성적표
+          </button>
+          <button onClick={()=>{setForm({...EMPTY,order_date:todayISO()});setEditId(null);setSelItem(null);setSelVendor('');setVendorSearch('');setItemSearch('');setLines([]);setShowBom(false);setBomProject(null);setShowForm(!showForm)}}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700" data-po-add>
+            ➕ 구매발주 추가
+          </button>
+        </>}
+      </PageHead>
+      <div className="flex items-center gap-3 flex-wrap justify-between">
+        <CustomerTabs flush />
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
           {[['po','📋 구매발주'],['history','📊 구매현황'],['proposal','📝 품의서']].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)}
               className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab===k?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{l}</button>
           ))}
         </div>
-        {tab==='po' && <>
-          {/* ── 1줄: 조회 조건 ── */}
-          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-            {['전체','가공','자재'].map(t=>(
-              <button key={t} onClick={()=>setTypeTab(t)}
-                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${typeTab===t?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{t}</button>
-            ))}
-          </div>
-          <div className="relative">
-            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="거래처·제조사·품번·품명 검색"
-              className="w-56 pl-8 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
-            {search&&<button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>}
-          </div>
-
-          {/* 납기 필터 — 임박 건을 골라 일괄 이월할 때 */}
-          <div className="inline-flex items-center gap-1">
-            <span className="text-[11px] font-semibold text-slate-500">납기</span>
-            <div className="flex gap-0.5 bg-slate-100 rounded-lg p-0.5">
-              {[['','전체'],['over','지남'],['d7','7일'],['d14','14일'],['month','이달'],['next','다음달'],['range','기간']].map(([k,l])=>(
-                <button key={k} onClick={()=>setDueFilter(k)}
-                  className={`px-2 py-1 text-[11px] font-semibold rounded-md ${dueFilter===k
-                    ? (k==='over' ? 'bg-rose-500 text-white' : 'bg-white text-slate-900 shadow-sm')
-                    : 'text-slate-500 hover:text-slate-700'}`}>{l}</button>
-              ))}
-            </div>
-            {dueFilter==='range' && (
-              <>
-                <input type="date" value={dueFrom} onChange={e=>setDueFrom(e.target.value)}
-                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg"/>
-                <span className="text-slate-400 text-xs">~</span>
-                <input type="date" value={dueTo} onChange={e=>setDueTo(e.target.value)}
-                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg"/>
-              </>
-            )}
-          </div>
-
-          <div className="inline-flex items-center gap-1">
-            <span className="text-[11px] font-semibold text-slate-500">발주일</span>
-            <input type="date" value={filterOrderDate} onChange={e=>setFilterOrderDate(e.target.value)}
-              title="발주일자로 필터 (이카운트 발주서 뽑을 때)"
-              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-            {filterOrderDate&&<button onClick={()=>setFilterOrderDate('')} className="text-slate-400 hover:text-slate-600 text-xs px-1">✕</button>}
-          </div>
-
-          <button onClick={()=>{
-            const allOn = sorted.length>0 && sorted.every(p=>checked[p.id])
-            if (allOn) setChecked({})
-            else setChecked(Object.fromEntries(sorted.map(p=>[p.id,true])))
-          }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
-            {sorted.length>0 && sorted.every(p=>checked[p.id]) ? '☐ 전체해제' : '☑ 전체선택'}
-            {checkedPOs.length>0 ? ` (${checkedPOs.length})` : ''}
-          </button>
-          <button onClick={exportStatusExcel} title="현재 목록(검색/필터 적용)을 엑셀로 — 구매처 피드백 요청용"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
-            📥 현황 엑셀
-          </button>
-          <div className="flex-1"/>
-          <button onClick={()=>{setForm({...EMPTY,order_date:todayISO()});setEditId(null);setSelItem(null);setSelVendor('');setVendorSearch('');setItemSearch('');setLines([]);setShowBom(false);setBomProject(null);setShowForm(!showForm)}}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-            ➕ 구매발주 추가
-          </button>
-        </>}
       </div>
 
       {/* 부족자재·소요예측에서 막 만든 발주만 보는 중 */}
@@ -944,105 +933,6 @@ export default function PurchasePage() {
           <span className="text-[11px] text-emerald-600">골라져 있으니 아래 일괄 작업으로 발주번호·납기를 채우세요</span>
           <button onClick={()=>setOnlyMade(false)}
             className="ml-auto px-3 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">전체 보기</button>
-        </div>
-      )}
-
-      {/* ── 2줄: 선택한 건에 대한 일괄 작업 (선택했을 때만 나타남) ── */}
-      {tab==='po' && checkedPOs.length>0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-xl border-2 border-indigo-200 bg-indigo-50/60 px-3 py-2">
-          <span className="text-xs font-bold text-indigo-700">
-            {checkedPOs.length}건 선택됨
-          </span>
-          <button onClick={()=>setChecked({})}
-            className="text-[11px] text-slate-500 hover:text-slate-700 underline">선택 해제</button>
-
-          {/* 물건이 왔으면 여기서 바로 입고 화면으로 — 고른 발주가 체크된 채 열린다 */}
-          {checkedPOs.some(p=>Number(p.qty_remaining)>0) && (
-            <button onClick={()=>goInbound(checkedPOs)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
-              📥 입고 처리 ({checkedPOs.filter(p=>Number(p.qty_remaining)>0).length})
-            </button>
-          )}
-
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
-
-          {/* 납기 일괄 — 이월할 때 가장 많이 쓰므로 앞에 */}
-          <div className="inline-flex items-center gap-1">
-            <input type="date" value={bulkPromiseDate} onChange={e=>setBulkPromiseDate(e.target.value)}
-              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
-            <button onClick={()=>bulkDateMut.mutate({ids:checkedPOs.map(p=>p.id),field:'promise_date',value:bulkPromiseDate})}
-              disabled={!bulkPromiseDate||bulkDateMut.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
-              📅 납기 이월 ({checkedPOs.length})
-            </button>
-          </div>
-
-          <div className="inline-flex items-center gap-1">
-            <input type="date" value={bulkOrderDate} onChange={e=>setBulkOrderDate(e.target.value)}
-              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
-            <button onClick={()=>bulkDateMut.mutate({ids:checkedPOs.map(p=>p.id),field:'order_date',value:bulkOrderDate})}
-              disabled={!bulkOrderDate||bulkDateMut.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-100 disabled:opacity-40">
-              📅 발주일자
-            </button>
-          </div>
-
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
-
-          <div className="inline-flex items-center gap-1">
-            <input value={bulkPo} onChange={e=>setBulkPo(e.target.value)} placeholder="이카운트 발주번호"
-              className="w-36 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
-            <button onClick={()=>bulkPoMut.mutate({ids:checkedPOs.map(p=>p.id),poNo:bulkPo.trim()})}
-              disabled={!bulkPo.trim()||bulkPoMut.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-100 disabled:opacity-40">
-              🔖 발주번호 부여
-            </button>
-          </div>
-
-          <button onClick={async ()=>{
-            // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
-            const need = checkedPOs.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
-            let revOf = {}
-            try {
-              for (const cid of [...new Set(need.map(p => p.customer_id))]) {
-                const m = await fetchBomRevs(cid, need.filter(p => p.customer_id === cid).map(p => p.item_id))
-                need.filter(p => p.customer_id === cid).forEach(p => { if (m[p.item_id]) revOf[p.id] = m[p.item_id] })
-              }
-            } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 내려받습니다 (' + e.message + ')') }
-            exportEcount(checkedPOs, vendors, ecountStaff, revOf)
-          }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
-            📑 이카운트 발주서
-          </button>
-          {/* 해외 업체 건이 섞여 있으면 영문 발주서도 뽑을 수 있게 한다 */}
-          {(() => {
-            const fv = [...new Set(checkedPOs.map(p => p.vendor_id))]
-              .map(id => vendorMap[id]).filter(v => v?.is_foreign)
-            if (fv.length !== 1) return null
-            const rows = checkedPOs.filter(p => p.vendor_id === fv[0].id)
-            return (
-              <button onClick={() => {
-                  const r = printForeignPO(rows, fv[0])
-                  if (!r.ok) { toastError(r.msg); return }
-                  toastSuccess(`${r.cnt}건 · ${r.cur} ${r.total.toLocaleString()}`)
-                  if (r.odd?.length) {
-                    toastError(`발주 단위(75M 배수)가 아닌 건: ${r.odd.slice(0,3).join(', ')}${r.odd.length>3?` 외 ${r.odd.length-3}건`:''}`)
-                  }
-                }}
-                title="해외 업체용 영문 발주서 — 인쇄하거나 PDF 로 저장합니다"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-100">
-                🌏 해외 발주서 ({rows.length})
-              </button>
-            )
-          })()}
-
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
-
-          <button onClick={()=>{ setDelWord(''); setDelAsk(true) }}
-            title="선택한 발주를 지웁니다 — 되돌릴 수 없습니다"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50">
-            🗑 삭제 ({checkedPOs.length})
-          </button>
         </div>
       )}
 
@@ -1145,8 +1035,12 @@ export default function PurchasePage() {
                     </div>
                   </div>
                   <div>
-                    <label className="block text-xs font-bold text-slate-500 mb-1">납기 약속일</label>
-                    <input type="date" value={form.promise_date} onChange={f('promise_date')} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                    <label className="block text-xs font-bold text-slate-500 mb-1">요청 납기 <span className="font-normal text-slate-400">(우리가 필요한 날)</span></label>
+                    <input type="date" value={form.promise_date} onChange={f('promise_date')} data-po-promise className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+                    {editId && (form.promise_orig||'') !== (form.promise_date||'') && (
+                      <input value={form.need_reason||''} onChange={f('need_reason')} placeholder="요청 납기 바꾼 사유 (필수) — 예: 고객사 일정 연기" data-po-need-reason
+                        className="mt-1 w-full px-3 py-1.5 text-xs border border-amber-300 bg-amber-50 rounded-lg"/>
+                    )}
                   </div>
                 </div>
                 <p className="text-[11px] text-slate-400 mt-1.5">발주번호는 등록 후 체크 → 상단 "발주번호 부여"로 이카운트 값 일괄 입력</p>
@@ -1442,11 +1336,167 @@ export default function PurchasePage() {
             </div>
           )}
 
-          <div className="kpi-grid grid grid-cols-4 gap-3">
-            <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">발주 건수</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
-            <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">납기 지연</p><p className="text-xl font-bold text-red-600">{filtered.filter(p=>p.isDelayed).length}</p></div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">D-7 임박</p><p className="text-xl font-bold text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length}</p></div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1">입고 예정</p><p className="text-xl font-bold text-emerald-700">{filtered.reduce((a,p)=>a+(p.qty_remaining||0),0)}</p></div>
+
+          {showScore && <VendorScorecard onClose={()=>setShowScore(false)} />}
+          <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-3" data-po-kpi>
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-[13px] text-slate-500">발주 건수</p><p className="text-[26px] leading-tight font-extrabold font-mono text-slate-900">{filtered.length.toLocaleString()}</p><p className="text-[11.5px] text-slate-400">지금 목록 기준 (조건 · 검색 적용)</p></div>
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><p className="text-[13px] text-red-500">납기 지연</p><p className="text-[26px] leading-tight font-extrabold font-mono text-red-600">{filtered.filter(p=>p.isDelayed).length.toLocaleString()}</p><p className="text-[11.5px] text-red-400">요청 납기 지남 · 독촉 {filtered.filter(p=>p.isChase).length.toLocaleString()} · 변경 약속 {filtered.filter(p=>p.isDelayed&&!p.isChase).length.toLocaleString()}</p></div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><p className="text-[13px] text-amber-600">D-7 임박</p><p className="text-[26px] leading-tight font-extrabold font-mono text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length.toLocaleString()}</p><p className="text-[11.5px] text-amber-600/80">7일 안에 약속일이 오는 건</p></div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><p className="text-[13px] text-emerald-600">입고 예정</p><p className="text-[26px] leading-tight font-extrabold font-mono text-emerald-700">{filtered.reduce((a,p)=>a+(p.qty_remaining||0),0).toLocaleString()}</p><p className="text-[11.5px] text-emerald-600/80">미입고 수량 합계</p></div>
+          </div>
+
+          {/* 조회 조건 + 선택한 건 일괄 작업 — 표 바로 위 한 카드 (선택 줄은 늘 같은 자리라 표가 밀리지 않는다) */}
+          <div className="rounded-xl border border-slate-200 bg-white" data-po-toolbar>
+            <div className="flex items-center gap-3 flex-wrap px-3 py-2.5">
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+            {['전체','가공','자재'].map(t=>(
+              <button key={t} onClick={()=>setTypeTab(t)}
+                className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${typeTab===t?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{t}</button>
+            ))}
+          </div>
+          {/* 납기 필터 — 임박 건을 골라 일괄 이월할 때 */}
+          <div className="inline-flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">납기</span>
+            <div className="flex gap-0.5 bg-slate-100 rounded-lg p-0.5">
+              {[['','전체'],['over','지남'],['chase','독촉'],['vchg','변경 약속'],['d7','7일'],['d14','14일'],['month','이달'],['next','다음달'],['range','기간']].map(([k,l])=>(
+                <button key={k} onClick={()=>setDueFilter(k)}
+                  className={`px-2 py-1 text-[11px] font-semibold rounded-md ${dueFilter===k
+                    ? (k==='over' ? 'bg-rose-500 text-white' : 'bg-white text-slate-900 shadow-sm')
+                    : 'text-slate-500 hover:text-slate-700'}`} data-due-filter={k}>{l}{['over','d7','chase','vchg'].includes(k) && dueCount[k]>0 && <b className={`ml-1 font-mono ${dueFilter===k&&k==='over'?'text-white':(k==='over'||k==='chase')?'text-rose-600':'text-amber-700'}`}>{dueCount[k].toLocaleString()}</b>}</button>
+              ))}
+            </div>
+            {dueFilter==='range' && (
+              <>
+                <input type="date" value={dueFrom} onChange={e=>setDueFrom(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg"/>
+                <span className="text-slate-400 text-xs">~</span>
+                <input type="date" value={dueTo} onChange={e=>setDueTo(e.target.value)}
+                  className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg"/>
+              </>
+            )}
+          </div>
+
+          <div className="inline-flex items-center gap-1">
+            <span className="text-[11px] font-semibold text-slate-500">발주일</span>
+            <input type="date" value={filterOrderDate} onChange={e=>setFilterOrderDate(e.target.value)}
+              title="발주일자로 필터 (이카운트 발주서 뽑을 때)"
+              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            {filterOrderDate&&<button onClick={()=>setFilterOrderDate('')} className="text-slate-400 hover:text-slate-600 text-xs px-1">✕</button>}
+          </div>
+
+              <div className="flex-1"/>
+          <div className="relative">
+            <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="거래처 · 제조사 · 품번 · 품명 · 발주번호 · 프로젝트"
+              className="w-72 pl-8 pr-7 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            <span className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
+            {search&&<button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>}
+          </div>
+            </div>
+            <div className={`flex flex-wrap items-center gap-2 px-3 py-2 border-t border-slate-100 rounded-b-xl ${checkedPOs.length>0 ? 'bg-indigo-50/60' : 'bg-slate-50/60'}`} data-po-selbar>
+          <button onClick={()=>{
+            const allOn = sorted.length>0 && sorted.every(p=>checked[p.id])
+            if (allOn) setChecked({})
+            else setChecked(Object.fromEntries(sorted.map(p=>[p.id,true])))
+          }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
+            {sorted.length>0 && sorted.every(p=>checked[p.id]) ? '☐ 전체해제' : '☑ 전체선택'}
+            {checkedPOs.length>0 ? ` (${checkedPOs.length})` : ''}
+          </button>
+              {checkedPOs.length===0
+                ? <span className="text-[11.5px] text-slate-400">체크하면 여기서 입고 처리 · 납기 이월 · 발주번호 부여 · 이카운트 발주서 · 삭제를 한 번에 합니다</span>
+                : <>
+          <span className="text-xs font-bold text-indigo-700">
+            {checkedPOs.length}건 선택됨
+          </span>
+          <button onClick={()=>setChecked({})}
+            className="text-[11px] text-slate-500 hover:text-slate-700 underline">선택 해제</button>
+
+          {/* 물건이 왔으면 여기서 바로 입고 화면으로 — 고른 발주가 체크된 채 열린다 */}
+          {checkedPOs.some(p=>Number(p.qty_remaining)>0) && (
+            <button onClick={()=>goInbound(checkedPOs)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
+              📥 입고 처리 ({checkedPOs.filter(p=>Number(p.qty_remaining)>0).length})
+            </button>
+          )}
+
+          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+
+          {/* 납기 일괄 — 이월할 때 가장 많이 쓰므로 앞에 */}
+          <div className="inline-flex items-center gap-1">
+            {/* 납기 — 「협력사가 바꿈(변경 납기)」과 「우리 필요일 변경」을 나눠 사유 · 이력과 함께 남긴다 (v4.98.0) */}
+            <button onClick={()=>setDueDlg(checkedPOs)} data-po-due-btn
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
+              📅 납기 이월 · 변경 ({checkedPOs.length})
+            </button>
+          </div>
+
+          <div className="inline-flex items-center gap-1">
+            <input type="date" value={bulkOrderDate} onChange={e=>setBulkOrderDate(e.target.value)}
+              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
+            <button onClick={()=>bulkDateMut.mutate({ids:checkedPOs.map(p=>p.id),field:'order_date',value:bulkOrderDate})}
+              disabled={!bulkOrderDate||bulkDateMut.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-100 disabled:opacity-40">
+              📅 발주일자
+            </button>
+          </div>
+
+          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+
+          <div className="inline-flex items-center gap-1">
+            <input value={bulkPo} onChange={e=>setBulkPo(e.target.value)} placeholder="이카운트 발주번호"
+              className="w-36 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
+            <button onClick={()=>bulkPoMut.mutate({ids:checkedPOs.map(p=>p.id),poNo:bulkPo.trim()})}
+              disabled={!bulkPo.trim()||bulkPoMut.isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-100 disabled:opacity-40">
+              🔖 발주번호 부여
+            </button>
+          </div>
+
+          <button onClick={async ()=>{
+            // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
+            const need = checkedPOs.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
+            let revOf = {}
+            try {
+              for (const cid of [...new Set(need.map(p => p.customer_id))]) {
+                const m = await fetchBomRevs(cid, need.filter(p => p.customer_id === cid).map(p => p.item_id))
+                need.filter(p => p.customer_id === cid).forEach(p => { if (m[p.item_id]) revOf[p.id] = m[p.item_id] })
+              }
+            } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 내려받습니다 (' + e.message + ')') }
+            exportEcount(checkedPOs, vendors, ecountStaff, revOf)
+          }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
+            📑 이카운트 발주서
+          </button>
+          {/* 해외 업체 건이 섞여 있으면 영문 발주서도 뽑을 수 있게 한다 */}
+          {(() => {
+            const fv = [...new Set(checkedPOs.map(p => p.vendor_id))]
+              .map(id => vendorMap[id]).filter(v => v?.is_foreign)
+            if (fv.length !== 1) return null
+            const rows = checkedPOs.filter(p => p.vendor_id === fv[0].id)
+            return (
+              <button onClick={() => {
+                  const r = printForeignPO(rows, fv[0])
+                  if (!r.ok) { toastError(r.msg); return }
+                  toastSuccess(`${r.cnt}건 · ${r.cur} ${r.total.toLocaleString()}`)
+                  if (r.odd?.length) {
+                    toastError(`발주 단위(75M 배수)가 아닌 건: ${r.odd.slice(0,3).join(', ')}${r.odd.length>3?` 외 ${r.odd.length-3}건`:''}`)
+                  }
+                }}
+                title="해외 업체용 영문 발주서 — 인쇄하거나 PDF 로 저장합니다"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-100">
+                🌏 해외 발주서 ({rows.length})
+              </button>
+            )
+          })()}
+
+          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+
+          <button onClick={()=>{ setDelWord(''); setDelAsk(true) }}
+            title="선택한 발주를 지웁니다 — 되돌릴 수 없습니다"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50">
+            🗑 삭제 ({checkedPOs.length})
+          </button>
+                </>}
+            </div>
           </div>
 
           {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
@@ -1479,7 +1529,7 @@ export default function PurchasePage() {
                             checked[p.id] ? 'bg-indigo-50' : p.isDelayed ? 'bg-red-50/30 hover:bg-red-50/50' : 'hover:bg-slate-50'}`}>
                           <td className="px-3 py-2"><input type="checkbox" checked={!!checked[p.id]} onChange={e=>setChecked(prev=>({...prev,[p.id]:e.target.checked}))} className="w-3.5 h-3.5 accent-indigo-600"/></td>
                           <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{p.po_number||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{p.order_date||'-'}</td>
+                          <td className="px-3 py-2 text-slate-500 font-mono whitespace-nowrap">{p.order_date||'-'}</td>
                           <td className="px-3 py-2 overflow-hidden">
                             <div className="font-mono text-xs text-indigo-600 truncate">{p.items?.std_code||'-'}{p.item_rev && <span className="ml-1 text-[10px] font-bold text-violet-600" title="발주할 때 BOM 에서 따라온 도면 REV">REV {p.item_rev}</span>}</div>
                             <div className="text-[11px] text-slate-500 truncate">{p.items?.name||''}</div>
@@ -1496,10 +1546,14 @@ export default function PurchasePage() {
                           <td className="px-3 py-2 text-right font-bold text-slate-900">{p.qty_remaining}</td>
                           <td className="px-3 py-2 text-right text-slate-500">{p.unit_price?Number(p.unit_price).toLocaleString():'-'}</td>
                           <td className="px-3 py-2 text-right text-slate-500">{supply?supply.toLocaleString():'-'}</td>
-                          <td className="px-3 py-2"><span className={`${diff!==null&&diff<0?'text-red-600 font-bold':diff!==null&&diff<=7?'text-amber-700 font-semibold':'text-slate-600'}`}>{p.promise_date||'-'}</span></td>
+                          <td className="px-3 py-2 whitespace-nowrap"><span className={`font-mono ${diff!==null&&diff<0?'text-red-600 font-bold':diff!==null&&diff<=7?'text-amber-700 font-semibold':'text-slate-600'}`}>{p.promise_date||'-'}</span>{diff!==null && (diff<0 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-red-50 text-red-600 text-[10.5px] font-bold">{-diff}일 지남</span> : diff<=7 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-amber-50 text-amber-700 text-[10.5px] font-bold">D-{diff}</span> : null)}
+                            {/* 협력사 변경 납기 (v4.98.0) — 누르면 바꾸기 · 이력 */}
+                            <button type="button" onClick={e=>{e.stopPropagation();setDueDlg([p])}} data-vendor-date={p.vendor_date||''}
+                              className={`block text-[10.5px] font-bold text-left ${p.vendor_date?(p.vendor_date<today?'text-red-600':'text-amber-700'):'text-slate-300 opacity-0 group-hover:opacity-100'}`}>
+                              {p.vendor_date?`→ 변경 ${p.vendor_date.slice(5)}${p.vendor_date<today?' (지남)':''}`:'＋ 변경 납기'}</button></td>
                           <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">{p.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500 overflow-hidden truncate" title={p.memo||''}>{p.memo||'-'}</td>
-                          <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':'bg-emerald-50 text-emerald-700'}`}>{p.isDelayed?'지연':'진행중'}</span></td>
+                          <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isChase?'bg-red-50 text-red-600':p.isDelayed?'bg-amber-50 text-amber-700':'bg-emerald-50 text-emerald-700'}`}>{p.isChase?'지연 · 독촉':p.isDelayed?'지연 · 변경 약속':'진행중'}</span></td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1">
                               {Number(p.qty_remaining)>0 && (
@@ -1671,6 +1725,7 @@ export default function PurchasePage() {
           )}
         </div>
       )}
+      {dueDlg && dueDlg.length > 0 && <PoDueDialog pos={dueDlg} onClose={()=>setDueDlg(null)} onDone={()=>setChecked({})} />}
     </div>
   )
 }

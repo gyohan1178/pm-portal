@@ -6,7 +6,8 @@ import { must } from '../../lib/db'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
-import { useCanEdit, useMe } from '../../hooks/useProfile'
+import { useCanEdit, useMe, useMyProfile } from '../../hooks/useProfile'
+import { isLead } from '../../lib/workflow'
 import FillBox from '../../components/FillBox'
 import { useLocation, useNavigate } from 'react-router-dom'
 import InternalDist from './InternalDist'
@@ -125,9 +126,22 @@ const Chip = ({ on, tone = 'slate', children, ...p }) => (
     : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{children}</button>
 )
 
+// 외주 배포 대장 권한 (v4.98.0) — 쓰기는 구매자재팀, 전결 승인은 구매자재 팀장(팀장급) · 관리자. 품질 · 팀장급은 열람만
+//   ⚠ 화면에서 가리는 것 — 대장 자체는 지금처럼 편집 권한(RLS pm_can_edit)으로 지킨다
+export function extDistAccess(profile, canEditRole = true) {
+  const admin = profile?.role === 'admin'
+  const buyer = admin || profile?.dept === '구매자재'
+  const write = !!canEditRole && buyer
+  return { view: admin || isLead(profile) || ['구매자재', '품질'].includes(profile?.dept), write, approve: write && (admin || isLead(profile)) }
+}
+
 function ExternalDist() {
   const qc = useQueryClient()
-  const canEdit = useCanEdit()
+  const canEditRole = useCanEdit()
+  const { data: profile } = useMyProfile()
+  const acc = extDistAccess(profile, canEditRole)
+  const canEdit = acc.write
+  const canApprove = acc.approve
   const me = useMe()
 
   const [q, setQ] = useState('')
@@ -346,6 +360,11 @@ function ExternalDist() {
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">대장을 못 불러왔습니다 — {error.message}</div>}
+      {profile && !canEdit && (
+        <div data-dd-readonly className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[12.5px] text-slate-600">
+          📖 열람 전용입니다 — 배포 기록은 구매자재팀이 쓰고, 전결 승인은 구매자재 팀장이 합니다.
+        </div>
+      )}
       {undo && canEdit && (
         <div data-dd-undo className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
           <span>방금 한 작업: <b>{undo.label}</b></span>
@@ -378,7 +397,7 @@ function ExternalDist() {
         <Chip on={only === '사전승인'} onClick={() => setOnly(only === '사전승인' ? '' : '사전승인')}>사전승인 대상만</Chip>
         <Chip on={only === '미폐기통보'} onClick={() => setOnly(only === '미폐기통보' ? '' : '미폐기통보')}>폐기통보 안 한 것</Chip>
         <span className="text-xs text-slate-400">{n(view.length)}건</span>
-        {canEdit && sel.size > 0 && (
+        {canApprove && sel.size > 0 && (
           <div className="ml-auto flex items-center gap-2">
             <span className="text-xs font-bold text-indigo-600">{n(sel.size)}건 고름</span>
             <button onClick={() => approve([...sel], true)}
@@ -395,7 +414,7 @@ function ExternalDist() {
         <table className="w-full text-xs">
           <thead className="bg-slate-50 text-slate-400 sticky top-0 z-10">
             <tr className="text-left">
-              {canEdit && (
+              {canApprove && (
                 <th className="px-2 py-2 w-8">
                   <input type="checkbox" checked={view.length > 0 && view.every((r) => sel.has(r.id))}
                     onChange={(e) => setSel(e.target.checked ? new Set(view.map((r) => r.id)) : new Set())} />
@@ -419,7 +438,7 @@ function ExternalDist() {
             {!isLoading && !view.length && <tr><td colSpan={12} className="py-10 text-center text-slate-400">해당하는 줄이 없습니다.</td></tr>}
             {view.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
-                {canEdit && <td className="px-2 py-2"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>}
+                {canApprove && <td className="px-2 py-2"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>}
                 <td className="px-2 py-2 tabular-nums text-slate-400">{r.seq}</td>
                 <td className="px-2 py-2 tabular-nums text-slate-600">{r.dist_date}</td>
                 <td className="px-2 py-2">
@@ -726,12 +745,15 @@ function DrawingRows({ list, onChange }) {
 export default function DrawingDist() {
   const loc = useLocation()
   const nav = useNavigate()
-  const tab = new URLSearchParams(loc.search).get('tab') === 'int' ? 'int' : 'ext'
+  const { data: profile } = useMyProfile()
+  // 외주 배포 대장은 구매자재 · 품질 · 팀장급 · 관리자만 (v4.98.0) — 그 밖 부서는 사내 배포 탭만
+  const extOk = !profile || extDistAccess(profile).view
+  const tab = !extOk || new URLSearchParams(loc.search).get('tab') === 'int' ? 'int' : 'ext'
   const go = (t) => nav(t === 'int' ? '?tab=int' : '?', { replace: true })
   return (
     <div className="space-y-4">
       <nav className="flex gap-1 border-b border-slate-200" aria-label="도면 배포이력 탭">
-        {[['ext', '🏭 외주 배포 (협력사)'], ['int', '🏢 사내 배포']].map(([k, l]) => (
+        {[['ext', '🏭 외주 배포 (협력사)'], ['int', '🏢 사내 배포']].filter(([k]) => k === 'int' || extOk).map(([k, l]) => (
           <button key={k} type="button" onClick={() => go(k)} data-dist-tab={k}
             className={`px-4 py-2.5 text-[13px] -mb-px border-b-2 ${tab === k ? 'font-extrabold text-violet-700 border-violet-600' : 'font-bold text-slate-500 border-transparent hover:text-slate-700'}`}>{l}</button>
         ))}

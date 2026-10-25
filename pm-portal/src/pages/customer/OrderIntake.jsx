@@ -7,6 +7,7 @@
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
 import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
+import PageHead from '../../components/PageHead'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
@@ -462,12 +463,10 @@ export default function OrderIntake() {
 
   return (
     <div className="space-y-4 min-w-0" data-order-intake data-view={isBuy ? 'buy' : 'sales'}>
-      <div className="flex items-start gap-3">
-        <p className="page-desc text-xs text-slate-400 flex-1 leading-relaxed">
-          전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
-          {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}
-        </p>
-        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`} data-view-badge>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
+      <PageHead crumb="영업" title="수주대장"
+        desc={<>전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
+          {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}</>}>
+        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`} data-view-badge>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
         {isAdmin && isPurchasing(profile) && (
           <button type="button" onClick={() => { setAsSales((v) => !v); setChecked(new Set()) }} data-as-sales
             title="영업 · 타부서 계정이 보는 화면을 미리 봅니다 (관리자만)"
@@ -475,7 +474,8 @@ export default function OrderIntake() {
             {asSales ? '구매자재 화면으로 돌아가기' : '영업 화면으로 보기'}
           </button>
         )}
-      </div>
+      
+      </PageHead>
 
       <nav className="flex gap-1 border-b border-slate-200 overflow-x-auto" aria-label="수주대장 탭" data-oi-tabs>
         {[['list', '수주 목록'], ['ecount', '이카운트 대조'], ['cleanup', '코드 · BOM 정리']].map(([k, l]) => (

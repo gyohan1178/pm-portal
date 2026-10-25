@@ -1,4 +1,5 @@
 import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react'
+import { DocRequestButton } from '../../components/DocRequestModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
@@ -432,6 +433,7 @@ export default function FaiNavigator() {
             초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.
           </p>
         </div>
+        <DocRequestButton preset={{ kind: '사양서', customer_code: 'AX', source: 'fai', reason: '초도품 자재 매칭 — 등록 제조사 확인' }} />
         <p className="text-[10px] text-slate-400 text-right leading-relaxed">
           FAI Navigator {APP_VER}<br />Developed by 김교한 (Gyohan Kim) · © 2026 진선테크 구매자재팀<br />무단 수정·재배포 금지
         </p>

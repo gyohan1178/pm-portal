@@ -52,7 +52,8 @@ async function fetchPOsFor(customerIds) {
 async function fetchBuyPOsFor(customerIds) {
   const per = await Promise.all(customerIds.map(cid => fetchAll(() =>
     supabase.from('purchase_orders')
-      .select('id,po_number,promise_date,order_date,qty_ordered,qty_received,qty_remaining,unit_price,status,customer_id,item_id,vendor_id, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
+      // * — 변경 납기(vendor_date · v4.98.0)는 SQL 전에는 없는 칸이라 이름으로 고르지 않는다
+      .select('*, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
       .eq('customer_id', cid)
       .eq('order_type', 'purchase')          // neq 는 null 을 걸러내 못 잡는다
       // 지난 것(지연)과 앞으로 2주(예정)를 함께 가져온다

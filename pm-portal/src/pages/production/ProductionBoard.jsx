@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
@@ -142,6 +142,25 @@ export default function ProductionBoard() {
     return { hot: shown.filter((c) => c._hot).length, lanes, lateElec, missJobs, missCount: missJobs.reduce((a, c) => a + c._miss.length, 0), total: shown.length, next }
   }, [rows, meta, mainVer])
 
+  // 움직임 (v4.97.0) — 5분마다 새로 받을 때 다음 단계로 넘어간 카드는 옆 칸으로 미끄러져 들어오고,
+  //   새로 지연된 카드는 빨간 테두리가 4번 깜빡인다. 처음 켤 때는 움직이지 않는다
+  const laneSig = view.lanes.map((L) => L.list.map((c) => `${c.id}:${L.k}:${c._d != null && c._d < 0 ? 1 : 0}`).join(',')).join('|')
+  const prevBoard = useRef(null)
+  const [fx, setFx] = useState(() => ({ moved: new Set(), late: new Set() }))
+  useEffect(() => {
+    const lane = new Map(), late = new Set()
+    view.lanes.forEach((L) => L.list.forEach((c) => { lane.set(c.id, L.k); if (c._d != null && c._d < 0) late.add(c.id) }))
+    const prev = prevBoard.current
+    prevBoard.current = { lane, late }
+    if (!prev || !prev.lane.size) return undefined
+    const moved = new Set([...lane].filter(([id, k]) => prev.lane.has(id) && prev.lane.get(id) !== k).map(([id]) => id))
+    const nl = new Set([...late].filter((id) => prev.lane.has(id) && !prev.late.has(id)))
+    if (!moved.size && !nl.size) return undefined
+    setFx({ moved, late: nl })
+    const t = setTimeout(() => setFx({ moved: new Set(), late: new Set() }), 6000)
+    return () => clearTimeout(t)
+  }, [laneSig]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const pulled = schChg.filter((c) => c.to_date && c.from_date && c.to_date < c.from_date)
 
   // 아래 알림 한 줄 — 8초마다 돌아간다
@@ -221,7 +240,7 @@ export default function ProductionBoard() {
               <div style={{ padding: '0 6px 10px', borderBottom: `3px solid ${L.line}`, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between' }}>
                   <span style={{ fontSize: narrow ? 20 : 28, fontWeight: 800 }}>{L.l}</span>
-                  <span style={{ ...big, fontSize: narrow ? 40 : 66, lineHeight: 0.8, color: L.line }}>{L.list.length}</span>
+                  <span style={{ ...big, fontSize: narrow ? 40 : 66, lineHeight: 0.8, color: L.line }}><span key={L.list.length} className={prevBoard.current ? 'pm-pop' : ''}>{L.list.length}</span></span>
                 </div>
                 <span style={{ fontSize: narrow ? 13 : 17, color: '#C3CEDF' }}>{view.next[L.k]}</span>
               </div>
@@ -230,7 +249,8 @@ export default function ProductionBoard() {
                 const late = c._d != null && c._d < 0
                 const near = c._d === 0 || c._d === 1
                 return (
-                  <div key={c.id} data-card={c.id} style={{ borderRadius: 12, padding: '9px 12px', background: late ? 'rgba(255,107,94,0.16)' : '#182338', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div key={c.id} data-card={c.id} data-card-fx={fx.moved.has(c.id) ? 'moved' : fx.late.has(c.id) ? 'late' : undefined}
+                    className={fx.moved.has(c.id) ? 'pm-slide-in' : fx.late.has(c.id) ? 'pm-late-blink' : ''} style={{ borderRadius: 12, padding: '9px 12px', background: late ? 'rgba(255,107,94,0.16)' : '#182338', display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {/* 첫 줄이 넘치면 D-day 가 잘리지 않고 아랫줄로 내려간다 */}
                     <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', columnGap: 7, rowGap: 3, minWidth: 0 }}>
                       <span style={{ ...big, fontWeight: 700, fontSize: narrow ? 21 : 27, letterSpacing: '-0.02em', whiteSpace: 'nowrap' }}>{c.pn}</span>

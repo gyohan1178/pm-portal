@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PageHead from '../../components/PageHead'
 import ItemPicker from '../../components/ItemPicker'
 import VendorPicker from '../../components/VendorPicker'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -38,12 +39,9 @@ export default function Quote() {
   const [mode, setMode] = useState('one')   // one 한 품목 · bulk 여러 품목 (v4.86.0)
   return (
     <div className="space-y-4">
-      <div>
-        <p className="page-desc text-xs text-slate-400">
-          협력사 견적 단가를 등록합니다. 한 품목씩 넣거나, 견적서 표를 붙여넣어 여러 품목을 한 번에 등록합니다.
-          저장하면 견적 이력이 남고, 고른 품목은 「최근 매입가」도 바뀝니다.
-        </p>
-      </div>
+      <PageHead crumb="기초자료" title="품목 단가 등록"
+        desc="협력사 견적 단가를 등록합니다. 한 품목씩 넣거나, 견적서 표를 붙여넣어 여러 품목을 한 번에 등록합니다. 저장하면 견적 이력이 남고, 고른 품목은 「최근 매입가」도 바뀝니다."></PageHead>
+
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit" data-quote-mode>
         {[['one', '한 품목'], ['bulk', '📋 여러 품목 (견적서 붙여넣기)']].map(([k, l]) => (
           <button key={k} type="button" onClick={() => setMode(k)} data-quote-tab={k}
@@ -112,7 +110,7 @@ function QuoteOne() {
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         {/* 왼쪽: 견적 입력 */}
         <div className="space-y-4">
           <div className="rounded-xl border border-slate-200 p-4 space-y-3">

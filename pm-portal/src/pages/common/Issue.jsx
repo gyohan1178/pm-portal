@@ -862,9 +862,9 @@ export default function Issue() {
       {/* 장바구니 — 담긴 게 있으면 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 (머리글 · 출고 처리 단추가 늘 보이게) */}
       <div ref={cartRef} data-issue-cart className={`border border-slate-200 rounded-xl overflow-hidden ${cart.length ? 'flex flex-col' : ''}`}
         style={cart.length && cartH ? { height: cartH + 'px' } : undefined}>
-        <div className="px-3 py-2 bg-slate-50 flex items-center justify-between shrink-0">
+        <div className="px-3 py-2 bg-slate-50 flex items-center justify-between flex-wrap gap-2 shrink-0">
           <span className="text-xs font-bold text-slate-600">장바구니 {cart.length}건 · 불출 {issuedCnt} / 결품 {shortCnt}</span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 [&>button]:whitespace-nowrap">
             <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)\n※ 담기함은 같은 고객사 사용자끼리 공유됩니다. 지금 화면에 보이는 줄만 지웁니다.`)) clearMut.mutate(cart.map(c => c.id)) }}
               disabled={!cart.length || clearMut.isPending} className="px-3 py-1 text-xs font-semibold rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 초기화</button>
             <button onClick={() => setTimeout(printIssueSheet, 100)} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>

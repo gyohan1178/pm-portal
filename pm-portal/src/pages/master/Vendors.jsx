@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react'
+import PageHead from '../../components/PageHead'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -231,6 +232,8 @@ export default function Vendors() {
 
   return (
     <div className="space-y-4">
+      <PageHead crumb="기초자료" title="협력사"
+        desc="구매처 · 가공 협력사의 연락처 · 결제조건 · 해외 여부를 관리합니다. 결제조건은 품의서 · 결제 계획과 연결됩니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="협력사명 검색"
           className="w-56 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />

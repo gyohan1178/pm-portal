@@ -1,4 +1,5 @@
 import { useUndo } from '../../components/UndoBar'
+import PageHead from '../../components/PageHead'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { refreshProcurement } from '../../lib/refresh'
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -528,9 +529,9 @@ export default function Outbound() {
           onPrint={(range) => sendOutLabels(
             range ? labelConfirm.labels.slice(range.a - 1, range.b) : labelConfirm.labels)} />
       )}
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-bold text-slate-800">📤 ASSY 출고 <span className="ml-1 text-xs font-normal text-slate-400">프로젝트를 골라 BOM 단위로 출고</span></p>
-        <Link to="/outbound-history" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📋 출고 현황 보기 →</Link>
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <PageHead crumb="자재 · 일일 업무" title="📤 ASSY 출고" desc="고객사 · 프로젝트를 고르면 BOM 단위로 필요한 부품을 한 번에 출고합니다. 고객사 PO 를 고르면 대수가 자동으로 채워집니다." />
+        <Link to="/outbound-history" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📋 출고 현황 보기 →</Link>
       </div>
 
       {tab==='process' && (

@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from 'react'
+import { DocRequestButton } from '../../components/DocRequestModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
@@ -247,6 +248,7 @@ function CnList({ onOpen }) {
             생산기술팀은 「리뷰」(완료 / 불필요)를 고르고, 자사 품번을 몇 호기부터 적용할지 상세 화면에 적어 둡니다.
           </p>
         </div>
+        <span className="ml-auto"><DocRequestButton preset={{ kind: '도면', customer_code: 'AX', source: 'cn', reason: '설계변경(CN) — 새 Rev 도면 필요' }} /></span>
         {canEdit && (
           <label data-cn-upload className={`px-3 py-2 text-xs font-bold rounded-lg text-white cursor-pointer ${busy ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
             {busy ? '분석 중…' : '＋ CN 파일 올리기'}

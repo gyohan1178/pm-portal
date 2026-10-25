@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo } from 'react'
+import PageHead from '../../components/PageHead'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { refreshProcurement } from '../../lib/refresh'
@@ -946,15 +947,10 @@ export default function MaterialRequest() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">🙋 자재 요청</h1>
-          <p className="page-desc text-xs text-slate-400">
-            {canEdit
-              ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
-              : '필요한 자재를 요청하면 구매자재팀에 전달됩니다. 처리 상황은 이 목록에서 확인할 수 있습니다.'}
-          </p>
-        </div>
+      <PageHead crumb="현장" title="🙋 자재 요청"
+        desc={canEdit
+          ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
+          : '필요한 자재를 요청하면 구매자재팀에 전달됩니다. 처리 상황은 이 목록에서 확인할 수 있습니다.'}>
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
           {[['list', '📋 요청 목록'],
             ...(canReq ? [['new', '＋ 새 요청']] : []),
@@ -967,7 +963,7 @@ export default function MaterialRequest() {
             </button>
           ))}
         </div>
-      </div>
+      </PageHead>
 
       {/* ───────── 새 요청 ───────── */}
       {/* ───────── 내 요청 알림 ─────────

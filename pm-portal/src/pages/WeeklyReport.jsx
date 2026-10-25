@@ -378,6 +378,10 @@ export default function WeeklyReport() {
   const planTotal     = (d?.plan||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
   const planCount     = (d?.plan||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
   const delayCount    = (d?.delay||[]).length
+  // 주간업무 지연 B안 (v4.98.0) — 변경 납기가 오늘 이후면 ② 변경 약속 받음, 나머지(없음 · 지남 · 직접 입력)는 ① 독촉 필요
+  const todayYmd      = ymdKST(today)
+  const delayG2       = (d?.delay||[]).filter(r => r.vendor_date && String(r.vendor_date).slice(0,10) >= todayYmd)
+  const delayG1       = (d?.delay||[]).filter(r => !delayG2.includes(r))
 
   return (
     <>
@@ -468,7 +472,7 @@ export default function WeeklyReport() {
           <div className={`rounded-xl border px-3.5 py-2.5 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
             <p className={`text-[11px] font-bold ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연</p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{delayCount}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
-              <span className="text-xs text-slate-400 ml-2">{delayCount>0?'아래 목록':'지난 납기 없음'}</span></p>
+              <span className="text-xs text-slate-400 ml-2">{delayCount>0?`독촉 ${delayG1.length} · 변경 약속 ${delayG2.length}`:'지난 납기 없음'}</span></p>
           </div>
         </div>
 
@@ -698,12 +702,22 @@ export default function WeeklyReport() {
                   )}
                 </div>
               }>
-              {CUSTOMERS.map(cs=>(delayByCS[cs]?.length>0&&(
+              {/* B안 (v4.98.0) — 요청 납기가 지난 건을 ① 독촉 필요(변경 납기 없음 · 변경 납기도 지남) ② 변경 약속 받음(새 날짜 기다림) 으로 나눈다.
+                  합계는 그대로 — 변경 납기를 적어도 지연에서 빠지지 않는다 */}
+              {[[1, '① 독촉 필요', '변경 납기 없음 · 변경 납기도 지남', 'bg-red-50 text-red-700', delayG1], [2, '② 변경 약속 받음', '협력사가 새 날짜를 줌 — 그날 다시 확인', 'bg-amber-50 text-amber-800', delayG2]].map(([grp, gt, gs, gc, grows]) => {
+                const byCS = byCustomer(grows)
+                return grows.length > 0 && (
+                <div key={grp} data-wk-delay-group={grp}>
+                  <div className={`px-4 py-2 border-b border-slate-200 flex items-center gap-2 ${gc}`}>
+                    <span className="text-xs font-extrabold">{gt} {grows.length}건</span>
+                    <span className="text-[11px] opacity-80">{gs}</span>
+                  </div>
+              {CUSTOMERS.map(cs=>(byCS[cs]?.length>0&&(
                 <div key={cs}>
                   <div className="px-4 py-1.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between">
                     <div>
                       <span className="text-xs font-bold text-slate-600">{cs}</span>
-                      <span className="ml-2 text-xs text-red-500 font-semibold">{delayByCS[cs].length}건</span>
+                      <span className="ml-2 text-xs text-red-500 font-semibold">{byCS[cs].length}건</span>
                     </div>
                   </div>
                   <div className="overflow-x-auto">
@@ -711,16 +725,16 @@ export default function WeeklyReport() {
                       <thead><tr className="bg-slate-50 border-b border-slate-200">
                         <th className="px-2 py-2 no-print w-6">
                           <input type="checkbox"
-                            checked={delayByCS[cs].filter(r=>isStored(r.id)).length>0 && delayByCS[cs].filter(r=>isStored(r.id)).every(r=>checkedDelay[r.id])}
-                            onChange={e=>setCheckedDelay(v=>({...v,...Object.fromEntries(delayByCS[cs].filter(r=>isStored(r.id)).map(r=>[r.id,e.target.checked]))}))}
+                            checked={byCS[cs].filter(r=>isStored(r.id)).length>0 && byCS[cs].filter(r=>isStored(r.id)).every(r=>checkedDelay[r.id])}
+                            onChange={e=>setCheckedDelay(v=>({...v,...Object.fromEntries(byCS[cs].filter(r=>isStored(r.id)).map(r=>[r.id,e.target.checked]))}))}
                             className="w-3.5 h-3.5 accent-red-500"/>
                         </th>
-                        {['품목코드','구매처','제조사','제조사품번','수량','요청일','현황','대책'].map(h=>(
+                        {['품목코드','구매처','제조사','제조사품번','수량','요청 납기','변경 납기','현황','대책'].map(h=>(
                           <th key={h} className="px-3 py-2 text-left font-bold text-slate-400 whitespace-nowrap">{h}</th>
                         ))}
                       </tr></thead>
                       <tbody>
-                        {delayByCS[cs].map((r,i)=>(
+                        {byCS[cs].map((r,i)=>(
                           <tr key={r.id||i} className={`border-b border-slate-100 ${checkedDelay[r.id]?'bg-emerald-50/30':'hover:bg-red-50/20'}`}>
                             <td className="px-2 py-1.5 no-print">
                               {isStored(r.id) && <input type="checkbox" checked={!!checkedDelay[r.id]}
@@ -745,6 +759,10 @@ export default function WeeklyReport() {
                               {r.target_date||'-'}
                               {r.target_date && (()=>{ const dd=Math.floor((today-new Date(r.target_date))/86400000); return dd>0?<span className="ml-1 px-1 rounded bg-red-100 text-red-600 text-[10px] font-bold">D+{dd}</span>:null })()}
                             </td>
+                            <td className="px-3 py-1.5 whitespace-nowrap" data-wk-vendor-date>
+                              {r.vendor_date ? <span className={`font-mono font-bold ${grp===2?'text-amber-700':'text-red-600'}`}>{r.vendor_date}{grp===1 && ' (지남)'}</span> : <span className="text-red-500">없음</span>}
+                              {r.vendor_reason && <span className="block text-[10px] text-slate-400">{r.vendor_reason}</span>}
+                            </td>
                             <td className="px-3 py-1.5">
                               <input defaultValue={r.situation||''} placeholder="현황 입력"
                                 onBlur={e=>{ if(r.id) updateItemMut.mutate({id:r.id,field:'situation',value:e.target.value}) }}
@@ -762,6 +780,9 @@ export default function WeeklyReport() {
                   </div>
                 </div>
               )))}
+                </div>
+                )
+              })}
               {(d?.delay||[]).length===0&&<p className="text-xs text-slate-400 text-center py-6">지연 없음 ✓</p>}
             </SectionCard>
           )

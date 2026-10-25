@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PageHead from '../components/PageHead'
 import { toast, toastError, toastSuccess } from '../lib/toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
@@ -314,6 +315,8 @@ export default function WeeklyUpload() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
+      <PageHead crumb="주간 / 분석" title="주간업무보고 올리기"
+        desc="담당자별 발주입고내역 엑셀과 자재 불출 현황을 올려 주간업무보고에 반영합니다. 확정매입(ecount) 파일도 여기서 올립니다."></PageHead>
       {/* 담당자 엑셀(예상) / ecount(확정) */}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
         {[['weekly', '📄 주간 업무보고'], ['ecount', '💳 확정매입 (ecount)']].map(([k, l]) => (
@@ -327,7 +330,7 @@ export default function WeeklyUpload() {
 
       {mainTab === 'ecount' ? <EcountUpload /> : (<>
       {/* 주차 선택 */}
-      <div className="flex items-center gap-2">
+      <div className="flex items-center flex-wrap gap-2 [&>button]:whitespace-nowrap">
         <button onClick={()=>setWeekOffset(v=>v-1)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">← 전주</button>
         <button onClick={()=>setWeekOffset(0)} className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all ${weekOffset===0?'border-indigo-500 bg-indigo-50 text-indigo-700':'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>이번 주</button>
         <button onClick={()=>setWeekOffset(v=>v+1)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">다음 주 →</button>
@@ -470,7 +473,7 @@ export default function WeeklyUpload() {
               className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">+ 행 추가</button>
           </div>
           {outbounds.map((o,i)=>(
-            <div key={i} className="grid grid-cols-6 gap-2 items-center">
+            <div key={i} className="grid grid-cols-2 sm:grid-cols-6 gap-2 items-center [&>*]:min-w-0 pb-2 sm:pb-0 border-b border-slate-100 sm:border-0">
               <select value={o.customer} onChange={e=>setOutbounds(v=>v.map((r,j)=>j===i?{...r,customer:e.target.value}:r))}
                 className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none">
                 {CUSTOMERS.map(c=><option key={c}>{c}</option>)}
@@ -485,7 +488,7 @@ export default function WeeklyUpload() {
                 placeholder="수량" className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none text-right"/>
               <div className="flex gap-1">
                 <input value={o.note} onChange={e=>setOutbounds(v=>v.map((r,j)=>j===i?{...r,note:e.target.value}:r))}
-                  placeholder="비고" className="flex-1 px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none"/>
+                  placeholder="비고" className="flex-1 min-w-0 px-2 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none"/>
                 {outbounds.length>1&&<button onClick={()=>setOutbounds(v=>v.filter((_,j)=>j!==i))}
                   className="text-slate-300 hover:text-red-400 text-xs px-1">×</button>}
               </div>

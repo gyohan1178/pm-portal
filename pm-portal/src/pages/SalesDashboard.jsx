@@ -129,15 +129,15 @@ export default function SalesDashboard() {
           <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
           <p className="page-desc text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</p>
         </div>
-        <div className="flex items-center gap-2">
-        <label className="flex items-center gap-1 text-xs font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
+        <div className="flex items-center gap-2 flex-wrap">
+        <label className="flex items-center gap-1 text-xs whitespace-nowrap font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
           <span title="CCN=B(달러) PO에 적용">💱 USD</span>
           <input type="number" value={fx} onChange={e=>setFx(Number(e.target.value)||0)}
             className="w-16 text-right font-mono text-slate-900 outline-none" />
           <span className="text-slate-400">원</span>
         </label>
-        <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>
-        <Link to="/sales/upload" className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📥 실적 업로드</Link>
+        <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 whitespace-nowrap">🖨️ 출력</button>
+        <Link to="/sales/upload" className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 whitespace-nowrap">📥 실적 업로드</Link>
         <select value={year} onChange={e=>setYear(e.target.value)}
           className="text-xs font-bold text-slate-900 bg-white border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500">
           {years.map(y=>(<option key={y} value={y}>{y}년</option>))}
@@ -145,7 +145,7 @@ export default function SalesDashboard() {
         </div>
       </div>
 
-      <div className="kpi-grid grid grid-cols-3 gap-3">
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
           <p className="text-xs font-bold text-slate-500">예상 매출 (전체)</p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{fmtEok(d.total)}<span className="text-sm text-slate-400 ml-1">억</span></p>

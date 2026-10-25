@@ -129,15 +129,17 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
       kind: 'inboundLate',
       std_code: p.items?.std_code || '',
       name: p.items?.name || p.po_number || '',
-      detail: `${p.promise_date} 납기 · ${d}일 지남 · ${p.vendors?.name || '구매처 미정'} · 잔량 ${p.qty_remaining}`,
+      detail: `${p.promise_date} 납기 · ${d}일 지남 · ${p.vendors?.name || '구매처 미정'} · 잔량 ${p.qty_remaining}${p.vendor_date ? ` · 변경 납기 ${p.vendor_date}` : ''}`,
+      vendor_date: p.vendor_date || null,
       urgency: Math.min(98, 60 + d),   // 오래될수록 급하다
       link: 'inbound',
     }
   })
 
   // 7) 입고 예정: 2주 안에 들어올 것. 자리를 미리 비워 둬야 한다.
+  //    협력사 변경 납기(v4.98.0)가 있으면 그 날짜로 — 「언제 들어오나」는 변경 납기 기준
   const inboundSoon = buyPos.filter(p => {
-    const d = dDays(p.promise_date, today)
+    const d = dDays(p.vendor_date || p.promise_date, today)
     const left = Number(p.qty_remaining ?? ((p.qty_ordered || 0) - (p.qty_received || 0)))
     return d != null && d >= 0 && d <= 14 && left > 0
   })
@@ -171,6 +173,8 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
   return {
     kpi: {
       inboundLate: inboundLate.length,
+      // 독촉 필요 (v4.98.0) — 입고 지연 중 변경 납기가 없거나 그것도 지난 것 (변경 약속을 받은 건은 그날까지 기다림)
+      chaseNeeded: inboundLate.filter(x => !x.vendor_date || dDays(x.vendor_date, today) < 0).length,
       inboundSoon: inboundSoon.length,
       orderNeeded: orderNeeded.length,
       negSoon: negSoon.length,

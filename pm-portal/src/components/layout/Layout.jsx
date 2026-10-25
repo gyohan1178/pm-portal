@@ -1,4 +1,4 @@
-import { useState, Suspense } from 'react'
+import { useState, useEffect, Suspense } from 'react'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { holidayCoverageWarning } from '../../lib/bizdays'
 import { supabase } from '../../lib/supabase'
@@ -53,6 +53,7 @@ const PATH_LABELS = {
   'sales-quote':      ['영업', '매출견적'],
   orders:             ['영업', '수주대장'],
   'material-request': ['현장', '자재 요청'],
+  'doc-request':      ['공통', '자료 요청'],
   'field-search':     ['현장', '현장 검색'],
   drawings:           ['현장', '도면 조회'],
   board:              ['현장', '생산 전광판'],
@@ -71,6 +72,9 @@ const PATH_LABELS = {
   activity:           ['기타', '활동 이력 · 용량'],
   backup:             ['기타', '데이터 백업'],
   todo:               ['', '할 일'],
+  'quote-history':    ['영업', '견적 이력'],
+  ecount:             ['구매', '확정매입 (ecount)'],
+  'sales/upload':     ['분석', '매출 실적 올리기'],
   flow:               ['', '업무 흐름'],
   upload:             ['', '파일 올리기'],
   admin:              ['', '관리자'],
@@ -102,6 +106,14 @@ export default function Layout({ profile }) {
     section = info?.[0] || ''; title = info?.[1] || segments[0]
   }
 
+  // 휴대폰 — 머리 줄을 보라로 칠하고 브라우저 위 상태줄 색도 같이 맞춘다 (v4.95.0 · A안)
+  useEffect(() => {
+    if (typeof window === 'undefined' || window.innerWidth >= 640) return
+    let m = document.querySelector('meta[name="theme-color"]')
+    if (!m) { m = document.createElement('meta'); m.setAttribute('name', 'theme-color'); document.head.appendChild(m) }
+    m.setAttribute('content', '#5f52e9')
+  }, [])
+
   async function handleLogout() { await supabase.auth.signOut() }
 
   // 인쇄할 때는 사이드바·상단바가 종이에 나오지 않게 한다.
@@ -127,17 +139,17 @@ export default function Layout({ profile }) {
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* 헤더 */}
-        <header className="border-b border-slate-200 px-4 flex items-center gap-3 flex-shrink-0 bg-white" style={{height:'52px'}}>
+        <header data-app-header className="border-b border-transparent sm:border-slate-200 px-4 flex items-center gap-3 flex-shrink-0 bg-[#5f52e9] sm:bg-white" style={{height:'52px'}}>
           {/* 햄버거 버튼 - 모바일만 */}
           <button data-menu-open onClick={() => setSidebarOpen(true)} title="메뉴 열기"
-            className={`${collapsed ? '' : 'lg:hidden'} p-1.5 rounded-lg text-slate-500 hover:bg-slate-100 flex-shrink-0`}>
+            className={`${collapsed ? '' : 'lg:hidden'} p-1.5 rounded-lg text-white/90 sm:text-slate-500 hover:bg-white/10 sm:hover:bg-slate-100 flex-shrink-0`}>
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
           </button>
           <div className="min-w-0">
-            {section && <p className="text-xs text-slate-400 font-medium truncate">{section}</p>}
-            <h1 className="text-sm font-bold text-slate-900 leading-tight tracking-tight truncate">{title}</h1>
+            {section && <p className="text-[11px] sm:text-xs text-white/70 sm:text-slate-400 font-medium truncate">{section}</p>}
+            <h1 className="text-[15px] sm:text-sm font-bold text-white sm:text-slate-900 leading-tight tracking-tight truncate">{title}</h1>
           </div>
           <div className="flex-1" />
           <button onClick={() => window.dispatchEvent(new Event('open-command-palette'))}
@@ -146,14 +158,14 @@ export default function Layout({ profile }) {
             <span className="font-mono">Ctrl D</span>
           </button>
           <button onClick={() => setSettingsOpen(true)}
-            className="text-slate-400 hover:text-slate-600 p-1.5 rounded hover:bg-slate-100 transition-colors flex-shrink-0" title="설정">
+            className="text-white/80 sm:text-slate-400 hover:text-slate-600 p-1.5 rounded hover:bg-slate-100 transition-colors flex-shrink-0" title="설정">
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
           </button>
           {profile?.role === 'viewer' && (
             <span className="text-[11px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-1 rounded flex-shrink-0" title="열람 전용 계정 — 데이터 수정 불가">🔒 열람 전용</span>
           )}
           <button onClick={handleLogout}
-            className="text-xs text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100 transition-colors flex-shrink-0">
+            className="text-xs text-white/75 sm:text-slate-400 hover:text-slate-600 px-2 py-1 rounded hover:bg-slate-100 transition-colors flex-shrink-0">
             로그아웃
           </button>
         </header>

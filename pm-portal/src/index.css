@@ -65,3 +65,106 @@ html[data-compact] .kpi-grid > * > :nth-child(2) { font-size: 1rem; line-height:
 html[data-compact] .kpi-grid > * > :nth-child(n+3) { display: none; }
 /* 노트북 화면 — 화면 설명 문단(.page-desc)은 한 줄로 줄이고 넘치는 건 … (v4.65.0) */
 html[data-compact] .page-desc { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 휴대폰 (640px 미만) — 표 머리글 · 칸 안 배지가 좁은 칸에서 한 글자씩 세로로 꺾이던 것.
+   한 줄로 두고 표 상자 안에서 옆으로 밀어 본다 (v4.95.0) */
+@media (max-width: 639px) {
+  main.pm-main th { white-space: nowrap; }
+}
+/* 표 칸 안 배지(구분 · 상태)는 어느 화면이든 한 줄로 — 좁은 칸에서 「차/단/기」처럼 꺾이지 않게 (v4.96.0) */
+main.pm-main td span.rounded-full, main.pm-main td .badge { white-space: nowrap; }
+
+/* ── 화면 톤 (v4.96.0 · A안) ─────────────────────────────────────────────
+   바탕은 옅은 회색, 덩어리(카드)는 흰색. 회색 테두리 대신 아주 옅은 그림자로 구분한다.
+   화면마다 border border-slate-200 rounded-xl 로 만든 상자가 많아 여기서 한 번에 바꾼다.
+   빼는 것: 점선(올리기 칸) · 굵은 테두리(border-2, 일부러 강조) · 안쪽 강조선(shadow-[inset…]) · 입력칸 */
+main.pm-main { background: #f4f5fa; }
+main.pm-main [class*="rounded-xl"][class*="border"]:not([class*="border-dashed"]):not([class*="border-2"]):not([class*="shadow-[inset"]):not([class*="border-0"]):not(input):not(select):not(textarea):not(a) {
+  border-color: transparent;
+  box-shadow: 0 1px 2px rgba(20,30,50,.04), 0 1px 3px rgba(20,30,50,.06);
+}
+/* 흰 카드 안의 상자는 그림자 대신 아주 옅은 선 (겹겹이 떠 보이지 않게) */
+main.pm-main [class*="rounded-xl"][class*="border"] [class*="rounded-xl"][class*="border"]:not([class*="border-dashed"]):not([class*="border-2"]):not([class*="shadow-[inset"]):not([class*="border-0"]):not(input):not(select):not(textarea):not(a) {
+  border-color: #eef0f4; box-shadow: none;
+}
+/* 회색 바탕(bg-slate-50)으로 만든 맨 바깥 상자는 흰 카드로 */
+main.pm-main > div > [class*="rounded-xl"][class*="bg-slate-50"][class*="border"]:not([class*="border-dashed"]),
+main.pm-main > div > div > [class*="rounded-xl"][class*="bg-slate-50"][class*="border"]:not([class*="border-dashed"]) { background-color: #fff; }
+/* 버튼 묶음(세그먼트) 바탕 — 회색 바탕 위에서도 보이게 */
+main.pm-main [class*="bg-slate-100"][class*="rounded-lg"][class*="p-1"],
+main.pm-main [class*="bg-slate-100"][class*="rounded-xl"][class*="p-1"],
+main.pm-main [class*="bg-slate-100"][class*="rounded-lg"][class*="p-0.5"] { background-color: #e9ebf2; }
+/* 표 — 머리글 바탕 · 줄 구분선을 옅게 */
+main.pm-main thead tr, main.pm-main thead th { background-color: #fafbfc; }
+main.pm-main thead th { color: #8a92a3; border-bottom-color: #eef0f4; }
+main.pm-main tbody td, main.pm-main tbody tr { border-color: #f2f3f6; }
+/* 보조 버튼 — 흰 바탕 + 회색 테두리 → 옅은 회색 바탕 (보라 주요 버튼만 눈에 띄게) */
+main.pm-main button[class*="border-slate-2"][class*="bg-white"]:not(:disabled),
+main.pm-main button[class*="border-slate-3"][class*="bg-white"]:not(:disabled) {
+  border-color: transparent; background-color: #eef0f5;
+}
+main.pm-main button[class*="border-slate-2"][class*="bg-white"]:not(:disabled):hover,
+main.pm-main button[class*="border-slate-3"][class*="bg-white"]:not(:disabled):hover { background-color: #e4e7ee; }
+/* 입력칸 테두리 옅게 */
+main.pm-main input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), main.pm-main select, main.pm-main textarea { border-color: #e3e6ec; }
+/* PC — 화면 제목(본문 h1) 크기 통일 */
+@media (min-width: 640px) {
+  main.pm-main h1.text-lg { font-size: 1.3rem; line-height: 1.75rem; font-weight: 800; letter-spacing: -.01em; }
+  main.pm-main .page-desc { font-size: 13px; }
+}
+@media print {
+  main.pm-main { background: #fff !important; }
+  main.pm-main [class*="rounded-xl"][class*="border"] { box-shadow: none !important; border-color: #e2e8f0 !important; }
+}
+/* 노트북 화면 — 화면 머리는 얇게 (구분 숨김 · 제목 작게) — 표에 자리를 더 준다 (v4.96.0) */
+html[data-compact] [data-page-crumb] { display: none; }
+html[data-compact] [data-page-title] { font-size: 17px; line-height: 1.4rem; }
+
+/* ── 움직임 (v4.97.0) ─────────────────────────────────────────────────
+   「바뀌었다 · 처리됐다 · 여기를 봐라」를 알려줄 때만 짧게. 늘 움직이는 것은 두지 않는다.
+   윈도우 · 휴대폰에서 「애니메이션 끄기」를 켜 둔 사람은 모두 꺼진다 (맨 아래). */
+@keyframes pm-pop { 0% { transform: scale(1) } 40% { transform: scale(1.25) } 100% { transform: scale(1) } }
+.pm-pop { display: inline-block; animation: pm-pop .4s ease-out; }
+@keyframes pm-chip-in { 0% { transform: translateY(-5px) scale(.6); opacity: 0 } 60% { transform: translateY(0) scale(1.12); opacity: 1 } 100% { transform: scale(1) } }
+.pm-chip-in { animation: pm-chip-in .45s cubic-bezier(.2,.9,.3,1.3) both; }
+/* 막힌 단계 — 화면 열 때 빨간 링이 3번 퍼지고 끝 */
+@keyframes pm-ring { 0% { opacity: .9; transform: scale(1) } 100% { opacity: 0; transform: scale(1.06) } }
+.pm-ring { position: absolute; inset: -3px; border-radius: 14px; border: 2px solid #e0505f; pointer-events: none; animation: pm-ring 1.1s ease-out 3 both; }
+@keyframes pm-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(224,80,95,.5) } 50% { box-shadow: 0 0 0 5px rgba(224,80,95,0) } }
+.pm-dot { display: inline-block; width: 7px; height: 7px; border-radius: 9999px; background: #e0505f; animation: pm-dot 1.2s ease-out 3; }
+/* 새로 넘어온 줄 — 위에서 내려오며 보라 바탕 → 원래 색 */
+@keyframes pm-row-in { 0% { transform: translateY(-12px); opacity: 0; background-color: #e4dffc } 25% { transform: translateY(0); opacity: 1; background-color: #e4dffc } 100% { } }
+.pm-row-in { animation: pm-row-in 2.6s ease-out both; }
+/* 처리됨 · 모두 처리 — 떴다가 사라짐 */
+@keyframes pm-flash-out { 0% { opacity: 0; transform: translateX(-6px) } 12% { opacity: 1; transform: none } 80% { opacity: 1 } 100% { opacity: 0 } }
+.pm-flash-out { animation: pm-flash-out 3s ease-out both; }
+@keyframes pm-hero-flash { 0% { background-color: rgba(255,255,255,.16) } 30% { background-color: rgba(255,255,255,.45) } 100% { background-color: rgba(255,255,255,.16) } }
+.pm-hero-flash { animation: pm-hero-flash 1s ease-out 2; }
+/* 처리한 줄 — 초록으로 번쩍 → 접히며 빠짐 */
+@keyframes pm-row-done { 0% { background-color: transparent } 25% { background-color: #c9f1db } 70% { background-color: #eafaf1; opacity: 1 } 100% { background-color: #eafaf1; opacity: .35 } }
+tr.pm-row-done > td, div.pm-row-done { animation: pm-row-done .9s ease-out both; }
+@keyframes pm-stamp { 0% { transform: scale(.3); opacity: 0 } 60% { transform: scale(1.25); opacity: 1 } 100% { transform: scale(1) } }
+.pm-stamp { display: inline-flex; animation: pm-stamp .4s cubic-bezier(.2,.9,.3,1.3) both; }
+/* 전광판 — 옆 칸으로 들어온 카드 · 새로 지연된 카드 */
+@keyframes pm-slide-in { 0% { transform: translateX(-50px); opacity: 0 } 60% { transform: translateX(6px); opacity: 1; box-shadow: 0 0 0 4px rgba(139,124,246,.55) } 100% { transform: none; box-shadow: 0 0 0 0 rgba(139,124,246,0) } }
+.pm-slide-in { animation: pm-slide-in .6s cubic-bezier(.2,.8,.3,1) both; }
+@keyframes pm-late-blink { 0%,100% { box-shadow: 0 0 0 0 rgba(224,80,95,0) } 50% { box-shadow: 0 0 0 5px rgba(224,80,95,.6) } }
+.pm-late-blink { animation: pm-late-blink 1s ease-in-out 4; }
+/* QR 스캔 결과 — 화면 전체 */
+@keyframes pm-scan-in { 0% { opacity: 0 } 100% { opacity: 1 } }
+@keyframes pm-big-pop { 0% { transform: scale(.2); opacity: 0 } 55% { transform: scale(1.15); opacity: 1 } 100% { transform: scale(1) } }
+@keyframes pm-shake { 0%,100% { transform: translateX(0) } 15% { transform: translateX(-14px) } 30% { transform: translateX(12px) } 45% { transform: translateX(-10px) } 60% { transform: translateX(8px) } 75% { transform: translateX(-4px) } }
+.pm-scan-in { animation: pm-scan-in .2s ease-out both; }
+.pm-big-pop { animation: pm-big-pop .45s cubic-bezier(.2,.9,.3,1.3) both; }
+.pm-shake { animation: pm-shake .5s ease-in-out both; }
+/* 업무 흐름 지도 — 나와 이어진 흐름의 화살표가 천천히 흐른다 (v4.98.0) */
+.pm-flow-dash { stroke-dasharray: 5 4; animation: pmFlowDash .9s linear infinite; }
+@keyframes pmFlowDash { to { stroke-dashoffset: -9; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .pm-flow-dash { animation: none !important; }
+  .pm-pop, .pm-chip-in, .pm-ring, .pm-dot, .pm-row-in, .pm-hero-flash, .pm-stamp, .pm-slide-in, .pm-late-blink, .pm-scan-in, .pm-big-pop, .pm-shake,
+  tr.pm-row-done > td, div.pm-row-done { animation: none !important; }
+  .pm-ring { display: none; }
+  .pm-flash-out { animation: none !important; }
+}

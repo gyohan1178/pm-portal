@@ -1,4 +1,4 @@
-import { useState, createContext, useContext, Fragment } from 'react'
+import { useState, useEffect, createContext, useContext, Fragment } from 'react'
 import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
@@ -11,6 +11,33 @@ import { todayISO } from '../../lib/utils'
 import { isHoliday } from '../../lib/bizdays'
 import { DAILY, isWorkday, normLoc, rackOf } from '../../lib/cycleCount'
 import { toastError } from '../../lib/toast'
+import { visibleDepts, flowOf } from '../../lib/workflow'
+import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLOW_SEEN_EVENT } from '../../lib/flowSeen'
+import { docCountsQuery } from '../../lib/docRequest'
+
+// 업무 흐름 — 내 부서에 마지막으로 본 뒤 새로 늘어난 일 (사이드바 숫자 · 탭 제목 「(3) …」) · v4.97.0
+//   업무 흐름 화면과 같은 건수(flowCounts)를 쓰고, 「봤음」 기준은 그 화면이 저장한 것을 읽는다
+function useFlowFresh(profile, on) {
+  const dept = on ? visibleDepts(profile)[0] : null
+  const { data: c0 = null } = useQuery({ ...flowCountsQuery, enabled: !!profile && !!dept })
+  const { data: dc = null } = useQuery({ ...docCountsQuery, enabled: !!profile && !!dept })
+  const c = c0 ? { ...c0, doc: dc } : null
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const h = () => setTick((t) => t + 1)
+    window.addEventListener(FLOW_SEEN_EVENT, h); window.addEventListener('storage', h)
+    return () => { window.removeEventListener(FLOW_SEEN_EVENT, h); window.removeEventListener('storage', h) }
+  }, [])
+  let n = 0
+  try {
+    if (dept && c) {
+      const pcs = (primaryCsCode(profile) || 'ax').toLowerCase()
+      n = freshTotal(flowSnapshot(flowOf(dept, { c, ct: null, pcs })), readSeen(profile?.id, dept))
+    }
+  } catch { n = 0 }
+  useEffect(() => { setTitleCount(n) }, [n])
+  return n
+}
 
 // 즐겨찾기에 표시할 이름·아이콘
 const MENU_META = {
@@ -20,6 +47,7 @@ const MENU_META = {
   '/finder': ['🔎','통합 검색'],          // 예전 즐겨찾기 — 통합 검색으로 이어진다
   '/outbound-history': ['📋','출고 현황'],
   '/material-request': ['🙋','자재 요청'],
+  '/doc-request': ['📎','자료 요청'],
   '/missing': ['🧩','결품 현황'],
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
@@ -137,7 +165,7 @@ function MenuItem({ to, icon, children, end, onNavigate, badge }) {
       <span className="text-sm w-4 text-center flex-shrink-0">{icon}</span>
       <span className="flex-1 min-w-0 truncate">{children}</span>
       {badge > 0 && (
-        <span className="flex-shrink-0 min-w-[18px] px-1 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold text-center leading-tight">
+        <span key={badge} data-menu-badge={to} className="pm-pop flex-shrink-0 min-w-[18px] px-1 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold text-center leading-tight">
           {badge > 99 ? '99+' : badge}
         </span>
       )}
@@ -261,6 +289,10 @@ function ChangelogModal({ onClose }) {
 
 export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) {
   const alerts = useAlertCounts()
+  const flowFresh = useFlowFresh(profile, !isFieldOnly(profile))
+  // 자료 요청 — 영업은 처리할 요청, 그 밖 부서는 받았는데 아직 확인 안 한 것 (v4.98.0)
+  const { data: docN } = useQuery({ ...docCountsQuery, enabled: !!profile })
+  const docBadge = !docN ? 0 : profile?.dept === '영업' ? docN.open : (docN.byDept?.[profile?.dept]?.recv || 0)
   const isAdmin = profile?.role === 'admin'
   const fieldOnly = isFieldOnly(profile)
   const pcs = primaryCsCode(profile)
@@ -378,6 +410,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {!canAccessSection(profile, 'floor') && (
           <div className="py-1 border-b border-slate-200">
             <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
+            <MenuItem to="/doc-request" icon="📎" onNavigate={onNavigate} badge={docBadge}>자료 요청</MenuItem>
           </div>
         )}
 
@@ -386,6 +419,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         <CollapseSection mover={mv} label="🏭 현장" sKey="floor">
           <MenuItem to="/field-search" icon="🔎" onNavigate={onNavigate}>현장 검색</MenuItem>
           <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
+          <MenuItem to="/doc-request" icon="📎" onNavigate={onNavigate} badge={docBadge}>자료 요청</MenuItem>
           <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>생산 대시보드</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
@@ -473,13 +507,13 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 업무 흐름 — 현장 전용 계정 말고 모두 (v4.91.0) */}
         {!fieldOnly && !(profile?.role !== 'viewer' && canAccessSection(profile, 'home')) && (
         <div className="py-1">
-          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate}>업무 흐름</MenuItem>
+          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>
         </div>
         )}
         {/* 홈 — 현장·조회 계정은 숨김 */}
         {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
-          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate}>업무 흐름</MenuItem>
+          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
           <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>

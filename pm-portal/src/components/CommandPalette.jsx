@@ -16,6 +16,7 @@ function buildCommands() {
   push('일일 업무', '재고현황', '/inventory', 'inventory jaego stock')
   push('일일 업무', '통합 검색', '/search', 'search tonghap')
   push('일일 업무', '자재 요청', '/material-request', 'material request jajae yocheong')
+  push('일일 업무', '자료 요청 (도면 · BOM → 영업)', '/doc-request', 'doc request jaryo yocheong drawing bom')
   push('일일 업무', '할 일', '/todo', 'todo hal il')
   push('일일 업무', '현장 검색', '/field-search', 'field search hyeonjang')
   push('일일 업무', '창고 배치도', '/rack-layout', 'rack layout changgo baechido')

@@ -1,4 +1,5 @@
 import { useUndo } from '../../components/UndoBar'
+import PageHead from '../../components/PageHead'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
 import { moveRows, pickNew, undoMoves } from '../../lib/undoMove'
@@ -232,6 +233,31 @@ export default function Inbound() {
     placeholderData: (prev) => prev,
   })
 
+  // 입고 단가 경고 (v4.98.0) — 품목마다 직전 입고 단가(단가 이력)와 ±10% 넘게 다르면 줄에 표시
+  const priceItemIds = useMemo(() => [...new Set(pendingPOs.map(p => p.item_id).filter(Boolean))].sort(), [pendingPOs])
+  const { data: lastPrice = {} } = useQuery({
+    queryKey: ['lastPrices', priceItemIds.length, priceItemIds[0] || '', priceItemIds[priceItemIds.length - 1] || ''],
+    enabled: priceItemIds.length > 0,
+    staleTime: 10 * 60 * 1000,
+    queryFn: async () => {
+      const out = {}
+      for (let i = 0; i < priceItemIds.length; i += 150) {
+        const { data } = await supabase.from('price_history').select('item_id,price,recorded_at')
+          .in('item_id', priceItemIds.slice(i, i + 150)).order('recorded_at', { ascending: false }).limit(1000)
+        for (const r of data || []) if (!(r.item_id in out) && Number(r.price) > 0) out[r.item_id] = Number(r.price)
+      }
+      return out
+    },
+  })
+  const priceGap = (po) => {
+    const last = lastPrice[po.item_id]
+    const raw = inboundData[po.id]?.unit_price
+    const now = Number(raw !== undefined && raw !== '' ? raw : po.unit_price)
+    if (!last || !now) return null
+    const r = (now - last) / last
+    return Math.abs(r) > 0.1 ? { pct: Math.round(r * 100), last } : null
+  }
+
   // 구매발주 화면의 「입고 처리」로 오면 ?po=id,id… — 그 발주를 체크하고 잔량을 채워 둔다
   const [sp, setSp] = useSearchParams()
   const [poFromUrl] = useState(() => (sp.get('po') || '').split(',').filter(Boolean))
@@ -262,6 +288,7 @@ export default function Inbound() {
   const history = histData?.rows || []
   const histCapped = !!histData?.capped
 
+  const [doneIds, setDoneIds] = useState(() => new Set())   // 방금 입고 처리한 줄 — 번쩍 표시 (v4.97.0)
   const inboundMut = useMutation({
     mutationFn: () => { if (!guardEdit()) throw new Error('__READONLY__'); return processInbound({ items: checkedRows, inboundData, note, inboundDate }) },
     onSuccess: (r) => {
@@ -274,12 +301,17 @@ export default function Inbound() {
                      vendor: r.vendors?.name || '', qty: Number(inboundData[r.id].qty) }))
       if (lotRows.length) setLotAsk({ rows: lotRows, date: inboundDate })
       setResult(`입고 처리 완료 (${inboundDate}) — ${checkedRows.length}건`)
-      // 검색어도 함께 지운다. 다음 명세표로 넘어갈 때 매번 지우는 수고를 던다.
-      setInboundData({}); setChecked({}); setNote(''); setRowSearch('')
-      refreshProcurement(qc)
-      // 입고 현황 캐시 명시적 갱신 (hQuery 포함 키까지 확실히 무효화)
-      qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })
-      refetch()
+      // 처리한 줄을 초록으로 번쩍 → 0.9초 뒤 목록을 새로 받아 빠지게 (v4.97.0)
+      //   체크는 바로 풀어 같은 줄을 두 번 처리하지 못하게 한다. 검색어도 함께 지운다.
+      setDoneIds(new Set(checkedRows.map(r => r.id)))
+      setChecked({}); setNote('')
+      setTimeout(() => {
+        setDoneIds(new Set()); setInboundData({}); setRowSearch('')
+        refreshProcurement(qc)
+        // 입고 현황 캐시 명시적 갱신 (hQuery 포함 키까지 확실히 무효화)
+        qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })
+        refetch()
+      }, 900)
     },
     onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
@@ -492,12 +524,15 @@ export default function Inbound() {
     <div className="space-y-4">
       {lotAsk && <LotInboundModal rows={lotAsk.rows} date={lotAsk.date} onClose={() => setLotAsk(null)}
         onDone={() => { qc.invalidateQueries({ queryKey: ['lotSummary'] }); qc.invalidateQueries({ queryKey: ['lotList'], exact: false }) }} />}
-      <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
-        {[['process','📥 입고 처리'],['direct','✍️ 발주외 입고'],['history','📋 입고 현황']].map(([k,l])=>(
-          <button key={k} onClick={()=>setTab(k)}
-            className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab===k?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{l}</button>
-        ))}
-      </div>
+      <PageHead crumb="자재 · 일일 업무" title="입고"
+        desc="들어온 물건을 발주에 맞춰 입고합니다. 발주를 체크하고 수량을 확인한 뒤 맨 아래 「입고 처리」를 누르면 재고와 입고 현황에 바로 반영됩니다.">
+        <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
+          {[['process','📥 입고 처리'],['direct','✍️ 발주외 입고'],['history','📋 입고 현황']].map(([k,l])=>(
+            <button key={k} onClick={()=>setTab(k)}
+              className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab===k?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{l}</button>
+          ))}
+        </div>
+      </PageHead>
 
       {tab==='process' && (
         // 노트북 화면에서도 표가 넉넉히 보이게 (v4.62.0) — 위 칸은 한 줄로 줄이고, 표가 남은 높이를 다 쓰고, 담은 품목 · 입고 처리는 맨 아래
@@ -527,7 +562,7 @@ export default function Inbound() {
                 className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">오늘로</button>
             )}
             <span className="ml-auto text-xs text-slate-400 whitespace-nowrap">
-              미입고 {rows.length}건 · 정렬 {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'}
+              미입고 <b key={rows.length} className="pm-pop font-mono text-slate-600">{rows.length}</b>건 · 정렬 {(PROC_COLS.find(c=>c.key===sort.key)?.label)||''} {sort.dir==='asc'?'▲':'▼'}
             </span>
           </div>
 
@@ -559,14 +594,19 @@ export default function Inbound() {
                         {vis.shown.map(po=>{
                           const on = !!checked[po.id]
                           const delayed = po.promise_date && po.promise_date < today
+                          const justDone = doneIds.has(po.id)
                           return (
-                            <tr key={po.id} {...rowProps(po.id, on)}
-                              className={`border-b border-slate-100 cursor-pointer select-none ${on?'bg-indigo-50':'hover:bg-slate-50'}`}>
+                            <tr key={po.id} {...rowProps(po.id, on)} data-inb-done={justDone ? '1' : undefined}
+                              className={`border-b border-slate-100 cursor-pointer select-none ${justDone ? 'pm-row-done' : on?'bg-indigo-50':'hover:bg-slate-50'}`}>
                               <td className="px-2 py-2 text-center" onClick={e=>e.stopPropagation()}>
-                                <input type="checkbox" checked={on} onChange={()=>toggleRow(po)} />
+                                {justDone
+                                  ? <span className="pm-stamp w-4 h-4 rounded-full bg-emerald-500 items-center justify-center" aria-label="입고됨"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10" /></svg></span>
+                                  : <input type="checkbox" checked={on} onChange={()=>toggleRow(po)} />}
                               </td>
                               <td className="px-3 py-2 text-slate-500">{po.order_date||'-'}</td>
-                              <td className="px-3 py-2 text-slate-500">{po.promise_date||'-'}{delayed && <span className="ml-1 text-red-500 font-bold">지연</span>}</td>
+                              <td className="px-3 py-2 text-slate-500">{po.promise_date||'-'}{delayed && <span className="ml-1 text-red-500 font-bold">지연</span>}
+                                {/* 협력사 변경 납기 (v4.98.0) — 지연은 요청 납기 기준 그대로, 언제 오는지는 변경 납기 */}
+                                {po.vendor_date && <span data-inb-vendor-date className={`block text-[10.5px] font-bold ${po.vendor_date < today ? 'text-red-600' : 'text-amber-700'}`}>→ 변경 {po.vendor_date.slice(5)}{po.vendor_date < today ? ' (지남)' : ''}</span>}</td>
                               <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-1.5 max-w-[260px]">
                                   <span className="font-mono text-indigo-600 shrink-0">{po.items?.std_code}</span>
@@ -589,6 +629,8 @@ export default function Inbound() {
                                   onChange={e=>updateData(po.id,'unit_price',e.target.value)}
                                   placeholder={po.unit_price||'단가'} disabled={!on}
                                   className="w-24 px-2 py-1 text-xs border border-slate-200 rounded text-right disabled:bg-slate-50 focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                                {(() => { const g = priceGap(po); return g && <span data-inb-price-gap={g.pct} title={`직전 입고 단가 ${g.last.toLocaleString()}원과 ${g.pct > 0 ? '+' : ''}${g.pct}% 차이 — 단가 확인`}
+                                  className={`block mt-0.5 text-[10.5px] font-bold ${g.pct > 0 ? 'text-red-600' : 'text-blue-600'}`}>{g.pct > 0 ? '▲' : '▼'} {Math.abs(g.pct)}% · 직전 {g.last.toLocaleString()}</span> })()}
                               </td>
                               <td className="px-3 py-2" onClick={e=>e.stopPropagation()}>
                                 <input type="number" min={0} value={inboundData[po.id]?.qty??''}

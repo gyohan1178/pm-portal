@@ -117,6 +117,7 @@ export default function ScheduleChanges() {
         <div className="rounded-xl border border-slate-200 bg-white p-3">
           <p className="text-[11px] font-bold text-slate-400">전체</p>
           <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>
+          <p className="text-[10px] text-slate-400">지난주 대비 납기가 바뀐 줄</p>
         </div>
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
           <p className="text-[11px] font-bold text-rose-500">당겨짐</p>
@@ -126,6 +127,7 @@ export default function ScheduleChanges() {
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
           <p className="text-[11px] font-bold text-sky-500">밀림</p>
           <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>
+          <p className="text-[10px] text-sky-500">납기가 뒤로 미뤄진 줄</p>
         </div>
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
           <p className="text-[11px] font-bold text-amber-600">이번 주 3회+</p>

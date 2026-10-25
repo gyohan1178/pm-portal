@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import PageHead from '../../components/PageHead'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
@@ -426,7 +427,11 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   return (
     <div className="space-y-4">
       {/* 통합검색 안에서는 고객사 탭이 어울리지 않아 숨긴다 */}
-      {!embedded && <><CustomerTabs /><ShortageTabs cs={csCode} /></>}
+      {!embedded && <>
+        <PageHead crumb="소요 · 부족" title="소요량 조회"
+          desc="상위 품번과 수량을 넣으면 BOM 을 전개해 필요한 부품 수량을 계산합니다. 역전개로 이 부품이 어디에 쓰이는지도 찾습니다." />
+        <CustomerTabs /><ShortageTabs cs={csCode} />
+      </>}
       {/* 탭 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['req','📊 소요량 조회'],['explode','🔍 역전개 (상위 찾기)']].map(([k,l])=>(

@@ -213,6 +213,8 @@ export function canAccessPath(profile, pathname) {
   // 자재 요청은 누구나 접근한다 — 현장에서 요청을 내야 하기 때문이다.
   // 처리(불출·발주)는 화면 안에서 편집 권한으로 다시 가린다.
   if (pathname === '/material-request') return true
+  // 자료 요청(도면 · BOM → 영업)도 누구나 — 쓰기는 화면 안에서 편집 권한으로 가린다 (v4.98.0)
+  if (pathname === '/doc-request') return true
 
   // 도움말은 누구나 본다.
   //   'home' 으로 분류되어 관제탑 규칙에 걸리면서

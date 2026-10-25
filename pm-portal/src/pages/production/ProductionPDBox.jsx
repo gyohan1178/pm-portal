@@ -1,5 +1,6 @@
 import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import PlanBadge from '../../components/PlanBadge'
+import { DocRequestButton } from '../../components/DocRequestModal'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
@@ -1161,6 +1162,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white">
               <h3 className="text-sm font-bold text-slate-800">{edit.id ? '호기 편집' : '호기 추가'}</h3>
+              <span className="ml-auto mr-2">{edit.id && edit.pn && !isVM && <DocRequestButton small label="📎 도면 · BOM 요청"
+                preset={{ kind: '도면', part_no: String(edit.pn || ''), customer_code: String(csCode || '').toUpperCase(), rev: edit.rev || '', ref: `호기 ${edit.hogi || ''}`.trim(), source: 'prod' }} />}</span>
               <button onClick={() => setEdit(null)} className="text-slate-400 hover:text-slate-600">✕</button>
             </div>
             <div className="p-5 space-y-3 text-sm">

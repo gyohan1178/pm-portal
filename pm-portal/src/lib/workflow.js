@@ -29,6 +29,7 @@ export const MENU = {
   '/outbound': 'ASSY 출고',
   '/issue': '다품목 출고',
   '/material-request': '자재 요청',
+  '/doc-request': '자료 요청',
   '/production/harness-release': '하네스 출도·불출',
   '/production/AX': '생산 관리',
   '/quality/drawing-dist': '도면 배포이력 · 외주 배포',
@@ -73,19 +74,22 @@ const F = {
     desc: '견적 → BOM 확인 → 수주 등록 → 도면 Rev 확인 → 구매자재 회신 → 납기 협의',
     steps: [
       { name: '견적 접수 · 작성', note: '견적 접수 현황 탭에서 접수 · 점검 후 견적 작성', go: () => ['/sales-quote'], badges: (c) => [['작성 가능', c?.rfq_ready, 'violet'], ['회신 D-3', c?.rfq_due, 'red']] },
-      { name: 'BOM 확인', note: '견적 · 수주 품목에 BOM 이 없으면 고객사에 요청해 올림', go: (pcs) => [cs(pcs, 'bom'), '/orders?tab=cleanup'], badges: (c) => [['BOM 필요', c?.rfq_bom, 'red'], ['BOM 요청', c?.bom_req, 'amber']] },
+      { name: 'BOM 확인', note: '견적 · 수주 품목에 BOM 이 없으면 고객사에 요청해 올림', go: (pcs) => [cs(pcs, 'bom'), '/orders?tab=cleanup'], badges: (c) => [['BOM 필요', c?.rfq_bom, 'red']] },
       { name: '수주 등록', note: 'PDF 올리기 · 직접 등록 (구두 발주 · 선진행 · 발주 예정)', go: () => ['/orders'], badges: (c) => [['이번 달 접수', c?.ord_month, 'gray'], ['정식 PO 대기 지남', c?.po_wait, 'red']] },
       { name: '도면 확인', note: 'PO Rev 와 도면 Rev 비교 — 다르면 받은 새 도면을 생산기술에 공유', go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
       { name: '구매자재 회신', note: '구매자재가 처리 — 기다리는 단계', other: '구매자재', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']] },
       { name: '회신 확인 · 납기 협의', note: '조건부 · 불가는 사유를 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
+      { name: '납품', note: '품질 검수가 끝난 호기를 고객사에 납품 (v4.98.0)', go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
     ],
     subs: [
       { name: '고객사 PO', go: (pcs) => [cs(pcs, 'cpo')], badges: () => [] },
       { name: '포캐스트', go: (pcs) => [cs(pcs, 'forecast')], badges: () => [] },
+      { name: '받은 자료 요청', go: () => ['/doc-request'], badges: (c) => [['필요일 지남', c?.doc?.late, 'red'], ['처리 중', c?.doc?.open, 'amber']] },
     ],
     inbox: [
       { from: '구매자재', text: '수주대장 회신 — 조건부 · 불가 (고객사 납기 협의)', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' },
-      { from: '구매자재', text: 'BOM 요청 — 고객사에 BOM 받아 올리기', n: (c) => c?.bom_req, tone: 'amber', path: '/orders?tab=cleanup' },
+      { from: '각 부서', text: '자료 요청 — 고객사에 도면 · BOM 받아 올리기', n: (c) => c?.doc?.open ?? null, tone: 'amber', path: '/doc-request' },
+      { from: '품질', text: '검수 끝 — 납품 대기', n: (c) => c?.prod_ship, tone: 'gray', path: '/production/AX' },
     ],
     outbox: [
       { from: '구매자재', text: '새 PO 확인 대기 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
@@ -100,7 +104,7 @@ const F = {
     steps: [
       { name: '수주 확인', note: '새로 올라온 PO 확인', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red']] },
       { name: '회신', note: '품번마다 가능 · 조건부 · 불가 (조건부 · 불가는 사유 필수)', go: () => ['/orders'], badges: (c) => [['새 PO 회신 대기', c?.ord_waiting, 'amber']] },
-      { name: '구매발주', note: '협력사 발주', go: (pcs) => [cs(pcs, 'purchase')], badges: () => [] },
+      { name: '구매발주', note: '협력사 발주 · 독촉 = 요청 납기 지남 + 변경 납기 없음(또는 그것도 지남)', go: (pcs) => [cs(pcs, 'purchase')], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red']] },
       { name: '입고', note: '발주 체크 후 입고', go: () => ['/inbound'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
       { name: '불출', note: 'BOM 단위 출고 · 여러 품목 한꺼번에 출고', go: () => ['/outbound', '/issue'], badges: () => [] },
     ],
@@ -109,7 +113,8 @@ const F = {
       { name: '견적 단가 요청', go: () => ['/sales-quote'], badges: (c) => [['요청', c?.rfq_price, 'amber']] },
       { name: '부족자재', go: (pcs) => [cs(pcs, 'short')], badges: () => [] },
       { name: '하네스 출도·불출', go: () => ['/production/harness-release'], badges: () => [] },
-      { name: '도면 배포 (협력사)', go: () => ['/quality/drawing-dist'], badges: (c) => [['승인 대기', c?.dist_wait, 'amber']] },
+      { name: '도면 배포 (협력사)', go: () => ['/quality/drawing-dist'], badges: (c) => [['팀 내 승인 대기', c?.dist_wait, 'amber']] },
+      { name: '자료 요청 (영업에)', go: () => ['/doc-request'], badges: (c) => [['받음 · 확인 대기', c?.doc?.byDept?.구매자재?.recv, 'violet'], ['기다림', c?.doc?.byDept?.구매자재?.wait, 'gray']] },
     ],
     inbox: [
       { from: '영업', text: '새로 올라온 PO 확인 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
@@ -128,6 +133,7 @@ const F = {
     ],
     subs: [
       { name: '도면 수령 확인', go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['수령 대기', c?.dwg_unrcv, 'amber'], ['옛 Rev 반납', c?.dwg_unret, 'red']] },
+      { name: '자료 요청 (영업에)', go: () => ['/doc-request'], badges: (c) => [['받음 · 확인 대기', c?.doc?.byDept?.제조?.recv, 'violet'], ['기다림', c?.doc?.byDept?.제조?.wait, 'gray']] },
     ],
     inbox: [{ from: '생산기술', text: '사내 배포 도면 — 수령 확인 · 옛 Rev 반납', n: (c) => c?.dwg_unrcv, tone: 'amber', path: '/quality/drawing-dist?tab=int' }],
     outbox: [{ from: '구매자재', text: '자재 요청 — 처리 대기', n: (c) => c?.req_open, tone: 'amber', path: '/material-request' }],
@@ -140,7 +146,9 @@ const F = {
       { name: '사내 도면 배포', note: '받을 부서 · 부수를 골라 배포 — 부서마다 수령 확인 · 옛 Rev 반납', go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['배포 대기', c?.dwg_shared, 'amber'], ['수령 확인 대기', c?.dwg_unrcv, 'gray'], ['옛 Rev 반납 대기', c?.dwg_unret, 'red']] },
       { name: '생산 일정', note: '호기별 일정', go: () => ['/production/AX'], badges: (c) => [['제작 대기', c?.prod_wait, 'gray']] },
     ],
-    subs: [],
+    subs: [
+      { name: '자료 요청 (영업에)', go: () => ['/doc-request'], badges: (c) => [['받음 · 확인 대기', c?.doc?.byDept?.생산기술?.recv, 'violet'], ['기다림', c?.doc?.byDept?.생산기술?.wait, 'gray']] },
+    ],
     inbox: [{ from: '영업', text: '새 Rev 도면 공유 — 사내 배포 대기', n: (c) => c?.dwg_shared, tone: 'violet', path: '/quality/drawing-dist?tab=int' }],
     outbox: [{ from: '제조 · 품질', text: '사내 배포 도면 수령 확인 대기', n: (c) => c?.dwg_unrcv, tone: 'amber', path: '/quality/drawing-dist?tab=int' }],
   },
@@ -150,12 +158,13 @@ const F = {
     steps: [
       { name: '초도품 진행', note: '초도품 일정 · 상태', go: () => ['/quality/fa-progress'], badges: () => [] },
       { name: '초도품 자재 매칭', note: '등록 제조사와 실제 구매이력 대조', go: () => ['/quality/fai'], badges: () => [] },
-      { name: '품질 검수', note: '출하 전 검수', go: () => ['/production/AX'], badges: (c) => [['검수 대기', c?.prod_quality, 'amber'], ['납품 대기', c?.prod_ship, 'gray']] },
+      { name: '품질 검수', note: '출하 전 검수 — 끝나면 영업 납품으로', go: () => ['/production/AX'], badges: (c) => [['검수 대기', c?.prod_quality, 'amber']] },
     ],
     subs: [
       { name: '로트 관리', go: () => ['/quality/lot'], badges: () => [] },
       { name: '도면 수령 확인', go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['수령 대기', c?.dwg_unrcv, 'amber']] },
-      { name: '도면 배포 승인', go: () => ['/quality/drawing-dist'], badges: (c) => [['승인 대기', c?.dist_wait, 'amber']] },
+      { name: '협력사 도면배포 대장 (열람)', go: () => ['/quality/drawing-dist'], badges: () => [] },
+      { name: '자료 요청 (영업에)', go: () => ['/doc-request'], badges: (c) => [['받음 · 확인 대기', c?.doc?.byDept?.품질?.recv, 'violet'], ['기다림', c?.doc?.byDept?.품질?.wait, 'gray']] },
     ],
     inbox: [{ from: '제조', text: '품질 검수 대기', n: (c) => c?.prod_quality, tone: 'amber', path: '/production/AX' }],
     outbox: [],

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import PageHead from '../../components/PageHead'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -40,6 +41,8 @@ export default function PriceHistory() {
 
   return (
     <div className="space-y-4">
+      <PageHead crumb="기초자료" title="단가변동이력"
+        desc="품목별 견적 · 구매 단가가 언제 얼마로 바뀌었는지 봅니다. 견적을 입력하면 자동으로 쌓입니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품명 또는 기준코드 검색"
           className="w-full sm:w-64 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />

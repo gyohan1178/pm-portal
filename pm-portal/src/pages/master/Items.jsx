@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback } from 'react'
+import PageHead from '../../components/PageHead'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { catOf, todayISO } from '../../lib/utils'
@@ -90,7 +91,7 @@ async function fetchVendorList() {
 const COLS = [
   { key:'std_code',     label:'기준코드',   defaultWidth:100 },
   { key:'name',         label:'품명',       defaultWidth:180 },
-  { key:'type',         label:'구분',       defaultWidth:55  },
+  { key:'type',         label:'구분',       defaultWidth:80  },
   { key:'unit',         label:'단위',       defaultWidth:45  },
   { key:'lt',           label:'LT',         defaultWidth:45  },
   { key:'safety',       label:'안전재고',   defaultWidth:70  },
@@ -328,6 +329,8 @@ export default function Items() {
 
   return (
     <div className="space-y-4">
+      <PageHead crumb="기초자료" title="기준코드 DB"
+        desc="모든 품목의 기준코드(JS-) · 품명 · 제조사 · 구매처를 관리합니다. 고객사 코드와의 연결은 「기준코드 매핑」에서 합니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
         <select value={searchField} onChange={e=>{ setSearchField(e.target.value); setQuery({search, type:'전체', field:e.target.value}) }}
           className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white">

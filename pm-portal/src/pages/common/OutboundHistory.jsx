@@ -164,14 +164,14 @@ export default function OutboundHistory() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-2">
-        <div>
+      <div className="flex items-start justify-between gap-2 flex-wrap">
+        <div className="min-w-0">
           <h1 className="text-lg font-bold text-slate-900">📋 출고 현황</h1>
           {!compact && <p className="text-xs text-slate-400 mt-0.5">ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 — 어느 고객사·프로젝트로, 누가 뺐는지</p>}
         </div>
         <div className="flex gap-1.5">
-          <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📤 ASSY 출고</Link>
-          <Link to="/issue" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">🧺 다품목 출고</Link>
+          <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📤 ASSY 출고</Link>
+          <Link to="/issue" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">🧺 다품목 출고</Link>
         </div>
       </div>
     <div className="space-y-4">
@@ -213,9 +213,9 @@ export default function OutboundHistory() {
       </div>
 
       <div className="kpi-grid grid grid-cols-3 gap-3">
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{histRows.length}</p></div>
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-bold text-rose-400 uppercase tracking-wide mb-1">총 출고 수량</p><p className="text-xl font-bold text-rose-700">{histTotal.toLocaleString()}</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size}</p></div>
+        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{histRows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">조회 기간 · 조건 기준</p></div>
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-bold text-rose-400 uppercase tracking-wide mb-1">총 출고 수량</p><p className="text-xl font-bold text-rose-700">{histTotal.toLocaleString()}</p><p className="text-[11px] text-rose-400 mt-0.5">빠져나간 수량 합계</p></div>
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size.toLocaleString()}</p><p className="text-[11px] text-indigo-400 mt-0.5">출고된 품목 종류</p></div>
       </div>
 
       {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (

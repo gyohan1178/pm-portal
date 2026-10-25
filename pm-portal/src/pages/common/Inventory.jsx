@@ -1,4 +1,5 @@
 import { refreshProcurement } from '../../lib/refresh'
+import PageHead from '../../components/PageHead'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
@@ -326,26 +327,46 @@ export default function Inventory() {
         <QrScanner onClose={()=>setScanOpen(false)}
           onScan={(loc)=>{ setScanOpen(false); navTo(`/cell/${loc}`) }} />
       )}
-      {/* 순환 실사 카드는 할 일 탭으로 옮겼다 (v4.79.1) */}
-      <div className="flex items-center gap-3 flex-wrap">
+      {/* 화면 머리 — 자주 쓰는 QR 스캔 · 보고용 추출은 오른쪽 끝 (v4.96.0) */}
+      <PageHead crumb="자재 · 일일 업무" title="재고현황"
+        desc="품목별 현재고 · 위치 · 안전재고를 봅니다. 숫자가 맞지 않으면 실사(붙여넣기 · QR 칸 실사 · 엑셀 업로드)로 바로잡습니다.">
+            <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 보고용 추출</button>
+            <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
+              📷 QR 스캔
+            </button>
+      </PageHead>
+
+      {/* 지표 — 노트북 화면이면 한 줄 칩으로 얇게 (v4.64.0) */}
+      {compact ? (
+        <div data-kpi-compact className="flex flex-wrap gap-1.5 text-xs">
+          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b></span>
+          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b></span>
+          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b></button>
+          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b></span>
+          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b></span>
+        </div>
+      ) : (
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" data-inv-kpi>
+        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{rows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">지금 조건(검색 · 구분 · 브랜드) 기준</p></div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">재고 없음</p><p className="text-xl font-bold text-red-600">{zeroStock.toLocaleString()}</p><p className="text-[11px] text-red-400 mt-0.5">현재고 0 인 품목</p></div>
+        <button onClick={()=>setShowNeg(v=>!v)} className={`text-left rounded-xl border p-3 transition-all ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>
+          <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mb-1">⚠ 음수 재고</p><p className="text-xl font-bold text-rose-600">{negRows.length}</p>
+          <p className="text-[10px] text-rose-400 mt-0.5">클릭해서 정리</p>
+        </button>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">안전재고 미달</p><p className="text-xl font-bold text-amber-700">{belowSafety.toLocaleString()}</p><p className="text-[11px] text-amber-600/80 mt-0.5">안전재고보다 적음 · 발주 검토</p></div>
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">재고 금액</p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
+      </div>
+      )}
+
+      {/* 조회 조건 + 실사 — 한 카드 (v4.96.0) */}
+      <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 flex items-center gap-3 flex-wrap" data-inv-toolbar>
         <input value={search} onChange={e=>setSearch(e.target.value)}
           onKeyDown={e=>{if(e.key==='Enter')setAppliedSearch(search)}}
           placeholder="기준코드 / 품명 / 고객사코드 검색 후 Enter"
           className="w-full sm:w-72 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
         <button onClick={()=>setAppliedSearch(search)} className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">검색</button>
         {appliedSearch&&<button onClick={()=>{setSearch('');setAppliedSearch('')}} className="text-xs text-slate-400 hover:text-slate-600">✕ 초기화</button>}
-        <button onClick={()=>setPasteOpen(true)} title="엑셀에서 품번·수량을 복사해 붙여넣어 실사 결과를 반영합니다"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
-          📋 실사 붙여넣기
-        </button>
-        <button onClick={()=>setAuditOpen(true)} title="QR 로 칸을 찍어 기록한 실사를 재고에 반영합니다 (차이만큼)"
-          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border whitespace-nowrap ${pendingAudit>0 ? 'border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100' : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
-          📋 칸 실사 반영{pendingAudit>0 ? ` (${pendingAudit})` : ''}
-        </button>
-        <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
-          📷 QR 스캔
-        </button>
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
           {['전체','가공','자재'].map(t=>(
             <button key={t} onClick={()=>setTypeFilter(t)}
@@ -362,32 +383,18 @@ export default function Inventory() {
           {hideExcluded?'관리대상만':'제외 포함'}
         </button>
         <div className="flex-1"/>
+        <span className="text-[11px] font-semibold text-slate-400">실사</span>
+        <button onClick={()=>setPasteOpen(true)} title="엑셀에서 품번·수량을 복사해 붙여넣어 실사 결과를 반영합니다"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
+          📋 실사 붙여넣기
+        </button>
+        <button onClick={()=>setAuditOpen(true)} title="QR 로 칸을 찍어 기록한 실사를 재고에 반영합니다 (차이만큼)"
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border whitespace-nowrap ${pendingAudit>0 ? 'border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100' : 'border-slate-200 text-slate-500 bg-white hover:bg-slate-50'}`}>
+          📋 칸 실사 반영{pendingAudit>0 ? ` (${pendingAudit})` : ''}
+        </button>
         <button onClick={downloadAuditTemplate} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-200 text-emerald-700 bg-white hover:bg-emerald-50">📋 실사양식{brandFilter!=='전체' && ` · ${brandFilter}`}</button>
         <label className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 cursor-pointer">📤 실사 업로드<input type="file" accept=".xlsx,.xls,.csv" onChange={onAuditFile} className="hidden"/></label>
-        <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 보고용 추출</button>
       </div>
-
-      {/* 지표 — 노트북 화면이면 한 줄 칩으로 얇게 (v4.64.0) */}
-      {compact ? (
-        <div data-kpi-compact className="flex flex-wrap gap-1.5 text-xs">
-          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b></span>
-          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b></span>
-          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b></button>
-          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b></span>
-          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b></span>
-        </div>
-      ) : (
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{rows.length}</p></div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">재고 없음</p><p className="text-xl font-bold text-red-600">{zeroStock}</p></div>
-        <button onClick={()=>setShowNeg(v=>!v)} className={`text-left rounded-xl border p-3 transition-all ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>
-          <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mb-1">⚠ 음수 재고</p><p className="text-xl font-bold text-rose-600">{negRows.length}</p>
-          <p className="text-[10px] text-rose-400 mt-0.5">클릭해서 정리</p>
-        </button>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">안전재고 미달</p><p className="text-xl font-bold text-amber-700">{belowSafety}</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">재고 금액</p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
-      </div>
-      )}
 
       {/* 재고 실사 미리보기 */}
       {showAudit && (() => {

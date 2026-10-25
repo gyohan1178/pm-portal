@@ -143,8 +143,8 @@ export default function PurchaseDashboard({ embed = false }) {
       `}</style>
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
-        <div className="flex items-center gap-2">
-          <p className="page-desc text-xs text-slate-400">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
+        <div className="flex items-center gap-2 flex-wrap">
+          <p className="page-desc text-xs text-slate-400 basis-full sm:basis-auto">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
           {!embed && (
             <button
               onClick={async () => {
@@ -157,11 +157,11 @@ export default function PurchaseDashboard({ embed = false }) {
               }}
               disabled={!!rptBusy}
               title="화면 그대로 HTML 파일로 저장 — 월·고객사별 세부 내역까지 담깁니다"
-              className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50">
+              className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 whitespace-nowrap">
               {rptBusy ? '만드는 중…' : '📄 보고서 저장'}
             </button>
           )}
-          {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700">🖨️ 출력</button>}
+          {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 whitespace-nowrap">🖨️ 출력</button>}
         </div>
       </div>
 
@@ -266,7 +266,7 @@ export default function PurchaseDashboard({ embed = false }) {
                       
                     </td>
                     {CS_LIST.map(cs=>(
-                      <td key={cs} className="px-3 py-1.5 text-right">
+                      <td key={cs} className="px-3 py-1.5 text-right whitespace-nowrap">
                         {((row[cs]||0)>0 || (row[cs+'Pend']||0)>0) ? (
                           <button onClick={()=>setDetail({ month: ri+1, cs })}
                             title="눌러서 이 숫자의 근거 보기"
@@ -289,12 +289,12 @@ export default function PurchaseDashboard({ embed = false }) {
                 )
               })}
               <tr className="border-t-2 border-slate-300 bg-slate-50 font-bold">
-                <td className="px-3 py-2 text-slate-700">연간 합계</td>
+                <td className="px-3 py-2 text-slate-700 whitespace-nowrap">연간 합계</td>
                 {CS_LIST.map(csN=>{
                   const tot = d.months.reduce((a,m)=>a+(m[csN]||0),0)
                   const pend = d.months.reduce((a,m)=>a+(m[csN+'Pend']||0),0)
                   return (
-                    <td key={csN} className="px-3 py-2 text-right">
+                    <td key={csN} className="px-3 py-2 text-right whitespace-nowrap">
                       <span className={csColor(csN).text}>{(tot/10000).toFixed(2)}억</span>
                       {pend>0 && <span className="text-amber-400 ml-1 text-xs font-normal">+{(pend/10000).toFixed(2)}</span>}
                     </td>

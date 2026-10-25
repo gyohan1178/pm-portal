@@ -54,6 +54,7 @@ const LotManage = lazy(() => import('./pages/common/LotManage'))
 const UnifiedUpload = lazy(() => import('./pages/UnifiedUpload'))
 const ScheduleChanges = lazy(() => import('./pages/customer/ScheduleChanges'))
 const MaterialRequest = lazy(() => import('./pages/common/MaterialRequest'))
+const DocRequest = lazy(() => import('./pages/common/DocRequest'))
 const CellAudit = lazy(() => import('./pages/common/CellAudit'))
 const PurchaseDashboard = lazy(() => import('./pages/PurchaseDashboard'))
 const CostSaving = lazy(() => import('./pages/report/CostSaving'))
@@ -195,6 +196,7 @@ export default function App() {
         <Route path="upload" element={<UnifiedUpload />} />
         <Route path="schedule-changes" element={<ScheduleChanges />} />
         <Route path="material-request" element={<MaterialRequest />} />
+        <Route path="doc-request" element={<DocRequest />} />
         <Route path="rack/:code" element={<RackLayout />} />
         <Route path="cell/:loc" element={<CellAudit />} />
         <Route path="purchase-dashboard" element={<PurchaseDashboard />} />

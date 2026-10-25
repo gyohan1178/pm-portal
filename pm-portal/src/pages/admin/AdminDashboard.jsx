@@ -133,14 +133,17 @@ export default function AdminDashboard() {
         <div className="rounded-xl border border-slate-200 p-3">
           <p className="text-xs font-bold text-slate-400 mb-1">남은 일</p>
           <p className="text-xl font-bold text-slate-900">{open.length}</p>
+          <p className="text-[11px] text-slate-400 mt-0.5">완료 안 된 항목</p>
         </div>
         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
           <p className="text-xs font-bold text-red-400 mb-1">기한 지남</p>
           <p className="text-xl font-bold text-red-600">{overdue.length}</p>
+          <p className="text-[11px] text-red-400 mt-0.5">기한이 지났는데 남은 것</p>
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
           <p className="text-xs font-bold text-amber-500 mb-1">우선순위 높음</p>
           <p className="text-xl font-bold text-amber-700">{high.length}</p>
+          <p className="text-[11px] text-amber-600/80 mt-0.5">우선순위 높음으로 표시한 남은 일</p>
         </div>
       </div>
 

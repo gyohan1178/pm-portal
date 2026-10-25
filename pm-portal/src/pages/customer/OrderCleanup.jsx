@@ -235,7 +235,7 @@ function BomPanel({ cust, editable, meName }) {
               {editable && st === 'req' && <button type="button" onClick={() => run(() => cancelBomRequest(picked), '요청을 거뒀습니다')} disabled={busy || !picked.length} className="h-8 px-3 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">요청 거두기</button>}
               {editable && (st === 'need' || st === 'unknown') && <button type="button" onClick={() => run(() => requestBom(picked, { assignee: who, due }, meName), `${picked.length}품목 BOM 요청 → ${who}`)} disabled={busy || !picked.length || !who} data-cl-bom-req className="h-8 px-4 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40">{picked.length}품목 BOM 요청</button>}
             </div>
-            <p className="text-[11px] text-slate-400">BOM 을 올리면(BOM 메뉴) 요청이 자동으로 「완료」 · 영업 업무 흐름 「BOM 확인」 단계에 「BOM 요청」 건수로 뜹니다.</p>
+            <p className="text-[11px] text-slate-400">BOM 요청은 📎 자료 요청에도 같이 올라가 영업 「받은 자료 요청」에 뜹니다. BOM 을 올리면(BOM 메뉴) 요청이 자동으로 「완료 · 받음」.</p>
           </div>
         </>
       )}

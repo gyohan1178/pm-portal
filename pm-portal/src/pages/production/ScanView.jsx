@@ -5,6 +5,7 @@ import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
 import { toastError } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
+import ScanFlash from '../../components/ScanFlash'
 import { isMainRow, fetchMainOverrides } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
@@ -87,9 +88,12 @@ export default function ScanView({ store: outer, rows: outerRows, full }) {
   const [, tick] = useState(0)
   useEffect(() => { if (!last) return undefined; const t = setInterval(() => tick((x) => x + 1), 1000); return () => clearInterval(t) }, [last])
 
+  const [flash, setFlash] = useState(null)   // 스캔 결과 — 화면 전체 초록 · 빨강 (v4.97.0)
   const onScan = useCallback((p) => {
     setOpen(false)
-    if (!rows.some((r) => String(r.id) === String(p.id))) { toastError('진행 중인 PD 호기가 아닙니다 (완료됐거나 다른 QR)'); return }
+    const hit = rows.find((r) => String(r.id) === String(p.id))
+    if (!hit) { setFlash({ ok: false, title: '진행 중인 호기가 아닙니다', sub: '완료됐거나 다른 QR 입니다' }); return }
+    setFlash({ ok: true, title: `${hit.hogi || ''} ${hit.pn || ''}`.trim(), sub: hit.name || '' })
     setCur({ id: p.id, qrRev: p.rev }); setLast(null); setPick(false)
   }, [rows])
 
@@ -104,6 +108,7 @@ export default function ScanView({ store: outer, rows: outerRows, full }) {
     const ev = { id: `${Date.now()}`, pid: String(r.id), step: nx.k, at: Date.now(), by: st.worker }
     put({ ...st, events: [...st.events, ev] })
     setLast({ ev, at: Date.now() })
+    setFlash({ ok: true, title: `${nx.l} 기록`, sub: `${r.hogi || ''} ${r.pn || ''}`.trim() })
   }
   function undo() {
     if (!last) return
@@ -246,6 +251,7 @@ export default function ScanView({ store: outer, rows: outerRows, full }) {
         )}
       </div>
 
+      <ScanFlash value={flash} onDone={() => setFlash(null)} />
       {open && (
         <QrScanner onScan={onScan} onClose={() => setOpen(false)} parse={parseQr}
           hint="작업지시서 오른쪽 위 QR 을 비추세요" placeholder="직접 입력 (예: PD|123|E)" />

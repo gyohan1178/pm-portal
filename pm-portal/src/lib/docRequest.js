@@ -1,0 +1,167 @@
+// 자료 요청 (v4.98.0) — 도면 · BOM · 사양서를 영업에 요청 → 영업이 고객사에 받아서 올림 → 요청한 부서로 알림
+//   진행 0 요청됨 → 1 고객사에 요청함 → 2 받음 → 3 요청 부서 확인. 영업은 한 칸 뒤로 되돌릴 수 있다 (잘못 눌렀을 때)
+//   같은 품번 · 같은 자료 · 같은 고객사가 진행 중이면 새로 만들지 않고 「같이 기다리기」
+//   SQL: 자료요청_반영_261025.sql (표 pm_doc_request · 함수 pm_doc_request_move / cancel / follow / autorecv)
+import { supabase } from './supabase'
+import { ORDER_CUSTOMERS } from './orderIntake'
+import { todayISO } from './utils'
+
+export const DOC_KINDS = ['도면', 'BOM', '사양서', '기타']
+export const DOC_STEPS = ['요청됨', '고객사에 요청함', '받음', '확인 완료']
+export const DOC_DEPTS = ['구매자재', '생산기술', '제조', '품질', '영업']
+export const DOC_CUSTOMERS = [...Object.entries(ORDER_CUSTOMERS).map(([code, c]) => ({ code, name: c.name, badge: c.badge })), { code: 'ETC', name: '기타', badge: 'bg-slate-100 text-slate-600' }]
+export const custName = (code) => DOC_CUSTOMERS.find((c) => c.code === code)?.name || code || '—'
+export const custBadge = (code) => DOC_CUSTOMERS.find((c) => c.code === code)?.badge || 'bg-slate-100 text-slate-600'
+export const KIND_BADGE = { 도면: 'bg-blue-50 text-blue-700', BOM: 'bg-violet-50 text-violet-700', 사양서: 'bg-emerald-50 text-emerald-700', 기타: 'bg-slate-100 text-slate-600' }
+
+const s = (v) => (v == null ? '' : String(v).trim())
+const missing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205' || /pm_doc_request/.test(e.message || '') && /does not exist|not find/i.test(e.message || ''))
+export const DOC_SQL_HINT = '자료 요청 표가 아직 없습니다 — 「자료요청_반영_261025.sql」 을 실행하세요'
+
+// 품번 → 고객사 짐작 (포털 코드 접두)
+export function guessCustomer(code) {
+  const c = s(code).toUpperCase()
+  if (c.startsWith('AX-') || /^\d{9}$/.test(c)) return 'AX'
+  if (c.startsWith('ED-')) return 'ED'
+  if (c.startsWith('VM-')) return 'VM'
+  if (c.startsWith('CS')) return 'CSK'
+  return ''
+}
+
+// 품번 입력 → 품목 찾기. 숫자만 넣으면 AX- 를 붙여 본다
+export async function lookupItem(code) {
+  const c = s(code).toUpperCase()
+  if (!c) return null
+  const tries = [c]
+  if (/^\d{6,}$/.test(c)) tries.push('AX-' + c)
+  for (const t of tries) {
+    const { data } = await supabase.from('items').select('id,std_code,name').ilike('std_code', t).limit(1)
+    if (data && data[0]) return data[0]
+  }
+  return null
+}
+
+// 필요일까지 남은 날 (음수 = 지남)
+export function dLeft(need, today = todayISO()) {
+  if (!need) return null
+  return Math.round((new Date(String(need).slice(0, 10)) - new Date(today)) / 86400000)
+}
+
+// 업무 흐름 숫자 — 진행 중 요청만 가볍게
+export const docCountsQuery = {
+  queryKey: ['docRequests', 'counts'],
+  queryFn: async () => {
+    const { data, error } = await supabase.from('pm_doc_request').select('id,status,from_dept,also_depts,need_date')
+      .eq('cancelled', false).lt('status', 3).limit(2000)
+    if (error) return null
+    return docCountsOf(data || [])
+  },
+  staleTime: 2 * 60 * 1000,
+  refetchInterval: 5 * 60 * 1000,
+}
+export function docCountsOf(rows, today = todayISO()) {
+  const out = { open: 0, late: 0, byDept: {} }
+  const add = (dept, k) => { if (!dept) return; out.byDept[dept] = out.byDept[dept] || { wait: 0, recv: 0 }; out.byDept[dept][k]++ }
+  for (const r of rows) {
+    const depts = [r.from_dept, ...(r.also_depts || [])]
+    if (r.status < 2) {
+      out.open++
+      if (r.need_date && String(r.need_date).slice(0, 10) < today) out.late++
+      depts.forEach((d) => add(d, 'wait'))
+    } else if (r.status === 2) depts.forEach((d) => add(d, 'recv'))
+  }
+  return out
+}
+
+export async function fetchDocRequests() {
+  const { data, error } = await supabase.from('pm_doc_request').select('*').order('id', { ascending: false }).limit(2000)
+  if (error) { if (missing(error)) { const e = new Error(DOC_SQL_HINT); e.missing = true; throw e } throw error }
+  return data || []
+}
+
+// 진행 중 같은 자료가 있나
+export async function findOpenSame({ part_no, kind, customer_code }) {
+  const { data, error } = await supabase.from('pm_doc_request').select('id,from_dept,also_depts,created_at,requester_name,status')
+    .ilike('part_no', s(part_no)).eq('kind', kind).eq('customer_code', customer_code).eq('cancelled', false).lt('status', 2).limit(1)
+  if (error) return null
+  return (data && data[0]) || null
+}
+
+// 요청 만들기 — 같은 자료가 진행 중이면 「같이 기다리기」로 붙인다. 반환 { row, followed }
+export async function createDocRequest(f, me) {
+  const part = s(f.part_no)
+  if (!part) throw new Error('품번을 넣으세요')
+  if (!DOC_KINDS.includes(f.kind)) throw new Error('무엇이 필요한지 고르세요')
+  if (!s(f.customer_code)) throw new Error('어느 고객사 자료인지 고르세요')
+  if (!s(f.from_dept)) throw new Error('요청 부서를 고르세요')
+  if (!f.need_date) throw new Error('필요일을 넣으세요')
+  const same = await findOpenSame({ part_no: part, kind: f.kind, customer_code: f.customer_code })
+  if (same) {
+    if (same.from_dept === f.from_dept || (same.also_depts || []).includes(f.from_dept)) return { row: same, followed: false, already: true }
+    const { data, error } = await supabase.rpc('pm_doc_request_follow', { p_id: same.id, p_dept: f.from_dept })
+    if (error) throw error
+    return { row: data, followed: true }
+  }
+  const row = {
+    kind: f.kind, customer_code: f.customer_code, item_id: f.item_id || null, part_no: part, item_name: s(f.item_name) || null,
+    rev: f.kind === '도면' ? s(f.rev) || null : null, need_date: f.need_date, reason: s(f.reason) || null, ref: s(f.ref) || null,
+    source: f.source || 'direct', from_dept: f.from_dept, requester_name: me?.name || null,
+  }
+  const { data, error } = await supabase.from('pm_doc_request').insert(row).select('*').single()
+  if (error) {
+    // 동시에 같은 요청이 들어온 경우 — 같이 기다리기로
+    if (error.code === '23505') {
+      const again = await findOpenSame(row)
+      if (again) { const r2 = await supabase.rpc('pm_doc_request_follow', { p_id: again.id, p_dept: f.from_dept }); if (!r2.error) return { row: r2.data, followed: true } }
+    }
+    if (missing(error)) throw new Error(DOC_SQL_HINT)
+    throw error
+  }
+  return { row: data, followed: false }
+}
+
+export async function moveDoc(id, to, note) {
+  const { data, error } = await supabase.rpc('pm_doc_request_move', { p_id: id, p_to: to, p_note: s(note) || null })
+  if (error) throw error
+  return data
+}
+export async function cancelDoc(id, note) {
+  const { data, error } = await supabase.rpc('pm_doc_request_cancel', { p_id: id, p_note: s(note) || null })
+  if (error) throw error
+  return data
+}
+export async function autoRecv() {
+  const { data, error } = await supabase.rpc('pm_doc_request_autorecv')
+  if (error) return 0
+  return Number(data) || 0
+}
+
+// 고객사에 보낼 한 통 — AXCELIS · Edwards 는 영어, 나머지는 한글
+export function mailText(rows, cust) {
+  const en = cust === 'AX' || cust === 'ED'
+  const kindEn = { 도면: 'drawing', BOM: 'BOM', 사양서: 'spec sheet', 기타: 'document' }
+  const pn = (r) => (cust === 'AX' ? r.part_no.replace(/^AX-/, '') : r.part_no)
+  const lines = rows.map((r, i) => en
+    ? `${i + 1}) ${pn(r)}${r.rev ? ' Rev ' + r.rev : ''} — ${kindEn[r.kind] || 'document'}${r.need_date ? ` (needed by ${String(r.need_date).slice(5, 10)})` : ''}`
+    : `${i + 1}) ${pn(r)}${r.rev ? ' Rev ' + r.rev : ''} — ${r.kind}${r.need_date ? ` (${String(r.need_date).slice(5, 10)}까지)` : ''}`)
+  return en
+    ? `Hi,\n\nCould you please share the documents below?\n${lines.join('\n')}\n\nThank you.`
+    : `안녕하세요, 진선테크입니다.\n아래 자료 공유 부탁드립니다.\n${lines.join('\n')}\n\n감사합니다.`
+}
+
+// 누가 무엇을 할 수 있나
+//   영업(또는 관리자): 앞으로 0→1→2, 뒤로 2→1→0 · 요청 부서: 받음 확인 2→3, 확인 취소 3→2, 요청됨일 때 취소
+export function docPerms(profile, row, canEdit) {
+  const admin = profile?.role === 'admin'
+  const sales = admin || profile?.dept === '영업'
+  const mineDept = !!profile?.dept && (row.from_dept === profile.dept || (row.also_depts || []).includes(profile.dept))
+  const req = admin || mineDept
+  if (!canEdit || row.cancelled) return { next: false, prev: false, confirm: false, unconfirm: false, cancel: false }
+  return {
+    next: sales && row.status < 2,
+    prev: sales && (row.status === 1 || row.status === 2),
+    confirm: req && row.status === 2,
+    unconfirm: req && row.status === 3,
+    cancel: (sales && row.status < 2) || (req && row.status === 0),
+  }
+}

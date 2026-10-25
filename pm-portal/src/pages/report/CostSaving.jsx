@@ -388,12 +388,12 @@ export default function CostSaving() {
             )}
           </p>
           {/* 기준단가 — 무엇과 견줄 것인가 */}
-          <div className="flex items-center gap-1.5 mt-2">
-            <span className="text-[11px] font-bold text-slate-400">기준단가</span>
+          <div className="flex items-center flex-wrap gap-1.5 mt-2">
+            <span className="text-[11px] font-bold text-slate-400 whitespace-nowrap">기준단가</span>
             {[['avg', '최근 실구매', '직전 기간에 실제로 산 값 — 보고 기준'], ['db', 'DB단가', '작년에 정한 목표가 — 내부 점검용']].map(([k, l, tip]) => (
               <button key={k} onClick={() => setBasis(k)} title={tip}
                 disabled={k === 'avg' && !hasAvg}
-                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border ${useBasis === k
+                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg border whitespace-nowrap ${useBasis === k
                   ? 'border-violet-300 bg-violet-50 text-violet-700'
                   : k === 'avg' && !hasAvg ? 'border-slate-100 text-slate-300 cursor-not-allowed'
                     : 'border-slate-200 text-slate-400 hover:bg-slate-50'}`}>{l}</button>
