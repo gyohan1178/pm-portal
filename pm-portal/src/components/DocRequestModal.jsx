@@ -1,5 +1,6 @@
 // 📎 자료 요청 쓰기 (v4.98.0) — 어느 화면에서 열어도 같은 창. preset 으로 품번 · 고객사 · Rev · 관련 PO 를 미리 채운다
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit } from '../hooks/useProfile'
 import { toastError, toastSuccess } from '../lib/toast'
@@ -15,7 +16,8 @@ export function DocRequestButton({ preset, label = '📎 영업에 자료 요청
     <>
       <button type="button" onClick={() => setOpen(true)} data-doc-req-open
         className={className || `${small ? 'px-2 py-0.5 text-[11px]' : 'px-3 py-1.5 text-xs'} font-bold rounded-lg border border-[#f3d9b1] bg-[#fff7ec] text-[#8a5a00] hover:bg-[#ffefd6] whitespace-nowrap`}>{label}</button>
-      {open && <DocRequestModal preset={preset} onClose={() => setOpen(false)} />}
+      {/* 창은 body 바로 아래에 — 버튼이 「줄바꿈 안 함」 영역(화면 머리 버튼 줄 등) 안에 있어도 글자가 창 밖으로 안 나가게 (v4.102.0) */}
+      {open && createPortal(<DocRequestModal preset={preset} onClose={() => setOpen(false)} />, document.body)}
     </>
   )
 }
@@ -64,8 +66,8 @@ export default function DocRequestModal({ preset = {}, onClose }) {
 
   const editable = canEdit(profile)
   return (
-    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4" onClick={onClose} data-doc-req-modal>
-      <div className="bg-white rounded-2xl w-full max-w-[460px] max-h-[92vh] overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4 whitespace-normal" onClick={onClose} data-doc-req-modal>
+      <div className="bg-white rounded-2xl w-full max-w-[460px] max-h-[92vh] overflow-y-auto overflow-x-hidden p-5 space-y-3" onClick={(e) => e.stopPropagation()} data-doc-req-box>
         <div className="flex items-center justify-between">
           <h3 className="text-[15px] font-extrabold text-slate-800">📎 영업에 자료 요청</h3>
           <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
@@ -74,14 +76,16 @@ export default function DocRequestModal({ preset = {}, onClose }) {
 
         <div>
           <label className="block text-[12px] font-bold text-slate-600 mb-1">무엇이 필요한가요</label>
-          <div className="inline-flex gap-1 p-1 rounded-lg bg-slate-100">
+          <div className="inline-flex flex-wrap max-w-full gap-1 p-1 rounded-lg bg-slate-100">
             {DOC_KINDS.map((k) => <button key={k} type="button" onClick={() => set('kind')(k)} data-doc-kind={k}
               className={`px-3 py-1 rounded-md text-[12.5px] font-bold ${f.kind === k ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}>{KIND_SHOW[k] || k}</button>)}
           </div>
-          {f.kind === '기타' && <>
-            <input value={f.kind_label} onChange={set('kind_label')} autoFocus placeholder="어떤 자료인가요 — 예: CN 내역 · 성적서 · 인증서" className={`${inp} mt-1.5`} data-doc-label />
-            <p className="text-[10.5px] text-slate-400 mt-1">적은 이름이 목록 · 고객사 요청 메일에 그대로 나갑니다. 품번이 없는 자료면 품번은 비워도 됩니다.</p>
-          </>}
+          {f.kind === '기타' && (
+            <div className="mt-1.5 min-w-0" data-doc-label-box>
+              <input value={f.kind_label} onChange={set('kind_label')} autoFocus placeholder="어떤 자료인가요 — 예: CN 내역 · 성적서 · 인증서" className={`${inp} block`} data-doc-label />
+              <p className="text-[10.5px] text-slate-400 mt-1">적은 이름이 목록 · 고객사 요청 메일에 그대로 나갑니다. 품번이 없는 자료면 품번은 비워도 됩니다.</p>
+            </div>
+          )}
         </div>
         <div>
           <label className="block text-[12px] font-bold text-slate-600 mb-1">품번 {f.kind === '기타' ? <span className="font-normal text-slate-400">(있으면)</span> : <span className="text-red-500">*</span>}</label>

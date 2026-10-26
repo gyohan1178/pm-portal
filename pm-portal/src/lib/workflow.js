@@ -34,6 +34,7 @@ export const MENU = {
   '/doc-request': '자료 요청',
   '/production/harness-release': '하네스 출도·불출',
   '/production/AX': '생산 관리',
+  '/production/targets': '생산관리 대상',
   '/quality/drawing-dist': '도면 배포이력 · 외주 배포',
   '/quality/drawing-dist?tab=int': '도면 배포이력 · 사내 배포',
   '/quality/cn': '설계변경(CN) 이력',

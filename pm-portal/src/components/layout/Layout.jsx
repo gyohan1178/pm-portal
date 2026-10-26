@@ -58,6 +58,7 @@ const PATH_LABELS = {
   drawings:           ['현장', '도면 조회'],
   board:              ['현장', '생산 전광판'],
   'production/qr-demo': ['현장', 'QR 공정 데모'],
+  'production/targets': ['현장', '생산관리 대상'],
   'quality/fa-progress': ['품질', '초도품 진행관리'],
   'quality/fai':      ['품질', '초도품 자재 매칭'],
   'quality/cn':       ['품질', '설계변경(CN) 이력'],

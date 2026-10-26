@@ -68,6 +68,7 @@ const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
 const DrawingSearch = lazy(() => import('./pages/production/DrawingSearch'))
 const QrDemo = lazy(() => import('./pages/production/QrDemo'))
 const HarnessRelease = lazy(() => import('./pages/production/HarnessRelease'))
+const ProdTargets = lazy(() => import('./pages/production/ProdTargets'))
 const ScanPage = lazy(() => import('./pages/production/ScanView').then((m) => ({ default: m.ScanPage })))
 
 function ControlTowerRoute() {
@@ -210,6 +211,7 @@ export default function App() {
         <Route path="production" element={<ProductionDashboard />} />
         <Route path="production/qr-demo" element={<QrDemo />} />
         <Route path="production/harness-release" element={<HarnessRelease />} />
+        <Route path="production/targets" element={<ProdTargets />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
         <Route path="drawings" element={<DrawingSearch />} />
       </Route>

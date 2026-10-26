@@ -285,6 +285,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       customer_code: cust, po_no: po.po_no, order_date: po.order_date || null, currency: po.currency || 'KRW', ccn: po.ccn || null,
       total: po.total ?? null, source, file_name: fileName || null, migrated: !!migrated, registered_name: meName || null,
       ...(po.ship_to ? { ship_to: po.ship_to } : {}),
+      ...(po.project ? { memo: [po.project, po.remark].filter(Boolean).join(' / ') } : {}),   // Edwards 발주서 프로젝트 줄 (v4.102.0)
       ...(po.extra || {}),          // 직접 등록 — 구분(kind) · 명세서번호 · 받은 경로 등 (v4.94.0)
     }
     let { data: o, error } = await supabase.from('pm_order').insert(head).select('id').single()

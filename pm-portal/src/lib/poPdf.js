@@ -167,12 +167,23 @@ function parseSAP(L) {
   const order_date = dEU(lastCell(t.find((x) => /발주일자 \|/.test(x))))
   const lines = []
   let cur = null
+  // 프로젝트 줄 (v4.102.0) — 표 머리(Your Material Number · 귀사품번) 바로 아래 첫 줄 = 프로젝트 · 호기 (예: Gen2 Plus_SS H2D #10 (NKB973)),
+  //   그다음 줄 = 비고 (예: Harness 정한납품 4/14). 다음 페이지 머리 아래에 없으면 앞 프로젝트를 그대로 쓴다.
+  //   품목 메모 끝에 「PROJECT …」로 붙인다 — 엑셀로 옮긴 Edwards 줄과 같은 모양 → 생산관리 프로젝트 · 호기와 연결
+  //   ⚠ 마지막 페이지 머리 아래의 꼬리 문구(납품서 안내 등)를 잡지 않게, 그 아래에 품목 줄이 이어질 때만 프로젝트로 본다
+  let underHead = false, project = null, remark = null
+  let pending = []
+  const plain = (x, c) => c.length === 1 && !/:/.test(x) && !/^(The Due Date|CONTINUED|TOTAL|Total)/i.test(x.trim())
   t.forEach((x) => {
     const c = cells(x)
+    if (/^(Your Material Number|귀사품번) \|/.test(x)) { if (!underHead) pending = []; underHead = true; return }
     if (/^\d{5}$/.test(c[0]) && dEU(c[5] || '')) {
-      cur = { line_no: c[0], del_line: '1', pn: c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dEU(c[5]), price: num(c[6]), delivered: 0, note: '', refs: refNums(x, po_no) }
+      if (underHead && pending.length) { project = pending[0]; if (remark == null) remark = pending.slice(1, 3).join(' / ') || null }
+      underHead = false; pending = []
+      cur = { line_no: c[0], del_line: '1', pn: c[1], rev: null, desc: c[2], spec: '', qty: num(c[3]), unit: c[4], due: dEU(c[5]), price: num(c[6]), delivered: 0, note: '', refs: refNums(x, po_no), project }
       lines.push(cur); return
     }
+    if (underHead && plain(x, c)) { pending.push(x.trim()); return }
     if (cur) cur.refs.push(...refNums(x, po_no))
     const mr = x.match(/^Material Revision:\s*(\S+)/)
     if (mr && cur) { cur.rev = mr[1]; return }
@@ -183,7 +194,9 @@ function parseSAP(L) {
   })
   const tot = lastCell(t.find((x) => /^Total \/ 합계/.test(x)))
   const dueChanged = t.some((x) => /Due Date has been changed/.test(x))
-  return { po_no, order_date, currency: 'KRW', total: num(tot), lines, dueChanged }
+  lines.forEach((l) => { if (l.project) l.note = [l.note, `PROJECT ${l.project}`].filter(Boolean).join(' · ') })
+  const proj = lines.find((l) => l.project)?.project || null
+  return { po_no, order_date, currency: 'KRW', total: num(tot), lines, dueChanged, project: proj, remark: proj ? remark : null }
 }
 
 function parseLN(L) {

@@ -17,8 +17,7 @@ import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
-// AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
-const CustomerPOUpload = lazy(() => import('./CustomerPOUpload'))
+import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   ORDER_CUSTOMERS, fetchOrders, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
@@ -27,6 +26,8 @@ import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
 import OrderEntry, { downloadTemplate } from './OrderEntry'
 import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, setSlipNo } from '../../lib/orderEntry'
+// AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
+const CustomerPOUpload = lazy(() => import('./CustomerPOUpload'))
 const EcountMatch = lazy(() => import('./EcountMatch'))
 const OrderCleanup = lazy(() => import('./OrderCleanup'))
 
@@ -170,6 +171,18 @@ function RevChip({ l, ax }) {
       title={`SREV ${l.rev || '—'} (지금 Rev) · BREV ${l.brev || '—'} (PO 낼 때 Rev)${diff ? ' — 서로 다름: 작업은 BREV 이상이면 됨' : ''}`}>
       S {l.rev || '—'}<span className="text-sky-600"> / B {l.brev || '—'}</span>
     </span>
+  )
+}
+
+// 생산관리 연결 (v4.102.0) — 이 진행 중 수주 줄과 이어진 생산관리 호기 (AX: 고객사 PO · CSK: Plnd · VM: PROJECT 코드 · ED: 프로젝트 + 호기)
+function ProdLink({ ps }) {
+  if (!ps || !ps.hogiList?.length) return null
+  const hs = ps.hogiList
+  return (
+    <div className={`mt-0.5 text-[10.5px] font-bold whitespace-nowrap ${ps.guess ? 'text-amber-600' : 'text-violet-600'}`} data-prod-link={hs.join(',')} data-prod-guess={ps.guess ? '1' : undefined}
+      title={`생산관리 ${ps.n_prod}줄과 연결${ps.prod_pns ? ` — ${ps.prod_pns}` : ''}${ps.guess ? ' · 「추정」 프로젝트 이름 앞부분만 같음' : ''}${ps.any_open ? '' : ' · 모두 완료'}`}>
+      🏭 {hs.slice(0, 3).join(' ')}{hs.length > 3 ? ` 외 ${hs.length - 3}` : ''}{ps.guess ? ' (추정)' : ''}
+    </div>
   )
 }
 
@@ -453,6 +466,8 @@ export default function OrderIntake() {
   // 한 번 올리면 둘 다 (v4.101.0) — AXCELIS 고객사 id 를 찾아 「고객사 PO」 업로드 창을 이 파일로 연다
   //   (고객사 id 를 못 찾으면 예전처럼 수주대장만 반영)
   const [cpoFile, setCpoFile] = useState(null)
+  // 생산관리 연결 — 수주 줄 id → 호기 (생산관리대상_매칭 SQL 전이면 빈 목록)
+  const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000 })
   const { data: axCsId } = useQuery({
     queryKey: ['axCustomerId'],
     queryFn: async () => { const { data } = await supabase.from('customers').select('id,code').ilike('code', 'ax').limit(1); return data?.[0]?.id || null },
@@ -712,7 +727,7 @@ export default function OrderIntake() {
             {isBuy && liveVisible.length > 0 && (
               <label className="flex items-center gap-2 px-1 text-[11px] font-bold text-slate-500"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all-m />보이는 품목 전체 선택</label>
             )}
-            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} />)}
+            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} prodMap={prodMap} />)}
           </>}
           {mode === 'po' && <>
             {!isLoading && !poRows.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">조건에 맞는 PO 가 없습니다</div>}
@@ -768,6 +783,7 @@ export default function OrderIntake() {
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${stCls}`} data-status title={l.cancel_reason || ''}>{stLabel}</span>
+                      <ProdLink ps={prodMap?.get(l.id)} />
                       {late && <div className="text-[10.5px] text-red-500 mt-0.5">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
                       {l.st.cancelled && l.cancel_reason && <div className="text-[10.5px] text-slate-500 mt-0.5 whitespace-normal" data-cancel-reason>{l.cancel_reason}</div>}
                     </td>
@@ -822,7 +838,7 @@ export default function OrderIntake() {
       </div>
 
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} onClose={() => setPoOpen(null)}
+        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} onClose={() => setPoOpen(null)}
           onOddOk={(ls, on) => oddMut.mutate({ ls, on })}
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}
@@ -843,7 +859,7 @@ export default function OrderIntake() {
 }
 
 // 휴대폰 카드 — 품번별 한 줄 (v4.90.7)
-function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk }) {
+function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
   const [stLabel, stCls] = statusOf(l)
   const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
   const c = ORDER_CUSTOMERS[l.o.customer_code]
@@ -868,6 +884,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk }) {
         </div>
         <div className="shrink-0 text-right">
           <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] font-bold whitespace-nowrap ${stCls}`} data-status>{stLabel}</span>
+          <ProdLink ps={prodMap?.get(l.id)} />
           {late && <div className="text-[10px] text-red-500 mt-0.5 whitespace-nowrap">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
         </div>
       </div>
@@ -906,7 +923,7 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -1009,6 +1026,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, onClose, onReply, r
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} /><OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} /></div>
+                      <ProdLink ps={prodMap?.get(l.id)} />
                       <div className="text-[11px] text-slate-500">{l.items?.name || l.raw_desc}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400">{l.note}</div>}
                     </td>
