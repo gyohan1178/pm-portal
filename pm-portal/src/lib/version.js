@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.102.0'
+export const APP_VERSION = 'v4.102.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.102.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.102.1',
+    date: '2026-10-26',
+    changes: [
+      '매출 대시보드 숫자가 열 때마다 왔다갔다하던 것 고침 — 실매출(pm_sales 2,820행)을 한 번에 1,000행까지만 받고 순서도 없어 매번 다른 1,000행이 더해졌음. 이제 끝까지 나눠 받음 (고객사 PO 도 같이)',
+    ],
+  },
   {
     version: 'v4.102.0',
     date: '2026-10-26',

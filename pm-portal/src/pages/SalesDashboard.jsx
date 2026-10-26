@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import AnalysisTabs from '../components/AnalysisTabs'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { fetchAll } from '../lib/paginate'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { ResizableTable } from '../components/ResizableTable'
 import { useTableSort } from '../hooks/useTableSort'
@@ -12,13 +13,16 @@ const CS_COLOR = { AXCELIS:'#4F46E5', Edwards:'#3B82F6', VM:'#059669', CSK:'#D97
 const csColor = n => CS_COLOR[n] || '#94a3b8'
 const fmtEok = v => (v/1e8).toFixed(2)
 
+// ⚠ 예전엔 .limit(20000) 이었지만 Supabase 는 한 번에 1000행까지만 준다 — 순서도 없어서
+//   불러올 때마다 다른 1000행이 와서 매출 숫자가 왔다갔다했다 (pm_sales 2,820행, 2026-10-26).
+//   고유 id 순서로 끝까지 나눠 받는다 (fetchAll).
 async function fetchSales() {
-  const [{ data: pos }, { data: css }, { data: sales }] = await Promise.all([
-    supabase.from('purchase_orders')
+  const [pos, { data: css }, sales] = await Promise.all([
+    fetchAll(() => supabase.from('purchase_orders')
       .select('id,customer_id,ccn,qty_ordered,unit_price,promise_date,order_date,status,issued')
-      .eq('order_type','customer_po').limit(20000),
+      .eq('order_type','customer_po').order('id')),
     supabase.from('customers').select('id,name'),
-    supabase.from('pm_sales').select('part_no,qty,unit_price,ccn,promise_date,status_note,customer_code,updated_at').limit(20000),
+    fetchAll(() => supabase.from('pm_sales').select('id,part_no,qty,unit_price,ccn,promise_date,status_note,customer_code,updated_at').order('id')),
   ])
   const csMap = Object.fromEntries((css||[]).map(c=>[c.id,c.name]))
   // 진행중 PO (예정 매출) — pm_sales에 실적이 있으니 완료건 중복 피하려 '완료' 아닌 것만
