@@ -268,16 +268,17 @@ export default function RfqBoard({ customers = [], onWrite }) {
                     {(r.status === '실주' || r.status === '취소') && r.result_memo && <div className="text-[11px] text-slate-400 mt-1 truncate max-w-[180px]" title={r.result_memo}>{r.result_memo}</div>}
                   </td>
                   <td className="px-3 py-3">
-                    <div className="flex flex-wrap gap-1.5 items-center">
-                      {editable && r.stage === 'new' && <Btn tone="primary" onClick={() => check(r)} busy={b} data="check">🔍 점검</Btn>}
+                    {/* 다음 할 일 — 주 동작은 한 줄 전체 · 보조 동작은 같은 폭 3칸 (v4.99.0 · 버튼 길이가 제각각이라 들쭉날쭉했음) */}
+                    <div className="grid grid-cols-3 gap-1.5 w-[300px]" data-rfq-next>
+                      {editable && r.stage === 'new' && <Btn wide tone="primary" onClick={() => check(r)} busy={b} data="check">🔍 점검</Btn>}
                       {r.stage === 'bom' && (isEtc(r.customer_code)
-                        ? <Btn tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>
-                        : <Btn tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
-                      {editable && r.stage === 'noprice' && <Btn tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
+                        ? <Btn wide tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>
+                        : <Btn wide tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
+                      {editable && r.stage === 'noprice' && <Btn wide tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
                       {r.stage === 'price' && (isBuy
-                        ? <Btn tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
-                        : <span className="text-[11px] text-slate-500">구매자재 처리 중</span>)}
-                      {r.status === '진행' && ready.length > 0 && <Btn tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
+                        ? <Btn wide tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
+                        : <span className="col-span-3 py-1.5 rounded-lg bg-amber-50/60 text-center text-[11.5px] font-bold text-amber-700">⏳ 구매자재 처리 중</span>)}
+                      {r.status === '진행' && ready.length > 0 && <Btn wide tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
                       {editable && ['bom', 'noprice', 'price', 'ready'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
                       {editable && isBuy && r.stage === 'price' && <Btn onClick={() => priceDone(r)} busy={b} data="done">단가 요청 끝</Btn>}
                       {editable && ['진행', '제출'].includes(r.status) && <Btn onClick={() => setResult({ id: r.id, title: r.title, status: r.status === '진행' ? '제출' : '수주', quote_no: r.quote_no || '', submitted_at: r.submitted_at || today, submit_amount: r.submit_amount ?? '', currency: r.currency || (r.customer_code === 'ax' ? 'USD' : 'KRW'), po_no: r.po_no || '', result_memo: r.result_memo || '',
@@ -377,10 +378,10 @@ export default function RfqBoard({ customers = [], onWrite }) {
   )
 }
 
-function Btn({ tone, onClick, busy, data, children }) {
+function Btn({ tone, onClick, busy, data, children, wide }) {
   const cls = tone === 'primary' ? 'bg-violet-600 text-white border-violet-600 hover:bg-violet-700'
     : tone === 'red' ? 'bg-white text-red-600 border-red-200 hover:bg-red-50'
     : tone === 'amber' ? 'bg-white text-amber-700 border-amber-200 hover:bg-amber-50'
     : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-  return <button type="button" onClick={onClick} disabled={busy} data-rfq-act={data} className={`px-2.5 py-1.5 rounded-lg text-[11.5px] font-bold border whitespace-nowrap disabled:opacity-40 ${cls}`}>{busy ? '…' : children}</button>
+  return <button type="button" onClick={onClick} disabled={busy} data-rfq-act={data} className={`${wide ? 'col-span-3' : ''} w-full px-2 py-1.5 rounded-lg text-[11.5px] font-bold border whitespace-nowrap text-center truncate disabled:opacity-40 ${cls}`}>{busy ? '…' : children}</button>
 }
