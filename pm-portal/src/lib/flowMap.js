@@ -45,7 +45,7 @@ export const MAP_SUBS = {
   ],
   구매자재: [
     { id: 'p6', name: '자재 요청', from: '제조', keys: ['mreq'], go: () => ['/material-request'], badges: (c) => [['요청', c?.req_open, 'amber']] },
-    { id: 'p7', name: '견적 단가 요청', from: '영업', keys: ['price'], go: () => ['/sales-quote'], badges: (c) => [['요청', c?.rfq_price, 'amber']] },
+    { id: 'p7', name: '견적 단가 요청', from: '영업', keys: ['price'], go: () => ['/quote', '/sales-quote'], badges: (c) => [['요청', c?.rfq_price, 'amber']] },
     { id: 'p8', name: '부족자재', keys: ['buy'], go: (pcs) => [cs(pcs, 'short')], badges: () => [] },
     { id: 'p9', name: '하네스 출도', keys: ['mreq'], go: () => ['/production/harness-release'], badges: () => [] },
     { id: 'p10', name: '협력사 도면배포', keys: ['dist'], go: () => ['/quality/drawing-dist'], badges: (c) => [['팀 내 승인 대기', c?.dist_wait, 'amber']] },

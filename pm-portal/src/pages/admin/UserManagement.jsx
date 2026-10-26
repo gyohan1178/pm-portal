@@ -155,7 +155,7 @@ export default function UserManagement() {
                       {tab === 'active' && (
                         <div className="mt-1">
                           <button onClick={() => setScopeEdit(p)} className="text-[10px] text-indigo-500 hover:underline">
-                            {allowedSections(p) === null ? '전체 메뉴' : `${allowedSections(p).length}개 메뉴`} ✎
+                            {allowedSections(p) === null ? '전체 메뉴' : `${allowedSections(p).filter((k) => k !== 'flow' && k !== '-flow').length}개 메뉴${allowedSections(p).includes('-flow') ? ' · 흐름 끔' : ''}`} ✎
                           </button>
                         </div>
                       )}
@@ -192,7 +192,9 @@ export default function UserManagement() {
 function ScopeModal({ profile, onSave, onClose }) {
   const init = allowedSections(profile)
   const [all, setAll] = useState(init === null)
-  const [sel, setSel] = useState(new Set(init || []))
+  const [sel, setSel] = useState(new Set((init || []).filter((k) => k !== 'flow' && k !== '-flow')))
+  // 업무 흐름 (v4.100.0) — 기록이 없던 계정은 켜진 것으로 시작. 저장할 때 'flow' 또는 '-flow' 로 남긴다
+  const [flowOn, setFlowOn] = useState(!(init || []).includes('-flow'))
   const toggle = (k) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
@@ -205,15 +207,16 @@ function ScopeModal({ profile, onSave, onClose }) {
         </label>
         <div className={`space-y-2 mb-4 ${all ? 'opacity-40 pointer-events-none' : ''}`}>
           {SECTIONS.map(sec => (
-            <label key={sec.key} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-              <input type="checkbox" checked={sel.has(sec.key)} onChange={() => toggle(sec.key)} className="rounded" />
+            <label key={sec.key} className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer" data-scope={sec.key}>
+              <input type="checkbox" checked={sec.key === 'flow' ? flowOn : sel.has(sec.key)} onChange={() => (sec.key === 'flow' ? setFlowOn((v) => !v) : toggle(sec.key))} className="rounded" />
               {sec.label}
+              {sec.key === 'flow' && <span className="text-[11px] text-slate-400">— 끄면 메뉴 · 첫 화면에서 빠짐</span>}
             </label>
           ))}
         </div>
         <div className="flex gap-2 justify-end">
           <button onClick={onClose} className="px-3 py-1.5 text-sm font-semibold text-slate-500 rounded-lg hover:bg-slate-100">취소</button>
-          <button onClick={() => onSave(profile.id, all ? null : [...sel])} className="px-3 py-1.5 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">저장</button>
+          <button onClick={() => onSave(profile.id, all ? null : [...sel, flowOn ? 'flow' : '-flow'])} data-scope-save className="px-3 py-1.5 text-sm font-bold text-white bg-indigo-600 rounded-lg hover:bg-indigo-700">저장</button>
         </div>
       </div>
     </div>

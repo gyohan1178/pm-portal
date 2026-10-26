@@ -11,12 +11,24 @@ const num0 = '#,##0'
 export const SUPPLIER = {
   company: 'Jinsun Tech Co., Ltd',
   bizNo: '312-86-59918',
-  ceo: 'ChunSeok Hong',
+  ceo: 'ChunSeok Hong, DongHo Kim',   // 공동대표 (v4.100.0)
   address: '98 Chadollo-ro, Dongnam-gu, Cheonan-si, Chungcheongnam-do, 2nd floor',
   bizType: 'Diode Transistors and Similar Semiconductor/Integrated Circuits',
   tel: '041-579-5845',
   fax: '041-579-5846',
   invoiceEmail: 'etax@jinsuntech.co.kr',
+}
+// 국문 견적서 공급자 (v4.100.0) — 사업자등록증 (2025-08-19 정정 발급) 기준
+export const SUPPLIER_KO = {
+  company: '(주)진선테크',
+  bizNo: SUPPLIER.bizNo,
+  ceo: '홍천석, 김동호 (공동대표)',
+  address: '충청남도 천안시 동남구 차돌로 98(다가동, 2층)',
+  bizType: '제조업, 도매 및 소매업',
+  bizItem: '다이오드 · 트랜지스터 및 유사 반도체 / 전자집적회로, 전기용 기계 · 장비 도매',
+  tel: SUPPLIER.tel,
+  fax: SUPPLIER.fax,
+  invoiceEmail: SUPPLIER.invoiceEmail,
 }
 
 const put = (ws, addr, value, opt = {}) => {
@@ -56,24 +68,34 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
 
   const cur = head.currency || 'USD'
   const money = cur === 'KRW' ? num0 : num2
+  const ko = head.lang === 'ko'   // 국문 견적서 (v4.100.0)
+  const S = ko ? SUPPLIER_KO : SUPPLIER
 
   // ── 제목 ──
   ws.mergeCells('B2:K2')
-  put(ws, 'B2', 'QUOTE', { bold: true, size: 28, align: 'center' })
+  put(ws, 'B2', ko ? '견 적 서' : 'QUOTE', { bold: true, size: 28, align: 'center' })
   ws.getRow(2).height = 38
 
-  put(ws, 'B3', `NO : ${head.quoteNo || ''}`, { bold: true, size: 12 })
+  put(ws, 'B3', `${ko ? '견적번호' : 'NO'} : ${head.quoteNo || ''}`, { bold: true, size: 12 })
   put(ws, 'B4', head.quoteDate || '', { bold: true, size: 11 })
 
   // ── Issued by / Supplier ──
-  put(ws, 'B6', 'Issued by', { bold: true, size: 14 })
-  put(ws, 'H6', 'Supplier', { bold: true, size: 14 })
+  put(ws, 'B6', ko ? '수신' : 'Issued by', { bold: true, size: 14 })
+  put(ws, 'H6', ko ? '공급자' : 'Supplier', { bold: true, size: 14 })
 
   ws.mergeCells('B7:D8')
-  put(ws, 'B7', head.issuedTo || '', { bold: true, size: 13, align: 'left' })
-  put(ws, 'B9', head.attn ? `Attn : ${head.attn}` : '', { bold: true, size: 11 })
+  put(ws, 'B7', head.issuedTo ? `${head.issuedTo}${ko ? ' 귀중' : ''}` : '', { bold: true, size: 13, align: 'left' })
+  put(ws, 'B9', head.attn ? `${ko ? '참조' : 'Attn'} : ${head.attn}` : '', { bold: true, size: 11 })
 
-  const sup = [
+  const sup = ko ? [
+    ['H7', `상호 : ${S.company}`],
+    ['H8', `등록번호 : ${S.bizNo}`],
+    ['H9', `대표 : ${S.ceo}`],
+    ['H10', `주소 : ${S.address}`],
+    ['H11', `업태 : ${S.bizType} / 종목 : ${S.bizItem}`],
+    ['H12', `담당 : ${head.contactName || ''}${head.contactPhone ? ` (${head.contactPhone})` : ''}`],
+    ['H13', `전화 : ${S.tel}   팩스 : ${S.fax}`],
+  ] : [
     ['H7', `Company : ${SUPPLIER.company}`],
     ['H8', `Business registration number : ${SUPPLIER.bizNo}`],
     ['H9', `CEO : ${SUPPLIER.ceo}`],
@@ -86,22 +108,26 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     ws.mergeCells(`${addr}:K${7 + i}`)
     put(ws, addr, v, { size: 10, wrap: true })
   })
-  put(ws, 'H14', 'E-Mail :', { bold: true, size: 10 })
+  put(ws, 'H14', ko ? '이메일 :' : 'E-Mail :', { bold: true, size: 10 })
   ws.mergeCells('I14:K14')
   put(ws, 'I14', head.contactEmail || '', { size: 10 })
   ws.mergeCells('I15:K15')
-  put(ws, 'I15', `${SUPPLIER.invoiceEmail} (Invoice)`, { size: 10 })
+  put(ws, 'I15', `${SUPPLIER.invoiceEmail} (${ko ? '계산서' : 'Invoice'})`, { size: 10 })
 
   // ── 안내 문구 ──
-  put(ws, 'B12', 'We hereby provide the following quotation:', { bold: true, size: 11 })
-  put(ws, 'B13', `Quotation Validity: ${head.validityDays || 15} days from the date of the quotation`, { size: 10 })
+  put(ws, 'B12', ko ? '아래와 같이 견적합니다.' : 'We hereby provide the following quotation:', { bold: true, size: 11 })
+  put(ws, 'B13', ko ? `견적 유효기간 : 견적일로부터 ${head.validityDays || 15}일` : `Quotation Validity: ${head.validityDays || 15} days from the date of the quotation`, { size: 10 })
   ws.mergeCells('B15:E16')
-  put(ws, 'B15', `Project Name: ${head.projectName || ''}`, { bold: true, size: 13, wrap: true })
-  put(ws, 'B17', `Delivery Schedule: ${head.deliveryNote || ''}`, { size: 10 })
+  put(ws, 'B15', `${ko ? '건명' : 'Project Name'}: ${head.projectName || ''}`, { bold: true, size: 13, wrap: true })
+  put(ws, 'B17', `${ko ? '납품 일정' : 'Delivery Schedule'}: ${head.deliveryNote || ''}`, { size: 10 })
 
   // ── 품목 표 ──
   const HEAD_ROW = 20
-  const cols = [
+  const cols = ko ? [
+    ['B', '번호'], ['C', '품번'], ['D', '품명'], ['F', 'Rev'],
+    ['G', '단위'], ['H', '수량'], ['I', `단가(${cur})`],
+    ['J', '대체품\n(O)'], ['K', '비고'],
+  ] : [
     ['B', 'NO.'], ['C', 'Item no.'], ['D', 'Description'], ['F', 'REV'],
     ['G', 'Unit'], ['H', 'Quantity'], ['I', `Unit Price(${cur})`],
     ['J', 'alternative\n(O)'], ['K', 'Remarks'],
@@ -137,10 +163,10 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   const condRow = endRow + 2
 
   ws.mergeCells(`B${condRow}:D${condRow}`)
-  put(ws, `B${condRow}`, 'Quotation Conditions', { bold: true, size: 11 })
+  put(ws, `B${condRow}`, ko ? '견적 조건' : 'Quotation Conditions', { bold: true, size: 11 })
 
   ws.mergeCells(`G${condRow}:I${condRow + 1}`)
-  put(ws, `G${condRow}`, 'Total (Excluding VAT)', { bold: true, size: 13, align: 'center', border: true, fill: 'FFF1F5F9' })
+  put(ws, `G${condRow}`, ko ? '합계 (부가세 별도)' : 'Total (Excluding VAT)', { bold: true, size: 13, align: 'center', border: true, fill: 'FFF1F5F9' })
   ws.mergeCells(`K${condRow}:K${condRow + 1}`)
   put(ws, `K${condRow}`, Number(totals?.amount) || 0,
     { bold: true, size: 14, align: 'right', border: true, fmt: money })
@@ -149,7 +175,7 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
 
   const conds = [
     `- ${head.leadTime || 'L/T 8W'}`,
-    `- Quotation Validity : ${head.validityDays || 15} days (${head.validUntil || ''})`,
+    ko ? `- 견적 유효기간 : ${head.validityDays || 15}일 (${head.validUntil || ''}까지)` : `- Quotation Validity : ${head.validityDays || 15} days (${head.validUntil || ''})`,
     ...(head.memo ? [`- ${head.memo}`] : []),
   ]
   conds.forEach((t, i) => {

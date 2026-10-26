@@ -136,6 +136,8 @@ export function canEdit(profile) {
 export const SECTIONS = [
   // 관제탑은 전사 현황이 보이므로 지정한 인원만 허용한다
   { key: 'home',   label: '🎯 관제탑' },
+  // 업무 흐름 (v4.100.0) — 끄면 메뉴 · 첫 화면에서 빠진다. 예전에 저장된 계정(이 칸 기록 없음)은 켜진 것으로 본다
+  { key: 'flow',   label: '🧭 업무 흐름' },
   // 부서 업무·주간회의 안건 — 계정마다 허용해 쓴다
   { key: 'todo',   label: '📋 할 일' },
   { key: 'floor',  label: '🏭 현장' },
@@ -154,6 +156,12 @@ export function allowedSections(profile) {
   const ms = profile.menu_scope
   if (Array.isArray(ms) && ms.length > 0) return ms
   return null // 지정 없음 = 전체
+}
+// 업무 흐름을 볼 수 있나 — menu_scope 에 '-flow' 가 있으면 막음. 'flow' 가 있거나 둘 다 없으면(예전 계정) 허용
+export function canSeeFlow(profile) {
+  if (!profile || isFieldOnly(profile)) return false
+  const a = allowedSections(profile)
+  return a === null || !a.includes('-flow')
 }
 export function canAccessSection(profile, key) {
   const a = allowedSections(profile)
@@ -202,7 +210,10 @@ export function landingPath(profile) {
     // 관제탑(home) 이 허용되면 홈으로, 아니면 허용된 첫 섹션으로.
     // 현장 검색은 모두가 볼 수 있는 화면이라 기본 도착지로 둔다.
     if (a.includes('home') && profile?.role !== 'viewer') return '/'   // 조회 계정은 관제탑을 못 보므로 '/' 로 보내면 돌고 돈다
-    return '/flow'     // 첫 화면 = 내 부서 업무 흐름 (v4.91.0 — 예전: 허용된 첫 섹션)
+    if (canSeeFlow(profile)) return '/flow'     // 첫 화면 = 내 부서 업무 흐름 (v4.91.0 — 예전: 허용된 첫 섹션)
+    // 업무 흐름을 막은 계정 (v4.100.0) — 허용된 첫 섹션으로. 아무것도 없으면 자재 요청(누구나 접근)
+    const k = a.find((x) => SECTION_LANDING[x])
+    return k ? SECTION_LANDING[k] : '/material-request'
   }
   if (profile?.role === 'viewer') return '/flow'   // 제한 없는 조회 계정도 업무 흐름부터 (예전: 통합검색)
   return '/'          // 전체 접근 (menu_scope 없음)
@@ -222,7 +233,7 @@ export function canAccessPath(profile, pathname) {
   if (pathname === '/help') return true
 
   // 업무 흐름은 현장 전용 계정 말고 모두 본다 — 부서별로 보이는 흐름은 화면 안에서 가린다 (v4.91.0)
-  if (pathname === '/flow') return !isFieldOnly(profile)
+  if (pathname === '/flow') return canSeeFlow(profile)   // 메뉴 권한에서 끌 수 있음 (v4.100.0)
 
   // 도면 배포이력은 여러 부서가 같이 쓴다 — 영업이 새 Rev 도면을 공유하고, 받은 부서가 수령 확인한다 (v4.93.0)
   //   쓰기(공유 · 배포 · 수령 확인)는 화면 안에서 편집 권한으로 다시 가린다

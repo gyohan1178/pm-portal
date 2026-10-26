@@ -6,6 +6,7 @@ import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { fetchControlTowerData } from '../../lib/controlTowerData'
 import { computeControlTower } from '../../lib/controlTower'
+import { useMyProfile, canSeeFlow } from '../../hooks/useProfile'
 
 const CUST = [
   { code: 'ax', name: 'AXCELIS', color: '#8b5cf6' },
@@ -44,6 +45,7 @@ export default function ControlTower({ scope = 'ax' }) {
   const nav = useNavigate()
   const qc = useQueryClient()
   const isMaster = scope === 'all'
+  const { data: me } = useMyProfile()
 
   // 수시로 열어두는 화면이므로 5분마다 조용히 갱신하고,
   // 다른 창을 보다 돌아왔을 때도 최신값을 가져온다.
@@ -160,10 +162,10 @@ export default function ControlTower({ scope = 'ax' }) {
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-40">
           {refreshing ? '계산 중…' : '↻ 다시 계산'}
         </button>
-        <button onClick={() => nav('/flow')} data-ct-flow
+        {canSeeFlow(me) && <button onClick={() => nav('/flow')} data-ct-flow
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">
           🧭 업무 흐름
-        </button>
+        </button>}
         <button onClick={() => nav(`/what-if/${isMaster ? 'ax' : scope}`)}
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">
           🔬 What-if

@@ -20,18 +20,21 @@ import { fetchQuoteBOM } from './QuoteSheet'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
-  ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['제출', '⑤ 제출'], ['수주', '⑥ 수주'], ['실주', '실주'], ['취소', '취소'],
+  ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['nq', '견적 불가 — 닫기 대기'], ['제출', '⑤ 제출'], ['수주', '⑥ 수주'], ['실주', '실주'], ['불가', '견적 불가'], ['취소', '취소'],
 ]
+// 견적 불가 사유 (v4.100.0) — 품목마다. 나머지 품목은 계속 진행, 전부 불가면 접수를 「불가」로 닫는다
+export const NOQUOTES = ['단종', '제작 불가', '사양 미확정', '수급 불가', '기타']
 export const STAGE_TONE = {
   new: 'bg-slate-100 text-slate-600 border-slate-200', bom: 'bg-red-50 text-red-600 border-red-200',
   noprice: 'bg-amber-50 text-amber-700 border-amber-200', price: 'bg-amber-50 text-amber-700 border-amber-200',
   ready: 'bg-violet-50 text-violet-700 border-violet-200', hold: 'bg-slate-100 text-slate-500 border-slate-300', 제출: 'bg-slate-100 text-slate-700 border-slate-200',
   수주: 'bg-emerald-50 text-emerald-700 border-emerald-200', 실주: 'bg-white text-slate-400 border-slate-200', 취소: 'bg-white text-slate-400 border-slate-200',
+  nq: 'bg-rose-50 text-rose-600 border-rose-200', 불가: 'bg-white text-rose-500 border-rose-200',
 }
 export const stageLabel = (k) => (RFQ_STAGES.find(([x]) => x === k) || [k, k])[1]
 
 export const HOLDS = ['수급 어려움', '단가 대기']
-export const isOpenLine = (l) => !l.quoted_at && !l.hold                     // 아직 견적 안 냈고 보류도 아님
+export const isOpenLine = (l) => !l.quoted_at && !l.hold && !l.noquote      // 아직 견적 안 냈고 보류 · 견적 불가도 아님
 export const isReadyLine = (l) => isOpenLine(l) && !!l.checked_at && (l.kind || 'none') !== 'none' && !(+l.noprice_count > 0)
 export const readyLines = (r) => (r.lines || []).filter(isReadyLine)
 
@@ -42,7 +45,12 @@ export function stageOf(r) {
   if (!ls.length || open.some((l) => !l.checked_at)) return 'new'
   if (open.some((l) => (l.kind || 'none') === 'none')) return 'bom'
   if (open.some((l) => (+l.noprice_count || 0) > 0)) return r.price_req_at && !r.price_done_at ? 'price' : 'noprice'
-  if (!open.length) return ls.some((l) => l.hold && !l.quoted_at) ? 'hold' : 'ready'
+  if (!open.length) {
+    if (ls.some((l) => l.hold && !l.quoted_at)) return 'hold'
+    // 남은 품목이 모두 견적 불가 — 하나도 안 냈으면 「불가」로 닫을 차례 (v4.100.0)
+    if (ls.some((l) => l.noquote && !l.quoted_at) && !ls.some((l) => l.quoted_at)) return 'nq'
+    return 'ready'
+  }
   return 'ready'
 }
 
@@ -136,7 +144,7 @@ export async function checkRfq(r) {
 
 // 단가 요청 끝 — 보류 · 제출된 품목을 빼고 남은 품목이 모두 준비되면 (구매자재가 따로 안 눌러도)
 export async function syncPriceDone(r, meName) {
-  const { data: ls, error } = await supabase.from('pm_rfq_line').select('kind, noprice_count, hold, quoted_at, checked_at').eq('rfq_id', r.id)
+  const { data: ls, error } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)   // * — 견적 불가 칸(noquote)은 SQL 전엔 없음
   if (error) throw error
   const open = (ls || []).filter(isOpenLine)
   const done = (ls || []).length && open.every((l) => (l.kind || 'none') !== 'none' && !(+l.noprice_count > 0))
@@ -156,11 +164,57 @@ export async function setLineHold(r, line, hold, memo, meName) {
   if (hold) await syncPriceDone(r, meName)
 }
 
+// 견적 불가 표시 · 해제 (v4.100.0) — 사유 필수. 칸이 없으면(SQL 전) 알려 준다
+export const NOQUOTE_SQL_HINT = '견적 불가 칸이 아직 없습니다 — Supabase 에서 「견적불가_반영_261026.sql」을 먼저 실행해 주세요'
+export async function setLineNoquote(r, line, reason, memo, meName) {
+  const t = new Date().toISOString()
+  const patch = reason ? { noquote: reason, noquote_memo: memo || null, noquote_by: meName || null, noquote_at: t } : { noquote: null, noquote_memo: null, noquote_by: null, noquote_at: null }
+  const { error } = await supabase.from('pm_rfq_line').update(patch).eq('id', line.id)
+  if (error) throw new Error(/noquote/.test(error.message || '') ? NOQUOTE_SQL_HINT : error.message)
+  if (reason) await syncPriceDone(r, meName)
+}
+// 모든 품목이 견적 불가 — 접수를 「불가」로 닫는다 (사유는 품목 사유를 모아서)
+export async function closeNoquote(r, memo) {
+  const reasons = [...new Set((r.lines || []).filter((l) => l.noquote).map((l) => l.noquote))].join(' · ')
+  const { error } = await supabase.from('pm_rfq').update({ status: '불가', result_at: new Date().toISOString().slice(0, 10), result_memo: memo || reasons || null, updated_at: new Date().toISOString() }).eq('id', r.id)
+  if (error) throw new Error(/check constraint|pm_rfq_status_chk/.test(error.message || '') ? NOQUOTE_SQL_HINT : error.message)
+}
+
+// 접수 수정 (v4.100.0) — 머리(건명 · 고객사 · 기한 …)와 품목(고치기 · 빼기 · 더하기). 바뀐 품목은 다시 점검한다
+//   이미 견적 낸 품목(quoted_at)은 고치거나 뺄 수 없다
+export async function editRfq(r, { head, lines, removed, added }) {
+  const t = new Date().toISOString()
+  const { error } = await supabase.from('pm_rfq').update({ ...head, updated_at: t }).eq('id', r.id)
+  if (error) throw error
+  const csChanged = head.customer_code != null && head.customer_code !== r.customer_code
+  for (const l of lines || []) {
+    const o = (r.lines || []).find((x) => x.id === l.id)
+    if (!o || o.quoted_at) continue
+    const pnChanged = String(o.pn || '').trim() !== String(l.pn || '').trim()
+    const p = { pn: String(l.pn || '').trim(), name: l.name || null, rev: l.rev || null, qty: Number(l.qty) || 1 }
+    if (pnChanged || csChanged) Object.assign(p, { checked_at: null, kind: null, std_code: null, project_id: null, item_id: null, part_count: 0, noprice_count: 0, noprice_codes: [] })
+    if (pnChanged || csChanged || o.name !== p.name || o.rev !== p.rev || Number(o.qty) !== p.qty) {
+      const { error: e1 } = await supabase.from('pm_rfq_line').update(p).eq('id', l.id)
+      if (e1) throw e1
+    }
+  }
+  const del = (removed || []).filter((id) => !(r.lines || []).find((x) => x.id === id)?.quoted_at)
+  if (del.length) {
+    const { error: e2 } = await supabase.from('pm_rfq_line').delete().in('id', del)
+    if (e2) throw e2
+  }
+  if ((added || []).length) {
+    const start = Math.max(0, ...(r.lines || []).map((x) => Number(x.line_no) || 0))
+    const { error: e3 } = await supabase.from('pm_rfq_line').insert(added.map((l, i) => ({ rfq_id: r.id, line_no: start + i + 1, pn: l.pn, name: l.name || null, rev: l.rev || null, qty: Number(l.qty) || 1 })))
+    if (e3) throw e3
+  }
+}
+
 // 제출 — 고른 품목만 제출로 표시. 남은 품목(보류 · 미준비)은 split 이면 새 접수로 옮긴다
 export async function submitRfq(r, { lineIds, quote_no, submitted_at, submit_amount, currency, split, meName }) {
   const t = new Date().toISOString()
   const pick = new Set(lineIds)
-  const rest = (r.lines || []).filter((l) => !l.quoted_at && !pick.has(l.id))
+  const rest = (r.lines || []).filter((l) => !l.quoted_at && !l.noquote && !pick.has(l.id))   // 견적 불가 품목은 잔여로 안 옮김
   if (pick.size) {
     const { error } = await supabase.from('pm_rfq_line').update({ quoted_at: t, quote_no: quote_no || null }).in('id', [...pick])
     if (error) throw error

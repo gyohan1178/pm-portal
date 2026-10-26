@@ -26,6 +26,7 @@ export const MENU = {
   '/sales-quote': '매출견적',
   '/drawings': '도면 조회',
   '/inbound': '입고',
+  '/quote': '품목 단가 등록',
   '/': '관제탑 (홈)',
   '/outbound': 'ASSY 출고',
   '/issue': '다품목 출고',
@@ -111,7 +112,7 @@ const F = {
     ],
     subs: [
       { name: '자재 요청', go: () => ['/material-request'], badges: (c) => [['요청', c?.req_open, 'amber'], ['처리 중', c?.req_doing, 'gray']] },
-      { name: '견적 단가 요청', go: () => ['/sales-quote'], badges: (c) => [['요청', c?.rfq_price, 'amber']] },
+      { name: '견적 단가 요청', go: () => ['/quote', '/sales-quote'], badges: (c) => [['요청', c?.rfq_price, 'amber']] },
       { name: '부족자재', go: (pcs) => [cs(pcs, 'short')], badges: () => [] },
       { name: '하네스 출도·불출', go: () => ['/production/harness-release'], badges: () => [] },
       { name: '도면 배포 (협력사)', go: () => ['/quality/drawing-dist'], badges: (c) => [['팀 내 승인 대기', c?.dist_wait, 'amber']] },
@@ -120,7 +121,7 @@ const F = {
     inbox: [
       { from: '영업', text: '새로 올라온 PO 확인 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
       { from: '제조 · 현장', text: '자재 요청', n: (c) => c?.req_open, tone: 'amber', path: '/material-request' },
-      { from: '영업', text: '견적 단가 요청 — 단가 없는 부품 등록', n: (c) => c?.rfq_price, tone: 'amber', path: '/sales-quote' },
+      { from: '영업', text: '견적 단가 요청 — 단가 없는 부품 등록', n: (c) => c?.rfq_price, tone: 'amber', path: '/quote' },
     ],
     outbox: [{ from: '영업', text: '조건부 · 불가 회신 — 영업이 고객사와 협의 중', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' }],
   },

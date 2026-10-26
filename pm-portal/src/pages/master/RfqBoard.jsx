@@ -10,7 +10,7 @@ import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
-import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq } from './rfq'
+import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
@@ -70,7 +70,46 @@ export default function RfqBoard({ customers = [], onWrite }) {
   }, '구매자재에 단가를 요청했습니다')
   const priceDone = (r) => run(r.id, () => patchRfq(r.id, { price_done_at: new Date().toISOString(), price_done_by: meName }), '단가 요청을 끝냈습니다')
 
+  // ✏ 수정 (v4.100.0) — 접수 머리와 품목을 그대로 폼에 올린다 (견적 낸 품목은 잠금)
+  function openEdit(r) {
+    const known = !isEtc(r.customer_code)
+    setForm({ id: r.id, customer_code: known ? r.customer_code : '__etc', etc_name: known ? '' : r.customer_code, title: r.title || '', cust_ref: r.cust_ref || '', due_date: r.due_date || '',
+      owner_name: r.owner_name || '', memo: r.memo || '', paste: '',
+      lines: r.lines.map((l) => ({ id: l.id, pn: l.pn || '', name: l.name || '', rev: l.rev || '', qty: l.qty ?? 1, locked: !!l.quoted_at })), removed: [] })
+    setOpen(null)
+    setTimeout(() => document.querySelector('[data-rfq-form]')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 30)
+  }
+  async function saveEdit() {
+    const r = rfqs.find((x) => x.id === form.id)
+    if (!r) { toastError('접수를 찾지 못했습니다'); return }
+    const etcName = String(form.etc_name || '').trim()
+    const reg = form.customer_code === '__etc' && etcName
+      ? csRows.find((x) => [x.code, x.name].some((v) => String(v || '').trim().toLowerCase() === etcName.toLowerCase())) : null
+    const code = form.customer_code === '__etc' ? (reg ? String(reg.code).toLowerCase() : etcName) : form.customer_code
+    const added = parsePaste(form.paste)
+    const keep = form.lines.filter((l) => !form.removed.includes(l.id))
+    if (!code || !form.title.trim()) { toastError('고객사 · 건명은 꼭 넣어 주세요'); return }
+    if (keep.some((l) => !String(l.pn || '').trim())) { toastError('품번이 빈 줄이 있습니다'); return }
+    if (!keep.length && !added.length) { toastError('품목이 하나는 있어야 합니다 — 접수 자체를 지우려면 품목 칸의 「이 접수 지우기」'); return }
+    const c = csRows.find((x) => String(x.code).toLowerCase() === code)
+    setBusy('new')
+    try {
+      await editRfq(r, { head: { customer_code: code, customer_id: c?.id || null, title: form.title.trim(), cust_ref: form.cust_ref.trim() || null, due_date: form.due_date || null, owner_name: form.owner_name.trim() || null, memo: form.memo.trim() || null },
+        lines: keep, removed: form.removed, added })
+      logActivity('update', 'pm_rfq', form.title, `견적 접수 수정 — ${form.title}${form.removed.length ? ` · 뺀 품목 ${form.removed.length}` : ''}${added.length ? ` · 더한 품목 ${added.length}` : ''}`)
+      setForm(null)
+      try {
+        const { data: fresh } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+        const { data: head } = await supabase.from('pm_rfq').select('*').eq('id', r.id).maybeSingle()
+        await checkRfq({ ...(head || r), lines: fresh || [] })
+        toastSuccess('수정하고 다시 점검했습니다')
+      } catch (e) { toastError('수정은 됐고 점검이 실패했습니다 — 「🔍 다시 점검」을 눌러 주세요 (' + e.message + ')') }
+      refresh()
+    } catch (e) { toastError(e.message) } finally { setBusy(null) }
+  }
+
   async function saveNew() {
+    if (form.id) return saveEdit()
     const lines = parsePaste(form.paste)
     // 기타 · 직접 입력 — 입력한 이름이 등록 고객사(코드 · 이름)와 같으면 그 고객사로 맞춘다
     const etcName = String(form.etc_name || '').trim()
@@ -113,9 +152,12 @@ export default function RfqBoard({ customers = [], onWrite }) {
     const patch = { status: r.status }
     if (r.status === '제출') Object.assign(patch, { quote_no: r.quote_no || null, submitted_at: r.submitted_at || today, submit_amount: r.submit_amount === '' ? null : Number(r.submit_amount), currency: r.currency || null })
     if (r.status === '수주') Object.assign(patch, { po_no: r.po_no || null, result_at: today })
-    if (r.status === '실주' || r.status === '취소') Object.assign(patch, { result_memo: r.result_memo || null, result_at: today })
-    if ((r.status === '실주') && !String(r.result_memo || '').trim()) { toastError('실주 사유를 적어 주세요'); return }
-    await run(r.id, async () => { await patchRfq(r.id, patch); logActivity('update', 'pm_rfq', r.title, `견적 결과 — ${r.title} → ${r.status}`) }, `${r.status} 로 저장했습니다`)
+    if (r.status === '실주' || r.status === '취소' || r.status === '불가') Object.assign(patch, { result_memo: r.result_memo || null, result_at: today })
+    if ((r.status === '실주' || r.status === '불가') && !String(r.result_memo || '').trim()) { toastError(`${r.status === '불가' ? '견적 불가' : '실주'} 사유를 적어 주세요`); return }
+    await run(r.id, async () => {
+      try { await patchRfq(r.id, patch) } catch (e) { throw new Error(r.status === '불가' && /check constraint|status_chk/.test(e.message || '') ? '「불가」 결과는 SQL(견적불가_반영_261026.sql) 실행 뒤에 저장됩니다' : e.message) }
+      logActivity('update', 'pm_rfq', r.title, `견적 결과 — ${r.title} → ${r.status}`)
+    }, `${r.status === '불가' ? '견적 불가' : r.status} 로 저장했습니다`)
     setResult(null)
   }
 
@@ -159,7 +201,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
           {pill('hold', '보류', count('hold'), 'bg-slate-100 text-slate-600 border-slate-300')}
           {pill('제출', '⑤ 제출', count('제출'))}
           {pill('수주', '⑥ 수주', count('수주'), 'bg-emerald-50 text-emerald-700 border-emerald-200')}
+          {pill('nq', '견적 불가 · 닫기 대기', count('nq'), 'bg-rose-50 text-rose-600 border-rose-200')}
           {pill('실주', '실주', count('실주'))}
+          {pill('불가', '견적 불가', count('불가'))}
           {pill('all', '전체', scoped.length)}
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -177,7 +221,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
 
       {form && (
         <div className="bg-white border border-violet-200 rounded-xl p-4 space-y-3" data-rfq-form>
-          <div className="flex items-center"><b className="text-sm">＋ 견적 접수</b><button type="button" onClick={() => setForm(null)} className="ml-auto text-xs font-bold text-slate-500">✕ 닫기</button></div>
+          <div className="flex items-center"><b className="text-sm">{form.id ? '✏ 접수 수정' : '＋ 견적 접수'}</b><button type="button" onClick={() => setForm(null)} className="ml-auto text-xs font-bold text-slate-500">✕ 닫기</button></div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50/70 rounded-lg p-3">
             <label className="text-xs font-bold text-slate-600 space-y-1">고객사 <span className="text-red-500">*</span>
               <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP} data-rfq-cs>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__etc">기타 (직접 입력)</option></select>
@@ -193,17 +237,40 @@ export default function RfqBoard({ customers = [], onWrite }) {
               <input value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} className={INP} /></label>
             <label className="text-xs font-bold text-slate-600 space-y-1 md:col-span-2">메모
               <input value={form.memo} onChange={(e) => setForm({ ...form, memo: e.target.value })} placeholder="고객사 담당자 · 특이사항" className={INP} /></label>
-            <label className="text-xs font-bold text-slate-600 space-y-1 md:col-span-4">품목 <span className="text-red-500">*</span>
-              <textarea rows={4} value={form.paste} onChange={(e) => setForm({ ...form, paste: e.target.value })} data-rfq-paste
+            {form.id && (
+              <div className="md:col-span-4 space-y-1" data-rfq-edit-lines>
+                <div className="text-xs font-bold text-slate-600">지금 품목 <span className="font-normal text-slate-400">— 품번을 바꾸면 그 품목은 다시 점검합니다 · 견적 낸 품목은 잠김</span></div>
+                <div className="rounded-lg border border-slate-200 bg-white divide-y divide-slate-100">
+                  {form.lines.map((l, i) => {
+                    const gone = form.removed.includes(l.id)
+                    const set = (k, v) => setForm({ ...form, lines: form.lines.map((x) => (x.id === l.id ? { ...x, [k]: v } : x)) })
+                    return (
+                      <div key={l.id} className={`flex items-center gap-2 px-2 py-1.5 ${gone ? 'opacity-40 line-through' : ''}`} data-rfq-edit-line={l.pn}>
+                        <span className="w-6 text-[11px] font-mono text-slate-400">{i + 1}</span>
+                        <input value={l.pn} disabled={l.locked || gone} onChange={(e) => set('pn', e.target.value)} placeholder="품번" className="w-40 px-2 py-1 text-[12px] font-mono border border-slate-200 rounded" />
+                        <input value={l.name} disabled={l.locked || gone} onChange={(e) => set('name', e.target.value)} placeholder="품명" className="flex-1 min-w-0 px-2 py-1 text-[12px] border border-slate-200 rounded" />
+                        <input value={l.rev} disabled={l.locked || gone} onChange={(e) => set('rev', e.target.value)} placeholder="Rev" className="w-14 px-2 py-1 text-[12px] border border-slate-200 rounded" />
+                        <input value={l.qty} disabled={l.locked || gone} onChange={(e) => set('qty', e.target.value.replace(/[^0-9.]/g, ''))} className="w-16 px-2 py-1 text-[12px] text-right border border-slate-200 rounded" />
+                        {l.locked ? <span className="w-12 text-[10.5px] text-emerald-700 font-bold">제출됨</span>
+                          : <button type="button" onClick={() => setForm({ ...form, removed: gone ? form.removed.filter((x) => x !== l.id) : [...form.removed, l.id] })} data-rfq-edit-del={l.pn}
+                              className="w-12 text-[11px] font-bold text-red-500">{gone ? '되살리기' : '✕ 빼기'}</button>}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+            <label className="text-xs font-bold text-slate-600 space-y-1 md:col-span-4">{form.id ? '품목 더하기' : <>품목 <span className="text-red-500">*</span></>}
+              <textarea rows={form.id ? 2 : 4} value={form.paste} onChange={(e) => setForm({ ...form, paste: e.target.value })} data-rfq-paste
                 placeholder={'엑셀에서 품번 · 품명 · Rev · 수량 순서로 복사해 붙여넣으세요 (여러 줄)\n110219638\tASSY PWR DIST EFEM\tA\t2'}
                 className={`${INP} font-mono text-[12px]`} /></label>
             <p className="md:col-span-4 -mt-1 text-[11.5px] text-slate-500">
-              읽은 품목 <b>{parsePaste(form.paste).length}</b>줄 · 저장하면 품목마다 BOM · 단가를 바로 점검합니다. BOM 이 없으면 「BOM 필요」로, 단가 없는 부품이 있으면 「단가 없음」으로 표시됩니다.
+              {form.id ? '더할' : '읽은'} 품목 <b>{parsePaste(form.paste).length}</b>줄 · 저장하면 품목마다 BOM · 단가를 바로 점검합니다. BOM 이 없으면 「BOM 필요」로, 단가 없는 부품이 있으면 「단가 없음」으로 표시됩니다.
             </p>
           </div>
           <div className="flex justify-end gap-2">
             <button type="button" onClick={() => setForm(null)} className="px-4 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200">취소</button>
-            <button type="button" disabled={busy === 'new'} onClick={saveNew} data-rfq-save className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40">{busy === 'new' ? '저장 · 점검 중…' : '접수 저장'}</button>
+            <button type="button" disabled={busy === 'new'} onClick={saveNew} data-rfq-save className="px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40">{busy === 'new' ? '저장 · 점검 중…' : form.id ? '수정 저장' : '접수 저장'}</button>
           </div>
         </div>
       )}
@@ -225,7 +292,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
               const held = ls.filter((l) => l.hold && !l.quoted_at)
               const quoted = ls.filter((l) => l.quoted_at)
               const ready = readyLines(r)
-              const partial = ready.length > 0 && ready.length < ls.length - quoted.length
+              const partial = ready.length > 0 && ready.length < ls.filter((l) => !l.quoted_at && !l.noquote).length
               const parts = ls.reduce((a, l) => a + (+l.part_count || 0), 0)
               const b = busy === r.id
               const late = r.d !== null && r.d < 0
@@ -260,6 +327,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">✓ {n(parts)}/{n(parts)}</span>}
                     {held.length > 0 && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-slate-100 text-slate-600 border border-slate-300" data-rfq-held title={held.map((l) => `${l.pn}: ${l.hold}${l.hold_memo ? ` (${l.hold_memo})` : ''}`).join('\n')}>보류 {n(held.length)}품목</span></div>}
                     {quoted.length > 0 && <div className="mt-1 text-[10.5px] text-slate-500">제출 {n(quoted.length)}품목</div>}
+                    {ls.some((l) => l.noquote && !l.quoted_at) && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200" data-rfq-nq title={ls.filter((l) => l.noquote).map((l) => `${l.pn}: ${l.noquote}${l.noquote_memo ? ` (${l.noquote_memo})` : ''}`).join('\n')}>견적 불가 {n(ls.filter((l) => l.noquote && !l.quoted_at).length)}품목</span></div>}
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
                     <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${STAGE_TONE[r.stage] || ''}`} data-rfq-stage-of={r.stage}>{stageLabel(r.stage)}</span>
@@ -280,16 +348,18 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         : <span className="col-span-3 py-1.5 rounded-lg bg-amber-50/60 text-center text-[11.5px] font-bold text-amber-700">⏳ 구매자재 처리 중</span>)}
                       {r.status === '진행' && ready.length > 0 && <Btn wide tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
                       {editable && ['bom', 'noprice', 'price', 'ready'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
+                      {editable && r.stage === 'nq' && <Btn wide tone="red" onClick={() => { const m = window.prompt('견적 불가로 닫습니다 — 고객사에 알린 내용 · 사유 (비우면 품목 사유를 모아 적음)', [...new Set(ls.filter((l) => l.noquote).map((l) => l.noquote))].join(' · ')); if (m !== null) run(r.id, () => closeNoquote(r, m.trim()), '견적 불가로 닫았습니다') }} busy={b} data="nq-close">🚫 견적 불가로 닫기</Btn>}
                       {editable && isBuy && r.stage === 'price' && <Btn onClick={() => priceDone(r)} busy={b} data="done">단가 요청 끝</Btn>}
                       {editable && ['진행', '제출'].includes(r.status) && <Btn onClick={() => setResult({ id: r.id, title: r.title, status: r.status === '진행' ? '제출' : '수주', quote_no: r.quote_no || '', submitted_at: r.submitted_at || today, submit_amount: r.submit_amount ?? '', currency: r.currency || (r.customer_code === 'ax' ? 'USD' : 'KRW'), po_no: r.po_no || '', result_memo: r.result_memo || '',
                         lineIds: ready.map((l) => l.id), split: true })} data="result">결과 입력</Btn>}
+                      {editable && r.status === '진행' && <Btn onClick={() => openEdit(r)} busy={b} data="edit">✏ 수정</Btn>}
                     </div>
                   </td>
                 </tr>,
                 open === r.id && (
                   <tr key={r.id + ':lines'} className="bg-slate-50/60"><td colSpan={7} className="px-4 py-3">
                     <table className="w-full text-[11.5px]" data-rfq-line-table>
-                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th className="pr-3">단가 · 없는 부품</th><th>보류 (구매자재) · 제출</th></tr></thead>
+                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th className="pr-3">단가 · 없는 부품</th><th>보류 (구매자재) · 제출</th><th className="pl-3">견적 불가</th></tr></thead>
                       <tbody>
                         {ls.map((l) => (
                           <tr key={l.id} className="border-t border-slate-100 align-top">
@@ -299,7 +369,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                               {l.item?.name && l.name && l.item.name.trim().toUpperCase() !== String(l.name).trim().toUpperCase() && <div className="text-[10px] text-slate-400" title="포털 품목 기준정보의 품명 — 붙여넣은 품명과 다르면 매칭이 맞는지 확인하세요">기준정보: {l.item.name}</div>}</td>
                             <td className="pr-3">{l.rev || '—'}</td>
                             <td className="pr-3 text-right font-mono">{n(l.qty)}</td>
-                            <td className="pr-3 whitespace-nowrap">{!l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}</td>
+                            <td className="pr-3 whitespace-nowrap">{l.noquote ? <span className="text-rose-600 font-bold">견적 불가</span> : !l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}</td>
                             <td className="text-amber-700" data-rfq-line-price={l.pn}>{l.kind === 'item' && !(+l.noprice_count > 0) && l.item?.price > 0 ? (
                               <span className="text-slate-600">매입가 <b className="font-mono">{n(l.item.price)}</b>원
                                 {l.item.vendor || l.item.last
@@ -320,6 +390,19 @@ export default function RfqBoard({ customers = [], onWrite }) {
                                   </div>
                                 ) : l.hold ? <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-600 font-bold" title={[l.hold_memo, l.hold_by].filter(Boolean).join(' · ')}>보류 · {l.hold}{l.hold_memo ? ` — ${l.hold_memo}` : ''}</span> : <span className="text-slate-300">—</span>}
                             </td>
+                            <td className="pl-3" data-rfq-nq-cell={l.pn}>
+                              {l.quoted_at ? <span className="text-slate-300">—</span>
+                                : editable && r.status === '진행' ? (
+                                  <div className="flex items-center gap-1.5">
+                                    <select value={l.noquote || ''} data-rfq-nq-sel={l.pn} disabled={busy === r.id}
+                                      onChange={(e) => { const v = e.target.value; const memo = v ? window.prompt(`${l.pn} — 견적 불가 (${v}) · 자세한 내용 (선택)`, l.noquote_memo || '') : ''; if (v && memo === null) return; run(r.id, () => setLineNoquote(r, l, v || null, memo || '', meName), v ? `${l.pn} 견적 불가 — ${v}` : `${l.pn} 견적 불가 해제`) }}
+                                      className={`px-1.5 py-1 text-[11px] border rounded bg-white ${l.noquote ? 'border-rose-300 text-rose-600 font-bold' : 'border-slate-200'}`}>
+                                      <option value="">— 견적 가능</option>{NOQUOTES.map((h) => <option key={h} value={h}>{h}</option>)}
+                                    </select>
+                                    {l.noquote_memo && <span className="text-[10.5px] text-slate-500 truncate max-w-[160px]" title={l.noquote_memo}>{l.noquote_memo}</span>}
+                                  </div>
+                                ) : l.noquote ? <span className="px-1.5 py-[1px] rounded bg-rose-50 text-rose-600 font-bold" title={[l.noquote_memo, l.noquote_by].filter(Boolean).join(' · ')}>{l.noquote}{l.noquote_memo ? ` — ${l.noquote_memo}` : ''}</span> : <span className="text-slate-300">—</span>}
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -332,7 +415,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                     <div className="flex flex-wrap items-end gap-2 text-xs">
                       <label className="space-y-1 font-bold text-slate-600">결과
                         <select value={result.status} onChange={(e) => setResult({ ...result, status: e.target.value })} className={INP} data-rfq-result-status>
-                          {['진행', '제출', '수주', '실주', '취소'].map((s) => <option key={s} value={s}>{s}</option>)}</select></label>
+                          {['진행', '제출', '수주', '실주', '불가', '취소'].map((s) => <option key={s} value={s}>{s === '불가' ? '견적 불가' : s}</option>)}</select></label>
                       {result.status === '제출' && <>
                         <label className="space-y-1 font-bold text-slate-600">견적번호<input value={result.quote_no} onChange={(e) => setResult({ ...result, quote_no: e.target.value })} className={INP} /></label>
                         <label className="space-y-1 font-bold text-slate-600">제출일<input type="date" value={result.submitted_at} onChange={(e) => setResult({ ...result, submitted_at: e.target.value })} className={INP} /></label>
@@ -341,9 +424,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         <div className="basis-full mt-1 rounded-lg border border-violet-100 bg-white px-3 py-2" data-rfq-submit-lines>
                           <div className="font-bold text-slate-600 mb-1">이번에 제출할 품목 <span className="font-normal text-slate-400">— 준비된 품목이 기본 · 보류 · 미준비 품목은 빼고 먼저 낼 수 있어요</span></div>
                           <div className="flex flex-wrap gap-x-4 gap-y-1">
-                            {ls.filter((l) => !l.quoted_at).map((l) => {
+                            {ls.filter((l) => !l.quoted_at && !l.noquote).map((l) => {
                               const on = result.lineIds.includes(l.id)
-                              const why = l.hold ? `보류 · ${l.hold}` : (l.kind || 'none') === 'none' ? 'BOM 없음' : +l.noprice_count > 0 ? `단가 없음 ${l.noprice_count}` : '준비됨'
+                              const why = l.noquote ? `견적 불가 · ${l.noquote}` : l.hold ? `보류 · ${l.hold}` : (l.kind || 'none') === 'none' ? 'BOM 없음' : +l.noprice_count > 0 ? `단가 없음 ${l.noprice_count}` : '준비됨'
                               return (
                                 <label key={l.id} className="flex items-center gap-1.5">
                                   <input type="checkbox" checked={on} data-rfq-submit-line={l.pn} onChange={() => setResult({ ...result, lineIds: on ? result.lineIds.filter((x) => x !== l.id) : [...result.lineIds, l.id] })} className="w-4 h-4 accent-violet-600" />
@@ -352,17 +435,18 @@ export default function RfqBoard({ customers = [], onWrite }) {
                               )
                             })}
                           </div>
-                          {ls.filter((l) => !l.quoted_at && !result.lineIds.includes(l.id)).length > 0 && (
+                          {ls.filter((l) => !l.quoted_at && !l.noquote && !result.lineIds.includes(l.id)).length > 0 && (
                             <label className="mt-2 flex items-center gap-1.5 font-bold text-slate-700">
                               <input type="checkbox" checked={result.split} onChange={(e) => setResult({ ...result, split: e.target.checked })} data-rfq-split className="w-4 h-4 accent-violet-600" />
-                              남은 {ls.filter((l) => !l.quoted_at && !result.lineIds.includes(l.id)).length}품목은 새 접수(「{r.title} (잔여)」)로 나눠 계속 진행
+                              남은 {ls.filter((l) => !l.quoted_at && !l.noquote && !result.lineIds.includes(l.id)).length}품목은 새 접수(「{r.title} (잔여)」)로 나눠 계속 진행
                               <span className="font-normal text-slate-400">— 끄면 이 접수에 남아 「진행」 그대로</span>
                             </label>
                           )}
                         </div>
                       </>}
                       {result.status === '수주' && <label className="space-y-1 font-bold text-slate-600">수주 PO번호<input value={result.po_no} onChange={(e) => setResult({ ...result, po_no: e.target.value })} placeholder="수주대장 PO번호" className={INP} /></label>}
-                      {(result.status === '실주' || result.status === '취소') && <label className="space-y-1 font-bold text-slate-600 flex-1 min-w-[220px]">{result.status === '실주' ? '실주 사유' : '취소 사유'} {result.status === '실주' && <span className="text-red-500">*</span>}<input value={result.result_memo} onChange={(e) => setResult({ ...result, result_memo: e.target.value })} placeholder="예: 단가 · 납기 · 사양 변경" className={INP} data-rfq-result-memo /></label>}
+                      {(result.status === '실주' || result.status === '취소' || result.status === '불가') && <label className="space-y-1 font-bold text-slate-600 flex-1 min-w-[220px]">{result.status === '실주' ? '실주 사유' : result.status === '불가' ? '견적 불가 사유' : '취소 사유'} {(result.status === '실주' || result.status === '불가') && <span className="text-red-500">*</span>}<input value={result.result_memo} onChange={(e) => setResult({ ...result, result_memo: e.target.value })} placeholder={result.status === '불가' ? '예: 단종 · 제작 불가 · 사양 미확정 · 수급 불가' : '예: 단가 · 납기 · 사양 변경'} className={INP} data-rfq-result-memo />
+                        {result.status === '불가' && <span className="flex flex-wrap gap-1 pt-1">{NOQUOTES.map((h) => <button key={h} type="button" onClick={() => setResult({ ...result, result_memo: result.result_memo ? `${result.result_memo} · ${h}` : h })} className="px-2 py-0.5 rounded-full border border-rose-200 bg-white text-[11px] text-rose-600 font-bold">{h}</button>)}</span>}</label>}
                       <button type="button" onClick={() => setResult(null)} className="px-3 py-2 rounded-lg font-bold bg-white border border-slate-200">닫기</button>
                       <button type="button" disabled={busy === r.id} onClick={saveResult} data-rfq-result-save className="px-3 py-2 rounded-lg font-bold bg-violet-600 text-white disabled:opacity-40">저장</button>
                     </div>
@@ -373,7 +457,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-slate-400 px-1">한 줄 = 고객사 견적 요청 한 건. 품목 칸을 누르면 품목마다 점검 결과(BOM · 단가 없는 부품)가 나옵니다. BOM 을 올리거나 단가를 등록한 뒤 「🔍 다시 점검」을 누르세요. 구매자재가 「수급 어려움 · 단가 대기」로 보류한 품목은 빼고 준비된 품목부터 견적 · 제출할 수 있습니다.</p>
+      <p className="text-[11px] text-slate-400 px-1">한 줄 = 고객사 견적 요청 한 건. 품목 칸을 누르면 품목마다 점검 결과(BOM · 단가 없는 부품)가 나옵니다. BOM 을 올리거나 단가를 등록한 뒤 「🔍 다시 점검」을 누르세요. 구매자재가 「수급 어려움 · 단가 대기」로 보류한 품목은 빼고 준비된 품목부터 견적 · 제출할 수 있습니다. 단종 · 제작 불가처럼 견적을 낼 수 없는 품목은 품목 표의 「견적 불가」에서 사유를 고르세요 — 모든 품목이 불가면 「🚫 견적 불가로 닫기」.</p>
     </div>
   )
 }

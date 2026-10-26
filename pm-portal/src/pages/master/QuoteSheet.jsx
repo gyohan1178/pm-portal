@@ -1,7 +1,8 @@
 import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { downloadQuoteExcel, SUPPLIER } from '../../lib/quoteExcel'
+import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
+import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
@@ -141,7 +142,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   // 초도품 / 양산 — 담긴 품목에 초도품이 하나라도 있으면 초도품. 직접 고르면 그걸 지킨다.
   const [leadKind, setLeadKind] = useState('fa')
   const [leadKindTouched, setLeadKindTouched] = useState(false)
-  const [deliveryNote, setDeliveryNote] = useState('(To be discussed later)')
+  const [deliveryNote, setDeliveryNote] = useState(fixedKind === 'purchase' ? '(To be discussed later)' : '추후 협의')
   const [memo, setMemo] = useState('')
 
   const [lines, setLines] = useState([])
@@ -156,15 +157,45 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [revOf, setRevOf] = useState(null)
   const [revLoading, setRevLoading] = useState(false)
 
-  // 견적 담당자 — 매번 다시 치지 않도록 마지막 값을 기억한다
-  const LS = 'pm_quote_contact'
-  const saved0 = (() => { try { return JSON.parse(localStorage.getItem(LS) || '{}') } catch { return {} } })()
-  const [contactName, setContactName] = useState(saved0.name || '')
-  const [contactPhone, setContactPhone] = useState(saved0.phone || '')
-  const [contactEmail, setContactEmail] = useState(saved0.email || 'sales@jinsuntech.co.kr')
+  // 견적서 언어 (v4.100.0) — 기본 국문 · 영문 선택. 매입견적(업체 수령)은 영문 그대로
+  const [lang, setLang] = useState('ko')
+  const ko = isSales && lang === 'ko'
+  // 견적 담당자 — 계정마다 · 국문/영문 따로 기억 (이 브라우저). 국문 담당 이름은 처음엔 로그인한 사람 이름,
+  //   영문 Contact · 연락처는 처음엔 비워 두고 한 번 적으면 다음부터 불러온다
+  const { data: me } = useMyProfile()
+  const LS = `pm_quote_contact.${me?.id || 'me'}`
+  const [contacts, setContacts] = useState({ ko: { name: '', phone: '', email: 'sales@jinsuntech.co.kr' }, en: { name: '', phone: '', email: 'sales@jinsuntech.co.kr' } })
+  const contactReady = useRef(false)
   useEffect(() => {
-    try { localStorage.setItem(LS, JSON.stringify({ name: contactName, phone: contactPhone, email: contactEmail })) } catch {}
-  }, [contactName, contactPhone, contactEmail])
+    if (!me?.id) return
+    let v = null
+    try { v = JSON.parse(localStorage.getItem(LS) || 'null') } catch { v = null }
+    if (!v) {   // 처음 — 예전(계정 구분 없던) 기억값은 영문 칸으로 옮겨 온다
+      let old = {}
+      try { old = JSON.parse(localStorage.getItem('pm_quote_contact') || '{}') } catch { old = {} }
+      v = { ko: { name: me.name || '', phone: '', email: old.email || 'sales@jinsuntech.co.kr' }, en: { name: old.name || '', phone: old.phone || '', email: old.email || 'sales@jinsuntech.co.kr' } }
+    }
+    if (!v.ko?.name && me.name) v = { ...v, ko: { ...(v.ko || {}), name: me.name } }
+    setContacts(v); contactReady.current = true
+  }, [me?.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!contactReady.current || !me?.id) return
+    try { localStorage.setItem(LS, JSON.stringify(contacts)) } catch {}
+  }, [contacts]) // eslint-disable-line react-hooks/exhaustive-deps
+  const cLang = ko ? 'ko' : 'en'
+  const contactName = contacts[cLang]?.name || ''
+  const contactPhone = contacts[cLang]?.phone || ''
+  const contactEmail = contacts[cLang]?.email || ''
+  const setContact = (k, v) => setContacts((c) => ({ ...c, [cLang]: { ...(c[cLang] || {}), [k]: v } }))
+  const setContactName = (v) => setContact('name', v)
+  const setContactPhone = (v) => setContact('phone', v)
+  const setContactEmail = (v) => setContact('email', v)
+  // 납품 일정 기본 문구도 언어를 따라간다 (손으로 고친 문구는 그대로)
+  const DELIV = { ko: '추후 협의', en: '(To be discussed later)' }
+  function switchLang(next) {
+    setLang(next)
+    setDeliveryNote((d) => (d === DELIV.ko || d === DELIV.en || !d ? DELIV[next] : d))
+  }
   const [err, setErr] = useState('')
 
   const sellRate = num(cfg.sellRate) || 1250
@@ -439,7 +470,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   }
 
   const draftPayload = () => ({
-    v: 1, quoteKind, currency, quoteDate, issuedTo, vendorId, attn, projectName,
+    v: 1, quoteKind, lang, currency, quoteDate, issuedTo, vendorId, attn, projectName,
     validityDays, leadTime, leadKind, deliveryNote, memo, lines, customerId, customerName, revOf,
   })
 
@@ -490,6 +521,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (error || !data) { setErr('불러오기 실패: ' + (error?.message || '없는 항목')); return }
     const d = data.payload || {}
     setQuoteKind(d.quoteKind || 'sales')
+    setLang(d.lang || 'en')
     setCurrency(d.currency || 'USD')
     setQuoteDate(d.quoteDate || todayISO())
     setIssuedTo(d.issuedTo || '')
@@ -524,6 +556,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (sErr) throw new Error('리비전 번호 조회 — ' + sErr.message)
 
       setQuoteKind(q.quote_kind || fixedKind || 'sales')
+      setLang(q.lang || 'en')   // 예전 견적(언어 기록 없음)은 영문
       setCurrency(q.currency || 'USD')
       setQuoteDate(q.quote_date || todayISO())
       setIssuedTo(q.issued_to || '')
@@ -534,9 +567,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       setLeadTime(q.lead_time || 'L/T 8W'); setLeadTouched(true); setLeadKindTouched(true)
       setDeliveryNote(q.delivery_note ?? '')
       setMemo(q.memo || '')
-      if (q.issuer_name) setContactName(q.issuer_name)
-      if (q.issuer_phone) setContactPhone(q.issuer_phone)
-      if (q.issuer_email) setContactEmail(q.issuer_email)
+      { const tl = (q.quote_kind || fixedKind || 'sales') === 'sales' && q.lang === 'ko' ? 'ko' : 'en'   // 그 견적의 언어 칸에 담당자를 넣는다
+        if (q.issuer_name || q.issuer_phone || q.issuer_email) setContacts((c) => ({ ...c, [tl]: { ...(c[tl] || {}), ...(q.issuer_name ? { name: q.issuer_name } : {}), ...(q.issuer_phone ? { phone: q.issuer_phone } : {}), ...(q.issuer_email ? { email: q.issuer_email } : {}) } })) }
       setLines((its || []).map((r) => newLine({
         kind: r.line_kind === 'assy' ? 'assy' : 'item',
         std_code: r.std_code || '', description: r.description || '', rev: r.rev || '',
@@ -628,8 +660,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         no = data
       }
 
-      const { data: q, error: qErr } = await supabase.from('pm_quotes').insert({
-        quote_no: no, quote_kind: quoteKind, quote_date: quoteDate,
+      const qRow = {
+        quote_no: no, quote_kind: quoteKind, quote_date: quoteDate, lang: isSales ? lang : 'en',
         customer_id: isSales ? ((revOf ? revOf.customer_id : custIdForSave) || null) : null,
         vendor_id: isSales ? null : (vendorId || null),
         quote_type: lines.some((l) => l.kind === 'assy') ? 'assy' : 'single',
@@ -646,7 +678,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         issuer_name: contactName || null,
         issuer_phone: contactPhone || null,
         issuer_email: contactEmail || null,
-      }).select('id, quote_no').single()
+      }
+      let { data: q, error: qErr } = await supabase.from('pm_quotes').insert(qRow).select('id, quote_no').single()
+      // 언어 칸(lang)은 SQL(견적불가_반영_261026.sql) 뒤에 생긴다 — 그 전엔 빼고 저장
+      if (qErr && /lang/.test(qErr.message || '')) {
+        const { lang: _l, ...rest } = qRow
+        ;({ data: q, error: qErr } = await supabase.from('pm_quotes').insert(rest).select('id, quote_no').single())
+      }
       if (qErr) throw new Error('견적 저장 실패: ' + qErr.message)
 
       const rows = lines.map((l, i) => ({
@@ -771,7 +809,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     try {
       await downloadQuoteExcel({
         head: {
-          quoteNo: savedNo, quoteDate, currency: cur,
+          quoteNo: savedNo, quoteDate, currency: cur, lang: ko ? 'ko' : 'en',
           issuedTo: isSales ? issuedTo : (vendors.find((v) => v.id === vendorId)?.name || ''),
           attn, projectName, validityDays, validUntil,
           leadTime, deliveryNote, memo,
@@ -779,7 +817,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         },
         lines, totals,
         extra: { detailRows, bomRows, infoRows },
-        fileName: `${kindLabel}_${savedNo || projectName || todayISO()}.xlsx`,
+        fileName: `${kindLabel}${ko ? '' : '_EN'}_${savedNo || projectName || todayISO()}.xlsx`,
       })
     } catch (e) {
       setErr('엑셀 생성 실패: ' + e.message)
@@ -847,6 +885,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       {/* 조작부 */}
       <div className="no-print flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-xl p-3">
+        {isSales && (
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1" data-quote-lang title="견적서 언어 — 인쇄 · 엑셀이 이 언어로 나옵니다">
+            {[['ko', '국문'], ['en', '영문']].map(([k, l]) => (
+              <button key={k} type="button" onClick={() => switchLang(k)} data-quote-lang-btn={k}
+                className={`px-3 py-1 text-xs font-bold rounded-md ${lang === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{l}</button>
+            ))}
+          </div>
+        )}
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
           {['USD', 'KRW'].map((c) => (
             <button key={c} onClick={() => switchCurrency(c)}
@@ -973,32 +1019,57 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       {/* ── 인쇄 영역 ── */}
       <div className="quote-print-area bg-white border border-slate-200 rounded-xl p-6">
         <div className="text-center mb-4">
-          <h2 className="text-3xl font-bold tracking-widest text-slate-900">
-            {isSales ? 'QUOTE' : 'PURCHASE QUOTE (수령)'}
+          <h2 className="text-3xl font-bold tracking-widest text-slate-900" data-quote-title>
+            {ko ? '견 적 서' : isSales ? 'QUOTE' : 'PURCHASE QUOTE (수령)'}
           </h2>
-          <p className="text-xs text-slate-500 mt-1">NO : {savedNo || '(저장 시 자동 부여)'} · {quoteDate}</p>
+          <p className="text-xs text-slate-500 mt-1">{ko ? '견적번호' : 'NO'} : {savedNo || '(저장 시 자동 부여)'} · {quoteDate}</p>
         </div>
 
         {/* Issued by / Supplier */}
         <div className="grid grid-cols-2 gap-6 mb-4 text-xs">
           <div>
-            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Issued by
+            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">{ko ? '수신' : 'Issued by'}
               {etcCust && <span className="no-print ml-2 px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold" data-etc-cust title="견적 접수에서 「기타 · 직접 입력」한 고객사 — 고객사 BOM 없이 품목만 찾고, 고객사 없이 저장합니다. 위에서 고객사를 바꾸면 풀립니다">기타 고객사 · {etcCust}</span>}</div>
             {isSales
-              ? <input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)}
-                  className="qi w-full font-bold text-sm" placeholder="AXCELIS Corp." />
+              ? <div className="flex items-center gap-1"><input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)} data-quote-issued
+                  className="qi w-full font-bold text-sm" placeholder={ko ? '고객사 이름' : 'AXCELIS Corp.'} />{ko && <span className="font-bold text-sm shrink-0">귀중</span>}</div>
               : <div className="font-bold text-sm">{vendors.find((v) => v.id === vendorId)?.name || '(업체 미선택)'}</div>}
             <div className="flex gap-1 mt-1.5">
-              <span className="text-slate-400 w-10 shrink-0">Attn</span>
+              <span className="text-slate-400 w-10 shrink-0">{ko ? '참조' : 'Attn'}</span>
               <input value={attn} onChange={(e) => setAttn(e.target.value)} className="qi flex-1" placeholder="담당자명" />
             </div>
-            <p className="mt-3 text-slate-600">We hereby provide the following quotation:</p>
-            <p className="text-slate-500">Quotation Validity: {validityDays} days from the date of the quotation</p>
+            <p className="mt-3 text-slate-600">{ko ? '아래와 같이 견적합니다.' : 'We hereby provide the following quotation:'}</p>
+            <p className="text-slate-500">{ko ? `견적 유효기간 : 견적일로부터 ${validityDays}일` : `Quotation Validity: ${validityDays} days from the date of the quotation`}</p>
           </div>
 
           <div>
-            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Supplier</div>
-            <div className="text-slate-600 leading-relaxed">
+            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">{ko ? '공급자' : 'Supplier'}</div>
+            {ko ? (
+            <div className="text-slate-600 leading-relaxed" data-quote-supplier="ko">
+              <div>상호 : <b className="text-slate-800">{SUPPLIER_KO.company}</b> · 등록번호 : {SUPPLIER_KO.bizNo}</div>
+              <div>대표 : {SUPPLIER_KO.ceo}</div>
+              <div>주소 : {SUPPLIER_KO.address}</div>
+              <div>업태 : {SUPPLIER_KO.bizType}</div>
+              <div>종목 : {SUPPLIER_KO.bizItem}</div>
+              <div className="flex items-center gap-1 mt-0.5">
+                <span>담당 :</span>
+                <input value={contactName} onChange={(e) => setContactName(e.target.value)} data-quote-contact-name
+                  className="qi w-28" placeholder="담당자 이름" />
+                <span>(</span>
+                <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} data-quote-contact-phone
+                  className="qi w-36" placeholder="010-0000-0000" />
+                <span>)</span>
+              </div>
+              <div>전화 : {SUPPLIER_KO.tel}   팩스 : {SUPPLIER_KO.fax}</div>
+              <div className="flex items-center gap-1">
+                <span>이메일 :</span>
+                <input value={contactEmail} onChange={(e) => setContactEmail(e.target.value)}
+                  className="qi flex-1" placeholder="sales@jinsuntech.co.kr" />
+              </div>
+              <div className="text-slate-400">{SUPPLIER_KO.invoiceEmail} (계산서)</div>
+            </div>
+            ) : (
+            <div className="text-slate-600 leading-relaxed" data-quote-supplier="en">
               <div>Company : {SUPPLIER.company}</div>
               <div>Business registration number : {SUPPLIER.bizNo}</div>
               <div>CEO : {SUPPLIER.ceo}</div>
@@ -1006,10 +1077,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               <div>Business Type : {SUPPLIER.bizType}</div>
               <div className="flex items-center gap-1 mt-0.5">
                 <span>Contact :</span>
-                <input value={contactName} onChange={(e) => setContactName(e.target.value)}
-                  className="qi w-28" placeholder="담당자명" />
+                <input value={contactName} onChange={(e) => setContactName(e.target.value)} data-quote-contact-name
+                  className="qi w-28" placeholder="Name" />
                 <span>(</span>
-                <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)}
+                <input value={contactPhone} onChange={(e) => setContactPhone(e.target.value)} data-quote-contact-phone
                   className="qi w-36" placeholder="82+10-0000-0000" />
                 <span>)</span>
               </div>
@@ -1021,33 +1092,34 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               </div>
               <div className="text-slate-400">{SUPPLIER.invoiceEmail} (Invoice)</div>
             </div>
+            )}
           </div>
         </div>
 
         <div className="grid grid-cols-2 gap-x-6 gap-y-1.5 text-xs mb-4">
-          <Row label="Date"><input value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} type="date" className="qi" /></Row>
-          <Row label="Currency"><span className="font-bold">{currency}</span></Row>
-          <Row label="Project Name"><input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="qi" placeholder="RFQ_110228078" /></Row>
-          <Row label="Validity">
+          <Row label={ko ? '견적일' : 'Date'}><input value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} type="date" className="qi" /></Row>
+          <Row label={ko ? '통화' : 'Currency'}><span className="font-bold">{currency}</span></Row>
+          <Row label={ko ? '건명' : 'Project Name'}><input value={projectName} onChange={(e) => setProjectName(e.target.value)} className="qi" placeholder="RFQ_110228078" /></Row>
+          <Row label={ko ? '유효기간' : 'Validity'}>
             <input type="number" value={validityDays} onChange={(e) => setValidityDays(e.target.value)} className="qi w-16" />
-            <span className="ml-1 text-slate-400">days ({validUntil})</span>
+            <span className="ml-1 text-slate-400">{ko ? `일 (${validUntil}까지)` : `days (${validUntil})`}</span>
           </Row>
-          <Row label="Delivery"><input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} className="qi flex-1" /></Row>
+          <Row label={ko ? '납품 일정' : 'Delivery'}><input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} className="qi flex-1" /></Row>
         </div>
 
         <table className="w-full text-xs border-t-2 border-slate-800">
           <thead>
             <tr className="border-b border-slate-300 text-slate-500">
-              <th className="py-2 w-8 text-left">NO</th>
-              <th className="py-2 text-left">Item no.</th>
-              <th className="py-2 text-left">Description</th>
+              <th className="py-2 w-8 text-left">{ko ? '번호' : 'NO'}</th>
+              <th className="py-2 text-left">{ko ? '품번' : 'Item no.'}</th>
+              <th className="py-2 text-left">{ko ? '품명' : 'Description'}</th>
               <th className="py-2 w-12 text-center">REV</th>
-              <th className="py-2 w-12 text-center">Unit</th>
-              <th className="py-2 w-14 text-right">Q'ty</th>
-              <th className="py-2 w-24 text-right">Unit Price</th>
-              <th className="py-2 w-24 text-right">Amount</th>
-              <th className="py-2 w-12 text-center">Alt.</th>
-              <th className="py-2 w-20 text-left">Remarks</th>
+              <th className="py-2 w-12 text-center">{ko ? '단위' : 'Unit'}</th>
+              <th className="py-2 w-14 text-right">{ko ? '수량' : "Q'ty"}</th>
+              <th className="py-2 w-24 text-right">{ko ? '단가' : 'Unit Price'}</th>
+              <th className="py-2 w-24 text-right">{ko ? '금액' : 'Amount'}</th>
+              <th className="py-2 w-12 text-center">{ko ? '대체' : 'Alt.'}</th>
+              <th className="py-2 w-20 text-left">{ko ? '비고' : 'Remarks'}</th>
               <th className="py-2 w-24 text-right no-print">자재비(원)</th>
               <th className="py-2 w-24 text-right no-print">작업비(원)</th>
               <th className="py-2 w-12 text-right no-print">마진</th>
@@ -1281,7 +1353,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-slate-800 font-bold">
-              <td colSpan={7} className="py-2 text-right pr-3">TOTAL</td>
+              <td colSpan={7} className="py-2 text-right pr-3">{ko ? '합계 (부가세 별도)' : 'TOTAL'}</td>
               <td className="py-2 text-right text-sm">{sym}{money(totals.amount, currency)}</td>
               <td colSpan={2}></td>
               <td className="py-2 text-right no-print">{won(totals.materialKrw)}</td>
@@ -1293,7 +1365,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </table>
 
         <div className="mt-4 text-xs text-slate-600 space-y-1">
-          <div className="flex gap-2 items-center"><span className="w-24 text-slate-400">Lead Time</span>
+          <div className="flex gap-2 items-center"><span className="w-24 text-slate-400">{ko ? '납기' : 'Lead Time'}</span>
             <input value={leadTime}
               onChange={(e) => { setLeadTouched(true); setLeadTime(e.target.value) }}
               className="qi flex-1" />
@@ -1323,9 +1395,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               </span>
             )}
           </div>
-          <div className="flex gap-2"><span className="w-24 text-slate-400">Validity</span>
-            <span>{validityDays} days from the date of quotation ({validUntil})</span></div>
-          <div className="flex gap-2"><span className="w-24 text-slate-400">Remarks</span>
+          <div className="flex gap-2"><span className="w-24 text-slate-400">{ko ? '유효기간' : 'Validity'}</span>
+            <span>{ko ? `견적일로부터 ${validityDays}일 (${validUntil}까지)` : `${validityDays} days from the date of quotation (${validUntil})`}</span></div>
+          <div className="flex gap-2"><span className="w-24 text-slate-400">{ko ? '비고' : 'Remarks'}</span>
             <input value={memo} onChange={(e) => setMemo(e.target.value)} className="qi flex-1" placeholder="특이사항" /></div>
         </div>
       </div>

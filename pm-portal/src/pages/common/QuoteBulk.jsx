@@ -68,6 +68,7 @@ export default function QuoteBulk() {
       if (r.fallback) toast('납기 · MOQ 는 메모에 적었습니다 — DB 설정(품목단가등록_261023.sql) 뒤에는 따로 저장됩니다')
       qc.invalidateQueries({ queryKey: ['items'], exact: false })
       qc.invalidateQueries({ queryKey: ['quoteHistory'], exact: false })
+      qc.invalidateQueries({ queryKey: ['quotePriceReqs'] })   // 영업 단가 요청 목록 (v4.99.2)
       setRows([]); setText('')
     } catch (e) { toastError('저장 실패: ' + e.message) } finally { setBusy(false) }
   }

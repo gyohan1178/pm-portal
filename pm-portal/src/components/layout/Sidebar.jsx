@@ -1,5 +1,5 @@
 import { useState, useEffect, createContext, useContext, Fragment } from 'react'
-import { isFieldOnly, canAccessSection } from '../../hooks/useProfile'
+import { isFieldOnly, canAccessSection, canSeeFlow } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { loadChangelogOld } from '../../lib/loadChangelogOld'
@@ -289,7 +289,7 @@ function ChangelogModal({ onClose }) {
 
 export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) {
   const alerts = useAlertCounts()
-  const flowFresh = useFlowFresh(profile, !isFieldOnly(profile))
+  const flowFresh = useFlowFresh(profile, canSeeFlow(profile))
   // 자료 요청 — 영업은 처리할 요청, 그 밖 부서는 받았는데 아직 확인 안 한 것 (v4.98.0)
   const { data: docN } = useQuery({ ...docCountsQuery, enabled: !!profile })
   const docBadge = !docN ? 0 : profile?.dept === '영업' ? docN.open : (docN.byDept?.[profile?.dept]?.recv || 0)
@@ -505,7 +505,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         </div>
 
         {/* 업무 흐름 — 현장 전용 계정 말고 모두 (v4.91.0) */}
-        {!fieldOnly && !(profile?.role !== 'viewer' && canAccessSection(profile, 'home')) && (
+        {!fieldOnly && canSeeFlow(profile) && !(profile?.role !== 'viewer' && canAccessSection(profile, 'home')) && (
         <div className="py-1">
           <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>
         </div>
@@ -513,7 +513,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 홈 — 현장·조회 계정은 숨김 */}
         {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
-          <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>
+          {canSeeFlow(profile) && <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>}
           <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
           <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>

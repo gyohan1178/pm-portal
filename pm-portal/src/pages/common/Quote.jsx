@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import PageHead from '../../components/PageHead'
 import ItemPicker from '../../components/ItemPicker'
 import VendorPicker from '../../components/VendorPicker'
@@ -9,6 +9,7 @@ import { todayISO } from '../../lib/utils'
 import { ilikeAny } from '../../lib/pgFilter'
 import { ltWeeksOf, saveQuotes } from '../../lib/quoteBulk'
 import QuoteBulk from './QuoteBulk'
+import QuotePriceReqs, { PRICE_REQ_KEY } from './QuotePriceReqs'
 
 async function searchItems(keyword) {
   if (!keyword || keyword.length < 1) return []
@@ -37,10 +38,14 @@ async function saveQuote({ itemId, vendorId, unitPrice, quoteDate, validUntil, m
 
 export default function Quote() {
   const [mode, setMode] = useState('one')   // one 한 품목 · bulk 여러 품목 (v4.86.0)
+  // 영업 견적 단가 요청에서 「단가 넣기」 → 한 품목 입력칸에 채움 (v4.99.2)
+  const [pick, setPick] = useState(null)      // { item, rfqs, n }
   return (
     <div className="space-y-4">
       <PageHead crumb="기초자료" title="품목 단가 등록"
         desc="협력사 견적 단가를 등록합니다. 한 품목씩 넣거나, 견적서 표를 붙여넣어 여러 품목을 한 번에 등록합니다. 저장하면 견적 이력이 남고, 고른 품목은 「최근 매입가」도 바뀝니다."></PageHead>
+
+      <QuotePriceReqs onPick={(item, rfqs) => { setMode('one'); setPick({ item, rfqs, n: Date.now() }) }} />
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit" data-quote-mode>
         {[['one', '한 품목'], ['bulk', '📋 여러 품목 (견적서 붙여넣기)']].map(([k, l]) => (
@@ -48,13 +53,14 @@ export default function Quote() {
             className={`px-3.5 py-1.5 text-xs font-bold rounded-md ${mode === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>{l}</button>
         ))}
       </div>
-      {mode === 'bulk' ? <QuoteBulk /> : <QuoteOne />}
+      {mode === 'bulk' ? <QuoteBulk /> : <QuoteOne pick={pick} />}
     </div>
   )
 }
 
-function QuoteOne() {
+function QuoteOne({ pick }) {
   const qc = useQueryClient()
+  const formRef = useRef(null)
   const [keyword, setKeyword] = useState('')
   const [searchResults, setSearchResults] = useState([])
   const [selItem, setSelItem] = useState(null)
@@ -84,6 +90,7 @@ function QuoteOne() {
       if (r?.fallback) toast('납기 · MOQ 는 메모에 적었습니다 — DB 설정(품목단가등록_261023.sql) 뒤에는 따로 저장됩니다')
       refetchHistory()
       qc.invalidateQueries(['items'])
+      qc.invalidateQueries({ queryKey: PRICE_REQ_KEY })   // 영업 단가 요청 목록에 「등록됨 ✓」
       setTimeout(()=>setSaved(false), 3000)
     },
     onError: (e) => toastError('오류: ' + e.message),
@@ -104,12 +111,22 @@ function QuoteOne() {
     setKeyword(item.name)
   }
 
+  // 영업 단가 요청 「단가 넣기」 — 그 품목을 고르고 메모에 견적 건 이름을 남김
+  useEffect(() => {
+    if (!pick?.item) return
+    selectItem(pick.item)
+    setKeyword(pick.item.name || pick.item.std_code || '')
+    const t = [...new Set((pick.rfqs || []).map((r) => r.title).filter(Boolean))].join(' / ')
+    if (t) setMemo(`영업 견적 요청 — ${t}`)
+    setTimeout(() => formRef.current?.scrollIntoView?.({ behavior: 'smooth', block: 'start' }), 50)
+  }, [pick?.n]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const priceChange = selItem && unitPrice && Number(unitPrice) !== selItem.purchase_price
     ? Number(unitPrice) - (selItem.purchase_price||0)
     : 0
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" ref={formRef}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
         {/* 왼쪽: 견적 입력 */}
         <div className="space-y-4">
