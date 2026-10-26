@@ -7,6 +7,10 @@ import { ORDER_CUSTOMERS } from './orderIntake'
 import { todayISO } from './utils'
 
 export const DOC_KINDS = ['도면', 'BOM', '사양서', '기타']
+// 「직접 입력」 (v4.101.0) — 화면에서는 「직접 입력」, DB 에는 kind='기타' + kind_label(예: CN 내역)
+export const KIND_SHOW = { 기타: '직접 입력' }
+export const kindLabel = (r) => (r?.kind === '기타' ? (s(r.kind_label) || '기타') : r?.kind || '—')
+export const DOC_LABEL_SQL_HINT = '「직접 입력」 칸이 아직 없습니다 — Supabase SQL Editor 에서 자료요청_직접입력_반영_261026.sql 을 먼저 실행해 주세요'
 export const DOC_STEPS = ['요청됨', '고객사에 요청함', '받음', '확인 완료']
 export const DOC_DEPTS = ['구매자재', '생산기술', '제조', '품질', '영업']
 export const DOC_CUSTOMERS = [...Object.entries(ORDER_CUSTOMERS).map(([code, c]) => ({ code, name: c.name, badge: c.badge })), { code: 'ETC', name: '기타', badge: 'bg-slate-100 text-slate-600' }]
@@ -80,22 +84,29 @@ export async function fetchDocRequests() {
 }
 
 // 진행 중 같은 자료가 있나
-export async function findOpenSame({ part_no, kind, customer_code }) {
-  const { data, error } = await supabase.from('pm_doc_request').select('id,from_dept,also_depts,created_at,requester_name,status')
-    .ilike('part_no', s(part_no)).eq('kind', kind).eq('customer_code', customer_code).eq('cancelled', false).lt('status', 2).limit(1)
+//   직접 입력은 이름(kind_label)까지 같아야 같은 요청 — 품번 없이 「CN 내역」만 요청해도 고객사 · 이름으로 묶인다
+export async function findOpenSame({ part_no, kind, customer_code, kind_label }) {
+  if (kind === '기타' && !s(kind_label)) return null
+  const pn = s(part_no)
+  const q0 = supabase.from('pm_doc_request').select('*')
+  const q = (pn ? q0.ilike('part_no', pn) : q0.eq('part_no', '')).eq('kind', kind).eq('customer_code', customer_code).eq('cancelled', false).lt('status', 2).limit(20)
+  const { data, error } = await q
   if (error) return null
-  return (data && data[0]) || null
+  const want = s(kind_label).toUpperCase()
+  return (data || []).find((r) => kind !== '기타' || s(r.kind_label).toUpperCase() === want) || null
 }
 
 // 요청 만들기 — 같은 자료가 진행 중이면 「같이 기다리기」로 붙인다. 반환 { row, followed }
 export async function createDocRequest(f, me) {
   const part = s(f.part_no)
-  if (!part) throw new Error('품번을 넣으세요')
   if (!DOC_KINDS.includes(f.kind)) throw new Error('무엇이 필요한지 고르세요')
+  const etc = f.kind === '기타'
+  if (etc && !s(f.kind_label)) throw new Error('어떤 자료인지 적어 주세요 (예: CN 내역)')
+  if (!part && !etc) throw new Error('품번을 넣으세요')
   if (!s(f.customer_code)) throw new Error('어느 고객사 자료인지 고르세요')
   if (!s(f.from_dept)) throw new Error('요청 부서를 고르세요')
   if (!f.need_date) throw new Error('필요일을 넣으세요')
-  const same = await findOpenSame({ part_no: part, kind: f.kind, customer_code: f.customer_code })
+  const same = await findOpenSame({ part_no: part, kind: f.kind, customer_code: f.customer_code, kind_label: f.kind_label })
   if (same) {
     if (same.from_dept === f.from_dept || (same.also_depts || []).includes(f.from_dept)) return { row: same, followed: false, already: true }
     const { data, error } = await supabase.rpc('pm_doc_request_follow', { p_id: same.id, p_dept: f.from_dept })
@@ -106,6 +117,7 @@ export async function createDocRequest(f, me) {
     kind: f.kind, customer_code: f.customer_code, item_id: f.item_id || null, part_no: part, item_name: s(f.item_name) || null,
     rev: f.kind === '도면' ? s(f.rev) || null : null, need_date: f.need_date, reason: s(f.reason) || null, ref: s(f.ref) || null,
     source: f.source || 'direct', from_dept: f.from_dept, requester_name: me?.name || null,
+    ...(etc ? { kind_label: s(f.kind_label) } : {}),   // 직접 입력일 때만 보낸다 — SQL 전에도 도면 · BOM · 사양서 요청은 그대로 됨
   }
   const { data, error } = await supabase.from('pm_doc_request').insert(row).select('*').single()
   if (error) {
@@ -115,6 +127,7 @@ export async function createDocRequest(f, me) {
       if (again) { const r2 = await supabase.rpc('pm_doc_request_follow', { p_id: again.id, p_dept: f.from_dept }); if (!r2.error) return { row: r2.data, followed: true } }
     }
     if (missing(error)) throw new Error(DOC_SQL_HINT)
+    if (/kind_label/.test(error.message || '')) throw new Error(DOC_LABEL_SQL_HINT)
     throw error
   }
   return { row: data, followed: false }
@@ -140,10 +153,12 @@ export async function autoRecv() {
 export function mailText(rows, cust) {
   const en = cust === 'AX' || cust === 'ED'
   const kindEn = { 도면: 'drawing', BOM: 'BOM', 사양서: 'spec sheet', 기타: 'document' }
-  const pn = (r) => (cust === 'AX' ? r.part_no.replace(/^AX-/, '') : r.part_no)
+  const pn = (r) => (cust === 'AX' ? s(r.part_no).replace(/^AX-/, '') : s(r.part_no))
+  const what = (r) => (r.kind === '기타' && s(r.kind_label) ? s(r.kind_label) : en ? kindEn[r.kind] || 'document' : r.kind)
+  const head = (r) => [pn(r) + (r.rev ? ' Rev ' + r.rev : ''), what(r)].filter(Boolean).join(' — ')
   const lines = rows.map((r, i) => en
-    ? `${i + 1}) ${pn(r)}${r.rev ? ' Rev ' + r.rev : ''} — ${kindEn[r.kind] || 'document'}${r.need_date ? ` (needed by ${String(r.need_date).slice(5, 10)})` : ''}`
-    : `${i + 1}) ${pn(r)}${r.rev ? ' Rev ' + r.rev : ''} — ${r.kind}${r.need_date ? ` (${String(r.need_date).slice(5, 10)}까지)` : ''}`)
+    ? `${i + 1}) ${head(r)}${r.need_date ? ` (needed by ${String(r.need_date).slice(5, 10)})` : ''}`
+    : `${i + 1}) ${head(r)}${r.need_date ? ` (${String(r.need_date).slice(5, 10)}까지)` : ''}`)
   return en
     ? `Hi,\n\nCould you please share the documents below?\n${lines.join('\n')}\n\nThank you.`
     : `안녕하세요, 진선테크입니다.\n아래 자료 공유 부탁드립니다.\n${lines.join('\n')}\n\n감사합니다.`

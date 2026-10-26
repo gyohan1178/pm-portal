@@ -406,7 +406,7 @@ async function axRowsOfFile(fileRows) {
     return {
       id: `f${i}`, po_number: r.po_number, order_line: r.order_line || '1', del_line: r.del_line || '1',
       item_id: it?.id || null, items: it ? { std_code: it.std_code, name: it.name } : null, raw_pn: r.pn, raw_desc: r.desc || null,
-      item_rev: r.item_rev || null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: r.order_date || null,
+      item_rev: r.item_rev || null, item_brev: r.item_brev || null, qty_ordered: r.qty, unit_price: r.unit_price, promise_date: r.promise_date, order_date: r.order_date || null,
       division: divisionOf(r.pn), status: r.status, ccn: r.ccn || null,
       issued_at: r.status === '완료' ? r.promise_date : null, fromRcv: r.src === 'rcv',
     }
@@ -417,6 +417,7 @@ async function axRowsOfFile(fileRows) {
 export async function axSyncPreview(fileRows) {
   if (!fileRows?.length) throw new Error('PO 엑셀에서 읽은 줄이 없습니다')
   const rows = await axRowsOfFile(fileRows)
+  const brevReady = await brevColReady()   // BREV 칸(SQL 전이면 없음) — 없으면 BREV 는 건너뛴다
   const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
   const hids = heads.map((h) => h.id)
   const lines = []
@@ -459,6 +460,7 @@ export async function axSyncPreview(fileRows) {
       if (!numEq(m.qty, r.qty_ordered)) { patch.qty = Number(r.qty_ordered) || 0; log('qty', m.qty, r.qty_ordered); if (+r.qty_ordered > +m.qty) reset = true }
       if (reset && m.reply) { Object.assign(patch, REPLY_CLEAR); log('reply_reset', replyText(m), '납기 당겨짐 · 수량 증가로 재회신 필요'); resets++ }
       if ((m.rev || '') !== (r.item_rev || '') && r.item_rev) { patch.rev = r.item_rev; log('rev', m.rev, r.item_rev) }
+      if (brevReady && r.item_brev && (m.brev || '') !== r.item_brev) { patch.brev = r.item_brev; log('brev', m.brev, r.item_brev) }
       if (r.unit_price != null && !numEq(m.unit_price, r.unit_price)) { patch.unit_price = r.unit_price; log('unit_price', m.unit_price, r.unit_price) }
       if (r.item_id && m.item_id !== r.item_id && !m.item_id) patch.item_id = r.item_id
       if (r.division && !m.division) patch.division = r.division
@@ -478,22 +480,28 @@ export async function axSyncPreview(fileRows) {
     .map((l) => ({ po_no: noByHead.get(l.order_id), key: `${l.line_no}/${l.del_line}`, due: l.due_date }))
   const cnt = (f) => hist.filter((x) => x.field === f).length
   return {
-    newPos, upd, add, hist, missing,
+    newPos, upd, add, hist, missing, brevReady,
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
       newLive: newPos.filter((p) => p.live).length, newDone: newPos.filter((p) => !p.live).length,
       fromRcv: newPos.reduce((a, p) => a + p.lines.filter((l) => l.fromRcv).length, 0) + add.filter((x) => x.r.fromRcv).length,
       missing: missing.length,
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
-      due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), price: cnt('unit_price'),
+      due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), brev: cnt('brev'), price: cnt('unit_price'),
       delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
     },
   }
 }
 
-const importRow = (orderId, l) => {
+// BREV 칸이 있나 (수주대장_SREV_BREV_반영_261026.sql) — 없으면 BREV 는 넣지 않는다 (SQL 전에도 반영이 깨지지 않게)
+export async function brevColReady() {
+  const { error } = await supabase.from('pm_order_line').select('brev').limit(1)
+  return !error
+}
+const importRow = (orderId, l, brevReady = false) => {
   const done = l.status === '완료'
   return {
+    ...(brevReady ? { brev: l.item_brev || null } : {}),
     order_id: orderId, line_no: String(l.order_line || '1'), del_line: String(l.del_line || '1'), item_id: l.item_id || null,
     raw_pn: l.items?.std_code?.replace(/^AX-/, '') || l.raw_pn || null, raw_desc: l.items?.name || l.raw_desc || null, rev: l.item_rev || null,
     qty: Number(l.qty_ordered) || 0, unit_price: l.unit_price ?? null, due_date: l.promise_date || null, division: l.division || null,
@@ -513,7 +521,7 @@ export async function axSyncRun(pv, meName) {
       currency: f.ccn === 'B' ? 'USD' : 'KRW', ccn: f.ccn || null, source: 'po_file', migrated: true, registered_name: meName || null,
     }).select('id').single()
     if (error) { if (/duplicate/i.test(error.message || '')) continue; throw error }
-    const rows = [...new Map(p.lines.map((l) => [keyOfPo(l), importRow(o.id, l)])).values()]
+    const rows = [...new Map(p.lines.map((l) => [keyOfPo(l), importRow(o.id, l, pv.brevReady)])).values()]
       .map((r) => (r.delivered_qty > 0 ? { ...r, sales_done_at: now } : r))
     const { error: e2 } = await supabase.from('pm_order_line').insert(rows)
     if (e2) { await supabase.from('pm_order').delete().eq('id', o.id); throw e2 }
@@ -522,7 +530,7 @@ export async function axSyncRun(pv, meName) {
   // 2) 기존 PO 고치기
   await pool(pv.upd, (u) => supabase.from('pm_order_line').update({ ...u.patch, updated_at: now }).eq('id', u.id))   // 20줄씩 동시에 (v4.90.6)
   if (pv.add.length) {
-    const { error } = await supabase.from('pm_order_line').insert(pv.add.map((a) => importRow(a.order_id, a.r)))
+    const { error } = await supabase.from('pm_order_line').insert(pv.add.map((a) => importRow(a.order_id, a.r, pv.brevReady)))
     if (error) throw error
   }
   const all = pv.hist.map(({ po_no, ...x }) => ({ ...x, source: 'po_file', changed_name: meName || null }))
@@ -603,7 +611,7 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림' }
+export const FIELD_LABEL = { po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
 
 // 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
 //   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })
@@ -650,7 +658,45 @@ export function oddsOf(lines) {
     if (l.cancelled || !/⚠/.test(l.note || '')) continue
     out.set(l.id, { ...(out.get(l.id) || {}), note: true })
   }
+  // 확인한 특이사항은 뺀다 (v4.101.0) — 확인할 때의 내용(oddSig)과 지금이 같을 때만. 새 차이가 생기면 다시 나온다
+  //   out.done = 확인해서 뺀 줄 (줄 id → { ...특이사항, ok: { name, at } }) — PO 상세에 「확인함」으로만 보인다
+  out.done = new Map()
+  for (const l of lines) {
+    const x = out.get(l.id)
+    if (!x || !l.odd_ok || l.odd_ok !== oddSig(x)) continue
+    out.delete(l.id)
+    out.done.set(l.id, { ...x, ok: { name: l.odd_ok_name || '', at: l.odd_ok_at || null } })
+  }
   return out
+}
+
+// 특이사항 내용 표시 — 확인할 때 같이 저장한다. 바로 앞 PO 의 Rev · 단가가 다시 바뀌면 달라져서 또 나온다 (v4.101.0)
+export const oddSig = (odd) => (!odd ? '' : [
+  odd.rev && `R:${odd.rev.prev}>${odd.rev.now}`,
+  odd.price && `P:${+odd.price.prev}>${+odd.price.now}`,
+  odd.note && 'N',
+].filter(Boolean).join('|'))
+export const ODD_OK_SQL_HINT = '특이사항 확인 칸이 아직 없습니다 — Supabase SQL Editor 에서 수주대장_특이사항확인_반영_261026.sql 을 먼저 실행해 주세요'
+
+// 특이사항 확인 / 확인 취소 — 줄마다 그때의 내용을 남기고 변경 이력에도 적는다 (v4.101.0)
+//   lines: 특이사항이 붙은 줄({...줄, odd}) · on=false 면 확인 취소
+export async function okOddLines(lines, meName, on = true) {
+  const ls = (lines || []).filter((l) => (on ? l.odd : l.odd_ok))
+  if (!ls.length) throw new Error(on ? '확인할 특이사항 줄이 없습니다' : '확인을 취소할 줄이 없습니다')
+  const now = new Date().toISOString()
+  const patches = new Map()
+  await pool(ls, (l) => {
+    const p = on ? { odd_ok: oddSig(l.odd), odd_ok_name: meName || null, odd_ok_at: now } : { odd_ok: null, odd_ok_name: null, odd_ok_at: null }
+    patches.set(l.id, p)
+    return supabase.from('pm_order_line').update({ ...p, updated_at: now }).eq('id', l.id)
+  })
+  const logs = ls.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'odd_ok',
+    before_val: on ? null : l.odd_ok, after_val: on ? patches.get(l.id).odd_ok : null, source: 'manual', changed_name: meName || null }))
+  for (let i = 0; i < logs.length; i += 500) {
+    const { error } = await supabase.from('pm_order_change').insert(logs.slice(i, i + 500))
+    if (error) throw error
+  }
+  return { n: ls.length, patches }
 }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)

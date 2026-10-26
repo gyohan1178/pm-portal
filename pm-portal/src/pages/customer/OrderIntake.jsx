@@ -17,9 +17,11 @@ import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
+// AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
+const CustomerPOUpload = lazy(() => import('./CustomerPOUpload'))
 import {
   ORDER_CUSTOMERS, fetchOrders, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT,
+  replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
@@ -139,14 +141,36 @@ function PackNote({ l }) {
 }
 
 // 특이사항 표시 — 바로 앞 PO 와 Rev · 단가가 다름 · 메모에 ⚠ (v4.90.7)
-function OddBadges({ odd }) {
+// onOk — 「✓ 확인」 버튼 (확인하면 특이사항 목록 · 숫자에서 빠진다, v4.101.0) · done — 확인한 특이사항 (PO 상세에서만 회색으로)
+function OddBadges({ odd, onOk, done, onUndo }) {
+  if (!odd && done) {
+    return <span className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold whitespace-nowrap" data-odd-done
+      title={`특이사항(${[done.rev && `Rev ${done.rev.prev}→${done.rev.now}`, done.price && `단가 ${done.price.pct > 0 ? '+' : ''}${done.price.pct.toFixed(0)}%`, done.note && '⚠ 메모'].filter(Boolean).join(' · ')}) 확인함`}>
+      ✓ 특이사항 확인{done.ok?.name ? ` · ${done.ok.name}` : ''}{done.ok?.at ? ` ${md(String(done.ok.at).slice(0, 10))}` : ''}
+      {onUndo && <button type="button" onClick={onUndo} className="ml-0.5 text-slate-400 hover:text-red-500" title="확인 취소 — 다시 특이사항에 나옵니다" data-odd-undo>✕</button>}
+    </span>
+  }
   if (!odd) return null
   const pct = odd.price ? odd.price.pct : 0
   return <>
     {odd.rev && <span className="px-1.5 py-[1px] rounded bg-red-50 text-red-600 text-[10px] font-bold whitespace-nowrap" title={`바로 앞 PO ${odd.rev.po} 는 Rev ${odd.rev.prev} — 도면 · 자재 Rev 확인`} data-odd-rev>Rev {odd.rev.prev}→{odd.rev.now}</span>}
     {odd.price && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold whitespace-nowrap" title={`바로 앞 PO ${odd.price.po} 단가 ${fmt(odd.price.prev)} → 이번 ${fmt(odd.price.now)}`} data-odd-price>단가 {pct > 0 ? '+' : ''}{pct.toFixed(Math.abs(pct) < 10 ? 1 : 0)}%</span>}
     {odd.note && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold whitespace-nowrap" title="메모에 ⚠ — 메모를 확인하세요" data-odd-note>⚠ 메모</span>}
+    {onOk && <button type="button" onClick={onOk} className="px-1.5 py-[1px] rounded border border-amber-300 bg-white text-amber-700 text-[10px] font-bold whitespace-nowrap hover:bg-amber-50" title="확인했으면 누르세요 — 특이사항 목록 · 숫자에서 빠집니다 (Rev · 단가가 또 바뀌면 다시 나옴)" data-odd-ok>✓ 확인</button>}
   </>
+}
+
+// Rev — AXCELIS 는 SREV · BREV 두 칸 (v4.101.0). BREV = PO 낼 때 Rev · SREV = 지금 Rev (작업은 BREV 이상이면 됨)
+function RevChip({ l, ax }) {
+  if (!ax) return l.rev ? <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span> : null
+  if (!l.rev && !l.brev) return null
+  const diff = !!(l.rev && l.brev && l.rev !== l.brev)
+  return (
+    <span className={`px-1.5 py-[1px] rounded text-[10px] font-bold whitespace-nowrap ${diff ? 'bg-sky-50 text-slate-600' : 'bg-slate-100 text-slate-500'}`} data-rev-chip
+      title={`SREV ${l.rev || '—'} (지금 Rev) · BREV ${l.brev || '—'} (PO 낼 때 Rev)${diff ? ' — 서로 다름: 작업은 BREV 이상이면 됨' : ''}`}>
+      S {l.rev || '—'}<span className="text-sky-600"> / B {l.brev || '—'}</span>
+    </span>
+  )
 }
 
 function CustCell({ o }) {
@@ -364,6 +388,16 @@ export default function OrderIntake() {
     },
     onError: (e) => toastError(e.message),
   })
+  // 특이사항 확인 / 확인 취소 (v4.101.0) — 화면 데이터만 고친다 (oddsOf 가 다시 돌며 목록 · 숫자에서 빠짐)
+  const oddMut = useMutation({
+    mutationFn: ({ ls, on = true }) => okOddLines(ls, meName, on),
+    onSuccess: (r, v) => {
+      patchLines((l) => r.patches.get(l.id) || null)
+      if (v.on !== false) setChecked((s) => { const n = new Set(s); r.patches.forEach((_, id) => n.delete(id)); return n })
+      toastSuccess(v.on === false ? '특이사항 확인을 취소했습니다 — 다시 목록에 나옵니다' : `특이사항 ${r.n}줄 확인 — 목록에서 빠졌습니다`)
+    },
+    onError: (e) => toastError(/odd_ok/.test(e.message || '') ? ODD_OK_SQL_HINT : '저장 실패: ' + e.message),
+  })
   const dlvMut = useMutation({
     mutationFn: ({ ls, on }) => markDelivered(ls, on, meName),
     onSuccess: (r) => { patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set()) },
@@ -416,6 +450,15 @@ export default function OrderIntake() {
   const [axPrev, setAxPrev] = useState(null)
   const [axBusy, setAxBusy] = useState(false)
   const axFileRef = useRef(null)
+  // 한 번 올리면 둘 다 (v4.101.0) — AXCELIS 고객사 id 를 찾아 「고객사 PO」 업로드 창을 이 파일로 연다
+  //   (고객사 id 를 못 찾으면 예전처럼 수주대장만 반영)
+  const [cpoFile, setCpoFile] = useState(null)
+  const { data: axCsId } = useQuery({
+    queryKey: ['axCustomerId'],
+    queryFn: async () => { const { data } = await supabase.from('customers').select('id,code').ilike('code', 'ax').limit(1); return data?.[0]?.id || null },
+    staleTime: 60 * 60 * 1000,
+  })
+  const pickAxFile = (file) => { if (!file) return; if (axCsId) setCpoFile(file); else axPreview(file) }
   // AXCELIS PO 엑셀(「고객사 PO」에 올리는 그 파일)을 골라 바로 읽는다 — Current Data + Received (v4.90.5)
   async function axPreview(file) {
     if (!file) return
@@ -569,9 +612,9 @@ export default function OrderIntake() {
           <span className="text-[11px] text-slate-400" data-count-unit>숫자 = {mode === 'line' ? '품목 줄 수' : 'PO 수'}</span>
           <div className="ml-auto flex flex-wrap gap-2">
             {editable && <>
-              <button type="button" onClick={() => axFileRef.current?.click()} disabled={axBusy} data-ax-import title="「고객사 PO」에 올리는 AXCELIS PO 관리 엑셀을 고르세요 (Current Data · Received 시트)"
+              <button type="button" onClick={() => axFileRef.current?.click()} disabled={axBusy} data-ax-import title="AXCELIS PO 관리 엑셀을 고르세요 (Current Data · Received · 3rd party 시트) — 수주대장 · 고객사 PO · 생산관리 호기가 한 번에 맞춰집니다"
                 className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">{axBusy ? '읽는 중…' : '🔁 AX PO 엑셀 반영'}</button>
-              <input ref={axFileRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" data-ax-file onChange={(e) => { axPreview(e.target.files?.[0]); e.target.value = '' }} />
+              <input ref={axFileRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" data-ax-file onChange={(e) => { pickAxFile(e.target.files?.[0]); e.target.value = '' }} />
             </>}
             {editable && <>
               <button type="button" onClick={downloadTemplate} data-entry-template title="구두 발주 · 선진행 · 발주 예정 · PDF 없는 PO 를 엑셀로 여러 건 올리는 양식" className="px-3 py-2 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-700 hover:bg-slate-50">엑셀 양식 받기</button>
@@ -591,7 +634,7 @@ export default function OrderIntake() {
             <option value="due">납기 빠른 순</option><option value="reg">최근 접수 순</option><option value="cust">고객사 순</option>
           </select>
           <button type="button" onClick={() => { setKpi(kpi === 'odd' ? null : 'odd'); setMode('line') }} data-odd-btn
-            title={`진행 중 줄 가운데 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 줄`}
+            title={`진행 중 줄 가운데 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 줄. 「✓ 확인」한 줄은 빠집니다 (확인 ${(oddMap.done?.size || 0).toLocaleString('ko-KR')}줄)`}
             className={`px-3 py-2 rounded-lg text-xs font-bold border whitespace-nowrap ${kpi === 'odd' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'}`}>
             ⚠ 특이사항 {kpis.odd.length.toLocaleString('ko-KR')}
             <span className="font-semibold text-amber-600/80 ml-1">Rev {kpis.odd.filter((l) => l.odd.rev).length} · 단가 {kpis.odd.filter((l) => l.odd.price).length}{kpis.odd.some((l) => l.odd.note) ? ` · 메모 ${kpis.odd.filter((l) => l.odd.note).length}` : ''}</span>
@@ -600,6 +643,12 @@ export default function OrderIntake() {
           {kpi && <button type="button" onClick={() => setKpi(null)} className="text-xs text-violet-600 font-bold">지표 거르기 해제 ✕</button>}
         </div>
       </div>
+
+      {cpoFile && axCsId && (
+        <Suspense fallback={null}>
+          <CustomerPOUpload csId={axCsId} csCode="ax" initialFile={cpoFile} onClose={() => setCpoFile(null)} onApplied={() => refresh()} />
+        </Suspense>
+      )}
 
       {axPrev && (() => {
         const s = axPrev.summary
@@ -614,7 +663,7 @@ export default function OrderIntake() {
             {nothing ? <div className="mt-2 text-xs text-slate-600">바뀐 것이 없습니다.</div> : (
               <div className="mt-2 text-xs text-slate-700 space-y-1">
                 {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
-                {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · Rev {s.rev} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
+                {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · SREV {s.rev}{s.brev ? ` · BREV ${s.brev}` : ''} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
                 {s.fromRcv > 0 && <div>· 그중 Received 시트에서 온 줄 {s.fromRcv} — Current Data 에 없는 지난 납품 · 취소분</div>}
                 {s.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>재회신 필요</b> {s.resets}건</div>}
                 {axPrev.hist.length > 0 && (
@@ -649,6 +698,7 @@ export default function OrderIntake() {
             <input type="date" value={relDate} onChange={(e) => setRelDate(e.target.value)} data-bulk-release-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
             <button type="button" disabled={!relDate || relMut.isPending} onClick={() => relMut.mutate({ ls: checkedLines, date: relDate }, { onSuccess: () => { setRelDate(''); setChecked(new Set()) } })} data-bulk-release className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">저장</button>
           </label>
+          {checkedLines.some((l) => l.odd) && <button type="button" disabled={oddMut.isPending} onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">✓ 특이사항 확인 {checkedLines.filter((l) => l.odd).length}</button>}
           <button type="button" onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">납품 표시</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
         </div>
@@ -662,7 +712,7 @@ export default function OrderIntake() {
             {isBuy && liveVisible.length > 0 && (
               <label className="flex items-center gap-2 px-1 text-[11px] font-bold text-slate-500"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all-m />보이는 품목 전체 선택</label>
             )}
-            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} />)}
+            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} />)}
           </>}
           {mode === 'po' && <>
             {!isLoading && !poRows.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">조건에 맞는 PO 가 없습니다</div>}
@@ -701,8 +751,8 @@ export default function OrderIntake() {
                       <div className="flex flex-wrap items-center gap-1.5">
                         {l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span>}
                         {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
-                        {l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}
-                        <OddBadges odd={l.odd} />
+                        <RevChip l={l} ax={l.o.customer_code === 'AX'} />
+                        <OddBadges odd={l.odd} onOk={editable && l.odd && !l.st.cancelled ? () => oddMut.mutate({ ls: [l] }) : null} />
                       </div>
                       <div className="text-[11.5px] text-slate-500 truncate" title={l.items?.name || l.raw_desc || ''}>{l.items?.name || l.raw_desc || '—'}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400 truncate" title={l.note}>{l.note}</div>}
@@ -773,6 +823,7 @@ export default function OrderIntake() {
 
       {poOpen && byOrder.get(poOpen) && (
         <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} onClose={() => setPoOpen(null)}
+          onOddOk={(ls, on) => oddMut.mutate({ ls, on })}
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}
           onPromote={(o, no) => promoteMut.mutate({ o, no })} promoteBusy={promoteMut.isPending}
@@ -792,7 +843,7 @@ export default function OrderIntake() {
 }
 
 // 휴대폰 카드 — 품번별 한 줄 (v4.90.7)
-function LineCard({ l, isBuy, checked, onToggle, onOpen }) {
+function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk }) {
   const [stLabel, stCls] = statusOf(l)
   const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
   const c = ORDER_CUSTOMERS[l.o.customer_code]
@@ -809,8 +860,8 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen }) {
           <div className="mt-1 flex items-center gap-1.5 flex-wrap">
             {l.items ? <span className="font-mono font-bold text-[12px] text-slate-800 break-all">{l.items.std_code}</span> : <span className="font-mono text-[12px] text-slate-500 break-all">{l.raw_pn || '품번 없음'}</span>}
             {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
-            {l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}
-            <OddBadges odd={l.odd} />
+            <RevChip l={l} ax={l.o.customer_code === 'AX'} />
+            <OddBadges odd={l.odd} onOk={onOddOk && l.odd && !l.st.cancelled ? onOddOk : null} />
           </div>
           <div className="text-[11.5px] text-slate-500 truncate">{l.items?.name || l.raw_desc || '—'}</div>
           {(l.o.ship_to || mgmtNoOf(l)) && <div className="text-[10.5px] text-slate-400 truncate">{[l.o.ship_to, mgmtNoOf(l)].filter(Boolean).join(' · ')}</div>}
@@ -855,7 +906,7 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -957,7 +1008,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onClose, onReply, replyBusy,
                     {editable && <td className="pl-3 py-2">{cancellable(l) && <input type="checkbox" checked={pick.has(l.id)} onChange={() => togglePick(l.id)} data-pick={`${l.line_no}/${l.del_line}`} />}</td>}
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}{l.rev && <span className="px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold">Rev {l.rev}</span>}<OddBadges odd={oddMap?.get(l.id)} /></div>
+                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} /><OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} /></div>
                       <div className="text-[11px] text-slate-500">{l.items?.name || l.raw_desc}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400">{l.note}</div>}
                     </td>

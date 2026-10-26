@@ -64,6 +64,7 @@ export function parseAxPoWorkbook(XLSX, wb, from = `${new Date().getFullYear()}-
       src: 'cur', pn, po_number: s(pick(r, ['ordernumber', 'order number', 'po', '오더번호', '발주번호'])),
       order_line: n0(pick(r, ['orderlines', 'order lines', '오더라인'])), del_line: n0(pick(r, ['delline', 'del line', '납품라인'])),
       ccn: s(pick(r, ['ccn'])), item_rev: s(pickExact(r, ['srev']) ?? pick(r, ['srev', 'rev', '리비전'])),
+      item_brev: s(pickExact(r, ['brev']) ?? ''),   // BREV = PO 낼 때 Rev (v4.101.0 — 수주대장에도 SREV · BREV 두 칸)
       desc: s(pick(r, ['itemdesc', 'item desc', '품명'])),
       qty: num(pick(r, ['quantity', '수량', 'qty', '발주량'])), unit_price: num(pick(r, ['unit price', 'unitprice', '단가'])) || null,
       promise_date: dnorm(pick(r, ['promisedate', 'promise date', '약속일', '납기'])), status: '진행중', stText: '',

@@ -9,7 +9,7 @@ import { DocRequestButton } from '../../components/DocRequestModal'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
 import { isLead } from '../../lib/workflow'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
+import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, kindLabel, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
 
 const Seg = ({ items, value, onChange, data }) => (
   <div className="inline-flex flex-wrap gap-1 p-1 rounded-lg bg-[#e9ebf2]" data-seg={data}>
@@ -63,7 +63,7 @@ export default function DocRequest() {
     catch (e) { toastError(e.message || String(e)) } finally { setBusy(false) }
   }
   const move = (r, to, msg) => act(() => moveDoc(r.id, to, to === 2 ? note[r.id] : msg), `${r.part_no} → ${DOC_STEPS[to]}`)
-  const cancel = (r) => { if (window.confirm(`${r.part_no} ${r.kind} 요청을 취소할까요?`)) act(() => cancelDoc(r.id, '취소'), '취소했습니다') }
+  const cancel = (r) => { if (window.confirm(`${[r.part_no, kindLabel(r)].filter(Boolean).join(' ')} 요청을 취소할까요?`)) act(() => cancelDoc(r.id, '취소'), '취소했습니다') }
   async function copyMail() {
     const text = mailText(mailRows, mailCust)
     try { await navigator.clipboard.writeText(text); toastSuccess('요청 문구를 복사했습니다 — 메일에 붙여넣으세요') } catch { toastError('복사가 안 되는 브라우저입니다 — 아래 글을 직접 복사하세요') }
@@ -73,7 +73,7 @@ export default function DocRequest() {
   return (
     <div className="space-y-4" data-doc-page>
       <PageHead crumb="공통" title="📎 자료 요청"
-        desc="도면 · BOM · 사양서가 필요하면 영업에 요청하세요. 영업이 고객사에 받아 올리면 요청한 부서로 알림이 갑니다. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.">
+        desc="도면 · BOM · 사양서 · 그 밖의 자료(「직접 입력」 — 예: CN 내역)가 필요하면 영업에 요청하세요. 영업이 고객사에 받아 올리면 요청한 부서로 알림이 갑니다. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.">
         <DocRequestButton label="+ 자료 요청" className="px-3 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white" />
       </PageHead>
 
@@ -127,10 +127,13 @@ export default function DocRequest() {
                 <Fragment key={r.id}>
                   <tr className={`border-t border-slate-100 ${r.cancelled ? 'opacity-50' : ''}`} data-doc-row={r.id} data-doc-status={r.status}>
                     <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${custBadge(r.customer_code)}`}>{custName(r.customer_code)}</span></td>
-                    <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${KIND_BADGE[r.kind]}`}>{r.kind}</span></td>
+                    <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${KIND_BADGE[r.kind]}`} data-doc-kind-label>{kindLabel(r)}</span></td>
                     <td className="px-3 py-2">
-                      <div className="font-mono font-bold text-[#5b6ee8] whitespace-nowrap">{r.part_no}{r.rev && <span className="ml-1 text-slate-400 font-sans font-normal">Rev {r.rev}</span>}</div>
-                      <div className="text-[11px] text-slate-400 truncate max-w-[220px]">{[r.item_name, r.ref].filter(Boolean).join(' · ')}</div>
+                      <div className="font-mono font-bold text-[#5b6ee8] whitespace-nowrap">{r.part_no || <span className="font-sans font-normal text-slate-400">품번 없음</span>}{r.rev && <span className="ml-1 text-slate-400 font-sans font-normal">Rev {r.rev}</span>}</div>
+                      <div className="text-[11px] text-slate-400 truncate max-w-[260px]">{[r.item_name, r.ref].filter(Boolean).join(' · ')}</div>
+                      {/* 왜 필요한지 — 목록에서 바로 보이게 (v4.101.0). 길면 두 줄까지, 누르면 아래에 전체 */}
+                      {r.reason && <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} title={r.reason} data-doc-reason-show
+                        className="mt-0.5 max-w-[260px] text-left text-[11.5px] leading-snug text-amber-800 bg-amber-50 rounded px-1.5 py-0.5 hover:bg-amber-100 line-clamp-2 break-words">💬 {r.reason}</button>}
                     </td>
                     <td className="px-3 py-2 whitespace-nowrap">{r.from_dept}{r.requester_name && <span className="text-slate-400"> · {r.requester_name}</span>}
                       {(r.also_depts || []).length > 0 && <div className="text-[11px] text-violet-600">+ 같이 기다림: {r.also_depts.join(', ')}</div>}</td>
@@ -161,7 +164,8 @@ export default function DocRequest() {
                   </tr>
                   {open === r.id && (
                     <tr className="bg-slate-50/70" data-doc-history={r.id}><td colSpan={8} className="px-4 py-2 text-[11.5px] text-slate-600">
-                      <div className="font-bold text-slate-500 mb-1">이력 — 요청 {String(r.created_at || '').slice(0, 16).replace('T', ' ')} {r.requester_name || ''}{r.reason ? ` · 사유: ${r.reason}` : ''}</div>
+                      {r.reason && <div className="mb-2 px-3 py-2 rounded-lg bg-white border border-amber-200 text-[12.5px] text-slate-700 whitespace-pre-wrap break-words" data-doc-reason-full><b className="text-amber-700">💬 왜 필요한가요</b> — {r.reason}</div>}
+                      <div className="font-bold text-slate-500 mb-1">이력 — 요청 {String(r.created_at || '').slice(0, 16).replace('T', ' ')} {r.requester_name || ''}</div>
                       {(r.history || []).map((h, i) => (
                         <div key={i}>{String(h.at || '').slice(0, 16).replace('T', ' ')} · {h.by} · {h.to === 'cancel' ? '취소' : h.from === h.to ? '' : `${DOC_STEPS[h.from] || h.from} → ${DOC_STEPS[h.to] || h.to}`}{h.note ? ` · ${h.note}` : ''}</div>
                       ))}

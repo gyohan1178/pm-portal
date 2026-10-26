@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -7,6 +7,9 @@ import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { planExcReady, planExcOf } from '../../lib/planExc'
 import { todayISO } from '../../lib/utils'
 import { parseThirdPartySheet, tpKey, thirdPartyReady, syncThirdPartyProduction } from '../../lib/thirdParty'
+import { parseAxPoWorkbook } from '../../lib/axPoFile'
+import { axSyncPreview, axSyncRun } from '../../lib/orderIntake'
+import { useMyProfile } from '../../hooks/useProfile'
 
 // 헤더 유연 매칭
 const pick = (row, keys) => {
@@ -56,8 +59,13 @@ const dnorm = v => {
   return m ? `${m[1]}-${m[2].padStart(2,'0')}-${m[3].padStart(2,'0')}` : (t || null)
 }
 
-export default function CustomerPOUpload({ csId, csCode, onClose }) {
+// 한 번 올리면 둘 다 (v4.101.0) — 고객사 PO 표 · 생산관리 호기 · 3rd party 에 더해 수주대장도 같이 맞춘다.
+//   수주대장 「AX PO 엑셀 반영」도 이 창을 연다 (initialFile 로 고른 파일을 바로 읽음). 어디서 올려도 결과는 같다
+export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, onApplied }) {
   const qc = useQueryClient()
+  const { data: me } = useMyProfile()
+  const [ordRows, setOrdRows] = useState(null)   // 수주대장용으로 읽은 줄 (parseAxPoWorkbook) — 못 읽으면 null
+  const [ordReadErr, setOrdReadErr] = useState('')
   const [rows, setRows] = useState([])
   const [diff, setDiff] = useState(null)   // { news, changes, sames }
   const [receivedSet, setReceivedSet] = useState(new Set())
@@ -73,6 +81,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
     const reader = new FileReader()
     reader.onload = e => {
       const wb = XLSX.read(e.target.result, { type: 'array', cellDates: true })
+      // 수주대장용 — 같은 파일을 수주대장 규칙(Current Data + 올해 Received)으로 한 번 더 읽는다
+      try { setOrdRows(parseAxPoWorkbook(XLSX, wb).rows); setOrdReadErr('') } catch (er) { setOrdRows(null); setOrdReadErr(er.message || String(er)) }
       // AXCELIS 양식이면 'Current Data' 시트 우선, 없으면 첫 시트
       const sheetName = wb.SheetNames.find(n => /current\s*data/i.test(n)) || wb.SheetNames[0]
       const ws = wb.Sheets[sheetName]
@@ -136,6 +146,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
     }
     reader.readAsArrayBuffer(file)
   }
+  // 수주대장에서 파일을 골라 열었으면 바로 읽는다
+  useEffect(() => { if (initialFile) parseFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 업로드 분석: 기존 PO와 (po+오더라인+DEL라인+품번) 키로 매칭 → 변경 감지
   const analyzeMut = useMutation({
@@ -274,7 +286,13 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const liveCount = all.filter(e => e.status !== '완료' && e.status !== '취소').length
       const disappearWarn = liveCount > 0 && disappeared.length / liveCount > 0.4
 
-      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: liveCount,
+      // 수주대장도 같이 — 무엇이 바뀌는지 미리 (실패해도 고객사 PO 쪽은 그대로 진행)
+      let ordPv = null, ordErr = ordReadErr || ''
+      if (ordRows?.length) {
+        try { ordPv = await axSyncPreview(ordRows) } catch (er) { ordErr = er.message || String(er) }
+      }
+
+      return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: liveCount, ordPv, ordErr,
                tpReady, tpOpen: tpOpen.length, tpTotal: tp.rows.length,
                planReady, planUpd, planInFile: rows.filter(r => r.plan_exc).length,
                // 약속일이 이미 지난 줄 — 엑셀에서 새 날짜로 고쳐 다시 올려야 한다
@@ -458,8 +476,16 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
         catch (e) { warns.push('3rd party 생산관리 반영 실패: ' + (e?.message || e)) }
       }
 
+      // ④ 수주대장도 같이 (v4.101.0) — 실패해도 위 적용은 유효. 안내만 남긴다
+      let ord = null
+      const op = diff.ordPv
+      if (op && (op.newPos.length || op.upd.length || op.add.length)) {
+        try { ord = await axSyncRun(op, me?.name || null) }
+        catch (e) { warns.push('수주대장 반영 실패: ' + (e?.message || e) + ' — 수주대장 「AX PO 엑셀 반영」으로 다시 올려 주세요') }
+      } else if (diff.ordErr) warns.push('수주대장은 반영 못 함: ' + diff.ordErr)
+
       return { changed: diff.changes.length, inserted, created, done, canceled,
-               priceFilled, sync, hogiDone, warns, tpSync }
+               priceFilled, sync, hogiDone, warns, tpSync, ord }
     },
     onSuccess: (r) => {
       const sy = r.sync
@@ -475,11 +501,14 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
       const ts = r.tpSync
       const tpMsg = ts && (ts.created || ts.updated || ts.unlinked)
         ? ` · 3rd party 생산관리(신규 ${ts.created}, 갱신 ${ts.updated}${ts.unlinked ? `, 연결 해제 ${ts.unlinked}` : ''})` : ''
-      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}${doneMsg}${tpMsg}`)
+      const ordMsg = r.ord ? ` · 수주대장(새 PO ${r.ord.created} · 바뀐 품목 ${r.ord.changed}${r.ord.resets ? ` · 재회신 ${r.ord.resets}` : ''})` : ''
+      setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}${doneMsg}${tpMsg}${ordMsg}`)
       setRows([]); setDiff(null); setDisCheck({}); setTp({ rows: [], skipped: [] })
       qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage'])
       qc.invalidateQueries({ queryKey: ['production'], exact: false })
       qc.invalidateQueries({ queryKey: ['todoList'] })
+      qc.invalidateQueries({ queryKey: ['orderIntake'], exact: false })
+      onApplied?.(r)
     },
     onError: e => toastError('적용 오류: ' + e.message),
   })
@@ -488,7 +517,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[88vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
-          <p className="text-sm font-bold text-slate-800">고객사 PO 업로드 — 변경 감지 ({csCode})</p>
+          <p className="text-sm font-bold text-slate-800">AXCELIS PO 엑셀 반영 — 수주대장 · 고객사 PO · 생산관리 한 번에</p>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg">✕</button>
         </div>
 
@@ -538,6 +567,25 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                 <div className="rounded-xl border border-slate-200 p-3 text-center">
                   <p className="text-xs font-bold text-slate-400">동일</p><p className="text-xl font-bold text-slate-600">{diff.sames.length}</p></div>
               </div>
+
+              {/* 수주대장도 같이 (v4.101.0) */}
+              {(() => {
+                const op = diff.ordPv, sm = op?.summary
+                const none = op && !sm.newPos && !sm.changedPos
+                return (
+                  <div data-cpo-ord className={`rounded-xl border px-4 py-3 text-xs ${op ? 'border-violet-200 bg-violet-50/60 text-slate-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                    <b className="text-violet-700">📨 수주대장도 같이 맞춥니다</b>
+                    {!op ? <div className="mt-1" data-cpo-ord-err>⚠ 수주대장은 이번에 못 맞춥니다 — {diff.ordErr || '수주대장용으로 읽은 줄이 없습니다'} (고객사 PO · 생산관리는 그대로 적용)</div>
+                      : none ? <div className="mt-1 text-slate-500">수주대장은 바뀔 것이 없습니다</div>
+                      : <div className="mt-1 space-y-0.5">
+                          {sm.newPos > 0 && <div>· 새 PO <b>{sm.newPos}</b>건 · {sm.newLines}품목</div>}
+                          {sm.changedPos > 0 && <div>· 바뀐 PO <b>{sm.changedPos}</b>건 — 납기 {sm.due} · 수량 {sm.qty} · SREV {sm.rev}{sm.brev ? ` · BREV ${sm.brev}` : ''} · 단가 {sm.price} · 납품 {sm.delivered} · 취소 {sm.cancelled}{sm.added ? ` · 품목 추가 ${sm.added}` : ''}</div>}
+                          {sm.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>구매자재 재회신 필요</b> {sm.resets}건</div>}
+                        </div>}
+                    {op && sm.missing > 0 && <div className="mt-1 text-amber-700">· 엑셀 어디에도 없는 수주대장 진행 중 줄 {sm.missing} — 바꾸지 않음</div>}
+                  </div>
+                )
+              })()}
 
               {diff.overdue?.length > 0 && (
                 <div data-overdue className="rounded-xl border border-red-200 bg-red-50 overflow-hidden">
@@ -692,7 +740,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose }) {
                 </div>
               )}
 
-              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0 && (diff.planUpd?.length || 0) === 0)}
+              <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0 && (diff.planUpd?.length || 0) === 0 && !(diff.ordPv && (diff.ordPv.newPos.length || diff.ordPv.upd.length || diff.ordPv.add.length)))}
                 className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
                 {applyMut.isPending ? '적용 중...' : `적용 (신규 ${diff.news.length} · 변경 ${diff.changes.length})`}
               </button>

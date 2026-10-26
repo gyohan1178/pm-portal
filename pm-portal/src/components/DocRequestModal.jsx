@@ -4,7 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit } from '../hooks/useProfile'
 import { toastError, toastSuccess } from '../lib/toast'
 import { todayISO } from '../lib/utils'
-import { DOC_KINDS, DOC_DEPTS, DOC_CUSTOMERS, custName, guessCustomer, lookupItem, findOpenSame, createDocRequest } from '../lib/docRequest'
+import { DOC_KINDS, KIND_SHOW, DOC_DEPTS, DOC_CUSTOMERS, custName, guessCustomer, lookupItem, findOpenSame, createDocRequest } from '../lib/docRequest'
 
 const addDays = (n) => { const d = new Date(todayISO()); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
 const inp = 'w-full px-3 py-2 text-[13px] border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-300'
@@ -25,7 +25,7 @@ export default function DocRequestModal({ preset = {}, onClose }) {
   const { data: profile } = useMyProfile()
   const myDept = DOC_DEPTS.includes(profile?.dept) && profile?.dept !== '영업' ? profile.dept : ''
   const [f, setF] = useState(() => ({
-    kind: preset.kind || '도면', part_no: preset.part_no || '', item_id: preset.item_id || null, item_name: preset.item_name || '',
+    kind: preset.kind || '도면', kind_label: preset.kind_label || '', part_no: preset.part_no || '', item_id: preset.item_id || null, item_name: preset.item_name || '',
     customer_code: preset.customer_code || guessCustomer(preset.part_no) || '', rev: preset.rev || '', need_date: preset.need_date || addDays(7),
     reason: preset.reason || '', ref: preset.ref || '', source: preset.source || 'direct', from_dept: myDept,
   }))
@@ -44,10 +44,11 @@ export default function DocRequestModal({ preset = {}, onClose }) {
   // 같은 자료가 진행 중인지
   useEffect(() => {
     let alive = true
-    if (!f.part_no || !f.customer_code) { setSame(null); return undefined }
-    findOpenSame(f).then((r) => { if (alive) setSame(r) })
-    return () => { alive = false }
-  }, [f.part_no, f.kind, f.customer_code])
+    const etc = f.kind === '기타'
+    if ((!f.part_no && !etc) || (etc && !f.kind_label.trim()) || !f.customer_code) { setSame(null); return undefined }
+    const t = setTimeout(() => findOpenSame(f).then((r) => { if (alive) setSame(r) }), etc ? 400 : 0)   // 직접 입력은 글자 칠 때마다 찾지 않게
+    return () => { alive = false; clearTimeout(t) }
+  }, [f.part_no, f.kind, f.customer_code, f.kind_label])
 
   const already = same && (same.from_dept === f.from_dept || (same.also_depts || []).includes(f.from_dept))
   async function submit() {
@@ -75,12 +76,16 @@ export default function DocRequestModal({ preset = {}, onClose }) {
           <label className="block text-[12px] font-bold text-slate-600 mb-1">무엇이 필요한가요</label>
           <div className="inline-flex gap-1 p-1 rounded-lg bg-slate-100">
             {DOC_KINDS.map((k) => <button key={k} type="button" onClick={() => set('kind')(k)} data-doc-kind={k}
-              className={`px-3 py-1 rounded-md text-[12.5px] font-bold ${f.kind === k ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}>{k}</button>)}
+              className={`px-3 py-1 rounded-md text-[12.5px] font-bold ${f.kind === k ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}>{KIND_SHOW[k] || k}</button>)}
           </div>
+          {f.kind === '기타' && <>
+            <input value={f.kind_label} onChange={set('kind_label')} autoFocus placeholder="어떤 자료인가요 — 예: CN 내역 · 성적서 · 인증서" className={`${inp} mt-1.5`} data-doc-label />
+            <p className="text-[10.5px] text-slate-400 mt-1">적은 이름이 목록 · 고객사 요청 메일에 그대로 나갑니다. 품번이 없는 자료면 품번은 비워도 됩니다.</p>
+          </>}
         </div>
         <div>
-          <label className="block text-[12px] font-bold text-slate-600 mb-1">품번 <span className="text-red-500">*</span></label>
-          <input value={f.part_no} onChange={set('part_no')} onBlur={lookup} placeholder="AX-110219638 · 숫자만 넣으면 AX- 자동" className={inp} data-doc-pn />
+          <label className="block text-[12px] font-bold text-slate-600 mb-1">품번 {f.kind === '기타' ? <span className="font-normal text-slate-400">(있으면)</span> : <span className="text-red-500">*</span>}</label>
+          <input value={f.part_no} onChange={set('part_no')} onBlur={lookup} placeholder={f.kind === '기타' ? '관련 품번 · 없으면 비움' : 'AX-110219638 · 숫자만 넣으면 AX- 자동'} className={inp} data-doc-pn />
           {f.item_name && <p className="text-[11px] text-slate-500 mt-1">{f.item_name}</p>}
         </div>
         <div>
@@ -106,8 +111,8 @@ export default function DocRequestModal({ preset = {}, onClose }) {
           <input value={f.ref} onChange={set('ref')} placeholder="예: PO 4500123 · 133EA" className={inp} />
         </div>
         <div>
-          <label className="block text-[12px] font-bold text-slate-600 mb-1">왜 필요한가요</label>
-          <textarea value={f.reason} onChange={set('reason')} rows={2} placeholder="예: 판금물 견적 · 초도품 확인" className={inp} data-doc-reason />
+          <label className="block text-[12px] font-bold text-slate-600 mb-1">왜 필요한가요 <span className="font-normal text-slate-400">— 영업 화면 목록에 그대로 보입니다</span></label>
+          <textarea value={f.reason} onChange={set('reason')} rows={2} placeholder="예: 판금물 견적 · 초도품 확인 · 설계변경 이력 확인" className={inp} data-doc-reason />
         </div>
         {!myDept && (
           <div>
