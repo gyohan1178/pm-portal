@@ -124,7 +124,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [quoteKind, setQuoteKind] = useState(fixedKind || 'sales')
   const isSales = quoteKind === 'sales'
 
-  const [currency, setCurrency] = useState('USD')
+  // 통화 기본 — 매출견적은 국문(기본)이라 원화 · 매입견적(업체 수령)은 달러 그대로 (v4.100.1)
+  const [currency, setCurrency] = useState(fixedKind === 'purchase' ? 'USD' : 'KRW')
   const [quoteDate, setQuoteDate] = useState(todayISO())
   const [issuedTo, setIssuedTo] = useState(customerName || '')
   // 견적 접수의 「기타 · 직접 입력」 고객사로 쓰는 견적 (v4.99.0) — 고객사 BOM 을 안 찾고, 고객사 없이 저장. 위 고객사를 바꾸면 풀림
@@ -192,9 +193,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const setContactEmail = (v) => setContact('email', v)
   // 납품 일정 기본 문구도 언어를 따라간다 (손으로 고친 문구는 그대로)
   const DELIV = { ko: '추후 협의', en: '(To be discussed later)' }
+  // 통화도 언어를 따라간다 (국문 원화 · 영문 달러). 손으로 바꿔 둔 통화와 지난 견적 수정 중(제출 단가 보호)은 그대로
+  const LANG_CUR = { ko: 'KRW', en: 'USD' }
   function switchLang(next) {
+    if (next === lang) return
     setLang(next)
     setDeliveryNote((d) => (d === DELIV.ko || d === DELIV.en || !d ? DELIV[next] : d))
+    if (!revOf && currency === LANG_CUR[lang]) switchCurrency(LANG_CUR[next])
   }
   const [err, setErr] = useState('')
 
@@ -850,6 +855,26 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         @media print{.qi{border:0}}
       `}</style>
 
+      {/* 주의 알림 (v4.100.1) — 재접수 · 반복 견적은 지난 이력과 맞춰 본다 */}
+      {isSales && (() => {
+        const hist = lines.filter((l) => l.std_code && history[l.std_code])
+        return (
+          <div className="no-print flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5" data-quote-notice>
+            <span className="text-base leading-5">⚠</span>
+            <div className="text-xs leading-5 text-amber-900">
+              <b>신규 접수 건이 아니면 이전 이력을 확인하여 검토 바랍니다.</b>
+              <span className="text-amber-800"> 같은 품목의 지난 견적 단가 · 통화 · 조건과 다르게 나가지 않는지 확인하세요.</span>
+              {hist.length > 0 && (
+                <div className="mt-0.5 font-semibold text-amber-900" data-quote-notice-hist={hist.length}>
+                  이 견적에 지난 견적 이력이 있는 품목 {hist.length}개 — 표의 「직전」 단가를 확인하세요
+                  <span className="font-normal text-amber-800"> ({hist.slice(0, 3).map((l) => l.std_code).join(', ')}{hist.length > 3 ? ` 외 ${hist.length - 3}` : ''})</span>
+                </div>
+              )}
+            </div>
+          </div>
+        )
+      })()}
+
       {/* 매출/매입 구분 — 색으로 확실히 갈라둔다 */}
       <div className={`no-print rounded-xl border-2 p-3 ${isSales ? 'border-indigo-300 bg-indigo-50/50' : 'border-amber-400 bg-amber-50/60'}`}>
         <div className="flex flex-wrap items-center gap-2">
@@ -895,7 +920,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         )}
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
           {['USD', 'KRW'].map((c) => (
-            <button key={c} onClick={() => switchCurrency(c)}
+            <button key={c} onClick={() => switchCurrency(c)} data-quote-cur-btn={c} data-on={currency === c ? '1' : undefined}
               className={`px-3 py-1 text-xs font-bold rounded-md ${currency === c ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{c}</button>
           ))}
         </div>
