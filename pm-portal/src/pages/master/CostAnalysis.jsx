@@ -9,7 +9,7 @@ import { useMyProfile } from '../../hooks/useProfile'
 import { orderedCustomers, primaryCsCode } from '../../lib/customers'
 import { useCustomer } from '../../hooks/useCustomers'
 import {
-  explodeBOM, computeCost, suggestPrice, calcMargin, fxScenario, tierMargin, DEFAULT_CFG,
+  explodeBOM, computeCost, needsPrice, suggestPrice, calcMargin, fxScenario, tierMargin, DEFAULT_CFG,
 } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import CostSummary from './CostSummary'
@@ -31,7 +31,7 @@ export async function fetchCostBOM(csId, projectId) {
   if (!csId || !projectId) return []
   return fetchAll(() => supabase
     .from('bom')
-    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
+    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, exclude_memo, items!bom_item_id_fkey(std_code, name, unit, category, js_code, manufacturer, manufacturer_code, purchase_price, vendor_id, vendors(name))')
     .eq('customer_id', csId).eq('project_id', projectId)
     .order('seq').order('created_at').order('id'))
 }
@@ -103,6 +103,7 @@ export default function CostAnalysis() {
       std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
       manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '',
       purchase_price: b.items?.purchase_price ?? null,
+      category: b.items?.category || '', js_code: b.items?.js_code || '',
       vendor: b.items?.vendors?.name || '',
       registered: !!b.items,
     }))
@@ -234,12 +235,12 @@ export default function CostAnalysis() {
                 origin: cost.impKrw > cost.domKrw ? 'imp' : 'dom',
                 kind: 'assy',
                 partCount: cost.items.length,
-                noPrice: cost.items.filter(r => !r.excluded && r.status !== 'ok').length,
+                noPrice: cost.items.filter(needsPrice).length,
                 parts: cost.items.map(r => ({
                   uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
                   manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
                   buyKrw: r.buyKrw, qty: r.qty, origin: r.origin,
-                  vendor: r.vendor || '', status: r.status, excluded: r.excluded,
+                  vendor: r.vendor || '', status: r.status, skip: r.skip || null, excluded: r.excluded,
                 })),
               }}
             />
@@ -288,7 +289,7 @@ export default function CostAnalysis() {
                     <td className="px-2 py-1.5 text-slate-600 max-w-[220px] truncate" title={r.name}>{r.name}</td>
                     <td className="px-2 py-1.5 text-slate-500 max-w-[130px] truncate" title={r.manufacturer}>{r.manufacturer || '-'}</td>
                     <td className="px-2 py-1.5 font-mono text-xs text-slate-500 max-w-[150px] truncate" title={r.manufacturer_code}>{r.manufacturer_code || '-'}</td>
-                    <td className="px-2 py-1.5 text-right">{r.buyKrw == null ? <span className="text-amber-500 text-xs">미등록가</span> : won(r.buyKrw)}</td>
+                    <td className="px-2 py-1.5 text-right">{r.status === 'skip' ? <span className="px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold whitespace-nowrap" title="단가가 필요 없는 줄 — 「미등록가」로 세지 않습니다" data-skip={r.skip}>단가 제외 · {r.skip}</span> : r.buyKrw == null ? <span className="text-amber-500 text-xs">미등록가</span> : won(r.buyKrw)}</td>
                     <td className="px-2 py-1.5 text-right text-slate-500">{r.qty}</td>
                     <td className="px-2 py-1.5 text-center text-slate-400 text-xs">{r.unit || '-'}</td>
                     <td className="px-2 py-1.5 text-center text-xs">{r.origin === 'imp' ? <span className="text-blue-500">수입</span> : <span className="text-slate-400">국내</span>}</td>
@@ -305,7 +306,7 @@ export default function CostAnalysis() {
             <MoreRows {...vis} />
           </div>
           <p className="text-xs text-slate-400">
-            · L0(KIT 자체)·제외 품목은 합산에서 빠집니다 (상하위 중복 방지). · <span className="text-amber-500">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>.
+            · L0(KIT 자체)·제외 품목은 합산에서 빠집니다 (상하위 중복 방지). · <span className="text-amber-500">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>, <span className="text-slate-500">회색 「단가 제외」=소요량 0 · 스펙 · 문서 (단가 필요 없음)</span>.
             · 수입품은 매입가(원)를 기준매입환율로 나눠 달러원가로 환산해 환율 시나리오에 반영합니다.
           </p>
         </>

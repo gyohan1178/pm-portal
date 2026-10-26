@@ -26,6 +26,7 @@ export const MENU = {
   '/sales-quote': '매출견적',
   '/drawings': '도면 조회',
   '/inbound': '입고',
+  '/': '관제탑 (홈)',
   '/outbound': 'ASSY 출고',
   '/issue': '다품목 출고',
   '/material-request': '자재 요청',

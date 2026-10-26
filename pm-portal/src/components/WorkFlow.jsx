@@ -1,5 +1,5 @@
 // 업무 흐름 — 부서 탭 · 단계 상자(누르면 그 화면) · 넘어온 일 / 넘긴 일 (v4.91.0)
-//   첫 화면(관제탑 위)과 「업무 흐름」 화면에서 같이 쓴다. 규칙 · 단계는 lib/workflow.js
+//   「업무 흐름」 화면의 「부서별 상세」 탭 · 휴대폰에서 쓴다 (v4.99.0 관제탑 위에서는 뺌). 규칙 · 단계는 lib/workflow.js
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'

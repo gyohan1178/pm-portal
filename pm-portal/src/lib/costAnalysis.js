@@ -74,6 +74,24 @@ export function explodeBOM(rows) {
   })
 }
 
+// 단가가 필요 없는 줄 (v4.99.0) — 「단가 없음」 · 구매자재 단가 요청에서 빼고 「단가 제외」로 따로 보인다
+//   ① 소요량(전개수량) 0 — 참고용 · 필요 시 사용(A/R) 줄
+//   ② 스펙 · 문서 — 원가 요약(pm_cost_group)의 「제외」와 같은 기준: 분류 문서 · 회로도 / JS-WI · DH · DA · DC
+//      분류가 비어 있으면 품명으로 (TEST SPEC · SPEC … · SPECIFICATION · WORKMANSHIP · PROC …)
+//   ②는 매입가가 등록돼 있으면 적용하지 않는다 (돈 주고 사는 문서 · 프로그램은 원가에 넣는다)
+const SKIP_CATS = new Set(['문서', '회로도', '회로도_도면'])
+const SKIP_JS = /^JS-(WI|DH|DA|DC)/
+const SKIP_NAME = /^(TEST\s+)?SPEC\b|SPECIFICATION|WORKMANSHIP|^PROC\s/i
+export function priceSkipReason(r, qty, buyKrw) {
+  if (!(Number(qty) > 0)) return '소요량 0'
+  if (buyKrw != null && Number(buyKrw) > 0) return null
+  const cat = String(r?.category || '').trim()
+  if (SKIP_CATS.has(cat) || SKIP_JS.test(String(r?.js_code || '')) || (!cat && SKIP_NAME.test(String(r?.name || '').trim()))) return '스펙 · 문서'
+  return null
+}
+// 단가를 받아야 하는 줄인가 — 견적 「단가없음」 · 견적 접수 「단가 없음」 · 단가 요청 목록이 같이 쓴다
+export const needsPrice = (r) => !r.excluded && r.status !== 'ok' && r.status !== 'skip'
+
 // 원가 집계. items는 explodeBOM 결과 + 품목정보(purchase_price, vendor, registered).
 export function computeCost(rows, cfg = DEFAULT_CFG, vendorMap = {}, laborKrw = 0) {
   const buyRate = Number(cfg.buyRate) || 1
@@ -83,13 +101,15 @@ export function computeCost(rows, cfg = DEFAULT_CFG, vendorMap = {}, laborKrw = 
     const origin = r.originOverride || vendorOrigin(r.vendor, vendorMap)
     const qty = Number(r.expQty) || 0
     const buyKrwTotal = buyKrw == null ? 0 : buyKrw * qty
-    const status = !r.registered ? 'unreg' : buyKrw == null ? 'noprice' : 'ok'
+    const base = !r.registered ? 'unreg' : buyKrw == null ? 'noprice' : 'ok'
+    const skip = base !== 'ok' ? priceSkipReason(r, qty, buyKrw) : null
+    const status = skip ? 'skip' : base
     const counted = !r.excluded && status === 'ok'
     if (counted) {
       if (origin === 'imp') { impKrw += buyKrwTotal; impUsd += buyKrwTotal / buyRate }
       else domKrw += buyKrwTotal
     }
-    return { ...r, buyKrw, origin, qty, buyKrwTotal, status, counted }
+    return { ...r, buyKrw, origin, qty, buyKrwTotal, status, skip, counted }
   })
   const labor = Number(laborKrw) || 0
   const totalBuyKrw = impKrw + domKrw + labor

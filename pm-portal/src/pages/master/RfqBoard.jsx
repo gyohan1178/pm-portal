@@ -39,11 +39,13 @@ export default function RfqBoard({ customers = [], onWrite }) {
   const [form, setForm] = useState(null)          // 새 접수
   const [busy, setBusy] = useState(null)
 
-  const csName = (code) => customers.find((c) => c.id === code)?.name || String(code || '').toUpperCase()
+  // 등록 고객사는 이름으로, 「기타 · 직접 입력」(v4.99.0)은 입력한 이름 그대로 (customer_code 에 이름이 들어 있음)
+  const isEtc = (code) => csRows.length > 0 && !csRows.some((c) => String(c.code).toLowerCase() === String(code || '').toLowerCase())
+  const csName = (code) => customers.find((c) => c.id === code)?.name || (/^[a-z]{2,4}$/.test(String(code || '')) && !isEtc(code) ? String(code).toUpperCase() : String(code || ''))
   const rows = useMemo(() => rfqs.map((r) => ({ ...r, stage: stageOf(r), d: r.status === '진행' ? dday(r.due_date, today) : null })), [rfqs, today])
   const hit = (r) => !qd || [r.title, r.cust_ref, r.owner_name, r.quote_no, r.po_no, csName(r.customer_code), ...r.lines.flatMap((l) => [l.pn, l.name])]
     .some((v) => String(v || '').toUpperCase().includes(qd))
-  const scoped = rows.filter((r) => (cs === 'all' || r.customer_code === cs) && hit(r))
+  const scoped = rows.filter((r) => (cs === 'all' || (cs === '__etc' ? isEtc(r.customer_code) : r.customer_code === cs)) && hit(r))
   const count = (k) => scoped.filter((r) => r.stage === k).length
   const shown = scoped.filter((r) => (stage === 'all' ? true : stage === 'live' ? r.status === '진행' || r.status === '제출' : r.stage === stage))
     .sort((a, b) => (a.status === '진행' ? 0 : 1) - (b.status === '진행' ? 0 : 1) || String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')) || String(b.created_at).localeCompare(String(a.created_at)))
@@ -70,12 +72,17 @@ export default function RfqBoard({ customers = [], onWrite }) {
 
   async function saveNew() {
     const lines = parsePaste(form.paste)
-    if (!form.customer_code || !form.title.trim() || !lines.length) { toastError('고객사 · 건명 · 품목은 꼭 넣어 주세요'); return }
-    const c = csRows.find((x) => String(x.code).toLowerCase() === form.customer_code)
+    // 기타 · 직접 입력 — 입력한 이름이 등록 고객사(코드 · 이름)와 같으면 그 고객사로 맞춘다
+    const etcName = String(form.etc_name || '').trim()
+    const reg = form.customer_code === '__etc' && etcName
+      ? csRows.find((x) => [x.code, x.name].some((v) => String(v || '').trim().toLowerCase() === etcName.toLowerCase())) : null
+    const code = form.customer_code === '__etc' ? (reg ? String(reg.code).toLowerCase() : etcName) : form.customer_code
+    if (!code || !form.title.trim() || !lines.length) { toastError(form.customer_code === '__etc' && !etcName ? '고객사 이름을 넣어 주세요' : '고객사 · 건명 · 품목은 꼭 넣어 주세요'); return }
+    const c = csRows.find((x) => String(x.code).toLowerCase() === code)
     setBusy('new')
     try {
       const r = await saveRfq({
-        head: { customer_code: form.customer_code, customer_id: c?.id || null, title: form.title.trim(), cust_ref: form.cust_ref.trim() || null, due_date: form.due_date || null, owner_name: form.owner_name.trim() || meName, memo: form.memo.trim() || null },
+        head: { customer_code: code, customer_id: c?.id || null, title: form.title.trim(), cust_ref: form.cust_ref.trim() || null, due_date: form.due_date || null, owner_name: form.owner_name.trim() || meName, memo: form.memo.trim() || null },
         lines, meName,
       })
       logActivity('create', 'pm_rfq', r.title, `견적 접수 — ${csName(r.customer_code)} ${r.title} · 품목 ${lines.length}`)
@@ -161,8 +168,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
           <select value={cs} onChange={(e) => setCs(e.target.value)} className="text-xs font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-600">
             <option value="all">모든 고객사</option>
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {rfqs.some((r) => isEtc(r.customer_code)) && <option value="__etc">기타 (직접 입력)</option>}
           </select>
-          {editable && <button type="button" onClick={() => setForm({ customer_code: customers[0]?.id || '', title: '', cust_ref: '', due_date: '', owner_name: meName, memo: '', paste: '' })} data-rfq-new
+          {editable && <button type="button" onClick={() => setForm({ customer_code: customers[0]?.id || '', etc_name: '', title: '', cust_ref: '', due_date: '', owner_name: meName, memo: '', paste: '' })} data-rfq-new
             className="ml-auto px-4 py-2 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700">＋ 견적 접수</button>}
         </div>
       </div>
@@ -172,7 +180,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
           <div className="flex items-center"><b className="text-sm">＋ 견적 접수</b><button type="button" onClick={() => setForm(null)} className="ml-auto text-xs font-bold text-slate-500">✕ 닫기</button></div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50/70 rounded-lg p-3">
             <label className="text-xs font-bold text-slate-600 space-y-1">고객사 <span className="text-red-500">*</span>
-              <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP}>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label>
+              <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP} data-rfq-cs>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__etc">기타 (직접 입력)</option></select>
+              {form.customer_code === '__etc' && <input value={form.etc_name} onChange={(e) => setForm({ ...form, etc_name: e.target.value })} placeholder="고객사 이름 (예: 한화컨버전스)" className={INP} data-rfq-etc autoFocus />}
+              {form.customer_code === '__etc' && <span className="block text-[10.5px] font-normal text-slate-400">등록 안 된 고객사 — BOM 없이 품목(단품)만 찾아 점검합니다</span>}</label>
             <label className="text-xs font-bold text-slate-600 space-y-1 md:col-span-2">건명 <span className="text-red-500">*</span>
               <input value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="예: EFEM PD 리뉴얼 견적" className={INP} data-rfq-title /></label>
             <label className="text-xs font-bold text-slate-600 space-y-1">회신 기한
@@ -260,7 +270,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
                   <td className="px-3 py-3">
                     <div className="flex flex-wrap gap-1.5 items-center">
                       {editable && r.stage === 'new' && <Btn tone="primary" onClick={() => check(r)} busy={b} data="check">🔍 점검</Btn>}
-                      {r.stage === 'bom' && <Btn tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>}
+                      {r.stage === 'bom' && (isEtc(r.customer_code)
+                        ? <Btn tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>
+                        : <Btn tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
                       {editable && r.stage === 'noprice' && <Btn tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
                       {r.stage === 'price' && (isBuy
                         ? <Btn tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
@@ -276,17 +288,24 @@ export default function RfqBoard({ customers = [], onWrite }) {
                 open === r.id && (
                   <tr key={r.id + ':lines'} className="bg-slate-50/60"><td colSpan={7} className="px-4 py-3">
                     <table className="w-full text-[11.5px]" data-rfq-line-table>
-                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th className="pr-3">단가 없는 부품</th><th>보류 (구매자재) · 제출</th></tr></thead>
+                      <thead className="text-slate-400"><tr className="text-left"><th className="py-1 pr-3">#</th><th className="pr-3">품번</th><th className="pr-3">품명</th><th className="pr-3">Rev</th><th className="pr-3 text-right">수량</th><th className="pr-3">점검</th><th className="pr-3">단가 · 없는 부품</th><th>보류 (구매자재) · 제출</th></tr></thead>
                       <tbody>
                         {ls.map((l) => (
                           <tr key={l.id} className="border-t border-slate-100 align-top">
                             <td className="py-1.5 pr-3 font-mono text-slate-400">{l.line_no}</td>
                             <td className="pr-3 font-mono font-bold text-slate-700">{l.pn}{l.std_code && l.std_code !== l.pn && <div className="text-[10px] text-slate-400 font-normal">{l.std_code}</div>}</td>
-                            <td className="pr-3 text-slate-600">{l.name || '—'}</td>
+                            <td className="pr-3 text-slate-600" data-rfq-line-name={l.pn}>{l.name || l.item?.name || '—'}
+                              {l.item?.name && l.name && l.item.name.trim().toUpperCase() !== String(l.name).trim().toUpperCase() && <div className="text-[10px] text-slate-400" title="포털 품목 기준정보의 품명 — 붙여넣은 품명과 다르면 매칭이 맞는지 확인하세요">기준정보: {l.item.name}</div>}</td>
                             <td className="pr-3">{l.rev || '—'}</td>
                             <td className="pr-3 text-right font-mono">{n(l.qty)}</td>
                             <td className="pr-3 whitespace-nowrap">{!l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}</td>
-                            <td className="text-amber-700">{+l.noprice_count > 0 ? <span title={(l.noprice_codes || []).join(', ')}><b>{n(l.noprice_count)}</b> · <span className="font-mono">{(l.noprice_codes || []).slice(0, 6).join(', ')}{(l.noprice_codes || []).length > 6 ? ` 외 ${(l.noprice_codes || []).length - 6}` : ''}</span></span> : <span className="text-slate-300">—</span>}</td>
+                            <td className="text-amber-700" data-rfq-line-price={l.pn}>{l.kind === 'item' && !(+l.noprice_count > 0) && l.item?.price > 0 ? (
+                              <span className="text-slate-600">매입가 <b className="font-mono">{n(l.item.price)}</b>원
+                                {l.item.vendor || l.item.last
+                                  ? <span className="text-slate-400"> · {[l.item.vendor, l.item.last ? `이력 ${md(l.item.last)}` : ''].filter(Boolean).join(' · ')}</span>
+                                  : <span className="ml-1 px-1.5 py-[1px] rounded-full bg-amber-50 text-amber-700 text-[10.5px] font-bold" title="품목 기준정보에 매입가만 있고 구매처 · 단가 이력이 없습니다 (처음 일괄 등록한 값일 수 있음) — 맞는 단가인지 확인하세요" data-rfq-price-nobasis>근거 없음 · 확인</span>}
+                              </span>
+                            ) : +l.noprice_count > 0 ? <span title={(l.noprice_codes || []).join(', ')}><b>{n(l.noprice_count)}</b> · <span className="font-mono">{(l.noprice_codes || []).slice(0, 6).join(', ')}{(l.noprice_codes || []).length > 6 ? ` 외 ${(l.noprice_codes || []).length - 6}` : ''}</span></span> : <span className="text-slate-300">—</span>}</td>
                             <td className="pl-3" data-rfq-hold-cell={l.pn}>
                               {l.quoted_at ? <span className="text-emerald-700 font-bold">✓ 제출 {l.quote_no || ''} {md(l.quoted_at)}</span>
                                 : isBuy && editable && r.status === '진행' ? (

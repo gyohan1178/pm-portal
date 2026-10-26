@@ -1,6 +1,5 @@
 import { useMemo, useState } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
-import WorkFlow from '../../components/WorkFlow'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -143,8 +142,8 @@ export default function ControlTower({ scope = 'ax' }) {
     <div className="space-y-5">
       <AnalysisTabs />
 
-      {/* 첫 화면 맨 위 — 부서별 업무 흐름 (v4.91.0). 관제탑 「전체」에서만 */}
-      {isMaster && <WorkFlow />}
+      {/* 업무 흐름은 「🧭 업무 흐름」 화면에서 본다 (v4.99.0) — 여기는 품번 단위 자재 위험만.
+          예전엔 맨 위에 흐름 박스가 있어 구매자재 숫자(입고 지연 · 발주 필요)가 한 화면에 두 번 보였다 */}
 
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-2">
@@ -152,7 +151,7 @@ export default function ControlTower({ scope = 'ax' }) {
           <h1 className="text-lg font-bold text-slate-900">
             🎯 {isMaster ? '마스터 관제탑' : `${CUST.find(c => c.code === scope)?.name || scope} 관제탑`}
           </h1>
-          <p className="text-xs text-slate-400 mt-0.5">자재 흐름 — 요청·입고·발주·재고</p>
+          <p className="text-xs text-slate-400 mt-0.5">품번 단위 자재 위험 — 무엇부터 처리할지 (부서별로 일이 어디 쌓였는지는 🧭 업무 흐름)</p>
         </div>
         <div className="flex items-center gap-2">
         {/* 부족자재는 캐시라 오래되면 값이 어긋난다. 여기서 다시 계산한다. */}
@@ -160,6 +159,10 @@ export default function ControlTower({ scope = 'ax' }) {
           title="부족자재를 다시 계산합니다 (몇 초 걸립니다)"
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-40">
           {refreshing ? '계산 중…' : '↻ 다시 계산'}
+        </button>
+        <button onClick={() => nav('/flow')} data-ct-flow
+          className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">
+          🧭 업무 흐름
         </button>
         <button onClick={() => nav(`/what-if/${isMaster ? 'ax' : scope}`)}
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-600 bg-white hover:bg-violet-50">

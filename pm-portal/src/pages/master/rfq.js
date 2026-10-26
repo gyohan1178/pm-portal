@@ -15,7 +15,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { codeCandidates } from '../../lib/custPrefix'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
-import { explodeBOM, computeCost, DEFAULT_CFG } from '../../lib/costAnalysis'
+import { explodeBOM, computeCost, needsPrice, DEFAULT_CFG } from '../../lib/costAnalysis'
 import { fetchQuoteBOM } from './QuoteSheet'
 
 export const RFQ_STAGES = [
@@ -50,7 +50,20 @@ export async function fetchRfqs() {
   const rows = await fetchAll(() => supabase.from('pm_rfq').select('*').order('created_at', { ascending: false }).order('id'))
   const lines = await fetchAll(() => supabase.from('pm_rfq_line').select('*').order('line_no').order('id'))
   const by = new Map(rows.map((r) => [r.id, { ...r, lines: [] }]))
-  lines.forEach((l) => by.get(l.rfq_id)?.lines.push(l))
+  // 단품으로 찾은 품목 — 기준정보 품명 · 매입가 · 그 단가의 근거(구매처 · 단가 이력)를 같이 보여 준다 (v4.99.0)
+  //   품명을 안 붙여넣으면 무엇과 매칭됐는지 안 보였고, 근거 없는 매입가(처음 일괄 등록값)도 「작성 가능」으로 넘어갔다
+  const ids = [...new Set(lines.filter((l) => l.item_id && !l.project_id).map((l) => l.item_id))]
+  const info = new Map()
+  for (let i = 0; i < ids.length; i += 150) {
+    const part = ids.slice(i, i + 150)
+    const [{ data: its }, { data: ph }] = await Promise.all([
+      supabase.from('items').select('id, name, purchase_price, vendors(name)').in('id', part),
+      supabase.from('price_history').select('item_id, recorded_at').in('item_id', part).order('recorded_at', { ascending: false }),
+    ])
+    ;(its || []).forEach((x) => info.set(x.id, { name: x.name || '', price: x.purchase_price == null ? null : Number(x.purchase_price), vendor: x.vendors?.name || '', last: null }))
+    ;(ph || []).forEach((h) => { const x = info.get(h.item_id); if (x && !x.last) x.last = h.recorded_at })
+  }
+  lines.forEach((l) => by.get(l.rfq_id)?.lines.push(l.item_id && info.has(l.item_id) ? { ...l, item: info.get(l.item_id) } : l))
   return [...by.values()]
 }
 
@@ -72,7 +85,7 @@ export function parsePaste(text) {
 export async function checkLine(customerId, csCode, pn) {
   const cands = codeCandidates(pn, csCode)
   const pick = (list, key) => cands.map((c) => (list || []).find((x) => x[key] === c)).find(Boolean) || null
-  const { data: projs, error: pErr } = await supabase.from('projects').select('id, code, name').eq('customer_id', customerId).in('code', cands)
+  const { data: projs, error: pErr } = customerId ? await supabase.from('projects').select('id, code, name').eq('customer_id', customerId).in('code', cands) : { data: [], error: null }
   if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
   const proj = pick(projs, 'code')
   if (proj) {
@@ -81,19 +94,20 @@ export async function checkLine(customerId, csCode, pn) {
       const mapped = rows.map((b, i) => ({
         uid: i, level: b.level, qty_per_unit: b.qty_per_unit, std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
         manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '', purchase_price: b.items?.purchase_price ?? null,
+        category: b.items?.category || '', js_code: b.items?.js_code || '',
         lt_weeks: b.items?.lt_weeks ?? null, moq: b.items?.moq ?? null, vendor: b.items?.vendors?.name || '', registered: !!b.items,
       }))
       const c = computeCost(explodeBOM(mapped), DEFAULT_CFG, {}, 0)
-      const miss = c.items.filter((r) => !r.excluded && r.status !== 'ok')
-      return { kind: 'assy', std_code: proj.code, project_id: proj.id, item_id: null, part_count: c.items.length, noprice_count: miss.length, noprice_codes: [...new Set(miss.map((r) => r.std_code).filter(Boolean))].slice(0, 200) }
+      const miss = c.items.filter(needsPrice)   // 소요량 0 · 스펙 · 문서는 단가 제외 (v4.99.0)
+      return { kind: 'assy', std_code: proj.code, project_id: proj.id, item_id: null, part_count: c.items.length, noprice_count: miss.length, noprice_codes: [...new Set(miss.map((r) => r.std_code).filter(Boolean))].slice(0, 200), found_name: proj.name || '' }
     }
   }
-  const { data: its, error: iErr } = await supabase.from('items').select('id, std_code, purchase_price').in('std_code', cands)
+  const { data: its, error: iErr } = await supabase.from('items').select('id, std_code, name, purchase_price').in('std_code', cands)
   if (iErr) throw new Error('품목 조회 — ' + iErr.message)
   const it = pick(its, 'std_code')
   if (it && !proj) {
     const has = Number(it.purchase_price) > 0
-    return { kind: 'item', std_code: it.std_code, project_id: null, item_id: it.id, part_count: 1, noprice_count: has ? 0 : 1, noprice_codes: has ? [] : [it.std_code] }
+    return { kind: 'item', std_code: it.std_code, project_id: null, item_id: it.id, part_count: 1, noprice_count: has ? 0 : 1, noprice_codes: has ? [] : [it.std_code], found_name: it.name || '' }
   }
   // 어셈블리 코드는 있는데 BOM 이 비어 있거나, 어디에도 없음 → BOM 필요
   return { kind: 'none', std_code: proj?.code || null, project_id: proj?.id || null, item_id: it?.id || null, part_count: 0, noprice_count: 0, noprice_codes: [] }
@@ -106,13 +120,15 @@ export async function checkRfq(r) {
   if (!customerId) {
     const { data, error } = await supabase.from('customers').select('id').eq('code', String(r.customer_code).toLowerCase()).maybeSingle()
     if (error) throw error
-    customerId = data?.id
-    if (!customerId) throw new Error(`고객사 ${r.customer_code} 를 못 찾았습니다`)
+    // 등록 안 된 고객사(「기타 · 직접 입력」 · v4.99.0)는 고객사 BOM 없이 품목(단품)만 찾는다
+    customerId = data?.id || null
   }
   for (const l of r.lines || []) {
     if (l.quoted_at) continue                                   // 이미 견적 낸 품목은 다시 안 봄
-    const res = await checkLine(customerId, r.customer_code, l.pn)
-    const { error } = await supabase.from('pm_rfq_line').update({ ...res, checked_at: now }).eq('id', l.id)
+    const { found_name: fname, ...res } = await checkLine(customerId, r.customer_code, l.pn)
+    // 품명을 안 붙여넣었으면 찾은 품목 · 어셈블리 이름을 채운다 — 무엇과 매칭됐는지 보이게 (v4.99.0)
+    const patch = { ...res, checked_at: now, ...(!String(l.name || '').trim() && fname ? { name: fname } : {}) }
+    const { error } = await supabase.from('pm_rfq_line').update(patch).eq('id', l.id)
     if (error) throw error
   }
   await syncPriceDone(r)

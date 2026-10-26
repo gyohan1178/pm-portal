@@ -6,7 +6,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost } from '../../lib/costAnalysis'
+import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsPrice } from '../../lib/costAnalysis'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
 import MarginSimulator from '../../components/MarginSimulator'
@@ -16,7 +16,7 @@ import MarginSimulator from '../../components/MarginSimulator'
 export async function fetchQuoteBOM(customerId, projectId) {
   return fetchAll(() => supabase
     .from('bom')
-    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
+    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, category, js_code, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
     .eq('customer_id', customerId).eq('project_id', projectId)
     .eq('quote_excluded', false)
     .order('seq').order('created_at').order('id'))
@@ -126,6 +126,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [currency, setCurrency] = useState('USD')
   const [quoteDate, setQuoteDate] = useState(todayISO())
   const [issuedTo, setIssuedTo] = useState(customerName || '')
+  // 견적 접수의 「기타 · 직접 입력」 고객사로 쓰는 견적 (v4.99.0) — 고객사 BOM 을 안 찾고, 고객사 없이 저장. 위 고객사를 바꾸면 풀림
+  const [etcCust, setEtcCust] = useState(null)
+  const etcRef = useRef(null)   // 품목을 차례로 넣는 동안(같은 렌더) 바로 읽어야 해서 ref 도 같이
+  useEffect(() => { setEtcCust(null); etcRef.current = null }, [customerId])
+  const custIdForSave = etcCust ? null : customerId
   const [vendorId, setVendorId] = useState('')
   const [attn, setAttn] = useState('')
   const [projectName, setProjectName] = useState('')
@@ -251,8 +256,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     try {
       // 고객사 접두로 찾는다 — 예전엔 AX- 로 고정돼 Edwards 품번(ASML 9B)이 AX-ASML 9B 가 되어 못 찾았다 (v4.57.0)
       //   후보 = [고객사 접두+품번, 품번 그대로]. 고객사를 모르면 AXCELIS 로 본다 (예전 동작)
-      let csCode = 'ax'
-      if (customerId) {
+      const etc = !!etcRef.current
+      let csCode = etc ? '' : 'ax'
+      if (customerId && !etc) {
         const { data: cs0 } = await supabase.from('customers').select('code').eq('id', customerId).maybeSingle()
         if (cs0?.code) csCode = cs0.code
       }
@@ -261,7 +267,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       const code = cands[0]
       // ⚠ 조회 오류를 반드시 드러낸다. 삼키면 「하위품목이 없는 것」처럼 보인다.
       //   (v4.8.3 배포 중에 lt_days 칸이 지워져 부품이 0건으로 보였던 사례)
-      const { data: projs, error: pErr } = await supabase
+      const { data: projs, error: pErr } = etc ? { data: [], error: null } : await supabase
         .from('projects').select('id, code, name, rev')
         .eq('customer_id', customerId).in('code', cands)
       if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
@@ -279,13 +285,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           manufacturer: b.items?.manufacturer || '',
           manufacturer_code: b.items?.manufacturer_code || '',
           purchase_price: b.items?.purchase_price ?? null,
+          category: b.items?.category || '', js_code: b.items?.js_code || '',
           lt_weeks: b.items?.lt_weeks ?? null, moq: b.items?.moq ?? null,
           vendor: b.items?.vendors?.name || '',
           registered: !!b.items,
         }))
         // 작업비는 라인에서 따로 잡으므로 여기선 0 (= 자재비만 계산)
         const c = computeCost(explodeBOM(mapped), cfg, {}, 0)
-        const noPrice = c.items.filter((r) => !r.excluded && r.status !== 'ok').length
+        const noPrice = c.items.filter(needsPrice).length   // 소요량 0 · 스펙 · 문서는 「단가 제외」 (v4.99.0)
 
         // 초도품 여부 — 생산 전광판이 쓰는 items.is_prototype 과 같은 기준
         const { data: pit, error: tErr } = await supabase.from('items')
@@ -303,7 +310,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           uid: r.uid, level: r.level, std_code: r.std_code, name: r.name,
           manufacturer: r.manufacturer || '', manufacturer_code: r.manufacturer_code || '',
           buyKrw: r.buyKrw, qty: r.qty, origin: r.origin, unit: r.unit || '',
-          vendor: r.vendor || '', status: r.status, excluded: r.excluded,
+          vendor: r.vendor || '', status: r.status, skip: r.skip || null, excluded: r.excluded,
           lt: r.lt_weeks ?? null, moq: r.moq ?? null,
         }))
         // 어셈블리 납기는 가장 늦게 들어오는 부품이 정한다 → 최장 L/T
@@ -368,7 +375,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (l.key !== key || !l.parts) return l
     const parts = l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x))
     const materialKrw = round100(sumParts(parts))
-    const noPrice = parts.filter((x) => !x.excluded && (x.buyKrw == null || x.status === 'unreg')).length
+    const noPrice = parts.filter((x) => !x.excluded && x.status !== 'skip' && (x.buyKrw == null || x.status === 'unreg')).length
     // 부품 L/T 를 고치거나 체크를 풀면 어셈블리 납기도 따라 바뀌어야 한다.
     const ltMax = parts.reduce((a, x) => (x.excluded || x.lt == null ? a : Math.max(a, num(x.lt))), 0)
     const n = { ...l, parts, materialKrw, noPrice, lt: ltMax || null }
@@ -442,7 +449,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       const { data: { user } } = await supabase.auth.getUser()
       const row = {
         title: projectName || lines[0]?.std_code || '(제목 없음)',
-        quote_kind: quoteKind, customer_id: customerId || null,
+        quote_kind: quoteKind, customer_id: custIdForSave || null,
         payload: draftPayload(), updated_at: new Date().toISOString(),
       }
       if (draftId) {
@@ -559,6 +566,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     ;(async () => {
       setLines([]); setRevOf(null); setSavedNo('')
       if (prefill.title) setProjectName(prefill.title)
+      setEtcCust(prefill.etcName || null); etcRef.current = prefill.etcName || null
+      if (prefill.etcName) setIssuedTo(prefill.etcName)
       for (const l of prefill.lines || []) await addByCode(l.pn, l.qty)
       onPrefillDone?.()
     })()
@@ -621,7 +630,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       const { data: q, error: qErr } = await supabase.from('pm_quotes').insert({
         quote_no: no, quote_kind: quoteKind, quote_date: quoteDate,
-        customer_id: isSales ? ((revOf ? revOf.customer_id : customerId) || null) : null,
+        customer_id: isSales ? ((revOf ? revOf.customer_id : custIdForSave) || null) : null,
         vendor_id: isSales ? null : (vendorId || null),
         quote_type: lines.some((l) => l.kind === 'assy') ? 'assy' : 'single',
         currency, project_name: projectName || null,
@@ -737,6 +746,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         '수입/내수': pt.origin === 'imp' ? '수입' : '내수',
         구매처: pt.vendor || '',
         포함: pt.excluded ? '제외' : 'O',
+        비고: pt.status === 'skip' ? `단가 제외 · ${pt.skip || ''}` : '',
       }))
     })
 
@@ -972,7 +982,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         {/* Issued by / Supplier */}
         <div className="grid grid-cols-2 gap-6 mb-4 text-xs">
           <div>
-            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Issued by</div>
+            <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">Issued by
+              {etcCust && <span className="no-print ml-2 px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold" data-etc-cust title="견적 접수에서 「기타 · 직접 입력」한 고객사 — 고객사 BOM 없이 품목만 찾고, 고객사 없이 저장합니다. 위에서 고객사를 바꾸면 풀립니다">기타 고객사 · {etcCust}</span>}</div>
             {isSales
               ? <input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)}
                   className="qi w-full font-bold text-sm" placeholder="AXCELIS Corp." />
@@ -1124,6 +1135,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                         className="text-[10px] text-indigo-500 hover:text-indigo-700 mt-0.5 underline">
                         {openParts[l.key] ? '▲ 접기' : `▼ 부품 ${l.partCount}`}
                         {l.noPrice > 0 && <span className="text-amber-600 font-bold"> · 단가없음 {l.noPrice}</span>}
+                        {(() => { const k = (l.parts || []).filter((x) => x.status === 'skip' && !x.excluded).length
+                          return k > 0 ? <span className="text-slate-400 font-semibold" data-skip-count title="소요량 0 · 스펙 · 문서 — 단가가 필요 없는 줄"> · 단가 제외 {k}</span> : null })()}
                       </button>
                     )}
                   </td>
@@ -1192,7 +1205,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                             {l.parts.map((pt) => (
                               <tr key={pt.uid}
                                 className={`border-t border-slate-100 ${pt.excluded ? 'opacity-40' : ''} ${
-                                  pt.status === 'unreg' ? 'bg-rose-50' : pt.buyKrw == null ? 'bg-amber-50' : ''}`}>
+                                  pt.status === 'skip' ? 'bg-slate-50/70' : pt.status === 'unreg' ? 'bg-rose-50' : pt.buyKrw == null ? 'bg-amber-50' : ''}`}>
                                 <td className="px-2 py-1 text-center">
                                   <input type="checkbox" checked={!pt.excluded}
                                     onChange={() => patchPart(l.key, pt.uid, { excluded: !pt.excluded })} />
@@ -1207,10 +1220,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                   <input type="number" value={pt.buyKrw ?? ''}
                                     onChange={(e) => patchPart(l.key, pt.uid, {
                                       buyKrw: e.target.value === '' ? null : Number(e.target.value),
-                                      status: e.target.value === '' ? 'noprice' : 'ok',
+                                      status: e.target.value === '' ? (pt.skip ? 'skip' : 'noprice') : 'ok',
                                     })}
-                                    placeholder="미등록"
-                                    className="qi w-full text-right" />
+                                    placeholder={pt.status === 'skip' ? '단가 제외' : '미등록'}
+                                    title={pt.status === 'skip' ? `단가 제외 — ${pt.skip}. 값을 넣으면 원가에 들어갑니다` : undefined}
+                                    data-skip={pt.status === 'skip' ? pt.skip : undefined}
+                                    className={`qi w-full text-right ${pt.status === 'skip' ? 'placeholder:text-slate-400' : ''}`} />
+                                  {pt.status === 'skip' && <div className="text-[9.5px] text-slate-400 whitespace-nowrap">{pt.skip}</div>}
                                 </td>
                                 <td className="px-2 py-1 text-right text-slate-500">{pt.qty}</td>
                                 <td className="px-2 py-1 text-center text-slate-400">{pt.unit || '-'}</td>
@@ -1248,7 +1264,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                       </div>
                       <p className="text-[10px] text-slate-400 mt-1.5">
                         · 하위 부품을 가진 중간 어셈블리는 자동으로 제외됩니다(상하위 중복 방지).
-                        · <span className="text-amber-600">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>.
+                        · <span className="text-amber-600">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>, <span className="text-slate-500">회색 「단가 제외」=소요량 0 · 스펙 · 문서 (단가 필요 없음)</span>.
                         여기서 고친 매입가는 이 견적에만 적용되고 품목 마스터는 바뀌지 않습니다.
                         · <b className="text-slate-500">L/T·MOQ 는 반대로 품목 마스터에 바로 저장됩니다</b> — 한 번 적어두면 다음 견적에서 그대로 떠오릅니다.
                         MOQ 는 이 줄 수량까지 곱한 소요량과 견줘 미달이면 주황색으로 표시합니다.

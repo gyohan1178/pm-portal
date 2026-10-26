@@ -1,15 +1,15 @@
 // 업무 흐름 지도 (v4.98.0) — 부서마다 한 줄 · 왼쪽부터 일의 순서 · 부서를 건너가는 일은 화살표 · 곁일은 오른쪽
 //   숫자 공개 규칙 · 칸 정의는 lib/flowMap.js. 휴대폰은 이 지도 대신 부서별 상세(WorkFlow)를 쓴다.
-import { useState, useMemo, useRef, useLayoutEffect } from 'react'
+import { useState, useMemo, useRef, useLayoutEffect, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import { flowCountsQuery } from '../lib/flowSeen'
+import { flowCountsQuery, flowSnapshot, writeSeen } from '../lib/flowSeen'
 import { docCountsQuery } from '../lib/docRequest'
 import { useMyProfile, canAccessPath } from '../hooks/useProfile'
 import { primaryCsCode } from '../lib/customers'
 import { fetchControlTowerData } from '../lib/controlTowerData'
 import { computeControlTower } from '../lib/controlTower'
-import { ctKpiOf, menuName } from '../lib/workflow'
+import { ctKpiOf, menuName, visibleDepts, flowOf } from '../lib/workflow'
 import { MAP_DEPTS, MAP_NODES, MAP_SUBS, MAP_KEYS, mapGeometry, mapViewer, cellOf } from '../lib/flowMap'
 
 const nf = (v) => Number(v || 0).toLocaleString('ko-KR')
@@ -50,6 +50,17 @@ export default function FlowMap() {
   const geo = useMemo(() => mapGeometry(w), [w])
   const [sel, setSel] = useState(null)   // { id, dept, name, key, spec }
 
+  // 「봤음」 기록 (v4.99.0) — 사이드바 「업무 흐름」 숫자 · 탭 제목 「(3)」은 마지막으로 본 숫자와 비교한다.
+  //   지도를 3초 보면 내 부서 숫자를 「봤음」으로 저장 (부서별 상세 탭과 같은 기록). 예전엔 지도만 보면 숫자가 안 꺼졌다
+  const myDept = profile ? visibleDepts(profile)[0] : null
+  const seenSnap = myDept && c ? flowSnapshot(flowOf(myDept, { c: { ...c, doc: d }, ct, pcs })) : null
+  const seenKey = seenSnap ? JSON.stringify(seenSnap) : ''
+  useEffect(() => {
+    if (!seenSnap) return undefined
+    const t = setTimeout(() => writeSeen(profile?.id, myDept, seenSnap), 3000)
+    return () => clearTimeout(t)
+  }, [seenKey, myDept]) // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!profile) return null
   const can = (p) => canAccessPath(profile, String(p).split('?')[0])
   const key = sel?.key || null
@@ -61,7 +72,8 @@ export default function FlowMap() {
     || (MAP_SUBS[viewer.mine] || []).some((s) => s.keys.includes(k))
 
   const selCell = sel ? cellOf(sel.spec, sel.dept, viewer, data) : null
-  const selLinks = sel ? sel.spec.go(pcs).map((p) => ({ path: p, label: menuName(p) })) : []
+  // 관제탑은 볼 수 있는 사람(관리자 · 지정한 팀장)에게만 버튼을 보인다 — 「권한 없음」으로도 띄우지 않음
+  const selLinks = sel ? sel.spec.go(pcs).filter((p) => p !== '/' || can(p)).map((p) => ({ path: p, label: menuName(p) })) : []
 
   return (
     <div className="space-y-2" data-flowmap>
