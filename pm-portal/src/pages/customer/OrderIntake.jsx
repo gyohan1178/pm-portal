@@ -74,6 +74,9 @@ const KPI_PICK = {
 const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.live && !l.st.planned
   : view === 'plan' ? l.st.live && l.st.planned : view === 'temp' ? l.st.live && isTempPo(l.o)
   : view === 'done' ? l.st.delivered && !l.st.cancelled : view === 'cancel' ? l.st.cancelled : true)
+// 누가 등록했는지 (v4.103.0) — 엑셀로 옮긴 옛 PO 는 「이관」으로만 보인다
+const regBy = (o) => (!o || o.migrated ? '' : String(o.registered_name || '').trim() === '엑셀 이관' ? '' : String(o.registered_name || '').trim())
+const regTitle = (o) => `등록 ${regBy(o) || (o?.migrated ? '이관' : '—')} · ${String(o?.registered_at || '').slice(0, 16).replace('T', ' ')}`
 const isMonthPo = (o, month) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
 
 // 열 너비 — 머리글 오른쪽 끝을 끌어 조절 (사람마다 이 브라우저에 기억) · 다른 화면 표와 같은 방식
@@ -818,8 +821,8 @@ export default function OrderIntake() {
                     <td className="px-3 py-3 whitespace-nowrap overflow-hidden">
                       <button type="button" onClick={() => setPoOpen(l.order_id)} className={`font-mono font-bold hover:underline ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button><KindBadge o={l.o} />
                       {l.o.planned
-                        ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}</div>
-                        : <div className="text-[11px] text-slate-400 mt-0.5 truncate">Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
+                        ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'} · ${regTitle(l.o)}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}{regBy(l.o) && <> · <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}</div>
+                        : <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={regTitle(l.o)}>Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{regBy(l.o) && <> <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
                     </td>
                     <td className="px-3 py-3 overflow-hidden">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -936,6 +939,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
             <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
             <button type="button" onClick={onOpen} className={`font-mono font-bold text-[13px] ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button>
             <span className="text-[10.5px] text-slate-400">{l.o.planned ? (l.plnd_no ? `Plnd ${l.plnd_no}` : '') : `Line ${l.line_no}${l.del_line !== '1' ? `/${l.del_line}` : ''}`}</span>
+            {regBy(l.o) && <span className="text-[10.5px] text-slate-500" title={regTitle(l.o)} data-reg-by>· {regBy(l.o)}</span>}
           </div>
           <div className="mt-1 flex items-center gap-1.5 flex-wrap">
             {l.items ? <span className="font-mono font-bold text-[12px] text-slate-800 break-all">{l.items.std_code}</span> : <span className="font-mono text-[12px] text-slate-500 break-all">{l.raw_pn || '품번 없음'}</span>}
