@@ -1,6 +1,8 @@
 // 수주대장 — 발주서 PDF 올리기 (v4.87.0)
 //   PDF 여러 개를 끌어 놓으면 → 양식 · 고객사 판별 → 품목 줄 읽기 → 포털 품목 맞추기 → (같은 PO 가 있으면) 변경 비교 → 등록
 import { useState, useRef } from 'react'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 import ItemPicker from '../../components/ItemPicker'
 import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
 import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan } from '../../lib/orderIntake'
@@ -40,6 +42,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   const [sel, setSel] = useState(0)
   const [busy, setBusy] = useState(false)
   const [drag, setDrag] = useState(false)
+  const [prog, setProg] = useState(null)       // { label, done, total } — 여러 개 읽기 · 한 번에 등록 진행 (v4.104.0)
   const inp = useRef(null)
 
   async function addFiles(list) {
@@ -47,9 +50,13 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     if (!pdfs.length) { toastError('PDF 파일만 올릴 수 있습니다'); return }
     setBusy(true)
     const out = []
-    for (const f of pdfs) out.push(await readFile(f, readLines))
-    setFiles((prev) => { const next = [...prev, ...out]; setSel(prev.length); return next })
-    setBusy(false)
+    setProg({ label: 'PDF 읽고 점검하는 중', done: 0, total: pdfs.length })
+    try {
+      for (const f of pdfs) { out.push(await readFile(f, readLines)); setProg((p) => p && { ...p, done: out.length }) }
+    } finally {
+      if (out.length) setFiles((prev) => { const next = [...prev, ...out]; setSel(prev.length); return next })
+      setProg(null); setBusy(false)
+    }
   }
 
   const cur = files[sel]
@@ -98,14 +105,17 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     setBusy(true)
     let n = 0
     const bad = []
+    const todo = files.map((f, i) => i).filter((i) => canSave(files[i]) && !files[i].po.warns.length)
+    setProg({ label: '등록하는 중', done: 0, total: todo.length })
     // 한 파일이 실패해도 나머지는 계속 (v4.90.5)
-    for (let i = 0; i < files.length; i++) {
-      if (!(canSave(files[i]) && !files[i].po.warns.length)) continue
+    for (const i of todo) {
+      setProg((p) => p && { ...p, done: n + bad.length })
       try { await save(files[i], i); n++ } catch (e) {
         bad.push(`${files[i].po.po_no}: ${e.message}`)
         setFiles((fs) => fs.map((x, k) => (k === i ? { ...x, err: e.message } : x)))
       }
     }
+    setProg(null)
     if (n) { toastSuccess(`점검 통과 ${n}건 등록${bad.length ? ` · 실패 ${bad.length}건` : ''}`); onSaved?.() }
     if (bad.length) toastError(`등록 실패 ${bad.length}건 — ${bad.slice(0, 3).join(' / ')}`)
     setBusy(false)   // v4.90.5 에서 빠졌던 것 — 등록 뒤 「읽는 중」에 멈춰 있던 문제
@@ -136,6 +146,12 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
           </div>
           <button type="button" onClick={onClose} className="ml-auto shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-bold text-slate-500 hover:text-slate-800">✕ 닫기</button>
         </div>
+        {/* 지금 어디쯤인지 — 고르기 → 읽고 점검 → 확인 · 고치기 → 등록 (v4.104.0) */}
+        <div className="px-4 md:px-6 pt-4 space-y-3">
+          <div className="max-w-[760px]"><Stepper steps={['PDF 고르기', '읽고 점검', '확인 · 고치기', '등록']}
+            cur={!files.length ? (prog ? 1 : 0) : files.every((f) => f.saved) ? 4 : prog?.label === '등록하는 중' ? 3 : 2} /></div>
+          {prog && prog.total > 1 && <div className="max-w-[760px]"><ProgressBar done={prog.done} total={prog.total} label={prog.label} unit="개" /></div>}
+        </div>
         <div className="flex flex-col lg:flex-row gap-4 p-3 md:p-5">
           {/* 왼쪽 — 파일 목록 (휴대폰 · 좁은 화면은 위아래로, v4.90.7) */}
           <div className="w-full lg:w-[400px] shrink-0 space-y-2 min-w-0">
@@ -143,7 +159,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
               onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files) }}
               onClick={() => inp.current?.click()}
               className={`border-2 border-dashed rounded-xl p-5 text-center cursor-pointer text-sm font-bold ${drag ? 'border-violet-500 bg-violet-50 text-violet-700' : 'border-violet-200 bg-violet-50/40 text-violet-600'}`}>
-              {busy ? '읽는 중…' : '⬇ PDF 를 끌어 놓거나 눌러서 고르세요 (여러 개)'}
+              {busy ? <span className="inline-flex items-center gap-2"><Spin />{prog?.label === '등록하는 중' ? '등록하는 중…' : '읽는 중…'}</span> : '⬇ PDF 를 끌어 놓거나 눌러서 고르세요 (여러 개)'}
               <input ref={inp} type="file" accept="application/pdf,.pdf" multiple className="hidden" data-pdf-input onChange={(e) => { addFiles(e.target.files); e.target.value = '' }} />
             </div>
             {files.map((f, i) => {

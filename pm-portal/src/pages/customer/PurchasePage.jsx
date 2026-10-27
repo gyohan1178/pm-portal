@@ -27,6 +27,10 @@ import { must } from '../../lib/db'
 import { ilikeAny } from '../../lib/pgFilter'
 import { fetchVendors } from '../../lib/vendorsQuery'
 import { fetchProjectProcRows, procReason, fetchBomRevs, ecountSpec } from '../../lib/bomProc'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 
 function monthAgoStr() {
@@ -219,6 +223,7 @@ export default function PurchasePage() {
   const [showScore, setShowScore] = useState(false) // 협력사 성적표
   const [lines, setLines] = useState([])  // 다품목 담기
   const [showBulk, setShowBulk] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // 확인 · 알림 창 (v4.104.0)
   const [bulkText, setBulkText] = useState('')
   const [showBom, setShowBom] = useState(false)
   const [bomProject, setBomProject] = useState(null)
@@ -330,7 +335,7 @@ export default function PurchasePage() {
       else await createPurchaseOrders([{ ...payload, customer_id: cs?.id, item_id: selItem?.id }], { log: '구매발주 등록', customerName: cs?.name })
     },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setForm(freshForm()); setSelItem(null); setSelVendor(''); setVendorSearch(''); setShowForm(false); setEditId(null) },
-    onError:(e)=>alert('오류: '+e.message),
+    onError:(e)=>toastError('저장 실패: '+e.message),
   })
   const buildInsert = (ln) => ({
     customer_id: cs?.id, item_id: ln.item_id, vendor_id: ln.vendor_id||null,
@@ -346,7 +351,7 @@ export default function PurchasePage() {
   const saveMultiMut = useMutation({
     mutationFn: async (rows) => createPurchaseOrders((await assignPoNumbers(rows)).map(buildInsert), { log: '구매발주 다품목 등록', customerName: cs?.name }),
     onSuccess:(res)=>{ if (res?.skipped) toastError(`수량이 0 인 ${res.skipped}줄은 빼고 등록했습니다`); qc.invalidateQueries(['purchase']); setLines([]); setForm(EMPTY); setSelItem(null); setSelVendor(''); setVendorSearch(''); setItemSearch(''); setShowForm(false) },
-    onError:(e)=>alert('오류: '+e.message),
+    onError:(e)=>toastError('저장 실패: '+e.message),
   })
   // 선택한 건 일괄 삭제.
   //   ⚠ 되돌릴 수 없어 확인창에 '삭제' 를 직접 치게 한다.
@@ -404,7 +409,7 @@ export default function PurchasePage() {
       logActivity('update','purchase_orders', poNo, `발주번호 일괄 부여 ${ids.length}건`, null, cs?.name)
     },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkPo(''); setChecked({}) },
-    onError:(e)=>alert('오류: '+e.message),
+    onError:(e)=>toastError('저장 실패: '+e.message),
   })
   const bulkDateMut = useMutation({
     mutationFn:async({ids,field,value})=>{
@@ -413,11 +418,11 @@ export default function PurchasePage() {
         `${field==='promise_date'?'납기':'발주일'} 일괄 변경 ${ids.length}건 → ${value||'(비움)'}`, null, cs?.name)
     },
     onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({}) },
-    onError:(e)=>alert('오류: '+e.message),
+    onError:(e)=>toastError('저장 실패: '+e.message),
   })
 
   function addLine() {
-    if (!selItem || !form.qty_ordered) { alert('품목과 수량을 입력하세요'); return }
+    if (!selItem || !form.qty_ordered) { toastError('품목을 고르고 수량을 넣어 주세요'); return }
     setLines(prev => {
       const idx = prev.findIndex(l => l.item_id === selItem.id)
       if (idx >= 0) {
@@ -481,7 +486,7 @@ export default function PurchasePage() {
   }
   async function addBulkPaste() {
     const { mode, rows: parsed, bad } = parsePoPaste(bulkText)
-    if (!parsed.length) { alert(bad.length ? bad.join('\n') : '붙여넣은 내용이 없어요'); return }
+    if (!parsed.length) { if (bad.length) await ask({ title: '읽을 수 있는 줄이 없습니다', desc: '엑셀에서 품목코드 · 수량 칸을 같이 복사했는지 확인해 주세요.', items: bad.slice(0, 8), more: Math.max(0, bad.length - 8), okText: '확인', cancelText: null }); else toastError('붙여넣은 내용이 없습니다'); return }
     let byCode
     try { byCode = await findItemsByCode([...new Set(parsed.map(r => r.code))]) }
     catch (e) { toastError(e.message); return }
@@ -547,7 +552,8 @@ export default function PurchasePage() {
     if (notFound.length) msg.push(`못 찾은 품목코드 ${notFound.length}건: ${[...new Set(notFound)].join(', ')}`)
     if (noVendor.length) msg.push(`못 찾은 공급업체 ${[...new Set(noVendor)].join(', ')} — 그 줄은 「업체없음」으로 담았습니다. 목록에서 골라 주세요`)
     if (bad.length) msg.push(...bad)
-    if (msg.length) alert(msg.join('\n\n'))
+    // 결과는 창으로 — 못 찾은 코드가 길어 알림 한 줄로는 다 안 보인다 (v4.104.0)
+    if (msg.length) await ask({ title: '붙여넣기 — 확인할 것', desc: '나머지 줄은 목록에 담았습니다.', items: msg, okText: '확인', cancelText: null })
   }
   function submitForm() {
     if (editId) { saveMut.mutate(form); return }
@@ -557,7 +563,7 @@ export default function PurchasePage() {
       po_number:form.po_number, memo:form.memo,
     }] : []
     const all = [...lines, ...cur]
-    if (!all.length) { alert('담은 품목이 없습니다'); return }
+    if (!all.length) { toastError('담은 품목이 없습니다 — 품목을 고르고 수량을 넣어 주세요'); return }
     saveMultiMut.mutate(all)
   }
   const bomShown = useMemo(() => {
@@ -573,7 +579,7 @@ export default function PurchasePage() {
   }, [bomRows, procOnly])
   function addBomToLines() {
     const picked = bomShown.filter(b => bomChecked[b.item_id])
-    if (!picked.length) { alert('담을 가공품을 체크하세요'); return }
+    if (!picked.length) { toastError('담을 가공품을 체크하세요'); return }
     const topVendorName = vendors.find(v=>v.id===selVendor)?.name || ''
     setLines(prev => {
       const next = [...prev]
@@ -616,7 +622,7 @@ export default function PurchasePage() {
   function exportStatusExcel() {
     try {
       const rows = sorted
-      if (!rows.length) { alert('내보낼 현황이 없습니다'); return }
+      if (!rows.length) { toastError('내보낼 현황이 없습니다'); return }
       const header = ['발주일자','코드','품명','제조사','제조사품번','발주수량','미입고수량','단가','공급가','납기약속일','상태','업체확인일자']
       const aoa = [header]
       for (const p of rows) {
@@ -642,7 +648,7 @@ export default function PurchasePage() {
       const tag = (search||'').trim() ? `_${search.trim().replace(/[\\/:*?"<>|]/g,'')}` : ''
       XLSX.writeFile(wb, `발주현황${tag}_${todayISO()}.xlsx`)
     } catch (e) {
-      alert('엑셀 생성 오류: ' + (e?.message || e))
+      toastError('엑셀 생성 오류: ' + (e?.message || e))
     }
   }
   function handleEdit(p) {
@@ -874,7 +880,7 @@ export default function PurchasePage() {
       <table class="dtbl"><thead><tr><th>발주일자</th><th>입고요청일</th><th>공급업체</th><th>품목코드</th><th>제조사</th><th>제조사품번</th><th>수량</th><th>발주금액</th><th>단위</th><th>합계금액</th><th>결제방식</th><th>프로젝트이력</th><th>비고</th></tr></thead><tbody>${detailRows}<tr class="tot"><td colspan="9" class="num">합계</td><td class="num">${propGrand.toLocaleString()}</td><td colspan="3"></td></tr></tbody></table>
     </body></html>`
     const w = window.open('', '_blank')
-    if (!w) { alert('팝업이 차단되었어요. 팝업 허용 후 다시 시도해줘.'); return }
+    if (!w) { toastError('팝업이 차단되었습니다 — 주소창 오른쪽에서 팝업을 허용한 뒤 다시 눌러 주세요'); return }
     w.document.write(html); w.document.close(); w.focus()
     setTimeout(()=>{ w.print() }, 350)
   }
@@ -897,6 +903,7 @@ export default function PurchasePage() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <PageHead crumb={`${cs?.name || ''} · 구매`} title="구매발주"
         desc="발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다.">
         {tab==='po' && <>
@@ -1196,7 +1203,7 @@ export default function PurchasePage() {
                         </label>
                       </div>
                       {!bomProject ? <p className="text-xs text-slate-400">제품을 고르면 하위 가공품이 나와요.</p>
-                       : bomLoading ? <p className="text-xs text-slate-400">불러오는 중...</p>
+                       : bomLoading ? <p className="text-xs text-slate-400 inline-flex items-center gap-1.5"><Spin />BOM 불러오는 중…</p>
                        : bomErr ? <p className="text-xs text-red-500">BOM 을 못 불러왔습니다: {bomErr.message}</p>
                        : bomShown.length===0 ? <p className="text-xs text-slate-400">해당 제품에 {procOnly?'판금 품목이':'품목이'} 없어요.</p>
                        : (<>
@@ -1337,10 +1344,10 @@ export default function PurchasePage() {
 
           {showScore && <VendorScorecard onClose={()=>setShowScore(false)} />}
           <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-3" data-po-kpi>
-            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-[13px] text-slate-500">발주 건수</p><p className="text-[26px] leading-tight font-extrabold font-mono text-slate-900">{filtered.length.toLocaleString()}</p><p className="text-[11.5px] text-slate-400">지금 목록 기준 (조건 · 검색 적용)</p></div>
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><p className="text-[13px] text-red-500">납기 지연</p><p className="text-[26px] leading-tight font-extrabold font-mono text-red-600">{filtered.filter(p=>p.isDelayed).length.toLocaleString()}</p><p className="text-[11.5px] text-red-400">요청 납기 지남 · 독촉 {filtered.filter(p=>p.isChase).length.toLocaleString()} · 변경 약속 {filtered.filter(p=>p.isDelayed&&!p.isChase).length.toLocaleString()}</p></div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><p className="text-[13px] text-amber-600">D-7 임박</p><p className="text-[26px] leading-tight font-extrabold font-mono text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length.toLocaleString()}</p><p className="text-[11.5px] text-amber-600/80">7일 안에 약속일이 오는 건</p></div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><p className="text-[13px] text-emerald-600">입고 예정</p><p className="text-[26px] leading-tight font-extrabold font-mono text-emerald-700">{filtered.reduce((a,p)=>a+(p.qty_remaining||0),0).toLocaleString()}</p><p className="text-[11.5px] text-emerald-600/80">미입고 수량 합계</p></div>
+            <div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-[13px] text-slate-500 flex items-center gap-1">발주 건수<InfoTip text="이 고객사의 진행 중 구매발주 줄 수 (완료 · 취소 빼고). 위 조건 · 검색을 바꾸면 같이 바뀝니다." /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-slate-900">{filtered.length.toLocaleString()}</p><p className="text-[11.5px] text-slate-400">지금 목록 기준 (조건 · 검색 적용)</p></div>
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><p className="text-[13px] text-red-500 flex items-center gap-1">납기 지연<InfoTip text="요청 납기(약속일)가 오늘보다 앞인데 아직 진행 중인 발주. 협력사 변경 납기를 적어도 지연으로 셉니다 — 그중 변경 납기가 없거나 그것도 지난 건이 「독촉」, 변경 납기가 아직 안 온 건이 「변경 약속」." /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-red-600">{filtered.filter(p=>p.isDelayed).length.toLocaleString()}</p><p className="text-[11.5px] text-red-400">요청 납기 지남 · 독촉 {filtered.filter(p=>p.isChase).length.toLocaleString()} · 변경 약속 {filtered.filter(p=>p.isDelayed&&!p.isChase).length.toLocaleString()}</p></div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><p className="text-[13px] text-amber-600 flex items-center gap-1">D-7 임박<InfoTip text="오늘부터 7일 안에 요청 납기(약속일)가 오는 진행 중 발주." align="right" /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length.toLocaleString()}</p><p className="text-[11.5px] text-amber-600/80">7일 안에 약속일이 오는 건</p></div>
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><p className="text-[13px] text-emerald-600 flex items-center gap-1">입고 예정<InfoTip text="지금 목록 발주들의 남은 수량(발주 수량 − 입고 수량)을 모두 더한 개수. 품목 단위가 섞여 있어 대략적인 물량 감으로 보세요." align="right" /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-emerald-700">{filtered.reduce((a,p)=>a+(p.qty_remaining||0),0).toLocaleString()}</p><p className="text-[11.5px] text-emerald-600/80">미입고 수량 합계</p></div>
           </div>
 
           {/* 조회 조건 + 선택한 건 일괄 작업 — 표 바로 위 한 카드 (선택 줄은 늘 같은 자리라 표가 밀리지 않는다) */}
@@ -1497,7 +1504,7 @@ export default function PurchasePage() {
             </div>
           </div>
 
-          {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
+          {isLoading ? <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-po-loading><table className="w-full"><tbody><SkeletonRows cols={9} rows={8} two={[1, 2]} /></tbody></table></div> : (
             <ResizableTable cols={PO_COLS} storageKey="purchase_cols" sortKey={sort.key} sortDir={sort.dir} onSort={onSort} fill fillMin={360}
               after={sorted.length > visibleCount && (
             <div className="flex items-center justify-center gap-3 py-3">
@@ -1557,7 +1564,12 @@ export default function PurchasePage() {
                                   className="px-2 py-1 text-xs font-semibold rounded border border-emerald-200 text-emerald-600 hover:bg-emerald-50">입고</button>
                               )}
                               <button onClick={()=>handleEdit(p)} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
-                              <button onClick={()=>{if(window.confirm('삭제할까요?'))deleteMut.mutate(p.id)}} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
+                              <button data-po-del onClick={async()=>{
+                                const ok = await ask({ title: `${p.items?.std_code || p.po_number || '이 발주'} 발주를 지울까요?`,
+                                  desc: '발주 줄이 지워지고 되돌릴 수 없습니다. 이미 입고가 잡힌 발주는 지워지지 않습니다.',
+                                  items: [`${p.po_number || '발주번호 없음'} · ${p.vendors?.name || '구매처 미정'}`, `${p.items?.name || ''} · ${Number(p.qty_ordered || 0).toLocaleString()}개 · 납기 ${p.promise_date || '—'}`],
+                                  okText: '발주 삭제', danger: true })
+                                if (ok) deleteMut.mutate(p.id) }} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
                             </div>
                           </td>
                         </tr>
@@ -1596,7 +1608,7 @@ export default function PurchasePage() {
             <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">총 공급가</p><p className="text-xl font-bold text-indigo-700">{Math.round(histShown.reduce((a,r)=>a+(r.supply||0),0)/10000).toLocaleString()}만원</p></div>
           </div>
 
-          {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
+          {histLoading ? <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-po-hist-loading><table className="w-full"><tbody><SkeletonRows cols={8} rows={6} two={[1]} /></tbody></table></div> : (
             <ResizableTable cols={HIST_COLS} storageKey="purchase_hist_cols" fill fillMin={360}>
               {()=>(
                 <tbody>

@@ -6,6 +6,11 @@ import { useMe } from '../hooks/useProfile'
 import { todayISO } from '../lib/utils'
 import { dday, isOwnedBy, canEditTodo, isNewForMe, groupOf, postponeDate } from '../lib/todoView'
 import { useCycleTodo, CycleTodoRow } from '../components/CycleTodo'
+import { SkelBar } from '../components/ux/Skeleton'
+import { useConfirm } from '../components/ux/ConfirmDialog'
+import { useUndoSnack } from '../components/ux/UndoSnack'
+import Spin from '../components/ux/Spin'
+import { useCoach } from '../components/ux/CoachMarks'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
 const PRIORITY = ['높음', '보통', '낮음']
@@ -69,6 +74,9 @@ export default function Todo() {
   const [cmtText, setCmtText] = useState('')
   const [detail, setDetail] = useState(null)   // 펼쳐 볼 안건
   const [folded, setFolded] = useState({ later: true, done: true })
+  const [titleErr, setTitleErr] = useState('')   // 내용 빈 채로 저장 → 칸 아래 안내 (v4.104.0)
+  const [ask, confirmEl] = useConfirm()
+  const snack = useUndoSnack(6000)
 
   const { data: rows = [], isLoading } = useQuery({ queryKey: ['todos'], queryFn: fetchTodos })
   const { data: people = [] } = useQuery({ queryKey: ['todoPeople'], queryFn: fetchPeople, staleTime: 10 * 60 * 1000 })
@@ -90,6 +98,7 @@ export default function Todo() {
 
   const saveMut = useMutation({
     mutationFn: async (rec) => {
+      if (!(rec.title || '').trim()) { setTitleErr('무엇을 할지 한 줄 적어 주세요'); throw Object.assign(new Error('내용을 적어 주세요'), { inline: true }) }
       const ownerName = (rec.owner || '').trim()
       // 고른 사람이면 그 사람에게 연결, 직접 적은 이름이면 같은 이름의 사람에게 연결
       const ownerId = rec.owner_id_pick || people.find(p => p.name === ownerName)?.id
@@ -119,8 +128,14 @@ export default function Todo() {
       }
     },
     onSuccess: () => { refresh(); setDraft(null) },
-    onError: (e) => toastError(e.message),
+    onError: (e) => { if (!e.inline) toastError(e.message) },
   })
+  // 되돌리기용 — 바꾸기 전 값으로 다시 저장 (v4.104.0)
+  const restore = async (id, patch) => {
+    const { error } = await supabase.from('pm_todo').update(patch).eq('id', id)
+    if (error) throw error
+    refresh()
+  }
 
   const patchMut = useMutation({
     mutationFn: async ({ id, patch }) => {
@@ -139,7 +154,7 @@ export default function Todo() {
       const { error } = await supabase.from('pm_todo').delete().eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => { refresh(); toastSuccess('삭제됨') },
+    onSuccess: () => { refresh(); toastSuccess('삭제했습니다') },
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
 
@@ -168,6 +183,7 @@ export default function Todo() {
   useEffect(() => {
     if (!draft && !detail) return
     const onKey = (e) => {
+      if (document.querySelector('[data-confirm-dialog]')) return   // 확인 창이 떠 있으면 그 창만 닫힌다
       if (e.key === 'Escape') { e.preventDefault(); draft ? closeDraft() : setDetail(null) }
     }
     const onPop = (e) => { e.preventDefault?.(); draft ? closeDraft() : setDetail(null) }
@@ -181,11 +197,12 @@ export default function Todo() {
 
   // 적어 둔 것이 있으면 묻고 닫는다.
   //   배경을 잘못 눌러 쓰던 내용이 사라진 적이 있다.
-  function closeDraft() {
+  async function closeDraft() {
     const dirty = (draft?.title || '').trim() || (draft?.detail || '').trim()
-    if (dirty && !window.confirm('적은 내용이 사라집니다. 닫을까요?')) return
-    setDraft(null)
+    if (dirty && !(await ask({ title: '적은 내용을 버리고 닫을까요?', desc: '저장하지 않은 내용은 사라집니다.', okText: '버리고 닫기', cancelText: '계속 쓰기', danger: true }))) return
+    setDraft(null); setTitleErr('')
   }
+  const askDelete = (r) => ask({ title: `「${r.title}」 을 지울까요?`, desc: '지우면 되돌릴 수 없습니다. 끝난 일이면 지우지 말고 「완료」로 두면 2주 동안 완료 묶음에 남습니다.', okText: '삭제', danger: true })
 
   // 사람 칩 — 남은 일 · 기한 지남 건수
   const chips = useMemo(() => {
@@ -241,8 +258,18 @@ export default function Todo() {
   // 검색 · 주간회의 안건만 볼 때는 실사 줄을 숨긴다
   const cycShown = q.trim() || agendaOnly ? [] : cyc.items
 
+  // 미루기 · 완료 — 묻지 않고 바로, 6초 동안 되돌리기 (v4.104.0)
   function postpone(r, kind) {
-    patchMut.mutate({ id: r.id, patch: { due_date: postponeDate(kind) } })
+    const to = postponeDate(kind)
+    patchMut.mutate({ id: r.id, patch: { due_date: to } }, {
+      onSuccess: () => snack.show(`「${r.title}」 기한 → ${to.slice(5).replace('-', '/')}`, () => restore(r.id, { due_date: r.due_date || null })),
+    })
+  }
+  function toggleDone(r) {
+    const done = r.status === '완료'
+    patchMut.mutate({ id: r.id, patch: { status: done ? '대기' : '완료' } }, {
+      onSuccess: () => { if (!done) snack.show(`「${r.title}」 완료`, () => restore(r.id, { status: r.status })) },
+    })
   }
 
   const renderRow = (r) => {
@@ -255,7 +282,7 @@ export default function Todo() {
       <div key={r.id} data-todo-row={r.id} className={`border-t border-slate-100 px-3 py-2.5 ${isNew ? 'bg-indigo-50/40' : ''}`}>
         <div className="flex items-center gap-2.5 flex-wrap">
           <input type="checkbox" checked={done} className="w-4 h-4"
-            onChange={() => patchMut.mutate({ id: r.id, patch: { status: done ? '대기' : '완료' } })}
+            onChange={() => toggleDone(r)} data-todo-done
             title={done ? '되돌리기' : '완료로'} />
           <div className="flex-1 min-w-[180px]">
             <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -310,7 +337,7 @@ export default function Todo() {
             <>
               <button onClick={() => setDraft({ ...r })}
                 className="text-slate-300 hover:text-indigo-500 px-1" title="수정">✎</button>
-              <button onClick={() => { if (window.confirm(`"${r.title}" 을 지울까요?`)) delMut.mutate(r.id) }}
+              <button onClick={async () => { if (await askDelete(r)) delMut.mutate(r.id) }} data-todo-del
                 className="text-slate-300 hover:text-rose-500 px-1" title="삭제">✕</button>
             </>
           ) : (
@@ -343,6 +370,12 @@ export default function Todo() {
     )
   }
 
+  // 처음 여는 사람 안내 (v4.104.0) — 이 브라우저에서 한 번
+  const coach = useCoach('todo', [
+    { sel: '[data-todo-add]', title: '① 할 일 적기', body: '회의에서 나온 일 · 내가 챙길 일을 적고 담당자를 고르세요. 다른 사람에게 맡기면 그 사람 화면에 「새로 받음」으로 뜹니다.' },
+    { sel: '[data-todo-who]', title: '② 사람별로 보기', body: '들어오면 「나」의 일만 보입니다. 사람을 누르면 그 사람 일, 「지남」은 기한이 지난 수입니다.' },
+    { sel: '[data-todo-done]', title: '③ 끝나면 체크', body: '체크하면 완료 묶음으로 옮겨지고, 잘못 눌렀으면 아래 「되돌리기」를 6초 안에 누르세요. 「내일로 · 다음 주」로 기한을 바로 미룰 수도 있습니다.' },
+  ], !isLoading)
   const newDraft = () => setDraft({ status: '대기', priority: '보통', owner: me?.name || '', owner_id_pick: me?.id || '', due_date: '' })
 
   return (
@@ -352,11 +385,14 @@ export default function Todo() {
           <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
           <p className="page-desc text-xs text-slate-400">내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만</p>
         </div>
-        <button onClick={newDraft}
-          className="ml-auto px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
+        <button onClick={coach.start} data-coach-again
+          className="ml-auto px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>
+        <button onClick={newDraft} data-todo-add
+          className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
           + 추가
         </button>
       </div>
+      {snack.el}{confirmEl}{coach.el}
 
       {/* 사람 칩 — 들어오면 「나」 */}
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -384,7 +420,16 @@ export default function Todo() {
         </p>
       )}
 
-      {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
+      {isLoading && (
+        <div className="rounded-xl border border-slate-200 bg-white overflow-hidden" data-todo-loading>
+          <div className="px-3 py-2 border-b border-slate-100"><SkelBar w={90} h={12} /></div>
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="border-t border-slate-100 first:border-0 px-3 py-3 flex items-center gap-3" data-skeleton>
+              <SkelBar w={16} h={16} /><div className="flex-1 space-y-1.5"><SkelBar w={`${55 - i * 6}%`} h={13} /><SkelBar w={90} h={9} /></div><SkelBar w={48} h={22} />
+            </div>
+          ))}
+        </div>
+      )}
       {!isLoading && !list.length && !cycShown.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">
@@ -535,8 +580,8 @@ export default function Todo() {
                 주간회의 안건
               </label>
               {mine && (
-                <button onClick={() => {
-                    if (window.confirm(`"${r.title}" 을 지울까요?`)) { delMut.mutate(r.id); setDetail(null) }
+                <button onClick={async () => {
+                    if (await askDelete(r)) { delMut.mutate(r.id); setDetail(null) }
                   }}
                   className="ml-auto text-xs text-slate-400 hover:text-rose-500 px-2">삭제</button>
               )}
@@ -558,10 +603,11 @@ export default function Todo() {
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">내용 *</label>
                 <input value={draft.title || ''} autoFocus
-                  onChange={e => setDraft(s => ({ ...s, title: e.target.value }))}
-                  onKeyDown={e => { if (e.key === 'Enter' && draft.title?.trim()) saveMut.mutate(draft) }}
-                  placeholder="회의에서 언급할 내용"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                  onChange={e => { setDraft(s => ({ ...s, title: e.target.value })); if (titleErr) setTitleErr('') }}
+                  onKeyDown={e => { if (e.key === 'Enter') saveMut.mutate(draft) }}
+                  placeholder="회의에서 언급할 내용" data-todo-title
+                  className={`w-full px-3 py-2 text-sm border rounded-lg ${titleErr ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'}`} />
+                {titleErr && <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error="title">{titleErr}</p>}
               </div>
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">상세</label>
@@ -632,7 +678,7 @@ export default function Todo() {
               <div className="flex gap-2 pt-1">
                 <button onClick={() => saveMut.mutate(draft)} disabled={saveMut.isPending}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {saveMut.isPending ? '저장 중…' : '저장'}
+                  {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
                 </button>
                 <button onClick={() => closeDraft()}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">

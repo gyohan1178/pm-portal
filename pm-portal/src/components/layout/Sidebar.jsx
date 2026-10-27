@@ -1,5 +1,5 @@
 import { useState, useEffect, createContext, useContext, Fragment } from 'react'
-import { isFieldOnly, canAccessSection, canSeeFlow } from '../../hooks/useProfile'
+import { isFieldOnly, canAccessSection, canSeeFlow, isPurchasing } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { loadChangelogOld } from '../../lib/loadChangelogOld'
@@ -97,9 +97,41 @@ const MenuPrefsCtx = createContext(null)
 // 메뉴 옆 알림 숫자.
 //   자재 요청이 들어와도 화면을 열어 보지 않으면 몰라 놓치는 일이 잦았다.
 //   포털을 쓰는 동안 늘 보이게 한다.
-function useAlertCounts() {
+// 수주대장 「미확인」 PO 수 (v4.104.0) — 수주대장 화면 미확인 지표와 같은 기준
+//   진행 중 줄이 있고 · 이관 · 발주 예정 · 취소 아님 · PO 확인도 줄 회신도 없이 등록 뒤 1영업일(주말 뺌)이 지난 PO
+//   bizDays 는 lib/orderIntake 의 bizDaysSince 와 같은 계산 — 메뉴가 수주대장 코드 전체를 미리 받지 않게 여기 따로 둔다
+const bizDays = (ts, now = new Date()) => {
+  if (!ts) return 0
+  const d = new Date(ts); let n = 0
+  const cur = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  while (cur < end) { cur.setDate(cur.getDate() + 1); const w = cur.getDay(); if (w !== 0 && w !== 6) n++ }
+  return n
+}
+const pageAll = async (mk) => {     // 1,000줄 넘게 — 1,000줄씩 이어 받기
+  const out = []
+  for (let f = 0; ; f += 1000) {
+    const { data, error } = await mk().range(f, f + 999)
+    if (error) throw error
+    out.push(...(data || []))
+    if (!data || data.length < 1000) return out
+  }
+}
+async function countUnconfirmedOrders() {
+  const heads = await pageAll(() => supabase.from('pm_order').select('id,registered_at,cancelled,migrated,planned').is('confirmed_at', null).order('id'))
+  const ids = heads.filter((o) => !o.cancelled && !o.migrated && !o.planned && bizDays(o.registered_at) >= 1).map((o) => o.id)
+  const hit = new Set()
+  for (let i = 0; i < ids.length; i += 200) {
+    const ls = await pageAll(() => supabase.from('pm_order_line_live_v').select('order_id').is('reply', null).in('order_id', ids.slice(i, i + 200)).order('id'))
+    ls.forEach((l) => hit.add(l.order_id))
+  }
+  return hit.size
+}
+
+function useAlertCounts(buy = false) {
   const { data } = useQuery({
-    queryKey: ['menuAlerts'],
+    // buy = 구매자재 — 수주대장 · 구매발주 숫자는 구매자재 메뉴에만 보이므로 그때만 센다 (v4.104.0)
+    queryKey: ['menuAlerts', buy],
     staleTime: 5 * 60 * 1000,
     refetchInterval: 10 * 60 * 1000,
     refetchIntervalInBackground: false,
@@ -117,6 +149,16 @@ function useAlertCounts() {
         const { data: mine } = await supabase.rpc('pm_request_notice_count')
         out['/material-request'] = (out['/material-request'] || 0) + (Number(mine) || 0)
       } catch { /* 함수가 아직 없어도 메뉴는 그려야 한다 */ }
+      if (buy) try {
+        out['/orders'] = await countUnconfirmedOrders()
+      } catch { /* 진행 중 줄 보기(SQL) 전이어도 메뉴는 그려야 한다 */ }
+      if (buy) try {
+        // 구매발주 납기 지연 (v4.104.0) — 요청 납기(약속일)가 지났는데 남은 수량이 있는 진행 중 구매발주 줄 (고객사 전체)
+        //   관제탑 「입고 지연」 · 구매발주 「납기 지연」과 같은 기준. 숫자만 받아 가볍다
+        const { count, error } = await supabase.from('purchase_orders').select('id', { count: 'exact', head: true })
+          .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').lt('promise_date', todayISO()).gt('qty_remaining', 0)
+        if (!error) out['/purchase'] = count || 0
+      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
       try {
         // 할 일 — 내 일 중 기한 지남 · 오늘까지 · 새로 받은 일
         const { data: { user } } = await supabase.auth.getUser()
@@ -288,7 +330,7 @@ function ChangelogModal({ onClose }) {
 }
 
 export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) {
-  const alerts = useAlertCounts()
+  const alerts = useAlertCounts(isPurchasing(profile))
   const flowFresh = useFlowFresh(profile, canSeeFlow(profile))
   // 자료 요청 — 영업은 처리할 요청, 그 밖 부서는 받았는데 아직 확인 안 한 것 (v4.98.0)
   const { data: docN } = useQuery({ ...docCountsQuery, enabled: !!profile })
@@ -383,7 +425,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 🛒 구매 — 부족 확인부터 발주·입고·단가까지 한 흐름 */}
         {canAccessSection(profile, 'buy') && (
         <CollapseSection mover={mv} label="🛒 구매" sKey="buy">
-          <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate}>구매발주</MenuItem>
+          <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate} badge={isPurchasing(profile) ? alerts['/purchase'] : 0}>구매발주</MenuItem>
           <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
           <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
           <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
@@ -396,7 +438,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 🤝 영업 */}
         {canAccessSection(profile, 'sales') && (
         <CollapseSection mover={mv} label="🤝 영업" sKey="sales">
-          <MenuItem to="/orders" icon="📨" onNavigate={onNavigate}>수주대장</MenuItem>
+          <MenuItem to="/orders" icon="📨" onNavigate={onNavigate} badge={isPurchasing(profile) ? alerts['/orders'] : 0}>수주대장</MenuItem>
           <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
           <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>

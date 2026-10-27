@@ -5,6 +5,7 @@
 //   v4.89.0  화면 정리(두 줄 셀 · 상태 한 칸 · D-day) · AXCELIS CCN · 납품처 · 납기 지남 지표
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
+//   v4.104.0 표 모양 먼저(스켈레톤) · 지표 ⓘ 설명 · 회신 · 납품 · 특이사항 확인 6초 되돌리기 · PO 삭제 확인 창 · 회신 칸 안내 · 처음 안내(영업)
 //   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
 import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
@@ -20,9 +21,15 @@ import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   ORDER_CUSTOMERS, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
+  replyLines, markDelivered, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
+import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { useUndoSnack } from '../../components/ux/UndoSnack'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
+import { useCoach } from '../../components/ux/CoachMarks'
 import OrderUpload from './OrderUpload'
 const OrderMrModal = lazy(() => import('./OrderMrModal'))
 import OrderEntry, { downloadTemplate } from './OrderEntry'
@@ -109,13 +116,14 @@ function useNarrow() {
   return n
 }
 
-function Kpi({ tone, label, value, sub, on, onClick }) {
+function Kpi({ tone, label, value, sub, on, onClick, tip, loading }) {
   const [box, num] = KPI_TONE[tone]
   return (
     <button type="button" onClick={onClick} data-kpi={label}
       className={`min-w-0 text-left rounded-xl border px-3 md:px-4 py-3 transition ${box} ${on ? 'ring-2 ring-violet-400' : 'hover:shadow-sm'}`}>
-      <div className="text-[12px] text-slate-500">{label}</div>
-      <div className={`text-[24px] md:text-[28px] font-extrabold leading-tight tabular-nums ${num}`}>{value.toLocaleString('ko-KR')}</div>
+      <div className="text-[12px] text-slate-500 flex items-center gap-1">{label}{tip && <InfoTip text={tip} />}</div>
+      {loading ? <div className="h-[32px] md:h-[35px] flex items-center"><SkelBar w={54} h={20} /></div>
+        : <div className={`text-[24px] md:text-[28px] font-extrabold leading-tight tabular-nums ${num}`}>{value.toLocaleString('ko-KR')}</div>}
       <div className="text-[11px] text-slate-500 truncate">{sub}</div>
     </button>
   )
@@ -252,21 +260,34 @@ function ReplyForm({ count, onSave, busy, unit = '건' }) {
   const [reply, setReply] = useState('')
   const [date, setDate] = useState('')
   const [memo, setMemo] = useState('')
+  // 저장 누를 때 빠진 칸을 그 자리에 빨갛게 (v4.104.0) — 예전엔 위에 알림만 잠깐 떴다
+  const [err, setErr] = useState(null)       // { reply } | { memo }
+  const save = () => {
+    if (!reply) { setErr({ reply: '가능 · 조건부 · 불가 중 하나를 고르세요' }); return }
+    if (reply !== '가능' && !memo.trim()) { setErr({ memo: `「${reply}」은 영업이 고객사와 협의해야 해서 사유가 꼭 필요합니다` }); return }
+    setErr(null); onSave({ reply, date, memo })
+  }
   return (
-    <div className="flex flex-wrap items-center gap-2" data-reply-form>
-      <div className="flex rounded-lg border border-slate-200 overflow-hidden">
+    <div className="flex flex-wrap items-start gap-2" data-reply-form>
+      <div className="flex flex-col gap-1">
+      <div className={`flex rounded-lg border overflow-hidden ${err?.reply ? 'border-red-400 ring-2 ring-red-100' : 'border-slate-200'}`}>
         {['가능', '조건부', '불가'].map((r) => (
-          <button key={r} type="button" onClick={() => setReply(r)} data-reply={r}
+          <button key={r} type="button" onClick={() => { setReply(r); setErr(null) }} data-reply={r}
             className={`px-3 py-1.5 text-xs font-bold border-r last:border-r-0 border-slate-200 ${reply === r ? REPLY[r][0] : 'bg-white text-slate-500 hover:bg-slate-50'}`}>{r}</button>
         ))}
       </div>
-      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500">자재 준비일
+      {err?.reply && <span className="text-[11px] font-semibold text-red-600" data-field-error="reply">{err.reply}</span>}
+      </div>
+      <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 py-1">자재 준비일
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} data-reply-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
       </label>
-      <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="영업에 보일 메모 (조건부 · 불가는 사유 필수)" data-reply-memo
-        className="flex-1 min-w-[220px] px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
-      <button type="button" disabled={busy || !count} onClick={() => onSave({ reply, date, memo })} data-reply-save
-        className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40 whitespace-nowrap">회신 저장 ({count}{unit})</button>
+      <div className="flex-1 min-w-[220px] flex flex-col gap-1">
+        <input value={memo} onChange={(e) => { setMemo(e.target.value); if (err?.memo) setErr(null) }} placeholder="영업에 보일 메모 (조건부 · 불가는 사유 필수)" data-reply-memo
+          className={`w-full px-2.5 py-1.5 text-xs border rounded-lg ${err?.memo ? 'border-red-400 ring-2 ring-red-100' : 'border-slate-200'}`} />
+        {err?.memo && <span className="text-[11px] font-semibold text-red-600" data-field-error="memo">{err.memo}</span>}
+      </div>
+      <button type="button" disabled={busy || !count} onClick={save} data-reply-save
+        className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-bold bg-violet-600 text-white disabled:opacity-40 whitespace-nowrap">{busy && <Spin />}{busy ? '저장 중…' : `회신 저장 (${count}${unit})`}</button>
     </div>
   )
 }
@@ -443,13 +464,35 @@ export default function OrderIntake() {
   }, [allLines, k, mode, view, kpi, month, today]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 구매자재 동작 ──
+  // ── 되돌리기 (v4.104.0) ── 회신 · 납품 표시 · 특이사항 확인은 묻지 않고 바로 하고, 6초 동안 「되돌리기」
+  //   되돌릴 때는 바꾸기 「전」 줄 값(누른 순간 화면에 있던 그대로)을 다시 저장 → 변경 이력에도 「(되돌림)」으로 남는다
+  const snack = useUndoSnack(6000)
+  const [ask, confirmEl] = useConfirm()
+  // 처음 쓰는 영업 · 타부서 안내 — 이 브라우저에서 처음 열 때 한 번 (v4.104.0)
+  const coach = useCoach('orders-sales', [
+    { sel: '[data-check-all], [data-check-all-m]', title: '① 체크해서 자재 요청', body: '단품으로 바로 납품하는 품목은 줄 앞 칸을 체크하고 위에 뜨는 「📦 자재 요청」을 누르세요. 구매자재가 렉에 챙겨 둡니다.' },
+    { sel: '[data-odd-btn]', title: '② 특이사항 확인', body: '바로 앞 PO 와 Rev · 단가가 다르거나 메모에 ⚠ 가 있는 줄만 모아 봅니다. 고객사에 다시 확인할 것이 있는지 먼저 보세요.' },
+    { sel: '[data-open-upload]', title: '③ 새 PO 는 PDF 로', body: '고객사 발주서 PDF 를 올리면 품번 · 수량 · 납기가 자동으로 들어갑니다. 같은 PO 를 다시 올리면 바뀐 것만 반영됩니다.' },
+  ], !isBuy && !pLoading && !isLoading && tab === 'list')
+  // 칸 일부만 받은 지난 줄(PO 상세를 아직 다 못 받은 때)이 섞이면 「전」 값을 몰라 되돌리기를 내놓지 않는다
+  const undoable = (ls) => ls.length > 0 && ls.every((l) => !l._slim)
+  const undoMut = async (prev, fields, opt, unconfirm = []) => {
+    const r = await restoreLineFields(prev, fields, meName, { ...opt, unconfirm })
+    patchLines((l) => r.patches.get(l.id) || null)
+    if (unconfirm.length) patchHead(unconfirm, () => ({ confirmed_at: null, confirmed_name: null }))
+    if (fields === REPLY_FIELDS) qc.invalidateQueries({ queryKey: ['menuAlerts'] })   // 메뉴 「미확인」 숫자
+  }
   const replyMut = useMutation({
+    // 이 회신으로 처음 「확인」되는 PO — 되돌리면 다시 미확인으로
     mutationFn: ({ ls, form }) => replyLines(ls, form, meName),
-    onSuccess: (r) => {
+    onSuccess: (r, v) => {
       const ids = new Set(r.ids)
       patchLines((l) => (ids.has(l.id) ? r.patch : null))
       patchHead(r.orderIds, (o) => (o.confirmed_at ? {} : r.head))
-      setChecked(new Set()); toastSuccess(`${r.lines}건 회신 저장 → 영업 화면에 표시`)
+      setChecked(new Set()); qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+      const msg = `${r.lines}품목 「${v.form.reply}」 회신 저장 → 영업 화면에 표시`
+      if (undoable(v.ls)) snack.show(msg, () => undoMut(v.ls, REPLY_FIELDS, { field: 'reply', textOf: replyTextOf, label: '회신' }, r.confirmedIds || []))
+      else toastSuccess(msg)
     },
     onError: (e) => toastError(e.message),
   })
@@ -459,13 +502,21 @@ export default function OrderIntake() {
     onSuccess: (r, v) => {
       patchLines((l) => r.patches.get(l.id) || null)
       if (v.on !== false) setChecked((s) => { const n = new Set(s); r.patches.forEach((_, id) => n.delete(id)); return n })
-      toastSuccess(v.on === false ? '특이사항 확인을 취소했습니다 — 다시 목록에 나옵니다' : `특이사항 ${r.n}줄 확인 — 목록에서 빠졌습니다`)
+      const prev = v.ls.filter((l) => r.patches.has(l.id))
+      const msg = v.on === false ? `특이사항 확인 취소 ${r.n}줄 — 다시 목록에 나옵니다` : `특이사항 ${r.n}줄 확인 — 목록에서 빠졌습니다`
+      if (undoable(prev)) snack.show(msg, () => undoMut(prev, ODD_FIELDS, { field: 'odd_ok', textOf: (l) => l.odd_ok || null, label: '특이사항 확인' }))
+      else toastSuccess(msg)
     },
     onError: (e) => toastError(/odd_ok/.test(e.message || '') ? ODD_OK_SQL_HINT : '저장 실패: ' + e.message),
   })
   const dlvMut = useMutation({
     mutationFn: ({ ls, on }) => markDelivered(ls, on, meName),
-    onSuccess: (r) => { patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set()) },
+    onSuccess: (r, v) => {
+      patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set())
+      const msg = `${v.on ? '납품 표시' : '납품 취소'} ${v.ls.length}품목`
+      if (v.ls.length && undoable(v.ls)) snack.show(msg, () => undoMut(v.ls, DLV_FIELDS, { field: 'delivered', textOf: (l) => String(+l.delivered_qty || 0), label: v.on ? '납품 표시' : '납품 취소' }))
+      else if (v.ls.length) toastSuccess(msg)
+    },
     onError: (e) => toastError('저장 실패: ' + e.message),
   })
   const relMut = useMutation({
@@ -481,7 +532,7 @@ export default function OrderIntake() {
       if (log) { const { error: e2 } = await supabase.from('pm_order_change').insert({ order_id: id, source: 'manual', changed_name: meName, ...log }); if (e2) throw e2 }
       return { id, patch }
     },
-    onSuccess: (r) => { patchHead([r.id], () => ({ ...r.patch, updated_at: new Date().toISOString() })); toastSuccess('저장했습니다') },
+    onSuccess: (r) => { patchHead([r.id], () => ({ ...r.patch, updated_at: new Date().toISOString() })); if ('confirmed_at' in r.patch) qc.invalidateQueries({ queryKey: ['menuAlerts'] }); toastSuccess('저장했습니다') },
     onError: (e) => toastError(/ship_to/.test(e.message || '') ? '납품처 칸이 아직 없습니다 — 수주대장_납품처_261023.sql 을 먼저 실행하세요' : '저장 실패: ' + e.message),
   })
   const delMut = useMutation({
@@ -576,7 +627,9 @@ export default function OrderIntake() {
       <PageHead crumb="영업" title="수주대장"
         desc={<>전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
           {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}</>}>
-        <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`} data-view-badge>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>
+        {/* 계정 정보를 받는 동안엔 비워 둔다 — 구매자재인데 잠깐 「영업 · 타부서 화면」으로 보이던 것 (v4.104.0) */}
+        {pLoading ? <SkelBar w={110} h={24} className="rounded-full" />
+          : <span className={`shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold ${isBuy ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'}`} data-view-badge>{isBuy ? '구매자재 화면' : '영업 · 타부서 화면'}</span>}
         {isAdmin && isPurchasing(profile) && (
           <button type="button" onClick={() => { setAsSales((v) => !v); setChecked(new Set()) }} data-as-sales
             title="영업 · 타부서 계정이 보는 화면을 미리 봅니다 (관리자만)"
@@ -584,8 +637,12 @@ export default function OrderIntake() {
             {asSales ? '구매자재 화면으로 돌아가기' : '영업 화면으로 보기'}
           </button>
         )}
-      
+        {!isBuy && !pLoading && tab === 'list' && (
+          <button type="button" onClick={coach.start} data-coach-again
+            className="shrink-0 whitespace-nowrap px-3 py-1 rounded-full text-xs font-bold border bg-white text-slate-500 border-slate-200 hover:border-slate-300">💡 안내 다시 보기</button>
+        )}
       </PageHead>
+      {snack.el}{confirmEl}{coach.el}
 
       <nav className="flex gap-1 border-b border-slate-200 overflow-x-auto" aria-label="수주대장 탭" data-oi-tabs>
         {[['list', '수주 목록'], ['ecount', '이카운트 대조'], ['cleanup', '코드 · BOM 정리']].map(([k, l]) => (
@@ -596,25 +653,34 @@ export default function OrderIntake() {
         ))}
       </nav>
       {tab !== 'list' && (
-        <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">불러오는 중…</div>}>
-          {!usingFull ? <div className="p-8 text-center text-xs text-slate-400" data-full-loading>지난 이력까지 불러오는 중…</div>
+        <Suspense fallback={<div className="bg-white border border-slate-200 rounded-xl overflow-hidden"><table className="w-full"><tbody><SkeletonRows cols={6} rows={5} /></tbody></table></div>}>
+          {!usingFull ? <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-full-loading>
+              <div className="px-4 py-2.5 text-[11.5px] text-slate-500 border-b border-slate-100 flex items-center gap-2"><Spin />지난 이력까지 불러오는 중… (처음 한 번만)</div>
+              <table className="w-full"><tbody><SkeletonRows cols={6} rows={6} two={[2]} /></tbody></table>
+            </div>
             : tab === 'ecount' ? <EcountMatch orders={orders} editable={editable} meName={meName} onChanged={refresh} />
             : <OrderCleanup orders={orders} editable={editable} meName={meName} onChanged={refresh} />}
         </Suspense>
       )}
       {tab === 'list' && <>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-        <Kpi tone="red" label="미확인" value={kpis.unconfirmed.length} sub={`PO ${pos(kpis.unconfirmed)}건 · 등록 1영업일 넘게 확인 없음`} {...kpiBtn('unconfirmed')} />
-        <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} />
-        <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} />
-        <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} />
-        <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} />
+        <Kpi tone="red" label="미확인" value={kpis.unconfirmed.length} sub={`PO ${pos(kpis.unconfirmed)}건 · 등록 1영업일 넘게 확인 없음`} {...kpiBtn('unconfirmed')} loading={isLoading}
+          tip="PO 가 등록된 뒤 1영업일(토 · 일 빼고)이 지나도록 구매자재가 회신도 「✓ 확인했음」도 안 한 품목 줄. 예전 데이터 이관 · 발주 예정(Plnd)은 세지 않습니다." />
+        <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} loading={isLoading}
+          tip="진행 중인데 아직 회신(가능 · 조건부 · 불가)이 없는 품목 줄. 고객사가 수량 · 납기를 바꿔 다시 들어와 재회신이 필요한 줄도 여기 들어옵니다." />
+        <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
+          tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
+        <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} loading={isLoading}
+          tip="고객사 납기일이 오늘보다 앞인데 아직 「납품 표시」가 안 된 줄. 실제로 나갔다면 납품 표시를 해 주세요." />
+        <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
+          tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
 
       {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) */}
       <div className={`rounded-xl border px-4 md:px-5 py-3 flex flex-wrap items-start gap-x-8 gap-y-3 min-w-0 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
         <div className="min-w-0 md:min-w-[210px]">
-          <div className="text-[12px] text-slate-500">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span></div>
+          <div className="text-[12px] text-slate-500 flex items-center gap-1">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span>
+            <InfoTip text={`납기가 올해인 줄의 「수량 × PO 단가」 합계 (취소 줄 제외). 달러 PO 는 환율 ${fx.toLocaleString('ko-KR')}원으로 바꿔 더합니다. 단가가 없는 품목은 빠지니 아래 「단가 없는 품목」을 채우면 정확해집니다.`} /></div>
           <div className="text-[22px] md:text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
           <div className="text-[11.5px] text-slate-600 tabular-nums mt-0.5">납품 완료 <b>{won(m.done)}</b> · 납품 예정 <b>{won(m.total - m.done)}</b></div>
         </div>
@@ -774,8 +840,8 @@ export default function OrderIntake() {
             <input type="date" value={relDate} onChange={(e) => setRelDate(e.target.value)} data-bulk-release-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
             <button type="button" disabled={!relDate || relMut.isPending} onClick={() => relMut.mutate({ ls: checkedLines, date: relDate }, { onSuccess: () => { setRelDate(''); setChecked(new Set()) } })} data-bulk-release className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">저장</button>
           </label>
-          {checkedLines.some((l) => l.odd) && <button type="button" disabled={oddMut.isPending} onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">✓ 특이사항 확인 {checkedLines.filter((l) => l.odd).length}</button>}
-          <button type="button" onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">납품 표시</button>
+          {checkedLines.some((l) => l.odd) && <button type="button" disabled={oddMut.isPending} onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인 {checkedLines.filter((l) => l.odd).length}</button>}
+          <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
         </div>
@@ -783,7 +849,7 @@ export default function OrderIntake() {
 
       {narrow ? (
         <div className="space-y-2" data-mobile-list>
-          {isLoading && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">불러오는 중…</div>}
+          {isLoading && <SkeletonCards n={5} />}
           {mode === 'line' && <>
             {!isLoading && !lines.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다'}</div>}
             {liveVisible.length > 0 && (
@@ -808,7 +874,7 @@ export default function OrderIntake() {
               <Th k="st" rz={lineRz}>상태</Th><Th k="reply" rz={lineRz}>구매자재 회신</Th>
             </tr></thead>
             <tbody>
-              {isLoading && <tr><td colSpan={9} className="p-8 text-center text-slate-400">불러오는 중…</td></tr>}
+              {isLoading && <SkeletonRows cols={9} rows={8} first={1} two={[2, 4]} />}
               {!isLoading && !lines.length && <tr><td colSpan={9} className="p-10 text-center text-slate-400">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다 — 「📄 PDF 올리기」로 시작하세요'}</td></tr>}
               {shownLines.map((l) => {
                 const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
@@ -863,6 +929,7 @@ export default function OrderIntake() {
               <Th k="due" rz={poRz}>가장 빠른 납기</Th><Th k="amt" rz={poRz} className="text-right">금액</Th><Th k="reply" rz={poRz}>회신</Th><Th k="reg" rz={poRz}>등록</Th>
             </tr></thead>
             <tbody>
+              {isLoading && <SkeletonRows cols={7} rows={8} two={[1, 2]} />}
               {!isLoading && !poRows.length && <tr><td colSpan={7} className="p-10 text-center text-slate-400">조건에 맞는 PO 가 없습니다</td></tr>}
               {shownPos.map(({ o, ls, amount }) => {
                 const rp = ls.filter((l) => !l.st.cancelled)
@@ -916,7 +983,18 @@ export default function OrderIntake() {
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
           onConfirm={(o) => headMut.mutate({ id: o.id, patch: { confirmed_at: new Date().toISOString(), confirmed_name: meName } })}
           onShipTo={(o, v) => headMut.mutate({ id: o.id, patch: { ship_to: v || null }, log: { field: 'ship_to', before_val: o.ship_to || null, after_val: v || null } })}
-          onDelete={(o) => { if (window.confirm(`${o.po_no} 를 수주대장에서 지울까요? (품목 · 변경 이력도 함께 지워집니다)`)) delMut.mutate(o.id) }} />
+          onDelete={async (o) => {
+            // 지우면 되돌릴 수 없다 → 무엇이 지워지는지 보여 주고 묻는다 (v4.104.0)
+            const ls = o.lines || []
+            const ok = await ask({
+              title: `${o.po_no} 를 수주대장에서 지울까요?`,
+              desc: `품목 ${ls.length}줄과 회신 · 변경 이력이 함께 지워지고 되돌릴 수 없습니다. 고객사가 취소한 PO 라면 지우지 말고 품목을 「취소」로 남겨 두세요.`,
+              items: ls.slice(0, 5).map((l) => `${l.items?.std_code || l.raw_pn || '—'} · ${fmt(l.qty)}개${l.due_date ? ` · 납기 ${l.due_date}` : ''}${l.reply ? ` · 회신 ${l.reply}` : ''}`),
+              more: ls.length > 5 ? ls.length - 5 : 0,
+              okText: 'PO 삭제', danger: true,
+            })
+            if (ok) delMut.mutate(o.id)
+          }} />
       )}
       {upload && <OrderUpload meName={meName} onClose={() => setUpload(false)} onSaved={refresh} />}
       {entry && <OrderEntry mode={entry} meName={meName} onClose={() => setEntry(null)} onSaved={refresh} />}

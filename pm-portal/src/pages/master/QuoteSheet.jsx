@@ -11,6 +11,9 @@ import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsP
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
 import MarginSimulator from '../../components/MarginSimulator'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { useUndoSnack } from '../../components/ux/UndoSnack'
+import Spin from '../../components/ux/Spin'
 
 // 견적 라인의 하위품목 — 1,000행 기본 제한에 잘리지 않게 끝까지 받는다 (fetchAll)
 //   원가분석에서 제외 지정한 부품(quote_excluded)은 견적에서도 빠진다.
@@ -202,6 +205,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (!revOf && currency === LANG_CUR[lang]) switchCurrency(LANG_CUR[next])
   }
   const [err, setErr] = useState('')
+  const [ask, confirmEl] = useConfirm()
+  const snack = useUndoSnack(6000)
 
   const sellRate = num(cfg.sellRate) || 1250
   const qc = useQueryClient()
@@ -418,9 +423,20 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
   }))
 
-  const remove = (key) => setLines((ls) => ls.filter((l) => l.key !== key))
+  // 줄 빼기 — 묻지 않고 바로, 6초 동안 같은 자리로 되돌리기 (v4.104.0)
+  const remove = (key) => {
+    const i = lines.findIndex((l) => l.key === key)
+    if (i < 0) return
+    const gone = lines[i]
+    setLines((ls) => ls.filter((l) => l.key !== key))
+    snack.show(`${gone.std_code || gone.description || '빈 줄'} 줄을 뺐습니다`, () => {
+      setLines((ls) => (ls.some((l) => l.key === key) ? ls : [...ls.slice(0, i), gone, ...ls.slice(i)]))
+      return `${gone.std_code || '줄'} 다시 넣었습니다`
+    })
+  }
 
   function switchCurrency(next) {
+    snack.hide()   // 뺀 줄을 옛 통화 단가로 되살리지 않게 (v4.104.0)
     setCurrency(next)
     if (!isSales) return
     setLines((ls) => ls.map((l) => ({ ...l, unitPrice: linePrice(l, next, sellRate, mcfg) })))
@@ -521,6 +537,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   })
 
   async function loadDraft(id) {
+    snack.hide()   // 다른 견적을 불러오면 지난 「줄 되돌리기」는 닫는다
     const { data, error } = await supabase.from('pm_quote_drafts')
       .select('*').eq('id', id).maybeSingle()
     if (error || !data) { setErr('불러오기 실패: ' + (error?.message || '없는 항목')); return }
@@ -547,6 +564,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   // ── 지난 견적 불러와서 수정 (리비전) ─────────────────────────────
   //   제출했던 단가 · 표기를 그대로 가져온다. 단가는 다시 계산하지 않는다.
   async function loadRevision(quoteId) {
+    snack.hide()
     setRevLoading(true); setErr('')
     try {
       const { data: q, error: qErr } = await supabase.from('pm_quotes').select('*').eq('id', quoteId).maybeSingle()
@@ -601,7 +619,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (prefill.customerId && prefill.customerId !== customerId) return
     prefillDone.current = prefillKey
     ;(async () => {
-      setLines([]); setRevOf(null); setSavedNo('')
+      snack.hide(); setLines([]); setRevOf(null); setSavedNo('')
       if (prefill.title) setProjectName(prefill.title)
       setEtcCust(prefill.etcName || null); etcRef.current = prefill.etcName || null
       if (prefill.etcName) setIssuedTo(prefill.etcName)
@@ -615,9 +633,9 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (reviseReq?.id) loadRevision(reviseReq.id)
   }, [reviseKey])   // eslint-disable-line react-hooks/exhaustive-deps
 
-  function cancelRevision() {
-    if (!confirm('수정을 그만두고 화면을 비울까요? (원본 견적은 그대로입니다)')) return
-    setRevOf(null); setLines([]); setSavedNo(''); setErr('')
+  async function cancelRevision() {
+    if (!(await ask({ title: '수정을 그만두고 화면을 비울까요?', desc: `원본 견적(${revOf?.quote_no || ''})은 그대로이고, 지금 고친 내용만 사라집니다.`, okText: '그만두기', cancelText: '계속 수정' }))) return
+    snack.hide(); setRevOf(null); setLines([]); setSavedNo(''); setErr('')
   }
 
   const cfgMut = useMutation({
@@ -837,6 +855,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   return (
     <div className="quote-root space-y-3">
+      {snack.el}{confirmEl}
       <style>{`
         @media print {
           html, body { height:auto !important; overflow:visible !important; }
@@ -930,7 +949,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
         <button onClick={() => addByCode()} disabled={adding}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-          {adding ? '조회 중…' : '+ 추가'}
+          {adding ? <span className="inline-flex items-center gap-1.5"><Spin />조회 중…</span> : '+ 추가'}
         </button>
         <button onClick={() => setLines((ls) => [...ls, newLine()])}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
@@ -939,7 +958,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         <div className="flex-1" />
         <button onClick={() => draftMut.mutate()} disabled={draftMut.isPending || !lines.length}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
-          {draftMut.isPending ? '보관 중…' : draftId ? '📝 보관 갱신' : '📝 임시저장'}
+          {draftMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />보관 중…</span> : draftId ? '📝 보관 갱신' : '📝 임시저장'}
         </button>
         <button onClick={() => setDraftOpen(true)}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
@@ -947,7 +966,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </button>
         <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !lines.length}
           className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
-          {saveMut.isPending ? '저장 중…' : '💾 저장'}
+          {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '💾 저장'}
         </button>
         <button onClick={doPrint} disabled={!lines.length}
           className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">🖨 인쇄</button>
@@ -1453,7 +1472,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   </div>
                   <button onClick={() => loadDraft(d.id)}
                     className="shrink-0 px-2.5 py-1 text-[11px] font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">불러오기</button>
-                  <button onClick={() => { if (confirm(`「${d.title || '제목 없음'}」 을 보관함에서 지울까요?`)) draftDelMut.mutate(d.id) }}
+                  <button onClick={async () => { if (await ask({ title: `「${d.title || '제목 없음'}」 을 보관함에서 지울까요?`, desc: '임시저장해 둔 내용이 사라지고 되돌릴 수 없습니다. 저장(💾)한 견적은 견적 이력에 그대로 남습니다.', okText: '삭제', danger: true })) draftDelMut.mutate(d.id) }} data-draft-del
                     className="shrink-0 text-slate-300 hover:text-rose-500">✕</button>
                 </div>
               ))}

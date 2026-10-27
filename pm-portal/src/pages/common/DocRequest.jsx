@@ -9,6 +9,9 @@ import { DocRequestButton } from '../../components/DocRequestModal'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
 import { isLead } from '../../lib/workflow'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { useCoach } from '../../components/ux/CoachMarks'
 import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, kindLabel, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
 
 const Seg = ({ items, value, onChange, data }) => (
@@ -32,6 +35,7 @@ export default function DocRequest() {
   const [mail, setMail] = useState(false)
   const [note, setNote] = useState({})         // 받음 메모 (줄마다)
   const [busy, setBusy] = useState(false)
+  const [ask, confirmEl] = useConfirm()
   useEffect(() => { if (profile && !view) setView(seeAll ? 'inbox' : 'mine') }, [profile]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: rows = [], error, isLoading, refetch } = useQuery({ queryKey: ['docRequests', 'list'], queryFn: fetchDocRequests, retry: false })
@@ -63,7 +67,16 @@ export default function DocRequest() {
     catch (e) { toastError(e.message || String(e)) } finally { setBusy(false) }
   }
   const move = (r, to, msg) => act(() => moveDoc(r.id, to, to === 2 ? note[r.id] : msg), `${r.part_no} → ${DOC_STEPS[to]}`)
-  const cancel = (r) => { if (window.confirm(`${[r.part_no, kindLabel(r)].filter(Boolean).join(' ')} 요청을 취소할까요?`)) act(() => cancelDoc(r.id, '취소'), '취소했습니다') }
+  const cancel = async (r) => {
+    const ok = await ask({ title: `${[r.part_no, kindLabel(r)].filter(Boolean).join(' ')} 요청을 취소할까요?`, desc: '영업 목록에서 빠지고 「전체 (취소 포함)」에서만 보입니다. 같이 기다리던 부서가 있으면 그 부서도 더 기다리지 않게 됩니다.', okText: '요청 취소', cancelText: '그대로 두기', danger: true })
+    if (ok) act(() => cancelDoc(r.id, '취소'), '취소했습니다')
+  }
+  // 처음 여는 사람 안내 (v4.104.0)
+  const coach = useCoach('doc-request', [
+    { sel: '[data-doc-new]', title: '① 자료가 필요하면 요청', body: '도면 · BOM · 사양서 · CN 내역 등 고객사 자료가 필요하면 여기서 영업에 요청하세요. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.' },
+    { sel: '[data-doc-toolbar]', title: '② 내 요청 따라가기', body: '「우리 부서 요청」에서 처리 중 · 받음 · 끝을 골라 봅니다. 영업이 자료를 받아 올리면 「받음」으로 넘어오고 알림이 갑니다.' },
+    { sel: '[data-doc-steps]', title: '③ 받았으면 확인', body: '막대 4칸이 요청됨 → 고객사에 요청함 → 받음 → 확인 완료 입니다. 받은 자료를 확인하고 「✔ 확인」을 누르면 끝납니다.' },
+  ], !isLoading)
   async function copyMail() {
     const text = mailText(mailRows, mailCust)
     try { await navigator.clipboard.writeText(text); toastSuccess('요청 문구를 복사했습니다 — 메일에 붙여넣으세요') } catch { toastError('복사가 안 되는 브라우저입니다 — 아래 글을 직접 복사하세요') }
@@ -74,8 +87,10 @@ export default function DocRequest() {
     <div className="space-y-4" data-doc-page>
       <PageHead crumb="공통" title="📎 자료 요청"
         desc="도면 · BOM · 사양서 · 그 밖의 자료(「직접 입력」 — 예: CN 내역)가 필요하면 영업에 요청하세요. 영업이 고객사에 받아 올리면 요청한 부서로 알림이 갑니다. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.">
-        <DocRequestButton label="+ 자료 요청" className="px-3 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white" />
+        <button type="button" onClick={coach.start} data-coach-again className="px-2.5 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>
+        <span data-doc-new className="inline-flex"><DocRequestButton label="+ 자료 요청" className="px-3 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white" /></span>
       </PageHead>
+      {confirmEl}{coach.el}
 
       {error && <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-[13px] text-amber-800" data-doc-missing>{error.message}</div>}
 
@@ -117,7 +132,7 @@ export default function DocRequest() {
             {['고객사', '자료', '품번 · 품명', '요청 부서', '필요일', '진행', '받은 자료 · 메모', ''].map((h) => <th key={h} className="px-3 py-2 font-bold whitespace-nowrap">{h}</th>)}
           </tr></thead>
           <tbody>
-            {isLoading && <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">불러오는 중…</td></tr>}
+            {isLoading && <SkeletonRows cols={8} rows={6} two={[2]} />}
             {!isLoading && !list.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{view === 'mine' ? '우리 부서가 요청한 자료가 없습니다' : '요청이 없습니다'}</td></tr>}
             {list.map((r) => {
               const p = docPerms(profile, r, editable)

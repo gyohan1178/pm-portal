@@ -161,8 +161,17 @@ tr.pm-row-done > td, div.pm-row-done { animation: pm-row-done .9s ease-out both;
 .pm-flow-dash { stroke-dasharray: 5 4; animation: pmFlowDash .9s linear infinite; }
 @keyframes pmFlowDash { to { stroke-dashoffset: -9; } }
 
+/* 스켈레톤 · 되돌리기 스낵바 (v4.104.0) */
+.pm-skel { background: linear-gradient(90deg, #eef0f4 25%, #f7f8fa 37%, #eef0f4 63%); background-size: 400% 100%; animation: pmSkel 1.3s ease infinite; }
+@keyframes pmSkel { 0% { background-position: 100% 50% } 100% { background-position: 0 50% } }
+.pm-snack { animation: pmSnackIn .22s ease-out; }
+@keyframes pmSnackIn { from { opacity: 0; transform: translate(-50%, 12px) } to { opacity: 1; transform: translate(-50%, 0) } }
+.pm-snack-bar { width: 100%; animation: pmSnackBar linear forwards; }
+@keyframes pmSnackBar { from { width: 100% } to { width: 0 } }
+
 @media (prefers-reduced-motion: reduce) {
   .pm-flow-dash { animation: none !important; }
+  .pm-skel, .pm-snack { animation: none !important; }
   .pm-pop, .pm-chip-in, .pm-ring, .pm-dot, .pm-row-in, .pm-hero-flash, .pm-stamp, .pm-slide-in, .pm-late-blink, .pm-scan-in, .pm-big-pop, .pm-shake,
   tr.pm-row-done > td, div.pm-row-done { animation: none !important; }
   .pm-ring { display: none; }

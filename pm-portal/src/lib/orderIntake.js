@@ -769,12 +769,53 @@ export async function replyLines(lines, { reply, date, memo }, meName) {
     if (error) throw error
   }
   const orderIds = [...new Set(lines.map((l) => l.order_id))]
-  const { error } = await supabase.from('pm_order').update({ confirmed_at: now, confirmed_name: meName || null, updated_at: now }).in('id', orderIds).is('confirmed_at', null)
+  // 이번에 실제로 「확인」된 PO 만 돌려받는다 (되돌리기 때 다른 사람이 확인한 PO 를 건드리지 않게 · v4.104.0)
+  const { data: confirmedRows, error } = await supabase.from('pm_order').update({ confirmed_at: now, confirmed_name: meName || null, updated_at: now }).in('id', orderIds).is('confirmed_at', null).select('id')
   if (error) throw error
   logActivity('update', 'pm_order', poNosOf(lines), `회신 「${reply}」 ${ids.length}품목${date ? ` · 준비일 ${date}` : ''}`, null, custNameOf(lines))
   // 화면은 다시 불러오지 않고 이 값으로 바로 고친다 (v4.90.6 속도)
-  return { lines: ids.length, orders: orderIds.length, ids, patch, orderIds, head: { confirmed_at: now, confirmed_name: meName || null } }
+  return { lines: ids.length, orders: orderIds.length, ids, patch, orderIds, head: { confirmed_at: now, confirmed_name: meName || null }, confirmedIds: (confirmedRows || []).map((r) => r.id) }
 }
+
+// 되돌리기 (v4.104.0) — 회신 · 납품 표시 · 특이사항 확인을 하기 「전」 값으로 줄을 돌려놓는다
+//   prev: 바꾸기 전 줄들(화면에 있던 그대로) · fields: 돌려놓을 칸 · field/textOf: 변경 이력에 남길 이름 · 글
+//   같은 값끼리 묶어 한 번에 저장 → 반환 patches 로 화면 데이터만 고친다
+export async function restoreLineFields(prev, fields, meName, { field, textOf, label, unconfirm = [] }) {
+  // 지난 줄을 칸 일부만 받아 둔 상태(빠르게 열기)면 「전」 값을 모른다 → 비우지 않게 멈춘다
+  if ((prev || []).some((l) => l._slim)) throw new Error('이 줄은 전 값을 다 받지 못해 되돌릴 수 없습니다 — PO 상세를 다시 열어 직접 고쳐 주세요')
+  const now = new Date().toISOString()
+  const groups = new Map()
+  for (const l of prev || []) {
+    const v = Object.fromEntries(fields.map((f) => [f, l[f] ?? null]))
+    const k = JSON.stringify(v)
+    if (!groups.has(k)) groups.set(k, { v, ids: [] })
+    groups.get(k).ids.push(l.id)
+  }
+  const patches = new Map()
+  for (const { v, ids } of groups.values()) {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabase.from('pm_order_line').update({ ...v, updated_at: now }).in('id', ids.slice(i, i + 200))
+      if (error) throw error
+    }
+    ids.forEach((id) => patches.set(id, { ...v, updated_at: now }))
+  }
+  const logs = (prev || []).map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field, before_val: '(되돌림)', after_val: textOf ? textOf(l) : null, source: 'manual', changed_name: meName || null }))
+  for (let i = 0; i < logs.length; i += 500) {
+    const { error } = await supabase.from('pm_order_change').insert(logs.slice(i, i + 500))
+    if (error) throw error
+  }
+  // 회신 되돌림 — 이 회신으로 처음 「확인」된 PO 는 다시 미확인으로 (그 전에 이미 확인된 PO 는 그대로)
+  if (unconfirm.length) {
+    const { error } = await supabase.from('pm_order').update({ confirmed_at: null, confirmed_name: null, updated_at: now }).in('id', unconfirm)
+    if (error) throw error
+  }
+  if (prev?.length) logActivity('update', 'pm_order', poNosOf(prev), `${label} 되돌림 ${prev.length}품목`, null, custNameOf(prev))
+  return { patches, unconfirm }
+}
+export const REPLY_FIELDS = ['reply', 'reply_date', 'reply_memo', 'replied_name', 'replied_at']
+export const DLV_FIELDS = ['delivered_qty', 'delivered_at', 'sales_done_at']
+export const ODD_FIELDS = ['odd_ok', 'odd_ok_name', 'odd_ok_at']
+export const replyTextOf = (l) => replyText(l)
 
 // 활동 이력용 — 고른 줄들의 PO번호 · 고객사 (v4.90.3)
 const poNosOf = (ls) => { const n = [...new Set(ls.map((l) => l.o?.po_no).filter(Boolean))]; return n.length ? `${n.slice(0, 3).join(', ')}${n.length > 3 ? ` 외 ${n.length - 3}` : ''}` : null }

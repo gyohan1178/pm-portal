@@ -16,6 +16,12 @@ import { cutLabel } from '../../lib/requestCut'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { requestLabelRows, sendZplToPrinter } from '../../lib/requestLabel'
 import { downloadRequestExcel } from '../../lib/requestExcel'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { useUndoSnack } from '../../components/ux/UndoSnack'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
+import { useCoach } from '../../components/ux/CoachMarks'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -148,6 +154,10 @@ export default function MaterialRequest() {
   const [mkType, setMkType] = useState('normal') // normal 전장 / harness 하네스
   const assyTimer = useRef(null)
   const [busy, setBusy] = useState(false)
+  // v4.104.0 — 확인 창 · 되돌리기 · 빠진 칸 안내
+  const [ask, confirmEl] = useConfirm()
+  const snack = useUndoSnack(6000)
+  const [tried, setTried] = useState(false)     // 「요청 등록」을 한 번 누른 뒤부터 빠진 칸을 그 자리에 표시
 
   const { data: list = [], isLoading } = useQuery({
     queryKey: ['materialRequests', filter, mine, csFilter, deptFilter],
@@ -355,18 +365,30 @@ export default function MaterialRequest() {
     } finally { setBusy(false) }
   }
 
+  // 빠진 칸 — 한꺼번에 찾아 그 칸 아래에 적는다 (예전엔 위에 알림 하나씩)
+  const isCut = head.check_dept === '하네스팀' && head.req_kind === '절단'
+  const formErrs = () => {
+    const e = {}
+    const valid = rows.filter(r => (r.std_code || r.item_name) && Number(r.qty) > 0)
+    if (!head.requester_name.trim()) e.requester = '요청자 이름을 넣어 주세요'
+    if (!head.check_dept) e.dept = '어느 부서가 확인할지 골라 주세요'
+    else if (head.check_dept === '하네스팀' && !head.req_kind) e.kind = '제작 · 절단 · 자재 중 하나를 골라 주세요'
+    if (!head.purpose.trim()) e.purpose = '무엇에 쓰는지 적어 주세요 — 처리 순서를 정할 때 봅니다'
+    if (!valid.length) e.items = rows.some(r => r.std_code || r.item_name) ? '수량을 넣어 주세요' : '품목을 찾아 고르고 수량을 넣어 주세요 (못 찾으면 품명만 적어도 됩니다)'
+    else if (isCut && valid.some(r => !(Number(r.cut_mm) > 0))) e.cut = '절단은 품목마다 총 절단길이(mm)를 적어 주세요'
+    return e
+  }
+  const ferr = tried ? formErrs() : {}
+  const errCls = (k) => (ferr[k] ? ' !border-rose-400 ring-2 ring-rose-100' : '')
+  const FErr = ({ k }) => (ferr[k] ? <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error={k}>{ferr[k]}</p> : null)
+
   async function submit() {
     const valid = rows.filter(r => (r.std_code || r.item_name) && Number(r.qty) > 0)
-    if (!valid.length) { toastError('품목과 수량을 입력하세요'); return }
-    if (!head.purpose.trim()) { toastError('사용 목적을 입력하세요'); return }
-    if (!head.requester_name.trim()) { toastError('요청자를 입력하세요'); return }
-    if (!head.check_dept) { toastError('확인부서를 선택하세요'); return }
-    if (head.check_dept === '하네스팀' && !head.req_kind) {
-      toastError('요청 종류를 고르세요 (제작·절단)'); return
-    }
-    if (head.check_dept === '하네스팀' && head.req_kind === '절단'
-        && valid.some(r => !(Number(r.cut_mm) > 0))) {
-      toastError('절단은 품목마다 총 절단길이(mm)를 적어 주세요'); return
+    const errs = formErrs()
+    if (Object.keys(errs).length) {
+      setTried(true)
+      setTimeout(() => document.querySelector('[data-field-error]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 30)
+      return
     }
     setBusy(true)
     try {
@@ -393,6 +415,7 @@ export default function MaterialRequest() {
       toastSuccess(`${n(data)}건 요청 등록 — 구매자재팀에 전달됩니다`)
       setRows([emptyRow()])
       setHead({ urgency: '보통', purpose: '', product_code: '', product_name: '', unit_no: '', need_date: '', requester_name: '', check_dept: '', customer_code: '' })
+      setTried(false)
       setTab('list')
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['todoList'] }); qc.invalidateQueries({ queryKey: ['ctReqPending'] })
@@ -428,7 +451,12 @@ export default function MaterialRequest() {
     const msg = force
       ? `${what}을 강제 불출합니다.\n\n재고가 모자라도 진행하며, 재고가 음수가 됩니다.\n나중에 입고나 실사로 바로잡아야 합니다.\n\n계속할까요?`
       : `${what}을 불출 처리합니다.\n\n재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.`
-    if (!confirm(msg)) return
+    if (!(await ask({ title: force ? `${what}을 강제 불출할까요?` : `${what}을 불출 처리할까요?`,
+      desc: force ? '재고가 모자라도 진행해 재고가 마이너스가 됩니다. 실물은 있는데 입고 처리가 안 된 경우에만 쓰고, 나중에 입고나 실사로 바로잡아야 합니다.'
+        : '재고에서 실제로 빼고 출고 이력을 남깁니다. 재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.',
+      items: (only ? [only] : checked).slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${n(r.qty)}${r.unit || ''}${r.req_no ? ` · ${r.req_no}` : ''}`),
+      more: only ? 0 : Math.max(0, checked.length - 5),
+      okText: force ? '강제 불출' : '불출 처리', danger: force }))) return
     try {
       const { data, error } = await supabase.rpc('pm_request_issue',
         { p_ids: ids, p_force: force })
@@ -749,7 +777,8 @@ export default function MaterialRequest() {
       const { labels, skipped } = requestLabelRows(data || [], checked)
       if (!labels.length) { toastError(`출력할 라벨이 없습니다${skipped.length ? ` (${skipped.map(s => `${s.code || '-'} ${s.why}`).join(', ')})` : ''}`); return }
       const skipTxt = skipped.length ? `\n\n빠지는 줄 ${skipped.length}: ${skipped.slice(0, 5).map(s => `${s.no}. ${s.code || '-'} (${s.why})`).join(', ')}${skipped.length > 5 ? ' …' : ''}` : ''
-      if (!window.confirm(`라벨 ${labels.length}장을 ZM400 으로 출력할까요?\n\nNO 는 🖨 출력(요청서) 번호와 같습니다.${skipTxt}`)) return
+      if (!(await ask({ title: `라벨 ${labels.length}장을 ZM400 으로 출력할까요?`, desc: 'NO 는 🖨 출력(요청서) 번호와 같습니다.',
+        items: skipped.slice(0, 5).map(s => `빠짐 — ${s.no}. ${s.code || '-'} (${s.why})`), more: Math.max(0, skipped.length - 5), okText: '라벨 출력' }))) return
       await sendZplToPrinter(buildLabelZpl(labels))
       toastSuccess(`자재요청 라벨 ${labels.length}장 전송`)
     } catch (e) { toastError('라벨 출력 실패: ' + e.message) }
@@ -782,7 +811,7 @@ export default function MaterialRequest() {
   //   코드를 부여받는 흐름으로만 처리한다.
   async function needCode() {
     if (!checked.length) return
-    if (!confirm(`${checked.length}건에 기준코드 부여를 요청합니다.\n\n관제탑에 표시되며, 코드가 부여되면 다시 처리할 수 있습니다.`)) return
+    if (!(await ask({ title: `${checked.length}건에 기준코드 부여를 요청할까요?`, desc: '관제탑에 표시되며, 코드가 부여되면 다시 처리할 수 있습니다.', okText: '코드 부여 요청' }))) return
     try {
       const { data, error } = await supabase.rpc('pm_request_need_code',
         { p_ids: checked.map(r => r.id) })
@@ -801,7 +830,7 @@ export default function MaterialRequest() {
   // 반려 취소 — 잘못 반려한 건을 요청 상태로 되돌린다
   async function undoReject() {
     if (!checked.length) return
-    if (!confirm(`${checked.length}건을 요청 상태로 되돌립니다.\n\n이미 불출·발주된 건은 되돌아가지 않습니다.`)) return
+    if (!(await ask({ title: `${checked.length}건 반려를 취소할까요?`, desc: '요청 상태로 되돌리고 요청자에게 간 반려 알림도 지웁니다. 이미 불출 · 발주된 건은 되돌아가지 않습니다.', okText: '반려 취소' }))) return
     try {
       const { data, error } = await supabase.rpc('pm_request_undo',
         { p_ids: checked.map(r => r.id) })
@@ -884,8 +913,12 @@ export default function MaterialRequest() {
             + `실물이 이미 나갔다면 재고가 실제보다 많아집니다.\n\n`
           : '')
       + '계속할까요?'
-    if (!confirm(msg)) return
-    const memo = prompt('되돌리는 사유 (선택)', '실수로 처리') ?? ''
+    const m = await ask({ title: `${done.length}건을 확인 단계로 되돌릴까요?`,
+      desc: issued.length ? `⚠ 불출된 ${issued.length}건은 출고를 지우고 재고를 되돌립니다. 실물이 이미 나갔다면 재고가 실제보다 많아집니다.` : '발주 담기 · 처리 완료 표시가 풀리고 확인 단계로 돌아갑니다.',
+      items: done.slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${r.handle_type || ''} ${n(r.qty)}${r.unit || ''}`), more: Math.max(0, done.length - 5),
+      okText: '되돌리기', danger: issued.length > 0, input: { label: '되돌리는 사유 (선택)', value: '실수로 처리' } })
+    if (!m) return
+    const memo = m.value
     try {
       const { data, error } = await supabase.rpc('pm_request_undo_done',
         { p_ids: done.map(r => r.id), p_memo: memo.trim() || null })
@@ -903,7 +936,7 @@ export default function MaterialRequest() {
 
   // 요청자 본인 취소
   async function cancelMine(id) {
-    if (!confirm('이 요청을 취소할까요?')) return
+    if (!(await ask({ title: '이 요청을 취소할까요?', desc: '구매자재팀 목록에서 빠지고 되돌릴 수 없습니다. 다시 필요하면 새로 요청하세요.', okText: '요청 취소', cancelText: '그대로 두기', danger: true }))) return
     try {
       const { data, error } = await supabase.rpc('pm_request_cancel', { p_id: id })
       if (error) throw error
@@ -917,9 +950,19 @@ export default function MaterialRequest() {
 
   async function changeStatus(status, type) {
     if (!checked.length) return
-    const memo = (status === '반려' || type)
-      ? prompt(status === '반려' ? '반려 사유' : `${type} 처리 메모 (선택)`) : null
-    if (status === '반려' && memo === null) return
+    let memo = null
+    if (status === '반려' || type) {
+      const m = await ask(status === '반려'
+        ? { title: `${checked.length}건을 반려할까요?`, desc: '요청자에게 「반려 — 사유」 알림이 갑니다. 사유를 보고 다시 요청할 수 있게 구체적으로 적어 주세요.',
+            items: checked.slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${n(r.qty)}${r.unit || ''}${r.requester ? ` · ${r.requester}` : ''}`), more: Math.max(0, checked.length - 5),
+            okText: '반려', danger: true, input: { label: '반려 사유', required: true, requiredMsg: '반려 사유를 적어 주세요 — 요청자에게 그대로 보입니다', placeholder: '예: 같은 품목 MR-261020-03 으로 이미 불출됨' } }
+        : { title: `${type} 처리`, okText: '처리', input: { label: `${type} 처리 메모 (선택)` } })
+      if (!m) return
+      memo = m.value
+    }
+    // 되돌리기용 — 반려만 · 「요청」이고 처리자도 없던 줄만 (반려 취소와 같은 길로 정확히 원래대로 돌아가는 경우)
+    //   확인은 되돌리기를 두지 않는다 — 6초 안에 그 줄이 불출되면 되돌릴 때 불출 건까지 요청으로 돌아갈 수 있다
+    const before = checked.map(r => ({ id: r.id, status: r.status, handler: r.handler }))
     try {
       const { data, error } = await supabase.rpc('pm_request_update', {
         p_ids: checked.map(r => r.id), p_status: status,
@@ -932,9 +975,19 @@ export default function MaterialRequest() {
       if (skip > 0) {
         // 다른 담당자가 먼저 처리한 건이 있으면 알린다
         toastError(`${n(upd)}건 처리 · ${r?.skipped_note || `${skip}건은 이미 처리되어 건너뜀`}`)
-      } else {
-        toastSuccess(`${n(upd)}건 → ${status}`)
       }
+      const ids = before.map(b => b.id)
+      const canUndo = status === '반려' && upd > 0 && skip === 0 && before.every(b => b.status === '요청' && !b.handler)
+      if (canUndo) {
+        snack.show(`${n(upd)}건 → ${status}`, async () => {
+          const { error: e1 } = await supabase.rpc('pm_request_undo', { p_ids: ids })
+          if (e1) throw e1
+          const { error: e2 } = await supabase.rpc('pm_request_notice_seen', { p_ids: ids, p_clear: true })
+          if (e2) throw e2
+          ;['materialRequests', 'requestNotice', 'menuAlerts', 'todoList', 'ctReqPending'].forEach(k => qc.invalidateQueries({ queryKey: [k] }))
+          return `${n(upd)}건 「요청」 상태로 되돌렸습니다`
+        })
+      } else if (skip === 0) toastSuccess(`${n(upd)}건 → ${status}`)
       setSel({})
       qc.invalidateQueries({ queryKey: ['materialRequests'] })
       qc.invalidateQueries({ queryKey: ['requestNotice'] })
@@ -945,8 +998,16 @@ export default function MaterialRequest() {
     }
   }
 
+  // 처음 여는 사람 안내 (v4.104.0) — 요청하는 사람 · 처리하는 사람 둘 다
+  const coach = useCoach('material-request', [
+    ...(canReq ? [{ sel: '[data-mr-tab="new"]', title: '① 자재가 필요하면 새 요청', body: '품번 · 품명 · 제조사품번으로 찾아 고르고 수량 · 사용 목적을 적으면 구매자재팀에 바로 갑니다. 품목을 못 찾아도 품명만 적어 요청할 수 있습니다.' }] : []),
+    { sel: '[data-req-kpi]', title: canReq ? '② 급한 것부터' : '① 급한 것부터', body: '필요일 지남 · 불출 예정일 지남 · 미배정 · 긴급을 누르면 그 요청만 봅니다. ⓘ 에 세는 기준이 있습니다.' },
+    { sel: '[data-mr-tab="hist"]', title: canReq ? '③ 지난 요청' : '② 지난 요청', body: '끝난 요청 · 불출 이력은 「📊 이력」에서 기간 · 품번으로 찾고 엑셀로 받을 수 있습니다.' },
+  ], tab === 'list' && !isLoading)
+
   return (
     <div className="space-y-4">
+      {confirmEl}{snack.el}{coach.el}
       <PageHead crumb="현장" title="🙋 자재 요청"
         desc={canEdit
           ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
@@ -957,7 +1018,7 @@ export default function MaterialRequest() {
             ['hist', '📊 이력'],
             ...(canEdit && pendingCodes.length ? [['code', `🏷 코드 부여 ${pendingCodes.length}`]] : []),
            ].map(([k, l]) => (
-            <button key={k} onClick={() => setTab(k)}
+            <button key={k} onClick={() => setTab(k)} data-mr-tab={k}
               className={`px-3 py-1.5 text-xs font-bold rounded-lg ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>
               {l}
             </button>
@@ -1044,8 +1105,9 @@ export default function MaterialRequest() {
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">요청자 *</label>
                 <input value={head.requester_name}
                   onChange={e => setHead(h => ({ ...h, requester_name: e.target.value }))}
-                  placeholder="이름"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                  placeholder="이름" data-mr-requester
+                  className={'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg' + errCls('requester')} />
+                <FErr k="requester" />
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">확인부서 *</label>
@@ -1060,6 +1122,7 @@ export default function MaterialRequest() {
                     </button>
                   ))}
                 </div>
+                <FErr k="dept" />
               </div>
               {/* 하네스팀은 만들어 달라는 것과 잘라 달라는 것이 다르다 */}
               {head.check_dept === '하네스팀' && (
@@ -1082,6 +1145,7 @@ export default function MaterialRequest() {
                       </button>
                     ))}
                   </div>
+                  <FErr k="kind" />
                   <p className="text-[11px] text-slate-400 mt-1">
                     제작 = 만들어 주세요 · 절단 = 잘라만 주세요 · 자재 = 자재만 주세요
                   </p>
@@ -1108,8 +1172,9 @@ export default function MaterialRequest() {
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">사용 목적 · 작업 내용 *</label>
                 <input value={head.purpose} onChange={e => setHead(h => ({ ...h, purpose: e.target.value }))}
-                  placeholder="예: LEB PD 조립 중 케이블 파손 교체"
-                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+                  placeholder="예: LEB PD 조립 중 케이블 파손 교체" data-mr-purpose
+                  className={'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg' + errCls('purpose')} />
+                <FErr k="purpose" />
               </div>
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">대상 제품 (선택)</label>
@@ -1150,7 +1215,7 @@ export default function MaterialRequest() {
           {/* 품목 */}
           <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-xs font-bold text-slate-500">③ 무엇이 얼마나</p>
+              <div><p className="text-xs font-bold text-slate-500">③ 무엇이 얼마나</p><FErr k="items" /><FErr k="cut" /></div>
               <div className="flex items-center gap-1.5">
                 <button onClick={() => setAssyOpen(true)}
                   title="ASSY 번호로 그 BOM 부품을 한꺼번에 가져옵니다"
@@ -1227,7 +1292,7 @@ export default function MaterialRequest() {
                           <input type="number" inputMode="decimal" min="0" value={r[f] || ''}
                             onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, [f]: e.target.value } : x))}
                             placeholder="mm"
-                            className={`${c} px-2 py-2 text-sm text-right font-bold border rounded-lg`} />
+                            className={`${c} px-2 py-2 text-sm text-right font-bold border rounded-lg${ferr.cut && f === 'cut_mm' && (r.std_code || r.item_name) && !(Number(r.cut_mm) > 0) ? ' !border-rose-500 ring-2 ring-rose-100' : ''}`} />
                         </label>
                       ))}
                       <span className="text-[11px] text-slate-400 pb-2.5">mm</span>
@@ -1236,7 +1301,7 @@ export default function MaterialRequest() {
                   <input type="number" inputMode="decimal" value={r.qty}
                     onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, qty: e.target.value } : x))}
                     placeholder="수량"
-                    className={`w-24 px-2 py-2 text-sm text-right font-bold border border-slate-200 rounded-lg ${head.check_dept === '하네스팀' && head.req_kind === '절단' ? 'mt-[15px]' : ''}`} />
+                    className={`w-24 px-2 py-2 text-sm text-right font-bold border border-slate-200 rounded-lg${ferr.items && (r.std_code || r.item_name) && !(Number(r.qty) > 0) ? ' !border-rose-400 ring-2 ring-rose-100' : ''} ${head.check_dept === '하네스팀' && head.req_kind === '절단' ? 'mt-[15px]' : ''}`} />
                   <span className={`text-xs text-slate-400 pt-2.5 w-8 ${head.check_dept === '하네스팀' && head.req_kind === '절단' ? 'mt-[15px]' : ''}`}>{r.unit}</span>
                   {rows.length > 1 && (
                     <button onClick={() => setRows(v => v.filter((_, k) => k !== i))}
@@ -1258,9 +1323,9 @@ export default function MaterialRequest() {
             ))}
           </div>
 
-          <button onClick={submit} disabled={busy}
+          <button onClick={submit} disabled={busy} data-mr-submit
             className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '등록 중…' : '요청 등록'}
+            {busy ? <span className="inline-flex items-center gap-2"><Spin />등록 중…</span> : '요청 등록'}
           </button>
           <p className="text-[11px] text-slate-400 text-center">
             등록하면 구매자재팀 관제탑에 알림으로 표시됩니다.
@@ -1532,14 +1597,14 @@ export default function MaterialRequest() {
           {liveTab && (
             <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-2.5" data-req-kpi>
               {[
-                ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400'],
-                ['readyLate',  '📦 불출 예정일 지남', '주겠다고 한 날이 지났는데 아직 안 나감', 'border-amber-200 bg-amber-50 text-amber-800',  'ring-amber-400'],
-                ['unassigned', '🙅 미배정',           '처리자가 아직 없는 요청',                'border-sky-200 bg-sky-50 text-sky-800',        'ring-sky-400'],
-                ['urgent',     '🚨 긴급',             '요청자가 긴급으로 올린 것',              'border-slate-200 bg-white text-slate-700',     'ring-slate-400'],
-              ].map(([k, label, note, cls, ring]) => (
+                ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400', '아직 처리 안 끝난 품목이 있는 요청 중, 요청서의 필요일이 오늘보다 앞인 것 (요청서 단위로 셉니다).'],
+                ['readyLate',  '📦 불출 예정일 지남', '주겠다고 한 날이 지났는데 아직 안 나감', 'border-amber-200 bg-amber-50 text-amber-800',  'ring-amber-400', '구매자재가 「📅 불출 가능일」로 회신한 날이 지났는데 아직 불출 · 발주가 안 된 품목이 있는 요청.'],
+                ['unassigned', '🙅 미배정',           '처리자가 아직 없는 요청',                'border-sky-200 bg-sky-50 text-sky-800',        'ring-sky-400', '진행 중인데 품목 어느 줄에도 처리자가 정해지지 않은 요청. 「👤 처리자 배정」으로 나눠 맡으세요.'],
+                ['urgent',     '🚨 긴급',             '요청자가 긴급으로 올린 것',              'border-slate-200 bg-white text-slate-700',     'ring-slate-400', '요청자가 긴급도를 「긴급」으로 고른 진행 중 요청. 필요일과 상관없이 맨 앞 구간에 나옵니다.'],
+              ].map(([k, label, note, cls, ring, tip]) => (
                 <button key={k} data-kpi={k} onClick={() => { setKpi(v => (v === k ? null : k)); setSel({}) }}
                   className={`text-left rounded-2xl border px-4 py-3 transition-shadow ${cls} ${kpi === k ? `ring-2 ${ring} shadow-sm` : 'hover:shadow-sm'}`}>
-                  <p className="text-xs font-bold">{label}</p>
+                  <p className="text-xs font-bold flex items-center gap-1">{label}<InfoTip text={tip} align={k === 'urgent' || k === 'unassigned' ? 'right' : 'left'} /></p>
                   <p className="text-2xl font-extrabold leading-tight">{n(reqView.counts[k])}<span className="text-xs font-bold ml-1">건</span></p>
                   <p className="text-[11px] opacity-80">{note}{kpi === k ? ' · 보는 중' : ''}</p>
                 </button>
@@ -1613,17 +1678,16 @@ export default function MaterialRequest() {
                   📅 불출 가능일
                 </button>
                 {handlers.length > 0 && (
-                  <select data-assign-bulk value="" onChange={e => {
+                  <select data-assign-bulk value="" onChange={async e => {
                       const to = e.target.value; if (!to) return
                       const open = checked.filter(r => !['완료', '반려'].includes(r.status))
                       const nm = handlers.find(h => h.id === to)?.name || ''
                       const has = open.filter(r => r.handler && r.handler !== nm)
                       // 처리자가 이미 있는 줄이 섞여 있으면 바꿀지 묻는다 — 아니오면 빈 줄만
-                      if (has.length && window.confirm(`고른 줄 중 ${n(has.length)}줄은 이미 처리자가 있습니다 (${[...new Set(has.map(r => r.handler))].join(' · ')}).\n\n이 줄들도 ${nm} (으)로 바꿀까요?\n(취소 = 처리자가 비어 있는 줄만 배정)`)) {
-                        assignHandler(open.map(r => r.id), to, true)
-                      } else {
-                        assignHandler(open.filter(r => !r.handler).map(r => r.id), to)
-                      }
+                      const all = has.length ? await ask({ title: `이미 처리자가 있는 ${n(has.length)}줄도 ${nm} (으)로 바꿀까요?`, desc: `지금 처리자: ${[...new Set(has.map(r => r.handler))].join(' · ')} — 창 바깥을 누르거나 Esc 면 아무것도 안 바꿉니다`, okText: `모두 ${nm}`, cancelText: '빈 줄만 배정' }) : false
+                      if (all === null) return   // 창을 그냥 닫음 = 그만두기
+                      if (all) assignHandler(open.map(r => r.id), to, true)
+                      else assignHandler(open.filter(r => !r.handler).map(r => r.id), to)
                     }}
                     title="고른 요청을 그 사람에게 배정합니다 — 이미 처리자가 있는 줄은 바꿀지 물어봅니다"
                     className="px-2 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">
@@ -1636,7 +1700,7 @@ export default function MaterialRequest() {
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50">
                   🔀 부서 변경
                 </button>
-                <button onClick={() => changeStatus('확인')}
+                <button onClick={() => changeStatus('확인')} data-mr-confirm
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50">확인</button>
                 <button onClick={() => doIssue(false)}
                   title="재고에서 실제로 차감하고 출고 이력을 남깁니다"
@@ -1654,7 +1718,7 @@ export default function MaterialRequest() {
                     🏷 코드 부여 요청
                   </button>
                 )}
-                <button onClick={() => changeStatus('반려')}
+                <button onClick={() => changeStatus('반려')} data-mr-reject
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">반려</button>
                 {checked.some(r => r.status === '반려') && (
                   <button onClick={undoReject}
@@ -1723,7 +1787,16 @@ export default function MaterialRequest() {
             </div>
           )}
 
-          {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
+          {isLoading && (
+            <div className="space-y-2" data-mr-loading>
+              {[0, 1, 2, 3].map(i => (
+                <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2" data-skeleton>
+                  <div className="flex items-center gap-2"><SkelBar w={16} h={16} /><SkelBar w={110} h={14} /><SkelBar w={60} h={14} /><SkelBar w={80} h={11} className="ml-auto" /></div>
+                  <SkelBar w={`${60 - i * 8}%`} h={11} /><SkelBar w="35%" h={9} />
+                </div>
+              ))}
+            </div>
+          )}
           {!isLoading && !list.length && (
             <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
               <p className="text-3xl mb-2">🙋</p>
@@ -1849,12 +1922,12 @@ export default function MaterialRequest() {
                                   <span className="inline-flex items-center gap-1">
                                     <span className="font-semibold text-slate-500">처리</span>
                                     <select data-reassign value={handlers.find(hh => hh.name === hd)?.id || ''} onClick={e => e.stopPropagation()}
-                                      onChange={e => {
+                                      onChange={async e => {
                                         const to = e.target.value
                                         const nm = handlers.find(hh => hh.id === to)?.name
                                         if (!to || (hs.length <= 1 && nm === hd)) return
                                         // 품목마다 처리자가 다를 수 있다 — 지금 처리자를 모두 보여 주고 묻는다 (2026-10-08)
-                                        if (!window.confirm(`${h.req_no} 처리자를 ${hs.length ? hs.join(' · ') : hd} → ${nm} (으)로 바꿀까요?\n열린 품목 ${liveIt.length}줄이 모두 ${nm} 담당이 됩니다.`)) return
+                                        if (!(await ask({ title: `${h.req_no} 처리자를 ${nm} (으)로 바꿀까요?`, desc: `지금 ${hs.length ? hs.join(' · ') : hd} → ${nm}. 열린 품목 ${liveIt.length}줄이 모두 ${nm} 담당이 됩니다.`, okText: '바꾸기' }))) return
                                         assignHandler(liveIt.map(x => x.id), to, true)
                                       }}
                                       title="눌러서 처리자를 바꿉니다"
@@ -2197,7 +2270,11 @@ export default function MaterialRequest() {
             </button>
           </div>
 
-          {hBusy && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
+          {hBusy && (
+            <div className="rounded-xl border border-slate-200 bg-white overflow-hidden" data-mr-hist-loading>
+              {[0, 1, 2, 3, 4, 5].map(i => <div key={i} className="flex items-center gap-4 px-3 py-3 border-t border-slate-100 first:border-0" data-skeleton><SkelBar w={70} h={11} /><SkelBar w={90} h={11} /><SkelBar w="30%" h={11} /><SkelBar w={50} h={11} className="ml-auto" /></div>)}
+            </div>
+          )}
           {!hBusy && !histRows.length && (
             <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
               <p className="text-3xl mb-2">📊</p>

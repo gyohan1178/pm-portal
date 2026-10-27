@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { Stepper } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
@@ -523,6 +525,9 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
         </div>
 
         <div className="p-5 overflow-y-auto space-y-4">
+          {/* 지금 어디쯤인지 (v4.104.0) — 적용 뒤에는 rows · diff 가 비워지고 result 만 남는다 */}
+          <Stepper steps={['엑셀 고르기', '변경 감지 분석', '확인', '적용']}
+            cur={result && !rows.length ? 4 : !rows.length ? 0 : !diff ? 1 : applyMut.isPending ? 3 : 2} />
           {result && warns.length > 0 && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700 font-semibold space-y-1">
               {warns.map((w, i) => <div key={i}>⚠ {w}</div>)}
@@ -553,8 +558,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
 
           {rows.length > 0 && !diff && (
             <button onClick={() => analyzeMut.mutate()} disabled={analyzeMut.isPending}
-              className="w-full py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {analyzeMut.isPending ? '분석 중...' : '변경 감지 분석'}
+              className="w-full py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 inline-flex items-center justify-center gap-2">
+              {analyzeMut.isPending ? <><Spin />분석 중... (수주대장 · 생산관리까지 비교)</> : '변경 감지 분석'}
             </button>
           )}
 
@@ -742,8 +747,8 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
               )}
 
               <button onClick={() => applyMut.mutate()} disabled={applyMut.isPending || (diff.news.length === 0 && diff.changes.length === 0 && (diff.disappeared?.length || 0) === 0 && (diff.priceBackfill?.length || 0) === 0 && (diff.planUpd?.length || 0) === 0 && !(diff.ordPv && (diff.ordPv.newPos.length || diff.ordPv.upd.length || diff.ordPv.add.length)))}
-                className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
-                {applyMut.isPending ? '적용 중...' : `적용 (신규 ${diff.news.length} · 변경 ${diff.changes.length})`}
+                className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40 inline-flex items-center justify-center gap-2">
+                {applyMut.isPending ? <><Spin />적용 중... 창을 닫지 마세요</> : `적용 (신규 ${diff.news.length} · 변경 ${diff.changes.length})`}
               </button>
             </>
           )}

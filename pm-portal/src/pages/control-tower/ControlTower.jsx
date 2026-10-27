@@ -7,6 +7,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { fetchControlTowerData } from '../../lib/controlTowerData'
 import { computeControlTower } from '../../lib/controlTower'
 import { useMyProfile, canSeeFlow } from '../../hooks/useProfile'
+import { SkelBar } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 const CUST = [
   { code: 'ax', name: 'AXCELIS', color: '#8b5cf6' },
@@ -135,7 +138,16 @@ export default function ControlTower({ scope = 'ax' }) {
     if (fn) nav(fn(cs))
   }
 
-  if (isLoading) return <div className="text-center py-16 text-slate-400 text-sm">관제 데이터를 불러오는 중...</div>
+  // 받는 동안 — 글자 대신 카드 · 목록 모양 먼저 (v4.104.0)
+  if (isLoading) return (
+    <div className="space-y-5" data-ct-loading>
+      <AnalysisTabs />
+      <div><SkelBar w={180} h={20} /><SkelBar w={320} h={11} className="mt-2" /></div>
+      {isMaster && <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">{[0, 1, 2, 3].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2" data-skeleton><SkelBar w={90} h={14} /><SkelBar w="70%" h={10} /><SkelBar w="50%" h={10} /></div>)}</div>}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="rounded-xl border-2 border-slate-100 bg-white p-2.5 space-y-1.5" data-skeleton><SkelBar w={50} h={9} /><SkelBar w={36} h={22} /><SkelBar w={44} h={8} /></div>)}</div>
+      <div className="rounded-xl border border-slate-200 bg-white">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="flex items-center gap-3 px-3 py-2.5 border-b border-slate-50 last:border-0" data-skeleton><SkelBar w={14} h={12} /><SkelBar w={44} h={14} /><SkelBar w={90} h={11} /><SkelBar w="40%" h={11} /></div>)}</div>
+    </div>
+  )
   if (!ct) return <div className="text-center py-16 text-slate-300 text-sm">데이터가 없습니다</div>
 
   const k = ct.kpi
@@ -160,7 +172,7 @@ export default function ControlTower({ scope = 'ax' }) {
         <button onClick={refreshAll} disabled={refreshing}
           title="부족자재를 다시 계산합니다 (몇 초 걸립니다)"
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50 disabled:opacity-40">
-          {refreshing ? '계산 중…' : '↻ 다시 계산'}
+          {refreshing ? <><Spin />계산 중…</> : '↻ 다시 계산'}
         </button>
         {canSeeFlow(me) && <button onClick={() => nav('/flow')} data-ct-flow
           className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">
@@ -212,12 +224,12 @@ export default function ControlTower({ scope = 'ax' }) {
         {/* 구매·자재만 남긴다. 담당자들이 각자 화면을 갖게 되면서
             생산·영업 항목은 그쪽에서 보는 편이 낫다. */}
         {[
-          { v: reqPending,    l: '자재 요청',  s: '처리 대기',   t: 'red',    link: 'request' },
-          { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound' },
-          { v: k.inboundSoon, l: '입고 예정',  s: '2주 안',      t: 'green',  link: 'inbound' },
-          { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short' },
-          { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'yellow', link: 'short' },
-          { v: lotAlert,      l: '로트 기한',  s: '만료·임박',   t: 'yellow', link: 'lot' },
+          { v: reqPending,    l: '자재 요청',  s: '처리 대기',   t: 'red',    link: 'request', tip: '최근 180일 자재 요청 중 상태가 요청 · 코드대기 · 확인인 건 (불출 준비 · 완료 · 반려는 빠짐).' },
+          { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound', tip: '구매발주 약속 납기가 오늘보다 앞인데 아직 남은 수량이 있는 발주 줄.' },
+          { v: k.inboundSoon, l: '입고 예정',  s: '2주 안',      t: 'green',  link: 'inbound', tip: '오늘부터 14일 안에 들어올 발주 줄 (협력사 변경 납기가 있으면 그 날짜 기준). 자리를 미리 비워 두세요.' },
+          { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short', tip: '부족자재 계산에서 재고가 마이너스가 되는 달까지 남은 기간이 (리드타임 + 1개월) 안인 품목 — 지금 발주해야 맞출 수 있음.' },
+          { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'yellow', link: 'short', tip: '부족자재 계산에서 3개월 안에 예상 재고가 마이너스가 되는 품목. 「↻ 다시 계산」으로 최신으로 맞출 수 있습니다.' },
+          { v: lotAlert,      l: '로트 기한',  s: '만료·임박',   t: 'yellow', link: 'lot', tip: '로트 관리에서 사용 기한이 지났거나 다가온 로트가 있는 품목 수.' },
         ].map((x, i) => {
           const tone = x.v === 0
             ? 'border-slate-200 bg-white text-slate-300'
@@ -225,9 +237,9 @@ export default function ControlTower({ scope = 'ax' }) {
             : x.t === 'yellow' ? 'border-amber-300 bg-amber-50 text-amber-700'
             : 'border-emerald-200 bg-emerald-50 text-emerald-700'
           return (
-            <button key={i} onClick={() => goLink({ link: x.link })}
+            <button key={i} onClick={() => goLink({ link: x.link })} data-ct-kpi={x.l}
               className={`rounded-xl border-2 p-2.5 text-left transition-all hover:shadow-md ${tone}`}>
-              <p className="text-[10px] font-bold opacity-70 leading-tight">{x.l}</p>
+              <p className="text-[10px] font-bold leading-tight flex items-center gap-1"><span className="opacity-70">{x.l}</span>{x.tip && <InfoTip text={x.tip} align={i >= 3 ? 'right' : 'left'} />}</p>
               <p className="text-2xl font-bold leading-none mt-0.5">{x.v}</p>
               {x.s && <p className="text-[9px] opacity-60 mt-0.5 leading-tight">{x.s}</p>}
             </button>

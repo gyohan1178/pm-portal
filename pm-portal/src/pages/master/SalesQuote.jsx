@@ -9,6 +9,7 @@ import QuoteSheet from './QuoteSheet'
 import QuoteHistory from './QuoteHistory'
 import RfqBoard from './RfqBoard'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
+import { useCoach } from '../../components/ux/CoachMarks'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 
@@ -25,6 +26,12 @@ export default function SalesQuote() {
   const [reviseReq, setReviseReq] = useState(null)
   const code = csCode || primaryCsCode(profile)
   const { data: cs } = useCustomer(code)
+  // 처음 여는 사람 안내 (v4.104.0) — 접수 → 견적 작성 → 이력 순서
+  const coach = useCoach('sales-quote', [
+    { sel: '[data-rfq-new]', title: '① 견적 요청 접수', body: '고객사 견적 요청이 오면 먼저 접수하세요. 품번 · 수량을 붙여넣으면 BOM · 단가가 있는지 바로 점검합니다.' },
+    { sel: '[data-rfq-next]', title: '② 다음 할 일', body: '줄마다 지금 해야 할 일이 버튼으로 보입니다 — BOM 올리기 · 단가 요청 · 견적 작성. 단가가 비면 「구매자재에 단가 요청」, 준비되면 「견적 작성」이 나옵니다.' },
+    { sel: '[data-sq-tab="history"]', title: '③ 제출한 견적', body: '견적서를 저장하면 견적 이력에 남고, 같은 품번을 다시 견적할 때 지난 단가를 참고할 수 있습니다.' },
+  ], tab === 'rfq')
 
   const [buyRate, setBuyRate] = useState(DEFAULT_CFG.buyRate)
   const [sellRate, setSellRate] = useState(DEFAULT_CFG.sellRate)
@@ -55,6 +62,7 @@ export default function SalesQuote() {
 
   return (
     <div className="space-y-4">
+      {coach.el}
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
@@ -65,12 +73,13 @@ export default function SalesQuote() {
         <div className="flex items-center gap-2">
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {[['rfq', '📥 견적 접수 현황'], ['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
-              <button key={k} onClick={() => { setTab(k); if (k === 'history') setReviseReq(null) }}
+              <button key={k} data-sq-tab={k} onClick={() => { setTab(k); if (k === 'history') setReviseReq(null) }}
                 className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                 {l}
               </button>
             ))}
           </div>
+          {tab === 'rfq' && <button type="button" onClick={coach.start} data-coach-again className="px-2.5 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>}
           {tab !== 'rfq' && <select value={code} onChange={(e) => setCsCode(e.target.value)}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
             {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}

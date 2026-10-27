@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom'
 import { useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit } from '../hooks/useProfile'
 import { toastError, toastSuccess } from '../lib/toast'
+import Spin from './ux/Spin'
 import { todayISO } from '../lib/utils'
 import { DOC_KINDS, KIND_SHOW, DOC_DEPTS, DOC_CUSTOMERS, custName, guessCustomer, lookupItem, findOpenSame, createDocRequest } from '../lib/docRequest'
 
@@ -134,7 +135,7 @@ export default function DocRequestModal({ preset = {}, onClose }) {
         <div className="flex justify-end gap-2 pt-1">
           <button type="button" onClick={onClose} className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-600">닫기</button>
           <button type="button" onClick={submit} disabled={busy || !editable || already} data-doc-submit
-            className="px-4 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white disabled:opacity-50">{!editable ? '요청 권한 없음' : same && !already ? '같이 기다리기' : '영업에 요청'}</button>
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white disabled:opacity-50">{busy && <Spin />}{!editable ? '요청 권한 없음' : same && !already ? '같이 기다리기' : '영업에 요청'}</button>
         </div>
       </div>
     </div>
