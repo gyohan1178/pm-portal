@@ -130,8 +130,6 @@ const PO_COLS = [
   {key:'std_code',      label:'기준코드·품명', defaultWidth:150},
   {key:'mfg',           label:'제조사·품번', defaultWidth:120},
   {key:'type',          label:'구분',     defaultWidth:72},
-  {key:'parent',        label:'상위품목', defaultWidth:84},
-  {key:'lt',            label:'LT',       defaultWidth:45},
   {key:'qty_ordered',   label:'발주량',   defaultWidth:60},
   {key:'qty_received',  label:'입고',     defaultWidth:50},
   {key:'qty_remaining', label:'미입고',   defaultWidth:55},
@@ -1539,8 +1537,6 @@ export default function PurchasePage() {
                             <div className="font-mono text-[11px] text-slate-400 truncate">{p.items?.manufacturer_code||''}</div>
                           </td>
                           <td className="px-3 py-2"><span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${PROC_CATS.has(catOf(p.items))?'bg-violet-50 text-violet-700':'bg-blue-50 text-blue-600'}`}>{catOf(p.items)}</span></td>
-                          <td className="px-3 py-2 font-mono text-xs text-slate-400 overflow-hidden truncate">{p.projects?.code||'-'}</td>
-                          <td className="px-3 py-2 text-slate-500">{p.items?.lt_weeks?`${p.items.lt_weeks}W`:'-'}</td>
                           <td className="px-3 py-2 text-right font-semibold text-slate-700">{p.qty_ordered}</td>
                           <td className="px-3 py-2 text-right text-emerald-600">{p.qty_received}</td>
                           <td className="px-3 py-2 text-right font-bold text-slate-900">{p.qty_remaining}</td>

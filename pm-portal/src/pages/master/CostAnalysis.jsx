@@ -20,8 +20,8 @@ const pct = n => ((Number(n) || 0) * 100).toFixed(1) + '%'
 
 async function fetchAssemblies(csId) {
   if (!csId) return []
-  const { data, error } = await supabase.rpc('get_bom_assemblies', { cs_id: csId })
-  if (error) throw error
+  // AXCELIS 어셈블리가 945개 — 1,000개(한 번에 받는 한도)를 넘으면 잘리지 않게 끝까지 (v4.103.0)
+  const data = await fetchAll(() => supabase.rpc('get_bom_assemblies', { cs_id: csId }).order('code').order('id'))
   return (data || []).map(p => ({ id: p.id, code: p.code, name: p.name || '', itemCount: Number(p.item_count) || 0 }))
 }
 

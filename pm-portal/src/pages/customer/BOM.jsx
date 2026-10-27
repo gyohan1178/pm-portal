@@ -38,28 +38,28 @@ function parseBomQty(v) {
 // 세부구분별 색상 (BOM 조회 뱃지)
 
 // 등록된 어셈블리 목록 (projects + BOM 품목수, RPC 한 방)
+//   v4.103.0 빠르게 — 예전엔 목록 → 등록일 → 품명(300개씩 4번)을 「차례로」 받아 서버를 6번 오갔다.
+//   이제 목록 · 등록일을 동시에, 품명은 한꺼번에 동시에 받는다 (2번).
+//   AXCELIS 어셈블리가 945개라 곧 1,000개(한 번에 받는 한도)를 넘는다 → 끝까지 나눠 받는다
 async function fetchAssemblies(customerId) {
-  const { data, error } = await supabase.rpc('get_bom_assemblies', { cs_id: customerId })
-  if (error) throw error
+  const [data, pj] = await Promise.all([
+    fetchAll(() => supabase.rpc('get_bom_assemblies', { cs_id: customerId }).order('code').order('id')),
+    // 등록일 = 마지막으로 올린 날 (2026-10-01) — BOM 을 올릴 때마다 projects.start_date 에 그날을 적는다. 못 읽으면 처음 등록일만
+    fetchAll(() => supabase.from('projects').select('id,start_date').eq('customer_id', customerId).order('id')).catch(() => null),
+  ])
+  const sd = pj ? Object.fromEntries(pj.map(x => [x.id, x.start_date])) : null
   const list = (data || []).map(p => ({
     id: p.id, code: p.code, name: p.name, rev: p.rev,
     created_at: p.created_at, itemCount: Number(p.item_count) || 0,
+    ...(sd ? { uploaded_at: sd[p.id] || null } : {}),
   }))
-  // 등록일 = 마지막으로 올린 날 (2026-10-01)
-  //   created_at 은 처음 만든 날이라 다시 올려도(버전 갱신) 안 바뀌었다.
-  //   BOM 을 올릴 때마다 projects.start_date 에 그날을 적으므로 그것을 보여 준다.
-  try {
-    const pj = await fetchAll(() => supabase.from('projects').select('id,start_date').eq('customer_id', customerId).order('id'))
-    const sd = Object.fromEntries(pj.map(x => [x.id, x.start_date]))
-    list.forEach(p => { p.uploaded_at = sd[p.id] || null })
-  } catch { /* 못 읽으면 처음 등록일만 */ }
   // 어셈블리명을 DB(items)에서 보충 — 코드(std_code) 기준 단일 소스
   const codes = list.map(p => p.code).filter(Boolean)
   const nameMap = {}
-  for (let i = 0; i < codes.length; i += 300) {
-    const { data: items } = await supabase.from('items').select('std_code,name').in('std_code', codes.slice(i, i + 300))
-    ;(items || []).forEach(it => { if (it.name) nameMap[it.std_code] = it.name })
-  }
+  const chunks = []
+  for (let i = 0; i < codes.length; i += 300) chunks.push(codes.slice(i, i + 300))
+  const res = await Promise.all(chunks.map(c => supabase.from('items').select('std_code,name').in('std_code', c)))
+  res.forEach(({ data: items }) => (items || []).forEach(it => { if (it.name) nameMap[it.std_code] = it.name }))
   return list.map(p => ({ ...p, name: nameMap[p.code] || p.name || '' }))
 }
 

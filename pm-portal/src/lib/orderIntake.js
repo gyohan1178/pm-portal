@@ -571,20 +571,63 @@ async function fetchParallel(table, cols, { order = 'id', conc = 6, page = 1000 
   return all
 }
 // 목록에 쓰는 칸만 (created_at · replied_at · unit 등 화면에 안 쓰는 칸은 뺌)
-const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,replied_at,note,plnd_no,prod_no,updated_at,cancel_reason,cancelled_name,cancelled_at'
+//   ⚠ v4.101.0 에 더한 칸(특이사항 확인 odd_ok* · BREV)이 빠져 있어, 새로고침하면 확인한 특이사항이 다시 나오고 BREV 가 「—」였다 (v4.103.0 고침)
+const LINE_LIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,raw_desc,spec,rev,qty,unit_price,due_date,release_date,division,delivered_qty,delivered_at,sales_done_at,cancelled,reply,reply_date,reply_memo,replied_name,replied_at,note,plnd_no,prod_no,updated_at,cancel_reason,cancelled_name,cancelled_at,odd_ok,odd_ok_name,odd_ok_at,brev'
+const LINE_LIST_COLS_OLD = LINE_LIST_COLS.replace(',odd_ok,odd_ok_name,odd_ok_at,brev', '')
+// 지난 줄은 특이사항 · PO 단계 계산에 쓰는 칸만 (수주대장_빠르게_반영_261026.sql 의 pm_order_line_hist_v)
+const HIST_COLS = 'id,order_id,line_no,del_line,item_id,raw_pn,rev,qty,unit_price,due_date,delivered_qty,cancelled,reply'
+const sortLines = (ls) => ls.sort((a, b) => (+a.line_no - +b.line_no) || (+a.del_line - +b.del_line) || String(a.line_no).localeCompare(String(b.line_no)))
+const fetchHeads = () => fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))
+function assemble(heads, lines, extra = {}) {
+  const by = new Map(heads.map((h) => [h.id, { ...h, ...extra, lines: [] }]))
+  lines.forEach((l) => by.get(l.order_id)?.lines.push(l))
+  by.forEach((o) => sortLines(o.lines))
+  return [...by.values()]
+}
 
+// 전부 (납품 완료 · 취소 · 전체 보기 · 이번 달 접수 · 단가 없는 품목 · 이카운트 대조 · 코드 정리)
 export async function fetchOrders() {
-  const headsP = fetchAll(() => supabase.from('pm_order').select('*').order('registered_at', { ascending: false }).order('id'))
+  const headsP = fetchHeads()
   let lines
   try { lines = await fetchParallel('pm_order_line', `${LINE_LIST_COLS}, items(${ITEM_COLS})`) } catch (e) {
     if (!/column|does not exist/i.test(e.message || '')) throw e
     lines = await fetchParallel('pm_order_line', `*, items(${ITEM_COLS})`)      // 칸 추가 SQL 전이면 전부
   }
-  const heads = await headsP
-  const by = new Map(heads.map((h) => [h.id, { ...h, lines: [] }]))
-  lines.forEach((l) => by.get(l.order_id)?.lines.push(l))
-  by.forEach((o) => o.lines.sort((a, b) => (+a.line_no - +b.line_no) || (+a.del_line - +b.del_line) || String(a.line_no).localeCompare(String(b.line_no))))
-  return [...by.values()]
+  return assemble(await headsP, lines)
+}
+
+// 빠르게 (v4.103.0) — 진행 중 줄은 전체 칸 · 지난 줄은 계산에 필요한 줄 · 칸만 · 품목은 진행 중 줄 것만 따로
+//   보기가 없으면(SQL 전) 오류 → 화면이 예전처럼 fetchOrders 로 받는다
+export async function fetchOrdersFast() {
+  // PO 머리 · 진행 중 줄 · 지난 줄을 「동시에」 받는다 (차례로 받으면 왕복이 쌓여 느림). 품목 코드 · 품명은 진행 중 줄 보기에 같이 들어 있다
+  const ITEM_IN_VIEW = ',item_std_code,item_name,item_js_code'
+  const liveP = fetchParallel('pm_order_line_live_v', LINE_LIST_COLS + ITEM_IN_VIEW).catch((e) => {
+    if (!/odd_ok|brev/.test(e.message || '')) throw e
+    return fetchParallel('pm_order_line_live_v', LINE_LIST_COLS_OLD + ITEM_IN_VIEW)
+  })
+  const histP = fetchAll(() => supabase.from('pm_order_line_hist_v').select(HIST_COLS).order('id'))
+  const [heads, live, hist] = await Promise.all([fetchHeads(), liveP, histP])
+  live.forEach((l) => {
+    l.items = l.item_id && (l.item_std_code != null || l.item_name != null) ? { id: l.item_id, std_code: l.item_std_code, name: l.item_name, js_code: l.item_js_code } : null
+    delete l.item_std_code; delete l.item_name; delete l.item_js_code
+  })
+  hist.forEach((l) => { l.items = null; l._slim = true })
+  // 전부 받을 때와 같은 차례(줄 id 순)로 — 같은 줄번호가 겹친 PO 에서도 특이사항 「바로 앞 PO」 고르는 결과가 같게
+  const all = [...live, ...hist].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+  return assemble(heads, all)
+}
+// PO 하나의 줄 전부 — 빠르게 받은 화면에서 PO 상세를 열 때
+export async function fetchOrderLinesFull(orderId) {
+  let r = await supabase.from('pm_order_line').select(`${LINE_LIST_COLS}, items(${ITEM_COLS})`).eq('order_id', orderId).order('id')
+  if (r.error && /column|does not exist/i.test(r.error.message || '')) r = await supabase.from('pm_order_line').select(`*, items(${ITEM_COLS})`).eq('order_id', orderId).order('id')
+  if (r.error) throw r.error
+  return sortLines(r.data || [])
+}
+// 예상 매출 · 단가 없는 품목 — 고객사 · 달러 여부 · 납기 연도별 합계 (pm_order_money · 검색어 q 반영)
+export async function fetchOrderMoney(q) {
+  const { data, error } = await supabase.rpc('pm_order_money', { p_q: q || null })
+  if (error) throw error
+  return data || []
 }
 
 // 진행 단계 — 1단계는 접수 · 확인 · 회신 · 납품까지

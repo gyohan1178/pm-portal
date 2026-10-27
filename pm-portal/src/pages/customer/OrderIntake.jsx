@@ -19,11 +19,12 @@ import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
-  ORDER_CUSTOMERS, fetchOrders, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
+  ORDER_CUSTOMERS, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, setReleaseDate, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import OrderUpload from './OrderUpload'
+const OrderMrModal = lazy(() => import('./OrderMrModal'))
 import OrderEntry, { downloadTemplate } from './OrderEntry'
 import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, setSlipNo } from '../../lib/orderEntry'
 // AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
@@ -277,7 +278,6 @@ export default function OrderIntake() {
   const editable = !!profile && canEdit(profile)
   const meName = (profile?.name || '').trim() || profile?.email || ''
 
-  const { data: orders = [], isLoading, error } = useQuery({ queryKey: ['orderIntake'], queryFn: fetchOrders })
   const { data: qcfg } = useQuery({ queryKey: QUOTE_CFG_KEY, queryFn: fetchQuoteMarginCfg, staleTime: 10 * 60 * 1000 })
   const [fxIn, setFxIn] = useState('')
   const fx = Number(fxIn) > 0 ? Number(fxIn) : (qcfg?.sellRate || 1400)
@@ -289,16 +289,39 @@ export default function OrderIntake() {
   const [kpi, setKpi] = useState(null)
   const [sort, setSort] = useState('due')
   const [checked, setChecked] = useState(() => new Set())
+  const [mrOpen, setMrOpen] = useState(false)      // 수주 줄 → 자재 요청 창 (v4.103.0)
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
   const [entry, setEntry] = useState(null)       // 'one' 직접 등록 · 'excel' 엑셀로 여러 건 (v4.94.0)
   const [sp, setSp] = useSearchParams()
   const tab = ['ecount', 'cleanup'].includes(sp.get('tab')) ? sp.get('tab') : 'list'
   const goTab = (t) => { const n = new URLSearchParams(sp); if (t === 'list') n.delete('tab'); else n.set('tab', t); setSp(n, { replace: true }) }
-  const refresh = () => qc.invalidateQueries({ queryKey: ['orderIntake'] })
+
+  // ── 데이터 (v4.103.0 빠르게) ──
+  //   평소: 진행 중 줄(전체 칸) + 특이사항 · PO 단계에 필요한 지난 줄만 + 예상 매출 · 단가 없는 품목은 DB 합계
+  //   지난 이력이 다 필요한 화면(납품 완료 · 취소 · 전체 보기, 이번 달 접수, 단가 없는 품목 목록, 이카운트 대조 · 코드 정리 탭)만 전부 받는다
+  //   SQL(보기) 전이거나 오류면 예전처럼 전부
+  const needFull = tab !== 'list' || ['done', 'cancel', 'all'].includes(view) || kpi === 'noPrice' || kpi === 'month'
+  const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
+  const k = qd.trim().toUpperCase()
+  const fastQ = useQuery({ queryKey: ['orderIntake', 'fast'], queryFn: fetchOrdersFast, retry: false })
+  // 예상 매출 · 단가 없는 품목 수 — 빠르게 받은 때는 DB 합계 (검색어도 같이). placeholderData 로 검색 바꾸는 동안 숫자가 비지 않게
+  const moneyQ = useQuery({ queryKey: ['orderMoney', k], queryFn: () => fetchOrderMoney(k), retry: false, enabled: !needFull && !fastQ.error, placeholderData: (prev) => prev })
+  const fastBroken = !!fastQ.error || !!moneyQ.error
+  const wantFull = needFull || fastBroken
+  const fullQ = useQuery({ queryKey: ['orderIntake', 'full'], queryFn: fetchOrders, enabled: wantFull })
+  const usingFull = wantFull && !!fullQ.data
+  const orders = (usingFull ? fullQ.data : fastQ.data) || []
+  const isLoading = wantFull ? !fullQ.data && !fullQ.error : fastQ.isLoading
+  const error = wantFull ? fullQ.error : null
+  const refresh = () => { qc.invalidateQueries({ queryKey: ['orderIntake'] }); qc.invalidateQueries({ queryKey: ['orderMoney'] }) }
   // 작은 작업(회신 · 납품 · 불출일 · 납품처 · 확인 · 삭제) 뒤에는 1만 줄을 다시 받지 않고 화면 데이터만 고친다 (v4.90.6 속도)
   //   PDF 등록 · AX 엑셀 반영처럼 줄이 생기는 작업만 전체를 다시 받는다
-  const patchLocal = (fnOrder) => qc.setQueryData(['orderIntake'], (prev) => (prev ? fnOrder(prev) : prev))
+  //   빠르게 · 전부 두 캐시를 같이 고친다. 예상 매출 합계는 DB 에서 다시 받는다 (가볍다)
+  const patchLocal = (fnOrder) => {
+    qc.setQueriesData({ queryKey: ['orderIntake'] }, (prev) => (Array.isArray(prev) ? fnOrder(prev) : prev))
+    qc.invalidateQueries({ queryKey: ['orderMoney'] })
+  }
   const patchLines = (patchOf) => patchLocal((os) => os.map((o) => {
     let hit = false
     const lines = o.lines.map((l) => { const p = patchOf(l); if (!p) return l; hit = true; return { ...l, ...p } })
@@ -307,21 +330,33 @@ export default function OrderIntake() {
   const patchHead = (ids, p) => { const set = new Set(ids); patchLocal((os) => os.map((o) => (set.has(o.id) ? { ...o, ...p(o) } : o))) }
   const lineRz = useResizableColumns('orderIntake_line_cols', Object.fromEntries(LINE_COLS))
   const poRz = useResizableColumns('orderIntake_po_cols', Object.fromEntries(PO_COLS))
-  const lineCols = isBuy ? LINE_COLS : LINE_COLS.filter(([k]) => k !== 'chk')
+  // 체크 칸 — 구매자재는 회신 · 납품 등 한꺼번에, 영업 · 타부서는 「📦 자재 요청」 (v4.103.0)
+  const lineCols = LINE_COLS
   const narrow = useNarrow()
 
   // 줄 펼치기 — 고객사 · 구분 상관없이 전체 (v4.90.4 「AX 전장만」 없앰)
   const { allLines, oddMap } = useMemo(() => {
     const ls = orders.flatMap((o) => o.lines.map((l) => ({ ...l, o, st: lineState(l, o) })))
     const odd = oddsOf(ls)                   // 특이사항 — 바로 앞 PO 와 Rev · 단가 다름 · ⚠ 메모 (v4.90.7)
+    // 빠르게 받은 때는 지난 줄의 이력이 다 있지 않다 → 지난 줄 특이사항은 표시하지 않는다 (진행 중 줄은 예전과 똑같음)
+    if (!usingFull) ls.forEach((l) => { if (!l.st.live) { odd.delete(l.id); odd.done?.delete(l.id) } })
     ls.forEach((l) => { const x = odd.get(l.id); if (x) l.odd = x })
     return { allLines: ls, oddMap: odd }
-  }, [orders])
+  }, [orders, usingFull])
   const byOrder = useMemo(() => new Map(orders.map((o) => [o.id, o])), [orders])
+  // PO 상세 — 빠르게 받은 때는 그 PO 의 줄을 전부 받아 화면 데이터에 넣는다 (납품 끝난 · 취소된 줄까지)
+  const openFull = poOpen ? (usingFull || !!byOrder.get(poOpen)?._full) : true
+  useEffect(() => {
+    if (!poOpen || openFull || !byOrder.get(poOpen)) return undefined
+    let alive = true
+    fetchOrderLinesFull(poOpen).then((ls) => {
+      if (!alive) return
+      qc.setQueryData(['orderIntake', 'fast'], (prev) => (Array.isArray(prev) ? prev.map((x) => (x.id === poOpen ? { ...x, lines: ls, _full: true } : x)) : prev))
+    }).catch((e) => toastError('PO 줄 불러오기 실패: ' + (e.message || e)))
+    return () => { alive = false }
+  }, [poOpen, openFull]) // eslint-disable-line react-hooks/exhaustive-deps
   // 코드 없는 고객사 품번 수 (진행 중 줄) — 「코드 · BOM 정리」 탭 숫자
   const unregCount = useMemo(() => new Set(allLines.filter((l) => l.st.live && !l.item_id && String(l.raw_pn || '').trim()).map((l) => `${l.o.customer_code}|${String(l.raw_pn).trim().toUpperCase()}`)).size, [allLines])
-  const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
-  const k = qd.trim().toUpperCase()
   const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -338,7 +373,20 @@ export default function OrderIntake() {
     // 올해 납기(납품일) 줄만 — 엑셀 매출 결산과 같은 기준. 내년 이후 · 납기 없음은 따로 (v4.90.2)
     const yr = today.slice(0, 4)
     const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0, byCust: {} }
-    scoped.filter((l) => !l.st.cancelled).forEach((l) => {
+    let noPriceN = null
+    if (!usingFull && moneyQ.data && !moneyQ.error) {
+      // 빠르게 — DB 합계로 (줄마다 더하던 것과 같은 식 · 고객사 선택 · 검색어 같이)
+      noPriceN = 0
+      moneyQ.data.filter((r) => cust === 'all' || r.customer_code === cust).forEach((r) => {
+        const y = r.y == null ? '' : String(r.y), k2 = r.usd ? fx : 1, a = +r.amt || 0, d = +r.done || 0
+        noPriceN += +r.no_price || 0
+        if (y !== yr) { if (!y) m.noDue += a * k2; else if (y > yr) m.later += a * k2; return }
+        if (r.usd) { m.usd += a; m.doneUsd += d } else { m.krw += a; m.doneKrw += d }
+        const c = (m.byCust[r.customer_code] ||= { total: 0, done: 0 })
+        c.total += a * k2; c.done += d * k2
+      })
+      m.fromDb = true
+    } else scoped.filter((l) => !l.st.cancelled).forEach((l) => {
       const y = String(l.due_date || '').slice(0, 4)
       if (y !== yr) { const a = amountOf(l) * (isUsd(l.o) ? fx : 1); if (!y) m.noDue += a; else if (y > yr) m.later += a; return }
       const a = amountOf(l), d = Math.min(+l.delivered_qty || 0, +l.qty || 0) * (+l.unit_price || 0)
@@ -352,10 +400,11 @@ export default function OrderIntake() {
     const noPrice = scoped.filter((l) => KPI_PICK.noPrice(l))
     const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
-    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, odd }
-  }, [scoped, orders, month, today, cust, fx])
+    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
+  }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data])
 
   const lines = useMemo(() => {
+    if (isLoading) return []                 // 지난 이력까지 받는 동안 — 반쯤 받은 목록을 잠깐 보여주지 않게 (v4.103.0)
     let r = kpi && kpi !== 'month' ? kpis[kpi] : scoped
     if (!kpi) r = r.filter((l) => inView(view, l))
     if (kpi === 'month') { const ids = new Set(kpis.monthPos.map((o) => o.id)); r = scoped.filter((l) => ids.has(l.order_id)) }
@@ -366,7 +415,7 @@ export default function OrderIntake() {
       cust: (a, b) => a.o.customer_code.localeCompare(b.o.customer_code) || due(a).localeCompare(due(b)),
     }[sort]
     return [...r].sort(cmp)
-  }, [scoped, kpis, kpi, view, sort])
+  }, [scoped, kpis, kpi, view, sort, isLoading])
 
   // PO별 묶기 — PO 마다 전체 줄을 다시 거르면 PO 수 × 줄 수로 느려진다 → 한 번에 묶는다 (v4.90.6)
   const poRows = useMemo(() => {
@@ -545,7 +594,8 @@ export default function OrderIntake() {
       </nav>
       {tab !== 'list' && (
         <Suspense fallback={<div className="p-8 text-center text-xs text-slate-400">불러오는 중…</div>}>
-          {tab === 'ecount' ? <EcountMatch orders={orders} editable={editable} meName={meName} onChanged={refresh} />
+          {!usingFull ? <div className="p-8 text-center text-xs text-slate-400" data-full-loading>지난 이력까지 불러오는 중…</div>
+            : tab === 'ecount' ? <EcountMatch orders={orders} editable={editable} meName={meName} onChanged={refresh} />
             : <OrderCleanup orders={orders} editable={editable} meName={meName} onChanged={refresh} />}
         </Suspense>
       )}
@@ -601,10 +651,10 @@ export default function OrderIntake() {
               <input value={fxIn} onChange={(e) => setFxIn(e.target.value.replace(/[^0-9.]/g, ''))} placeholder={String(qcfg?.sellRate || 1400)} title="달러(CCN B) PO 환율 — 비우면 매출견적 기준 판매환율" data-fx className="w-14 px-1 py-0.5 text-[10.5px] border border-emerald-200 rounded bg-white" /></div>
           )}
           {m.later > 0 && <div data-money-later>내년 이후 납기 {won(m.later)} 별도</div>}
-          {kpis.noPrice.length > 0 && (
+          {kpis.noPriceN > 0 && (
             <button type="button" onClick={() => { setKpi(kpi === 'noPrice' ? null : 'noPrice'); setMode('line') }} data-noprice
               className={`px-2 py-1 rounded-lg font-bold border ${kpi === 'noPrice' ? 'bg-amber-100 border-amber-300 text-amber-800' : 'bg-white border-amber-200 text-amber-700 hover:bg-amber-50'}`}>
-              단가 없는 품목 {kpis.noPrice.length.toLocaleString('ko-KR')} (합계 제외) {kpi === 'noPrice' ? '✕' : '보기 →'}
+              단가 없는 품목 {kpis.noPriceN.toLocaleString('ko-KR')} (합계 제외) {kpi === 'noPrice' ? '✕' : '보기 →'}
             </button>
           )}
         </div>
@@ -705,6 +755,14 @@ export default function OrderIntake() {
         )
       })()}
 
+      {!isBuy && checkedLines.length > 0 && (
+        <div className="sticky top-0 z-20 rounded-xl border border-violet-300 bg-white shadow-md px-4 py-3 flex flex-wrap items-center gap-3" data-bulk>
+          <b className="text-xs text-violet-700 whitespace-nowrap">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</b>
+          <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다</span>
+          <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="ml-auto px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white">📦 자재 요청 {checkedLines.length}</button>
+          <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
+        </div>
+      )}
       {isBuy && checkedLines.length > 0 && (
         <div className="sticky top-0 z-20 rounded-xl border border-violet-300 bg-white shadow-md px-4 py-3 flex flex-wrap items-center gap-3" data-bulk>
           <b className="text-xs text-violet-700 whitespace-nowrap">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</b>
@@ -715,6 +773,7 @@ export default function OrderIntake() {
           </label>
           {checkedLines.some((l) => l.odd) && <button type="button" disabled={oddMut.isPending} onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">✓ 특이사항 확인 {checkedLines.filter((l) => l.odd).length}</button>}
           <button type="button" onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">납품 표시</button>
+          <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
         </div>
       )}
@@ -724,7 +783,7 @@ export default function OrderIntake() {
           {isLoading && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">불러오는 중…</div>}
           {mode === 'line' && <>
             {!isLoading && !lines.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다'}</div>}
-            {isBuy && liveVisible.length > 0 && (
+            {liveVisible.length > 0 && (
               <label className="flex items-center gap-2 px-1 text-[11px] font-bold text-slate-500"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all-m />보이는 품목 전체 선택</label>
             )}
             {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} prodMap={prodMap} />)}
@@ -740,7 +799,7 @@ export default function OrderIntake() {
           <table className="text-xs" style={tableStyle(lineCols, lineRz)} data-line-table>
             <ColGroup cols={lineCols} rz={lineRz} />
             <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left">
-              {isBuy && <th className="pl-4 py-2.5"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all /></th>}
+              <th className="pl-4 py-2.5"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all /></th>
               <Th k="due" rz={lineRz}><span title="납기 = 고객사 납품일 · 그 아래 「불출」 = 협력사 불출일">납기</span></Th><Th k="cust" rz={lineRz}>고객사 · 납품처</Th><Th k="po" rz={lineRz}>PO번호</Th>
               <Th k="pn" rz={lineRz}>품번 · 품명</Th><Th k="qty" rz={lineRz} className="text-right">수량</Th><Th k="amt" rz={lineRz} className="text-right">금액</Th>
               <Th k="st" rz={lineRz}>상태</Th><Th k="reply" rz={lineRz}>구매자재 회신</Th>
@@ -753,7 +812,7 @@ export default function OrderIntake() {
                 const [stLabel, stCls] = statusOf(l)
                 return (
                   <tr key={l.id} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${l.st.cancelled ? 'opacity-40' : ''} ${checked.has(l.id) ? 'bg-violet-50/60' : ''}`} data-row={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
-                    {isBuy && <td className="pl-4 py-3">{!l.st.cancelled && <input type="checkbox" checked={checked.has(l.id)} onChange={() => toggle(l.id)} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</td>}
+                    <td className="pl-4 py-3">{!l.st.cancelled && <input type="checkbox" checked={checked.has(l.id)} onChange={() => toggle(l.id)} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</td>
                     <td className="px-3 py-3"><DueCell l={l} /></td>
                     <td className="px-3 py-3"><CustCell o={l.o} /></td>
                     <td className="px-3 py-3 whitespace-nowrap overflow-hidden">
@@ -837,8 +896,13 @@ export default function OrderIntake() {
         <button type="button" onClick={() => (mode === 'line' ? lineRz : poRz).resetWidths()} data-reset-cols className="ml-auto hover:text-slate-600 underline-offset-2 hover:underline">열 너비 초기화</button>
       </div>
 
+      {mrOpen && checkedLines.length > 0 && (
+        <Suspense fallback={null}>
+          <OrderMrModal lines={checkedLines} meName={meName} onClose={() => setMrOpen(false)} onDone={() => { setMrOpen(false); setChecked(new Set()) }} />
+        </Suspense>
+      )}
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} onClose={() => setPoOpen(null)}
+        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} histLoading={!openFull} onClose={() => setPoOpen(null)}
           onOddOk={(ls, on) => oddMut.mutate({ ls, on })}
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}
@@ -866,7 +930,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
   return (
     <div className={`bg-white border rounded-xl p-3 ${checked ? 'border-violet-300 bg-violet-50/40' : 'border-slate-200'} ${l.st.cancelled ? 'opacity-50' : ''}`} data-mcard={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
       <div className="flex items-start gap-2">
-        {isBuy && <div className="pt-0.5 w-5 shrink-0">{!l.st.cancelled && <input type="checkbox" className="w-4 h-4" checked={checked} onChange={onToggle} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</div>}
+        {<div className="pt-0.5 w-5 shrink-0">{!l.st.cancelled && <input type="checkbox" className="w-4 h-4" checked={checked} onChange={onToggle} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</div>}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
@@ -888,12 +952,12 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
           {late && <div className="text-[10px] text-red-500 mt-0.5 whitespace-nowrap">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
         </div>
       </div>
-      <div className={`mt-2 pt-2 border-t border-slate-100 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 text-xs ${isBuy ? 'pl-7' : ''}`}>
+      <div className={`mt-2 pt-2 border-t border-slate-100 grid grid-cols-[auto_minmax(0,1fr)_auto] gap-3 text-xs pl-7`}>
         <div className="min-w-0"><div className="text-[10px] text-slate-400">납기</div><DueCell l={l} /></div>
         <div className="text-right font-mono tabular-nums min-w-0"><div className="text-[10px] text-slate-400 font-sans">수량</div><div className="text-slate-800">{fmt(l.qty)}</div><PackNote l={l} />{+l.delivered_qty > 0 && <div className="text-[10.5px] text-emerald-600">납품 {fmt(l.delivered_qty)}</div>}</div>
         <div className="text-right font-mono tabular-nums min-w-0"><div className="text-[10px] text-slate-400 font-sans">금액</div><div className="text-slate-800 whitespace-nowrap">{+l.unit_price ? money(l.o, amountOf(l)) : '—'}</div>{+l.unit_price > 0 && <div className="text-[10px] text-slate-400">@ {isUsd(l.o) ? '$' : ''}{fmt(l.unit_price)}</div>}</div>
       </div>
-      {l.reply && <div className={`mt-2 ${isBuy ? 'pl-7' : ''}`}><ReplyCell l={l} memo /></div>}
+      {l.reply && <div className="mt-2 pl-7"><ReplyCell l={l} memo /></div>}
     </div>
   )
 }
@@ -923,7 +987,7 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -1008,6 +1072,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, onClose, o
               <p className="text-[10.5px] text-slate-400">품번마다 다르게 답하려면 목록(품번별)에서 체크해 회신하세요. 자재 가용성 자동 계산은 다음 단계에서 붙습니다.</p>
             </div>
           )}
+          {histLoading && <div className="text-[11px] text-slate-400 px-1" data-dline-loading>납품 끝난 · 취소된 줄까지 불러오는 중…</div>}
           <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto" data-dline-wrap>
             <table className="w-full min-w-[760px] text-xs">
               <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left whitespace-nowrap">
