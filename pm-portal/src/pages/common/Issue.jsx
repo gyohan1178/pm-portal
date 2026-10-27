@@ -15,6 +15,8 @@ import { useCompact } from '../../hooks/useCompact'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { must } from '../../lib/db'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -72,6 +74,8 @@ export default function Issue() {
   const [picked, setPicked] = useState([])   // 전개 전 담은 목록
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState('')
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
+  const [pickTried, setPickTried] = useState(false)   // 「전개해서 담기」를 누른 뒤부터 수량 빈 칸을 그 자리에 표시
   const [cartView] = useState('item')   // 품목 합계로만 본다
   const [excluded, setExcluded] = useState(new Set()) // 불출표 제외 대상 (std_code)
 
@@ -282,7 +286,7 @@ export default function Issue() {
   async function explodeAndAdd() {
     if (!picked.length) { toastError('담은 품목이 없습니다'); return }
     const bad = picked.filter(p => !(Number(p.qty) > 0))
-    if (bad.length) { toastError('수량을 입력하세요'); return }
+    if (bad.length) { setPickTried(true); return }   // 빈 수량 칸 — 그 칸 아래에 표시 (예전엔 위에 알림)
     setBusy(true)
     try {
       const { data, error } = await supabase.rpc('pm_explode_assy', {
@@ -313,7 +317,7 @@ export default function Issue() {
         source: 'direct', issued: true,
       })))
       toastSuccess(`${data.length}품목 담김`)
-      setPicked([])
+      setPicked([]); setPickTried(false)
     } catch (e) { toastError('전개 실패: ' + e.message) }
     finally { setBusy(false) }
   }
@@ -429,7 +433,9 @@ export default function Issue() {
       // 넘겨받은 줄 — 출고가 끝났으니 불출 표시를 묻는다
       if (handoff?.rows?.length) {
         const h = handoff; setHandoff(null)
-        if (confirm(`출고 완료.\n\n${h.from}에서 넘겨받은 고객사 PO ${h.rows.length}줄을 「불출」로 표시할까요?\n· 고객사 PO 자재불출 체크 → 쇼티지 계산에서 빠집니다\n· 「취소」하면 표시하지 않습니다 (하네스 출도 · 불출 화면에서 나중에 할 수 있음)`)) {
+        if (await ask({ title: `출고 완료 — ${h.from}에서 넘겨받은 고객사 PO ${h.rows.length}줄을 「불출」로 표시할까요?`,
+          desc: '고객사 PO 자재불출 체크가 되어 쇼티지 계산에서 빠집니다. 「표시 안 함」을 누르면 그대로 두고, 하네스 출도 · 불출 화면에서 나중에 할 수 있습니다.',
+          okText: '불출로 표시', cancelText: '표시 안 함' })) {
           try {
             const n = await markPoIssued(h.rows, true, '하네스 출도 → 다품목 출고 후 불출 처리')
             toastSuccess(`${n}줄 불출 처리했습니다`)
@@ -708,6 +714,7 @@ export default function Issue() {
 
   return (
     <div className={compact ? 'space-y-2.5' : 'p-4 max-w-5xl mx-auto space-y-4'}>
+      {confirmEl}
       {labelConfirm && (
         <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendLabels(labelConfirm.labels)} />
       )}
@@ -760,7 +767,7 @@ export default function Issue() {
                   className="px-2 py-1 text-[11px] text-slate-400">닫기</button>
                 <button onClick={addPaste} disabled={busy || !pasteText.trim()}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {busy ? '확인 중…' : '담기'}
+                  {busy ? <span className="inline-flex items-center gap-1.5"><Spin />확인 중…</span> : '담기'}
                 </button>
               </div>
             </div>
@@ -832,12 +839,17 @@ export default function Issue() {
                   <input type="number" min="1" value={p.qty}
                     onChange={e => setPicked(prev => prev.map((x, j) =>
                       j === i ? { ...x, qty: e.target.value } : x))}
-                    className="w-14 px-1.5 py-1 text-right border border-indigo-200 rounded" />
+                    data-pick-qty-bad={pickTried && !(Number(p.qty) > 0) ? '1' : undefined}
+                    className={`w-14 px-1.5 py-1 text-right border rounded ${pickTried && !(Number(p.qty) > 0) ? 'border-rose-400 bg-rose-50 ring-2 ring-rose-100' : 'border-indigo-200'}`} />
                   <span className="text-slate-400 w-6">{p.unit}</span>
                   <button onClick={() => setPicked(prev => prev.filter((_, j) => j !== i))}
                     className="text-slate-300 hover:text-rose-500 px-1">✕</button>
                 </div>
               ))}
+              {pickTried && picked.some(p => !(Number(p.qty) > 0)) && (
+                <p className="px-2 py-1 text-[11px] font-bold text-rose-600" data-field-error="pick-qty">
+                  수량을 넣어 주세요 — 빨간 칸 {picked.filter(p => !(Number(p.qty) > 0)).length}개 (1 이상)</p>
+              )}
               <div className="px-2 py-2 flex items-center gap-2">
                 <span className="text-[11px] text-slate-500 flex-1">
                   {picked.length}품목 · ASSY {picked.filter(p => p.is_assy).length}개
@@ -846,7 +858,7 @@ export default function Issue() {
                   className="px-2 py-1 text-[11px] text-slate-400">비우기</button>
                 <button onClick={explodeAndAdd} disabled={busy}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {busy ? '전개 중…' : '전개해서 담기'}
+                  {busy ? <span className="inline-flex items-center gap-1.5"><Spin />전개 중…</span> : '전개해서 담기'}
                 </button>
               </div>
             </div>
@@ -865,13 +877,26 @@ export default function Issue() {
         <div className="px-3 py-2 bg-slate-50 flex items-center justify-between flex-wrap gap-2 shrink-0">
           <span className="text-xs font-bold text-slate-600">장바구니 {cart.length}건 · 불출 {issuedCnt} / 결품 {shortCnt}</span>
           <div className="flex flex-wrap gap-2 [&>button]:whitespace-nowrap">
-            <button onClick={() => { if (cart.length && window.confirm(`장바구니 ${cart.length}건을 전부 비울까요?\n(출고 처리는 안 되고 목록만 초기화)\n※ 담기함은 같은 고객사 사용자끼리 공유됩니다. 지금 화면에 보이는 줄만 지웁니다.`)) clearMut.mutate(cart.map(c => c.id)) }}
+            <button onClick={async () => {
+                if (!cart.length) return
+                const ids = cart.map(c => c.id)
+                if (await ask({ title: `장바구니 ${cart.length}건을 전부 비울까요?`,
+                  desc: '출고 처리는 안 되고 목록만 지웁니다 (재고 변화 없음). 담기함은 같은 고객사 사용자끼리 공유되니, 지금 화면에 보이는 줄만 지웁니다.',
+                  items: cart.slice(0, 5).map(c => `${c.std_code || '-'} · ${c.name || ''} · ${c.qty}${c.unit || ''}`), more: Math.max(0, cart.length - 5),
+                  okText: '비우기', danger: true })) clearMut.mutate(ids)
+              }}
               disabled={!cart.length || clearMut.isPending} className="px-3 py-1 text-xs font-semibold rounded border border-red-200 text-red-500 hover:bg-red-50 disabled:opacity-40">🗑 초기화</button>
             <button onClick={() => setTimeout(printIssueSheet, 100)} disabled={!cart.length} title="제외 체크한 품목 빼고, 제조사→제조사품번 순으로 불출표 인쇄" className="px-3 py-1 text-xs font-semibold rounded border border-indigo-200 text-indigo-600 hover:bg-indigo-50 disabled:opacity-40">🖨 불출표 출력</button>
             <button onClick={printLabels} disabled={!cart.length} title="위치값 있는 품목을 ZM400 라벨로 출력 (Zebra Browser Print 필요)" className="px-3 py-1 text-xs font-semibold rounded border border-teal-200 text-teal-600 hover:bg-teal-50 disabled:opacity-40">🏷 라벨 출력</button>
-            <button onClick={() => { if (cart.length && window.confirm(`불출분 출고처리 / 결품 ${shortCnt}건 기록. 진행할까요?`)) processMut.mutate() }}
-              disabled={!cart.length || processMut.isPending} className="px-3 py-1 text-xs font-bold rounded bg-teal-600 text-white disabled:opacity-40">
-              ✅ 출고 처리
+            <button onClick={async () => {
+                if (!cart.length) return
+                if (await ask({ title: `불출분 ${issuedCnt}건을 출고 처리할까요?${shortCnt ? ` (결품 ${shortCnt}건 기록)` : ''}`,
+                  desc: '불출 수량만큼 재고에서 빼고 출고 이력을 남깁니다. 모자란 수량은 결품으로 기록되고, 호기에서 담은 줄은 생산관리 호기 결품에도 반영됩니다. 처리 뒤 위에 「↩ 되돌리기」가 뜨면 출고 전으로 되돌릴 수 있습니다.',
+                  items: cart.slice(0, 5).map(c => `${c.std_code || '-'} · ${c.name || ''} · 불출 ${Number(c.issue_qty ?? c.qty) || 0}${shortQ(c) > 0 ? ` · 결품 ${shortQ(c)}` : ''}`), more: Math.max(0, cart.length - 5),
+                  okText: '출고 처리' })) processMut.mutate()
+              }}
+              disabled={!cart.length || processMut.isPending} className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-bold rounded bg-teal-600 text-white disabled:opacity-40">
+              {processMut.isPending && <Spin />}✅ 출고 처리
             </button>
           </div>
         </div>

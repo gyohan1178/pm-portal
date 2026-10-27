@@ -5,6 +5,8 @@ import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { isHot } from '../../lib/planExc'
+import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 
 const MAXBUNDLE = 10
 const WORK_UNIT = 4  // 한 번에 작업하는 권장 단위 (인원 제약상 10개를 4씩 끊어서)
@@ -90,8 +92,9 @@ function arrivalStatus(b) {
   return <span className="text-amber-600 font-semibold">{b.machineN}/{b.qty} 입고</span>
 }
 
-export default function ProductionHarness({ rows, csCode }) {
+export default function ProductionHarness({ rows, csCode, isLoading }) {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()   // 완료 처리 확인 창 (v4.104.0)
   const today = useMemo(() => new Date().setHours(0, 0, 0, 0), [])
   const { ver: mainVer } = useMainPns()   // 주요 관리 품번이 바뀌면 다시 묶는다
   const bundles = useMemo(() => buildHarnessBundles(rows, today), [rows, today, mainVer])
@@ -112,15 +115,37 @@ export default function ProductionHarness({ rows, csCode }) {
     onSuccess: () => qc.invalidateQueries(['production', csCode]),
     onError: (e) => toastError('완료 처리 오류: ' + e.message),
   })
+  // 묶음 완료 — 묶음 안 호기를 모두 「하네스 완료」로 → 이 우선순위 목록에서 빠진다
+  const askDone = async (b) => {
+    if (await ask({ title: `${b.pn} ${b.hogiRange} (${b.qty}대) 하네스 완료 처리할까요?`,
+      desc: '묶음 안 호기가 모두 하네스 완료로 표시되고 이 우선순위 목록에서 빠집니다.',
+      items: b.items.slice(0, 5).map(r => `${r.pn || '-'} · ${r.hogi || '-'}${r.req_date ? ` · 납품 ${String(r.req_date).slice(0, 10)}` : ''}`),
+      more: Math.max(0, b.items.length - 5), okText: '하네스 완료' })) doneMut.mutate(b.items)
+  }
+
+  // 생산관리 목록을 받는 동안 — 「작업할 하네스가 없습니다」가 잠깐 보이던 것 대신 (v4.104.0)
+  if (isLoading) return (
+    <div className="space-y-4" data-hns-loading>
+      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map(i => <div key={i} className="rounded-xl border border-slate-200 p-3 space-y-2" data-skeleton><SkelBar w={60} /><SkelBar w={36} h={20} /></div>)}
+      </div>
+      <div className="sm:hidden space-y-2"><SkeletonCards n={4} /></div>
+      <div className="hidden sm:block rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={6} two={[1]} /></tbody></table>
+      </div>
+    </div>
+  )
 
   if (!bundles.length) return (
     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-8 text-center text-sm text-slate-400">
+      {confirmEl}
       작업할 하네스가 없습니다 (모두 완료되었거나 대상 없음)
     </div>
   )
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       {/* 요약 */}
       <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-3">
         <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-500 mb-1">납품 지남</p><p className="text-xl font-bold text-red-700">{summary.overdue}</p><p className="text-[10px] text-red-400">묶음 기준</p></div>
@@ -148,7 +173,7 @@ export default function ProductionHarness({ rows, csCode }) {
                     )}
                   </div>
                 </div>
-                <button onClick={() => { if (window.confirm(`${b.pn} ${b.hogiRange} (${b.qty}대) 하네스 완료 처리할까요?`)) doneMut.mutate(b.items) }}
+                <button onClick={() => askDone(b)} data-hns-done
                   disabled={doneMut.isPending}
                   className="shrink-0 px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 font-bold text-sm disabled:opacity-40">✓ 완료</button>
               </div>
@@ -199,7 +224,7 @@ export default function ProductionHarness({ rows, csCode }) {
                   <td className="px-3 py-2 text-center">{ddayBadge(b.minReq)}</td>
                   <td className="px-3 py-2 text-center">{arrivalStatus(b)}</td>
                   <td className="px-2 py-2 text-center">
-                    <button onClick={() => { if (window.confirm(`${b.pn} ${b.hogiRange} (${b.qty}대) 하네스 완료 처리할까요?`)) doneMut.mutate(b.items) }}
+                    <button onClick={() => askDone(b)} data-hns-done
                       disabled={doneMut.isPending}
                       className="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 hover:bg-emerald-100 font-bold disabled:opacity-40">✓</button>
                   </td>

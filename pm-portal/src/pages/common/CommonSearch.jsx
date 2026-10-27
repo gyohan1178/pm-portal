@@ -9,6 +9,7 @@ import { addEffQty } from '../../lib/whereUsedEff'
 import { addPoQty, partDemand, PO_SPANS } from '../../lib/whereUsedPo'
 import ReqBOM from '../customer/ReqBOM'
 import { ilikeAny } from '../../lib/pgFilter'
+import { SkeletonRows, SkelBar } from '../../components/ux/Skeleton'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -142,7 +143,9 @@ export default function CommonSearch() {
           </div>
 
           {pSubmitted && (pLoading
-            ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-search-loading="product">
+                <table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={6} two={[0, 3]} /></tbody></table>
+              </div>
             : pErr
               ? <div className="text-center py-10 text-rose-600 text-sm">검색 실패 — {pErr.message}</div>
             : items.length === 0
@@ -226,7 +229,10 @@ export default function CommonSearch() {
           </div>
 
           {rSubmitted && (rLoading
-            ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-search-loading="where">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2" data-skeleton><SkelBar w={120} h={14} /><SkelBar w={160} /></div>
+                <table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={4} /></tbody></table>
+              </div>
             : rErr
               ? <div className="text-center py-10 text-rose-600 text-sm">조회 실패 — {rErr.message}</div>
             : grouped.length === 0

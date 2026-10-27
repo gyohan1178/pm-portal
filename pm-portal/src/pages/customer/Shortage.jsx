@@ -17,6 +17,10 @@ import ShortageMonthly, { fetchMonthly } from './ShortageMonthly'
 import { getCategoryCode, ITEM_CATEGORIES, todayISO } from '../../lib/utils'
 import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 function fmtNum(v) {
   const r = Math.round((v||0)*100)/100
@@ -167,6 +171,7 @@ export default function Shortage() {
   const [excluded, setExcluded] = useState(() => new Set())  // 방금 제외한 항목(새로고침 전까지 표시)
   const [view, setView] = useState('monthly')  // monthly(통합) | list(발주 상세)
   const [made, setMade] = useState(null)       // 방금 만든 발주 → 구매발주 화면으로 가는 줄
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
 
   const { widths, startResize, resetWidths } = useResizableColumns('shortage_cols', COL_DEFAULTS)
   const { data: cs } = useCustomer(csCode)
@@ -206,9 +211,12 @@ export default function Shortage() {
   // 재고관리 대상 제외 — useCallback([])로 고정해 행 memo가 깨지지 않게 함
   const excludedRef = useRef(excluded)
   excludedRef.current = excluded
-  const handleExclude = useCallback((itemId, stdCode) => {
+  //   ask 는 매 렌더 새로 만들어지지만 처음 것도 똑같이 동작한다 (상태 setter · ref 만 씀) → 의존성 [] 그대로
+  const handleExclude = useCallback(async (itemId, stdCode) => {
     if (excludedRef.current.has(itemId)) return
-    if (!window.confirm(`${stdCode}를 재고관리 대상에서 제외할까요?\n목록을 새로고침하면 부족자재에서 빠집니다.\n(기준코드 DB에서 다시 관리대상으로 되돌릴 수 있음)`)) return
+    if (!(await ask({ title: `${stdCode}를 재고관리 대상에서 제외할까요?`,
+      desc: '목록을 새로고침하면 부족자재에서 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.',
+      okText: '재고관리 제외', danger: true }))) return
     setExcluded(prev => new Set(prev).add(itemId))
     supabase.from('items').update({ stock_managed: false }).eq('id', itemId)
       .then(({ error }) => {
@@ -276,6 +284,7 @@ export default function Shortage() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <PageHead crumb="소요 · 부족" title="부족자재"
         desc="고객사 PO 에 BOM 을 전개해 재고 · 입고예정으로 모자라는 부품을 찾습니다. 체크해서 바로 구매발주를 만들 수 있습니다."></PageHead>
       <CustomerTabs />
@@ -396,20 +405,25 @@ export default function Shortage() {
                 orderMut.mutate(items)
               }} disabled={orderMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {orderMut.isPending?'생성 중...':'⚡ 구매발주 생성'}
+              {orderMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />생성 중...</span>:'⚡ 구매발주 생성'}
             </button>
           </div>
         </div>
       )}
 
       <div className="kpi-grid grid grid-cols-4 gap-3">
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">발주필요</p><p className="text-xl font-bold text-red-600">{needOrder.length}</p></div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">부족 품목</p><p className="text-xl font-bold text-amber-700">{filtered.filter(r=>r.lack>0).length}</p></div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1">미입고</p><p className="text-xl font-bold text-emerald-700">{filtered.reduce((a,r)=>a+r.pending,0)}</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">선택됨</p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">발주필요 <InfoTip text="지금 보이는 목록(구분 · 부서 · 구매처 · 상위품목 · 카테고리 필터) 중 「발주필요」가 0 보다 큰 품목 수. 발주필요 = 부족 − 구매발주 미입고, 부족 = 총필요수량 − 현재고 (음수 재고는 0 으로 봄)." /></p><p className="text-xl font-bold text-red-600">{needOrder.length}</p></div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">부족 품목 <InfoTip text="지금 보이는 목록 중 총필요수량이 현재고보다 많은 품목 수 (미입고 발주는 빼지 않은 값). 미입고로 메워지는 품목도 여기엔 들어갑니다." /></p><p className="text-xl font-bold text-amber-700">{filtered.filter(r=>r.lack>0).length}</p></div>
+        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1 flex items-center gap-1">미입고 <InfoTip text="지금 보이는 목록 품목들의 구매발주 미입고 수량을 모두 더한 값 (품목 수가 아니라 수량 합 · 단위가 섞여 있음)." /></p><p className="text-xl font-bold text-emerald-700">{filtered.reduce((a,r)=>a+r.pending,0)}</p></div>
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">선택됨 <InfoTip align="right" text="체크한 품목 중 지금 목록에 보이고 발주필요가 0 보다 큰 품목 수 — 「선택 N건 구매발주」에 들어가는 품목입니다." /></p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
       </div>
 
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">계산 중...</div> : (
+      {isLoading ? (
+        <div className="rounded-xl border border-slate-200 overflow-hidden" data-shortage-loading>
+          <div className="px-3 py-2 text-[11.5px] text-slate-500 border-b border-slate-100 flex items-center gap-2 bg-slate-50"><Spin />계산 중...</div>
+          <table className="w-full text-xs"><tbody><SkeletonRows cols={COLS.length + 1} rows={8} first={1} two={[1, 3]} /></tbody></table>
+        </div>
+      ) : (
         <>
         <div className="rounded-xl border border-slate-200 overflow-x-auto">
           <div className="overflow-x-auto">

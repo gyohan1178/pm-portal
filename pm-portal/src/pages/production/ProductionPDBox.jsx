@@ -22,6 +22,14 @@ import * as XLSX from 'xlsx'
 import { parseCskSchedule, planCsk, planText, applyCsk } from '../../lib/cskSchedule'
 import { CskTable, cskHay, cskNo } from './CskProductionTable'
 import { parseVmHtml, parseVmCsv, planVm, planVmText, applyVm } from '../../lib/vmNotion'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
+
+// 여러 줄 요약 글자 → 확인 창 목록 줄 (v4.104.0)
+const toLines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean)
+// 「날짜 비우기」 확인 창에 보일 칸 이름 — 일괄 수정 고르기 칸과 같은 이름
+const bulkLabel = (f, isED) => ({ arrival_date: isED ? 'Frame 입고 (확정)' : '가공물 입고예정', due_fix: '확정 납기', machine_date: '가공물 발주일', elec_done: '전장 완료요청', req_date: '납품요청일' }[f] || f)
 
 // 자재를 빼주면 '제작대기' 로 둔다. 만들 준비는 끝났고 착수 전인 상태다.
 // 외주: 사서 납품하는 건. 만들지 않지만 가공물 입고를 챙겨야 해 상태로 둔다.
@@ -174,6 +182,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const statusOpts = isVM ? STATUS_VM : STATUS_OPTS
   const [memoDraft, setMemoDraft] = useState({})
   const edFileRef = useRef(null)
+  // 확인 창 (v4.104.0) — 편집 모달(z-50) 위에도 뜬다 (z-80)
+  const [ask, confirmEl] = useConfirm()
 
   // 월간 실적 시트를 읽어 프로젝트+호기+구분 줄로 묶는다.
   //   상태·비고·담당자는 현장이 관리하므로 덮어쓰지 않는다.
@@ -186,11 +196,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (error) { toastError(error); return }
       if (!records.length) { toastError('가져올 내용이 없습니다'); return }
       const now = records.filter(r => r.status !== '완료').length
-      const ok = window.confirm(
-        `${records.length}줄을 가져올까요?\n` +
-        `  진행 ${now} · 완료 ${records.length - now}\n` +
-        `  호기가 없는 ${skipped}줄(단품·ETC)은 뺍니다\n\n` +
-        `이미 있는 줄은 납기만 갱신하고\n상태·비고·담당자는 그대로 둡니다.`)
+      const ok = await ask({ title: `월간 실적 ${records.length}줄을 가져올까요?`,
+        desc: '이미 있는 줄은 납기만 갱신하고 상태 · 비고 · 담당자는 그대로 둡니다.',
+        items: [`진행 ${now} · 완료 ${records.length - now}`, `호기가 없는 ${skipped}줄(단품·ETC)은 뺍니다`],
+        okText: '가져오기' })
       if (!ok) return
       importMut.mutate({ records, edMode: true })
     } catch (err) { toastError('파일을 읽지 못했습니다: ' + err.message) }
@@ -207,13 +216,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     },
     onError: (e) => toastError('구분 저장 실패: ' + e.message),
   })
-  function toggleMain(m) {
+  async function toggleMain(m) {
     if (mainMissing) { toastError('먼저 SQL(생산관리_주요품번_설정_261019.sql)을 실행해 주세요'); return }
     const toMain = !m.main
-    const msg = toMain
-      ? `${m.rawPn} 을 ⭐ 주요 관리로 옮길까요?\n가공물·하네스·전장 일정 체크와 하네스 우선순위 · 생산 전광판에 들어갑니다.`
-      : `${m.rawPn} 을 Sub Assy 로 옮길까요?\n일정 체크 · 하네스 우선순위 · 생산 전광판에서 빠지고 진행상태만 봅니다.`
-    if (!window.confirm(msg)) return
+    if (!(await ask(toMain
+      ? { title: `${m.rawPn} 을 ⭐ 주요 관리로 옮길까요?`, desc: '가공물 · 하네스 · 전장 일정 체크와 하네스 우선순위 · 생산 전광판에 들어갑니다.', items: [`${m.rawPn} · ${m.name || ''} · 호기 ${m.total}대`], okText: '⭐ 주요 관리로' }
+      : { title: `${m.rawPn} 을 Sub Assy 로 옮길까요?`, desc: '일정 체크 · 하네스 우선순위 · 생산 전광판에서 빠지고 진행상태만 봅니다.', items: [`${m.rawPn} · ${m.name || ''} · 호기 ${m.total}대`], okText: 'Sub Assy 로' }))) return
     mainMut.mutate({ pn: m.rawPn, toMain })
   }
   // production.vm 칸이 있는가 (SQL pm_vm_production_261007 실행 여부) — 없으면 자재 칸 · VM 진행 묶음을 숨긴다
@@ -247,6 +255,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   }, []))
   const [bulkField, setBulkField] = useState('arrival_date')
   const [bulkDate, setBulkDate] = useState('')
+  const [bulkDateErr, setBulkDateErr] = useState(false)   // 「일괄 적용」을 날짜 없이 눌렀을 때 그 칸 아래에 (v4.104.0)
   const [bulkStatus, setBulkStatus] = useState('')   // 체크한 호기의 진행 상태를 한 번에 (2026-10-02)
   // 작업지시서 인쇄 — 고른 호기를 QR 작업지시서로 (components/WorkOrderPrint.jsx, QR 공정 데모와 같은 양식)
   const [woRows, setWoRows] = useState(null)
@@ -390,12 +399,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (!plan.ins.length && !plan.upd.length && !plan.goneIds.length) {
         toastSuccess(`일정표 ${p.rows.length}줄 — 바뀐 것이 없습니다`); return
       }
-      const ok = window.confirm(
-        `CSK 생산 일정표${p.fileDate ? ` (${p.fileDate} 기준)` : ''} [${p.sheet}] ${p.rows.length}줄을 생산관리에 반영할까요?\n\n` +
-        planText(plan) +
-        (p.skipped?.length ? `\n\n건너뛴 줄 ${p.skipped.length}: ${p.skipped.slice(0, 3).join(' / ')}` : '') +
-        (p.missing?.length ? `\n\n파일에 없는 칸: ${p.missing.join(' · ')}` : '') +
-        `\n\n상태 · 메모 · 담당자 등 포털에서 넣은 값은 그대로 둡니다.`)
+      const ok = await ask({
+        title: `CSK 생산 일정표${p.fileDate ? ` (${p.fileDate} 기준)` : ''} ${p.rows.length}줄을 생산관리에 반영할까요?`,
+        desc: `[${p.sheet}] 시트 · 상태 · 메모 · 담당자 등 포털에서 넣은 값은 그대로 둡니다.`,
+        items: [...toLines(planText(plan)),
+          ...(p.skipped?.length ? [`건너뛴 줄 ${p.skipped.length}: ${p.skipped.slice(0, 3).join(' / ')}`] : []),
+          ...(p.missing?.length ? [`파일에 없는 칸: ${p.missing.join(' · ')}`] : [])],
+        okText: '반영' })
       if (!ok) return
       cskMut.mutate(plan)
     } catch (err) { toastError('일정표 파일을 읽지 못했습니다: ' + err.message) }
@@ -422,10 +432,18 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (!p.rows.length) { toastError('파일에 프로젝트 줄이 없습니다'); return }
       const plan = planVm(p.rows, rows)
       if (!plan.ins.length && !plan.dateDiff.length) { toastSuccess(`노션 PROJECT ${p.rows.length}건 — 새로 넣을 프로젝트가 없습니다 (모두 등록됨)`); return }
-      if (plan.ins.length && !window.confirm(`노션 PROJECT ${p.rows.length}건을 읽었습니다.\n\n${planVmText(plan)}\n\n새 프로젝트 ${plan.ins.length}건을 생산관리 VM 에 넣을까요?\n(구분 → 품번 · 구성 → PD명 · 프로젝트 → 호기 · 납품일자 · 상태 · ESC~ETC 자재 칸 · 노션 링크)`)) return
+      if (plan.ins.length && !(await ask({ title: `새 프로젝트 ${plan.ins.length}건을 생산관리 VM 에 넣을까요?`,
+        desc: `노션 PROJECT ${p.rows.length}건을 읽었습니다. 구분 → 품번 · 구성 → PD명 · 프로젝트 → 호기 · 납품일자 · 상태 · ESC~ETC 자재 칸 · 노션 링크로 들어갑니다.`,
+        items: toLines(planVmText(plan)), okText: `${plan.ins.length}건 넣기` }))) return
       let dates = false
       if (plan.dateDiff.length) {
-        dates = window.confirm(`이미 있는 프로젝트 중 납품일이 노션과 다른 것 ${plan.dateDiff.length}건:\n\n${plan.dateDiff.slice(0, 15).map(d => `  · ${d.hogi}  포털 ${d.from || '미정'} → 노션 ${d.to}`).join('\n')}${plan.dateDiff.length > 15 ? `\n  … 외 ${plan.dateDiff.length - 15}건` : ''}\n\n이 납품일도 노션 날짜로 맞출까요? (생산관리 변경 이력에 남습니다)\n「취소」하면 납품일은 그대로 둡니다.`)
+        // 두 갈래 — 「맞추기」 = 납품일도 노션 날짜로 · 「그대로」 = 납품일은 두고 새 프로젝트만 · Esc · 바깥 누름 = 아무것도 안 함
+        const d = await ask({ title: `납품일이 노션과 다른 프로젝트 ${plan.dateDiff.length}건 — 노션 날짜로 맞출까요?`,
+          desc: '맞추면 생산관리 변경 이력에 남습니다. 「그대로」를 누르면 납품일은 두고' + (plan.ins.length ? ' 새 프로젝트만 넣습니다.' : ' 아무것도 바꾸지 않습니다.'),
+          items: plan.dateDiff.slice(0, 15).map(x => `${x.hogi} · 포털 ${x.from || '미정'} → 노션 ${x.to}`), more: Math.max(0, plan.dateDiff.length - 15),
+          okText: '노션 날짜로 맞추기', cancelText: '납품일은 그대로' })
+        if (d === null) return
+        dates = d === true
         if (!plan.ins.length && !dates) return
       }
       vmNotionMut.mutate({ plan, dates })
@@ -445,10 +463,9 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
       if (!plan.upd.length && !plan.ins.length && !plan.goneIds.length) {
         toastSuccess(`포캐스트 ${fcRows.length}대 — 바뀐 것이 없습니다`); return
       }
-      const ok = window.confirm(
-        `포캐스트${updated ? ` (${updated} 기준)` : ''} ${fcRows.length}대를 생산관리에 반영할까요?\n\n` +
-        planSummary(plan) +
-        `\n\n확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다.`)
+      const ok = await ask({ title: `포캐스트${updated ? ` (${updated} 기준)` : ''} ${fcRows.length}대를 생산관리에 반영할까요?`,
+        desc: '확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다.',
+        items: toLines(planSummary(plan)), okText: '반영' })
       if (!ok) return
       fcMut.mutate(plan)
     } catch (err) { toastError('포캐스트 파일을 읽지 못했습니다: ' + err.message) }
@@ -629,11 +646,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const onFile = (e) => {
     const f = e.target.files?.[0]; if (!f) return
     const reader = new FileReader()
-    reader.onload = () => {
+    reader.onload = async () => {
       try {
         const records = parsePDBoxCSV(String(reader.result))
         if (!records.length) { toastError('읽을 데이터가 없습니다'); return }
-        if (window.confirm(`${records.length}개 호기를 가져올까요?\n(같은 품번+호기는 일정만 갱신, 완료상태는 보존)`)) importMut.mutate({ records })
+        if (await ask({ title: `${records.length}개 호기를 가져올까요?`, desc: '같은 품번+호기는 일정만 갱신하고, 완료상태는 보존합니다. 없는 호기는 새로 만듭니다.',
+          items: records.slice(0, 5).map(r => `${r.pn || '-'} · ${r.hogi || '-'}${r.req_date ? ` · 납품 ${r.req_date}` : ''}`), more: Math.max(0, records.length - 5), okText: '가져오기' })) importMut.mutate({ records })
       } catch (err) { toastError('CSV 파싱 오류: ' + err.message) }
     }
     reader.readAsText(f, 'utf-8')
@@ -752,13 +770,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <button onClick={() => edFileRef.current?.click()} disabled={importMut.isPending}
               title="영업관리 파일의 '에드워드 월간 실적' 시트를 읽습니다"
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
-              {importMut.isPending ? '올리는 중…' : '📤 PO 업로드'}
+              {importMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />올리는 중…</span> : '📤 PO 업로드'}
             </button>
             <input ref={edFcRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={onEdFcFile} />
             <button onClick={() => edFcRef.current?.click()} disabled={fcMut.isPending}
               title="Edwards 포캐스트 파일(System Tag · to 정한 · Frame 입고 · H2D 자재)을 읽어 정한 납기를 채웁니다. 사람이 넣은 값은 그대로 둡니다."
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40">
-              {fcMut.isPending ? '반영 중…' : '📅 포캐스트 반영'}
+              {fcMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📅 포캐스트 반영'}
             </button>
             <button onClick={() => setShowRules(true)}
               title="불출 예정일 = 정한 납기 − N주 · 포캐스트 품번별 구분"
@@ -771,7 +789,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <button onClick={() => cskRef.current?.click()} disabled={cskMut.isPending}
               title="CSK 가 주는 생산 Schedule 엑셀(생산_Schedule 시트)을 읽어 관리번호별로 나열합니다. 다시 올리면 바뀐 값만 갱신하고, 상태 · 메모는 그대로 둡니다."
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
-              {cskMut.isPending ? '반영 중…' : '📅 일정표 올리기'}
+              {cskMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📅 일정표 올리기'}
             </button>
           </>
         )}
@@ -781,11 +799,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <button data-vm-notion onClick={() => vmRef.current?.click()} disabled={vmNotionMut.isPending}
               title="노션 🎯 PROJECT 표를 내보낸 파일(HTML 또는 CSV)을 올리면, 생산관리에 없는 프로젝트만 새 줄로 넣습니다. 이미 있는 줄은 그대로 두고, 납품일이 다르면 맞출지 묻습니다."
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-              {vmNotionMut.isPending ? '반영 중…' : '📥 노션 PROJECT 올리기'}
+              {vmNotionMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📥 노션 PROJECT 올리기'}
             </button>
           </>
         )}
-        <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? '가져오는 중...' : '📤 CSV 가져오기'}</button>
+        <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />가져오는 중...</span> : '📤 CSV 가져오기'}</button>
         <input ref={fileRef} type="file" accept=".csv" onChange={onFile} className="hidden" />
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
       </div>
@@ -796,7 +814,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           <EdFilters f={edF} setF={setEdF} />
         </>
       )}
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
+      {confirmEl}
+      {isLoading ? <div className="rounded-xl border border-slate-200 bg-white overflow-hidden" data-pd-loading>
+          <table className="w-full text-xs"><tbody><SkeletonRows cols={12} rows={10} first={1} two={[1]} /></tbody></table>
+        </div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           {/* 고른 호기 일괄 작업 — 표 위 (표 안에 두면 스크롤할 때 머리글을 가린다, v4.64.0) */}
           {view === 'list' && sel.size > 0 && (
@@ -810,12 +831,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <option value="elec_done">⚡ 전장 완료요청</option>
                 <option value="req_date">📦 납품요청일</option>
               </select>
-              <input type="date" value={bulkDate} onChange={e=>setBulkDate(e.target.value)}
-                className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400" />
-              <button onClick={()=>{ if(!bulkDate){ toastError('날짜를 선택하세요'); return } bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
-                disabled={bulkMut.isPending}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {bulkMut.isPending?'적용 중...':'일괄 적용'}
+              <span className="inline-flex flex-col">
+                <input type="date" value={bulkDate} onChange={e=>{ setBulkDate(e.target.value); if (e.target.value) setBulkDateErr(false) }} data-bulk-date
+                  className={`px-2 py-1 text-xs border rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${bulkDateErr ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'}`} />
+                {bulkDateErr && <p className="mt-1 whitespace-nowrap text-[11px] font-bold text-rose-600" data-field-error="bulk-date">날짜를 골라 주세요</p>}
+              </span>
+              <button onClick={()=>{ if(!bulkDate){ setBulkDateErr(true); return } setBulkDateErr(false); bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
+                disabled={bulkMut.isPending} data-bulk-apply
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {bulkMut.isPending?<><Spin />적용 중...</>:'일괄 적용'}
               </button>
               {/* 진행 상태 일괄 변경 — 줄마다 상태 칸을 누르는 것과 같은 저장 */}
               <span className="flex items-center gap-1.5 pl-2 ml-1 border-l border-indigo-200">
@@ -825,23 +849,31 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
                 <button disabled={bulkMut.isPending || !bulkStatus}
-                  onClick={()=>{
+                  onClick={async ()=>{
                     const list = rows.filter(r => sel.has(r.id))
                     const change = list.filter(r => (r.status || 'PO접수') !== bulkStatus)
                     if (!change.length) { toastError(`고른 ${list.length}건이 이미 「${bulkStatus}」입니다`); return }
                     const from = [...new Set(change.map(r => r.status || 'PO접수'))].join(' · ')
-                    if (!window.confirm(`선택 ${sel.size}건 중 ${change.length}건의 상태를 「${bulkStatus}」(으)로 바꿀까요?\n\n지금 상태: ${from}${bulkStatus === '완료' ? '\n\n완료로 바꾸면 「완료 포함」을 켜야 목록에 보입니다.' : ''}`)) return
+                    if (!(await ask({ title: `선택 ${sel.size}건 중 ${change.length}건의 상태를 「${bulkStatus}」(으)로 바꿀까요?`,
+                      desc: `지금 상태: ${from}${bulkStatus === '완료' ? ' — 완료로 바꾸면 「완료 포함」을 켜야 목록에 보입니다.' : ''}`,
+                      items: change.slice(0, 5).map(r => `${r.pn || '-'} · ${r.hogi || '-'} · ${r.status || 'PO접수'} → ${bulkStatus}`), more: Math.max(0, change.length - 5),
+                      okText: '상태 바꾸기' }))) return
                     bulkMut.mutate({ ids: change.map(r => r.id), field: 'status', value: bulkStatus }, { onSuccess: () => setBulkStatus('') })
                   }}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
-                  {bulkMut.isPending ? '적용 중...' : '상태 일괄 변경'}
+                  {bulkMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />적용 중...</span> : '상태 일괄 변경'}
                 </button>
               </span>
-              <button onClick={()=>{ if(window.confirm(`선택 ${sel.size}건의 날짜를 비울까요?`)) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null }) }}
+              <button onClick={async ()=>{
+                const list = rows.filter(r => sel.has(r.id))
+                if (await ask({ title: `선택 ${sel.size}건의 「${bulkLabel(bulkField, isED)}」 날짜를 비울까요?`, desc: '지금 적힌 날짜가 지워집니다. 되돌리려면 날짜를 다시 넣어야 합니다.',
+                  items: list.slice(0, 5).map(r => `${r.pn || '-'} · ${r.hogi || '-'} · 지금 ${r[bulkField] ? String(r[bulkField]).slice(0, 10) : '비어 있음'}`), more: Math.max(0, list.length - 5),
+                  okText: '날짜 비우기', danger: true })) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null })
+              }} data-bulk-clear
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
               <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
                 className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
-                {woRows ? 'QR 만드는 중…' : `🖨 작업지시서 (${sel.size})`}
+                {woRows ? <span className="inline-flex items-center gap-1.5"><Spin />QR 만드는 중…</span> : `🖨 작업지시서 (${sel.size})`}
               </button>
               <button onClick={()=>setSel(new Set())}
                 className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
@@ -1294,7 +1326,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2 sticky bottom-0 bg-white">
               <button onClick={() => setEdit(null)} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
               <button onClick={() => saveMut.mutate(edit)} disabled={saveMut.isPending || !edit.pn}
-                className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending ? '저장 중...' : '저장'}</button>
+                className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span> : '저장'}</button>
             </div>
           </div>
         </div>

@@ -9,6 +9,8 @@ import { fetchAll } from '../../lib/paginate'
 import { explodeProjects } from '../../lib/bomSupply'
 import { buildEvents, matchNeed, STATUS, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import { dday } from './EdProductionTable'
+import { SkelBar, SkeletonCards } from '../../components/ux/Skeleton'
+import Spin from '../../components/ux/Spin'
 
 const md = (d) => (d ? String(d).slice(5, 10) : '')
 const n0 = (v) => (Math.round(Number(v || 0) * 100) / 100).toLocaleString()
@@ -107,7 +109,18 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
   const [showOk, setShowOk] = useState({})   // 카드마다 「충분」 품목 펼침
   const { pq, dq, events, res } = useEdNeed(rows, rules)
 
-  if (pq.isLoading || dq.isLoading) return <div className="py-12 text-center text-sm text-slate-400">소요량 계산 중…</div>
+  // 계산하는 동안 — 위 요약 칸 · 카드 모양을 먼저 (v4.104.0)
+  if (pq.isLoading || dq.isLoading) return (
+    <div className="p-3 space-y-3" data-need-loading>
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="flex bg-white border border-slate-200 rounded-xl overflow-hidden" data-skeleton>
+          {[0, 1, 2, 3].map(i => <div key={i} className="px-4 py-2 border-r border-slate-100 last:border-r-0 space-y-1.5"><SkelBar w={64} h={9} /><SkelBar w={28} h={16} /></div>)}
+        </div>
+        <span className="inline-flex items-center gap-1.5 text-xs text-slate-400"><Spin />소요량 계산 중…</span>
+      </div>
+      <div className="space-y-2"><SkeletonCards n={4} /></div>
+    </div>
+  )
   if (pq.error || dq.error) return <div className="p-6 text-sm text-red-600">소요량을 불러오지 못했습니다: {(pq.error || dq.error).message}</div>
   if (!pq.data?.csId) return <div className="p-6 text-sm text-slate-500">Edwards 고객사(코드 ED)를 찾을 수 없습니다.</div>
 

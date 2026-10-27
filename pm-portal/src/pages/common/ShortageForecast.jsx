@@ -14,12 +14,18 @@ import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
 import { getCategoryCode, getCategoryName, ITEM_CATEGORIES, quarterOf, todayISO } from '../../lib/utils'
 import { useFillHeight } from '../../hooks/useFillHeight'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 const CUSTOMERS = [
   { code: 'ax', name: 'AXCELIS' }, { code: 'ed', name: 'Edwards' },
   { code: 'vm', name: 'VM' }, { code: 'csk', name: 'CSK' },
 ]
 
+// 요약 카드 공통 기준 (v4.104.0) — 아래 summary 계산 그대로
+const FC_TIP_BASE = '첫 부족월 = 마지막 「↻ 재계산」 때 만든 월말 예상재고가 처음 마이너스가 되는 달. 검색 · 카테고리 · 「쇼티지 예상만」 · 선발주 필터와 방금 제외 · 발주한 품목은 반영하지 않고, 재계산해야 바뀝니다.'
 const cellColor = (p) => p < 0 ? 'bg-red-50 text-red-600 font-bold' : p < 5 ? 'bg-amber-50 text-amber-700' : 'text-slate-600'
 
 // 행 단위 메모이즈 — 제외 클릭 시 바뀐 행만 다시 그림(표 전체 재렌더 방지)
@@ -158,6 +164,7 @@ export default function ShortageForecast() {
   const [ordered, setOrdered] = useState(() => new Set())   // 이 화면에서 방금 발주한 품목 (두 번 발주 막기)
 
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
   const { data: cs } = useCustomer(csCode)
   const { data: cache = { rows: [], computedAt: null }, isLoading } = useQuery({
     queryKey: ['forecastShortage', cs?.id], queryFn: () => fetchForecastShortage(cs?.id), enabled: !!cs?.id,
@@ -225,9 +232,10 @@ export default function ShortageForecast() {
 
   const excludedRef = useRef(excluded)
   excludedRef.current = excluded
-  const handleExclude = useCallback((itemId, stdCode) => {
+  //   ask 는 매 렌더 새로 만들어지지만 처음 것도 똑같이 동작한다 (상태 setter · ref 만 씀) → 의존성 [] 그대로
+  const handleExclude = useCallback(async (itemId, stdCode) => {
     if (excludedRef.current.has(itemId)) return
-    if (!window.confirm(`${stdCode}를 재고관리 제외할까요?\n재계산하면 쇼티지 예측에서 빠집니다.`)) return
+    if (!(await ask({ title: `${stdCode}를 재고관리 제외할까요?`, desc: '「↻ 재계산」하면 쇼티지 예측에서 빠집니다 (그 전까지는 흐리게 남음). 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.', okText: '재고관리 제외', danger: true }))) return
     setExcluded(prev => new Set(prev).add(itemId))
     supabase.from('items').update({ stock_managed: false }).eq('id', itemId)
       .then(({ error }) => {
@@ -492,6 +500,7 @@ export default function ShortageForecast() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       {/* 부족자재 · 소요량 조회와 같은 순서: 고객사 → 소요·부족 탭 */}
       <div className="-mb-4"><CustomerTabs active={csCode} onPick={(c) => { setCsCode(c); setExcluded(new Set()) }} /></div>
       <ShortageTabs cs={csCode} />
@@ -507,23 +516,26 @@ export default function ShortageForecast() {
           <span className="text-[11px] text-slate-400">
             {cache.computedAt ? `계산: ${new Date(cache.computedAt).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : '미계산'}
           </span>
-          <button onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending || !cs?.id}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
-            {refreshMut.isPending ? '계산 중...' : '↻ 재계산'}
+          <button onClick={() => refreshMut.mutate()} disabled={refreshMut.isPending || !cs?.id} data-fc-refresh
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
+            {refreshMut.isPending ? <><Spin />계산 중...</> : '↻ 재계산'}
           </button>
           {/* 화면에 걸린 필터 결과를 그대로 발주로 만든다 (부족자재 탭과 동일 방식) */}
           {(() => {
             const need = filtered.filter(it => Number(it.shortageQty) > 0 && !excluded.has(it.item_id) && !ordered.has(it.item_id))
             if (!need.length) return null
             return (
-              <button onClick={() => {
-                  if (!window.confirm(`현재 목록의 부족 품목 ${need.length}건을 구매발주로 만들까요?\n\n· 부족수량으로 생성됩니다\n· 발주번호·납기·단가는 구매발주 화면에서 채웁니다`)) return
+              <button onClick={async () => {
+                  if (!(await ask({ title: `현재 목록의 부족 품목 ${need.length}건을 구매발주로 만들까요?`,
+                    desc: '부족수량(가장 낮은 예상재고만큼)으로 생성됩니다. 발주번호 · 납기 · 단가는 구매발주 화면에서 채웁니다. 만든 뒤 자동으로 재계산합니다.',
+                    items: need.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''} · ${it.shortageQty}${it.unit || ''}`), more: Math.max(0, need.length - 5),
+                    okText: '발주 생성' }))) return
                   orderMut.mutate(need)
                 }}
                 disabled={orderMut.isPending}
                 title="지금 화면에 보이는 부족 품목을 발주로 생성합니다"
-                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40">
-                {orderMut.isPending ? '생성 중…' : `🛒 발주 생성 (${need.length})`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-orange-300 text-orange-700 bg-orange-50 hover:bg-orange-100 disabled:opacity-40">
+                {orderMut.isPending ? <><Spin />생성 중…</> : `🛒 발주 생성 (${need.length})`}
               </button>
             )
           })()}
@@ -532,20 +544,27 @@ export default function ShortageForecast() {
 
       {/* 고객사 탭은 맨 위(CustomerTabs)로 옮김 — 부족자재 · 소요량 조회와 같은 자리 */}
 
+      {/* 재계산 중 — 표는 지난 계산 결과 그대로이고 끝나면 바뀐다는 걸 분명히 (v4.104.0) */}
+      {refreshMut.isPending && (
+        <div data-fc-computing className="rounded-xl border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-xs text-indigo-700 font-semibold flex items-center gap-2">
+          <Spin />재계산 중… {csCode === 'ed' ? '생산관리 불출 예정 × BOM 으로 소요를 다시 만들고 ' : '포캐스트 × BOM 을 다시 전개하고 '}있습니다. 끝나면 아래 숫자와 표가 새로 바뀝니다 (지금 보이는 건 지난 계산).
+        </div>
+      )}
+
       {/* 요약 카드 */}
       <div className="kpi-grid grid grid-cols-3 gap-2">
         <div className="rounded-xl border border-red-200 bg-red-50 p-3">
-          <p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">🚨 지금 발주 필요</p>
+          <p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">🚨 지금 발주 필요 <InfoTip text={`「3개월 내 쇼티지」 품목 중, 첫 부족월에서 LT 를 뺀 달(LT 주 ÷ 4 를 올림한 개월 수)이 이번 달이거나 이미 지난 품목 수. ${FC_TIP_BASE}`} /></p>
           <p className="text-2xl font-bold text-red-600">{summary.urgent}</p>
           <p className="text-[11px] text-red-400 mt-0.5">LT 고려 시 이미 늦거나 임박</p>
         </div>
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">⚠️ 3개월 내 쇼티지</p>
+          <p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">⚠️ 3개월 내 쇼티지 <InfoTip text={`첫 부족월이 ${monthsAhead(3)} 까지인 품목 수 (이번 달부터 3개월 뒤 달까지 · 이미 지난 달 포함). ${FC_TIP_BASE}`} /></p>
           <p className="text-2xl font-bold text-amber-700">{summary.within3}</p>
           <p className="text-[11px] text-amber-500 mt-0.5">~{monthsAhead(3)}</p>
         </div>
         <div className="rounded-xl border border-slate-200 p-3">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 쇼티지 예상</p>
+          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">전체 쇼티지 예상 <InfoTip align="right" text={`계산된 기간 안에 월말 예상재고가 한 번이라도 마이너스가 되는 품목 수. ${FC_TIP_BASE}`} /></p>
           <p className="text-2xl font-bold text-slate-700">{summary.risk}</p>
           <p className="text-[11px] text-slate-400 mt-0.5">예측 기간 내</p>
         </div>
@@ -579,8 +598,11 @@ export default function ShortageForecast() {
           </label>
         )}
         {selEx.size > 0 && (
-          <button onClick={() => {
-              if (!window.confirm(`선택한 ${selEx.size}건을 재고관리 제외할까요?\n재계산하면 목록에서 빠집니다.`)) return
+          <button onClick={async () => {
+              const pick = items.filter(it => selEx.has(it.item_id))
+              if (!(await ask({ title: `선택한 ${selEx.size}건을 재고관리 제외할까요?`, desc: '「↻ 재계산」하면 목록에서 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.',
+                items: pick.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''}`), more: Math.max(0, pick.length - 5),
+                okText: '재고관리 제외', danger: true }))) return
               bulkExclude()
             }}
             className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100">
@@ -658,7 +680,11 @@ export default function ShortageForecast() {
         </div>
       )}
 
-      {!preorder && (isLoading ? <div className="text-center py-12 text-slate-400 text-sm">예측 계산 중...</div>
+      {!preorder && (isLoading ? (
+          <div className="rounded-xl border border-slate-200 overflow-hidden" data-fc-loading>
+            <div className="px-3 py-2 text-[11.5px] text-slate-500 border-b border-slate-100 flex items-center gap-2 bg-slate-50"><Spin />예측 계산 중...</div>
+            <table className="w-full text-xs"><tbody><SkeletonRows cols={10} rows={8} two={[0]} /></tbody></table>
+          </div>)
         : filtered.length === 0
           ? <div className="text-center py-16 text-slate-300 text-sm">
               {items.length === 0 ? '포캐스트가 없습니다. 먼저 포캐스트를 접수해주세요.' : '쇼티지 예상 품목이 없습니다 👍'}

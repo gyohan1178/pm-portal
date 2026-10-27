@@ -8,6 +8,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { genPoNumber } from '../../lib/poNumber'
 import { refreshProcurement } from '../../lib/refresh'
 import VendorPicker from '../../components/VendorPicker'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 // 발주 담기함 (장바구니) — 자재요청에서 담아 둔 것을 모아 한꺼번에 발주로 등록한다.
 //
@@ -100,6 +103,7 @@ export default function PoCart({ open, onClose }) {
   const [busy, setBusy] = useState(false)
   const [bulkVendor, setBulkVendor] = useState('')
   const [bulkDate, setBulkDate] = useState('')
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
   const { data: cart = [], isLoading } = useQuery({ queryKey: ['poCart'], queryFn: fetchCart, enabled: !!open })
 
   // 발주서 묶음 (구매처별) — 등록할 때 · 요약 칩에만 쓴다. 목록은 담은 순서 그대로 한 표 (v4.78.1)
@@ -146,7 +150,10 @@ export default function PoCart({ open, onClose }) {
     if (noQty.length) { toastError(`수량이 없는 줄이 ${noQty.length}개 있습니다`); return }
     const noCs = cart.filter((c) => !c.customer_id)
     if (noCs.length) { toastError(`고객사가 없는 줄이 ${noCs.length}개 있습니다 — 줄을 빼거나 자재요청에서 고객사를 채워주세요`); return }
-    if (!window.confirm(`${cart.length}줄을 발주로 등록합니다.\n구매처별로 발주번호 ${groups.length}장이 만들어집니다.`)) return
+    if (!(await ask({ title: `${cart.length}줄을 발주로 등록할까요?`,
+      desc: `구매처별로 발주번호 ${groups.length}장이 만들어지고 담기함은 비워집니다. 자재요청에서 담은 줄은 그 요청이 「처리중 · 발주」로 바뀝니다.`,
+      items: groups.slice(0, 5).map((g) => `${g.no}장 · ${g.name} · ${g.rows.length}줄`), more: Math.max(0, groups.length - 5),
+      okText: '발주 등록' }))) return
     setBusy(true)
     try {
       const order_date = todayISO()
@@ -194,7 +201,8 @@ export default function PoCart({ open, onClose }) {
   }
 
   if (!open) return null
-  return (
+  return (<>
+    {confirmEl}
     <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-auto" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-6xl my-6" onClick={(e) => e.stopPropagation()}>
         {/* 머리 */}
@@ -243,7 +251,15 @@ export default function PoCart({ open, onClose }) {
 
         {/* 목록 — 한 표 · 담은 순서 고정 (구매처를 바꿔도 줄이 안 움직임) */}
         <div className="max-h-[60vh] overflow-auto">
-          {isLoading ? <p className="p-8 text-center text-sm text-slate-400">불러오는 중…</p>
+          {isLoading ? (
+            <div className="p-4 space-y-3" data-cart-loading>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} className="flex items-center gap-4" data-skeleton>
+                  <SkelBar w={18} h={14} /><div className="space-y-1.5"><SkelBar w={150} /><SkelBar w={110} h={9} /></div>
+                  <SkelBar w={140} h={22} /><SkelBar w={50} h={22} /><SkelBar w={110} h={22} /><SkelBar w={80} h={22} />
+                </div>
+              ))}
+            </div>)
             : !cart.length ? <p className="p-10 text-center text-sm text-slate-400">담아 둔 것이 없습니다. 자재요청 · 소요량 조회에서 「🛒 담기」로 담으세요.</p>
               : (
                 <table data-cart-table className="w-full text-xs table-fixed">
@@ -333,10 +349,10 @@ export default function PoCart({ open, onClose }) {
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600">닫기</button>
           <button onClick={register} disabled={!cart.length || busy}
             className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '등록 중…' : `발주 등록 (${n(cart.length)}줄 · ${groups.length}장)`}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />등록 중…</span> : `발주 등록 (${n(cart.length)}줄 · ${groups.length}장)`}
           </button>
         </div>
       </div>
     </div>
-  )
+  </>)
 }

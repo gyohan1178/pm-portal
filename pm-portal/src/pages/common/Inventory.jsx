@@ -22,6 +22,11 @@ import { logActivity } from '../../lib/activityLog'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useCompact } from '../../hooks/useCompact'
 import { useUndo } from '../../components/UndoBar'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 
 const EMPTY_AUX = new Map()
 
@@ -95,7 +100,9 @@ export default function Inventory() {
   const rowSel = useRowSelect(setChecked)
   const [showAudit, setShowAudit] = useState(false)
   const [auditRows, setAuditRows] = useState([])
+  const [auditProg, setAuditProg] = useState(null)   // 실사 반영 진행 { done, total } — 화면 표시만 (v4.104.0)
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
 
   // 되돌리기 (v4.58.0) — 직접 고친 재고를 고치기 전 수량으로
   const { remember, bar: undoBar } = useUndo()
@@ -106,7 +113,10 @@ export default function Inventory() {
     if (e0) throw e0
     const now = new Map((cur || []).map(r => [r.id, Number(r.qty) || 0]))
     const moved = backs.filter(b => now.has(b.id) && now.get(b.id) !== Number(b.to))
-    if (moved.length && !window.confirm(`그사이 재고가 바뀐 품목이 있습니다 (입고 · 출고):\n${moved.slice(0, 8).map(b => `${b.code} ${b.to} → 지금 ${now.get(b.id)}`).join('\n')}${moved.length > 8 ? '\n…' : ''}\n\n그래도 고치기 전 수량으로 덮어쓸까요?`)) throw new Error('취소했습니다')
+    if (moved.length && !(await ask({ title: '그사이 재고가 바뀐 품목이 있습니다 — 그래도 고치기 전 수량으로 덮어쓸까요?',
+      desc: '고친 뒤에 입고 · 출고가 있었습니다. 덮어쓰면 그 사이 움직인 수량이 재고에서 사라집니다.',
+      items: moved.slice(0, 5).map(b => `${b.code} · 고친 값 ${b.to} → 지금 ${now.get(b.id)} · 되돌리면 ${b.from}`), more: Math.max(0, moved.length - 5),
+      okText: '그래도 덮어쓰기', cancelText: '그만두기', danger: true }))) throw new Error('취소했습니다')
     for (const b of backs) {
       const { error } = await supabase.from('inventory').update({ qty: b.from, updated_at: new Date().toISOString() }).eq('id', b.id)
       if (error) throw error
@@ -149,7 +159,10 @@ export default function Inventory() {
       if (e1) throw e1
       const dbQty = Number(cur?.qty) || 0
       if (dbQty !== (Number(row.qty) || 0) &&
-          !window.confirm(`${row.items?.std_code} 재고가 화면을 연 뒤 ${row.qty} → ${dbQty} 로 바뀌었습니다 (입고·출고).\n\n그래도 ${qty} 로 덮어쓸까요?`)) return null
+          !(await ask({ title: `${row.items?.std_code} 재고가 그사이 바뀌었습니다 — 그래도 ${qty} 로 덮어쓸까요?`,
+            desc: `화면을 연 뒤 입고 · 출고로 ${row.qty} → ${dbQty} 가 되었습니다. 덮어쓰면 그 움직임이 재고에서 사라집니다.`,
+            items: [`${row.items?.std_code} · ${row.items?.name || ''} · 지금 ${dbQty} → ${qty}`],
+            okText: `${qty} 로 덮어쓰기`, cancelText: '그만두기', danger: true }))) return null
       const { error } = await supabase.from('inventory').update({ qty, updated_at: new Date().toISOString() }).eq('id', row.id)
       if (error) throw error
       logActivity('update', 'inventory', row.items?.std_code || row.item_id, `재고 수정 (재고현황) ${dbQty} → ${qty}`)
@@ -247,11 +260,13 @@ export default function Inventory() {
       })
 
       let applied = 0
+      setAuditProg({ done: 0, total: merged.length })
       for (let i = 0; i < merged.length; i += 500) {
         const chunk = merged.slice(i, i + 500)
         const { error } = await supabase.from('inventory').upsert(chunk, { onConflict: 'item_id' })
         if (error) throw error
         applied += chunk.length
+        setAuditProg({ done: applied, total: merged.length })
       }
       // 조정 이력 — 누가 언제 얼마를 얼마로 바꿨는지 작업 기록에 남긴다
       const codeOf = {}; Object.entries(idMap).forEach(([c, id]) => { codeOf[id] = c })
@@ -270,6 +285,7 @@ export default function Inventory() {
       setShowAudit(false); setAuditRows([])
     },
     onError: (e) => toastError('실사 반영 실패: ' + e.message),
+    onSettled: () => setAuditProg(null),
   })
 
   const { data: invAll, isLoading, error } = useQuery({
@@ -291,6 +307,14 @@ export default function Inventory() {
   const totalValue=rows.reduce((a,r)=>a+(r.qty*(r.items?.purchase_price||0)),0)
   const negRows=allRows.filter(r=>r.qty<0)
   const checkedIds=Object.keys(checked).filter(k=>checked[k])
+  // 지표 기준 (v4.104.0) — 위 계산식 그대로
+  const KPI_TIP = {
+    all: '재고 표에 있는 품목 수. 위 검색 · 가공/자재 구분 · 브랜드 · 「관리대상만」 조건을 그대로 따릅니다 (「관리대상만」이면 재고관리 제외 품목은 빠짐).',
+    zero: '지금 조건의 품목 중 현재고가 정확히 0 인 품목 수 (음수는 들어가지 않음).',
+    neg: '현재고가 0 보다 적은 품목 수. 검색어만 따르고 구분 · 브랜드 · 관리대상 조건과 관계없이 셉니다. 눌러서 0 으로 정리할 수 있습니다.',
+    low: '안전재고가 0 보다 크게 잡힌 품목 중 현재고가 안전재고보다 적은 품목 수 (재고 0 인 품목도 포함). 지금 조건 기준.',
+    value: '지금 조건의 품목마다 「현재고 × 품목 매입가」를 더한 값 (원). 매입가가 없는 품목은 0 으로, 음수 재고는 빼서 계산합니다. M = 백만 원.',
+  }
 
   function exportExcel() {
     const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':locWithAux(r.location||'', auxAll.get(r.item_id), true),'최종업데이트':r.updated_at?.split('T')[0]}))
@@ -319,6 +343,7 @@ export default function Inventory() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       {pasteOpen && <StockPaste onClose={()=>setPasteOpen(false)} />}
       {auditOpen && <AuditApplyModal onClose={()=>setAuditOpen(false)} />}
       {undoBar}
@@ -340,22 +365,22 @@ export default function Inventory() {
       {/* 지표 — 노트북 화면이면 한 줄 칩으로 얇게 (v4.64.0) */}
       {compact ? (
         <div data-kpi-compact className="flex flex-wrap gap-1.5 text-xs">
-          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b></span>
-          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b></span>
-          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b></button>
-          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b></span>
-          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b></span>
+          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b> <InfoTip text={KPI_TIP.all} /></span>
+          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b> <InfoTip text={KPI_TIP.zero} /></span>
+          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b> <InfoTip text={KPI_TIP.neg} /></button>
+          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b> <InfoTip text={KPI_TIP.low} /></span>
+          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b> <InfoTip text={KPI_TIP.value} align="right" /></span>
         </div>
       ) : (
       <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" data-inv-kpi>
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{rows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">지금 조건(검색 · 구분 · 브랜드) 기준</p></div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">재고 없음</p><p className="text-xl font-bold text-red-600">{zeroStock.toLocaleString()}</p><p className="text-[11px] text-red-400 mt-0.5">현재고 0 인 품목</p></div>
+        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">전체 품목 <InfoTip text={KPI_TIP.all} /></p><p className="text-xl font-bold text-slate-900">{rows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">지금 조건(검색 · 구분 · 브랜드) 기준</p></div>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">재고 없음 <InfoTip text={KPI_TIP.zero} /></p><p className="text-xl font-bold text-red-600">{zeroStock.toLocaleString()}</p><p className="text-[11px] text-red-400 mt-0.5">현재고 0 인 품목</p></div>
         <button onClick={()=>setShowNeg(v=>!v)} className={`text-left rounded-xl border p-3 transition-all ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>
-          <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mb-1">⚠ 음수 재고</p><p className="text-xl font-bold text-rose-600">{negRows.length}</p>
+          <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mb-1 flex items-center gap-1">⚠ 음수 재고 <InfoTip text={KPI_TIP.neg} /></p><p className="text-xl font-bold text-rose-600">{negRows.length}</p>
           <p className="text-[10px] text-rose-400 mt-0.5">클릭해서 정리</p>
         </button>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">안전재고 미달</p><p className="text-xl font-bold text-amber-700">{belowSafety.toLocaleString()}</p><p className="text-[11px] text-amber-600/80 mt-0.5">안전재고보다 적음 · 발주 검토</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">재고 금액</p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
+        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">안전재고 미달 <InfoTip text={KPI_TIP.low} /></p><p className="text-xl font-bold text-amber-700">{belowSafety.toLocaleString()}</p><p className="text-[11px] text-amber-600/80 mt-0.5">안전재고보다 적음 · 발주 검토</p></div>
+        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">재고 금액 <InfoTip text={KPI_TIP.value} align="right" /></p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
       </div>
       )}
 
@@ -400,7 +425,9 @@ export default function Inventory() {
       {showAudit && (() => {
         const curMap = {}; allRows.forEach(r => { if (r.items?.std_code) curMap[r.items.std_code] = r.qty })
         return (
-          <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
+          <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3" data-audit-preview>
+            <div className="max-w-[560px]"><Stepper steps={['엑셀 고르기', '미리보기 확인', '재고에 반영']} cur={auditMut.isPending ? 2 : 1} /></div>
+            {auditMut.isPending && auditProg && auditProg.total > 0 && <div className="max-w-[560px]"><ProgressBar done={auditProg.done} total={auditProg.total} label="재고에 덮어쓰는 중 — 창을 닫지 마세요" /></div>}
             <div className="flex items-center justify-between flex-wrap gap-2">
               <div>
                 <p className="text-sm font-bold text-indigo-700">📤 재고 실사 미리보기 — {auditRows.length}건</p>
@@ -409,10 +436,18 @@ export default function Inventory() {
               </div>
               <div className="flex gap-2">
                 <button onClick={() => { setShowAudit(false); setAuditRows([]) }} className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">취소</button>
-                <button onClick={() => { if (auditRows.length && window.confirm(`${auditRows.length}건의 현재고를 실사값으로 덮어쓸까요?`)) auditMut.mutate(auditRows) }}
+                <button onClick={async () => {
+                    if (!auditRows.length) return
+                    const bad = auditRows.filter(r => r.bad).length
+                    const diffRows = auditRows.filter(r => !r.bad && curMap[r.std_code] !== undefined && curMap[r.std_code] !== r.qty)
+                    if (await ask({ title: `${auditRows.length}건의 현재고를 실사값으로 덮어쓸까요?`,
+                      desc: `현재고를 엑셀의 실사수량으로 바꾸고, 보관위치가 적힌 줄은 위치도 바꿉니다. 기준코드 DB 에 없는 품번${bad ? ` · 숫자가 아닌 ${bad}건` : ''}은 건너뜁니다. 수량 변동은 작업 기록에 남고, 되돌리기 단추는 없습니다.`,
+                      items: diffRows.slice(0, 5).map(r => `${r.std_code} · ${curMap[r.std_code]} → ${r.qty}`), more: Math.max(0, diffRows.length - 5),
+                      okText: '덮어쓰기', danger: true })) auditMut.mutate(auditRows)
+                  }}
                   disabled={!auditRows.length || auditMut.isPending}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                  {auditMut.isPending ? '반영 중...' : `${auditRows.length}건 덮어쓰기`}
+                  {auditMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중...</span> : `${auditRows.length}건 덮어쓰기`}
                 </button>
               </div>
             </div>
@@ -458,10 +493,17 @@ export default function Inventory() {
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">전체 선택</button>
               <button onClick={()=>setChecked({})}
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">해제</button>
-              <button onClick={()=>{if(checkedIds.length&&window.confirm(`${checkedIds.length}건을 0으로 변경할까요?`))zeroMut.mutate(checkedIds)}}
+              <button onClick={async ()=>{
+                  if(!checkedIds.length) return
+                  const ids = checkedIds
+                  const pick = negRows.filter(r => checked[r.id])
+                  if(await ask({ title: `${ids.length}건을 0으로 변경할까요?`, desc: '음수 재고를 0 으로 덮어씁니다. 처리 뒤 화면 위에 뜨는 「↩ 되돌리기」로 고치기 전 수량으로 돌릴 수 있습니다 (다른 작업을 하기 전까지).',
+                    items: pick.slice(0, 5).map(r => `${r.items?.std_code || '-'} · ${r.items?.name || ''} · ${r.qty} → 0`), more: Math.max(0, ids.length - 5),
+                    okText: '0으로 변경', danger: true })) zeroMut.mutate(ids)
+                }}
                 disabled={!checkedIds.length||zeroMut.isPending}
                 className="px-3 py-1.5 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
-                {zeroMut.isPending?'변경 중...':`선택 ${checkedIds.length}건 → 0으로`}
+                {zeroMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />변경 중...</span>:`선택 ${checkedIds.length}건 → 0으로`}
               </button>
             </div>
           </div>
@@ -497,7 +539,11 @@ export default function Inventory() {
         </div>
       )}
 
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
+      {isLoading ? (
+        <ResizableTable cols={COLS} storageKey="inventory_cols" fill fillMin={360}>
+          {() => <tbody data-inv-loading><SkeletonRows cols={COLS.length} rows={10} two={[1]} /></tbody>}
+        </ResizableTable>
+      ) : (
         <ResizableTable cols={COLS} storageKey="inventory_cols" fill fillMin={360} after={<MoreRows {...vis} />}>
           {() => (
             <tbody>

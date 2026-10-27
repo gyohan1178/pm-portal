@@ -15,6 +15,9 @@ import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
 import { todayISO } from '../../lib/utils'
 import { planExcOf, isHot, dueSort, planSince, planSinceText, planSinceTitle } from '../../lib/planExc'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 // 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
 const CARD_CLS = {
@@ -170,6 +173,8 @@ export default function CustomerPO() {
   })
 
   const [exporting, setExporting] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // 완료처리 · 되돌리기 · 삭제 확인 창 (v4.104.0)
+  const poLine = (p) => `${p.po_number || '-'} · ${p.order_line || '-'}/${p.del_line || '-'} · ${p.items?.std_code || '-'} · ${p.qty_ordered ?? 0}개${p.promise_date ? ` · 납기 ${p.promise_date}` : ''}`
 
   // 지금 화면에 보이는 목록(filtered)을 그대로 엑셀로.
   // 필터를 바꾸면 내보내는 내용도 따라 바뀐다.
@@ -292,7 +297,7 @@ export default function CustomerPO() {
       if (!rows.length) throw new Error('전개된 부품이 없습니다 — 선택한 PO에 BOM이 등록돼 있는지 확인하세요')
       const { error } = await supabase.from('pm_picking').insert(rows); if (error) throw error
     },
-    onSuccess: () => { setPicked({}); toastError('장바구니에 담았습니다. \'출고 작업(불출)\' 화면에서 처리하세요.') },
+    onSuccess: () => { setPicked({}); toastSuccess('장바구니에 담았습니다. \'출고 작업(불출)\' 화면에서 처리하세요.') },
     onError: e => toastError('담기 오류: ' + e.message),
   })
 
@@ -399,6 +404,7 @@ export default function CustomerPO() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
 
       {/* 카드 상세 — 표를 그대로 옮겨 복사할 수 있게 한다 */}
       {detail && (
@@ -506,7 +512,7 @@ export default function CustomerPO() {
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={()=>{setShowForm(false);setEditId(null)}} className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
-            <button onClick={()=>saveMut.mutate(form)} disabled={!form.qty_ordered||saveMut.isPending} className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending?'저장 중...':editId?'수정 완료':'저장'}</button>
+            <button onClick={()=>saveMut.mutate(form)} disabled={!form.qty_ordered||saveMut.isPending} className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span>:editId?'수정 완료':'저장'}</button>
           </div>
         </div>
       )}
@@ -522,7 +528,8 @@ export default function CustomerPO() {
               className={`rounded-xl border p-3 text-left ${st.box} ${
                 c.cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
               <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${st.lab}`}>{c.label}</p>
-              <p className={`text-xl font-bold ${st.val}`}>{c.cnt.toLocaleString()}</p>
+              {isLoading ? <div className="h-7 flex items-center" data-skeleton><SkelBar w={44} h={18} /></div>
+                : <p className={`text-xl font-bold ${st.val}`}>{c.cnt.toLocaleString()}</p>}
               {c.note && <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{c.note}</p>}
             </button>
           )
@@ -561,14 +568,18 @@ export default function CustomerPO() {
         <button onClick={exportList} disabled={exporting || !filtered.length}
           title="지금 화면에 보이는 목록을 그대로 엑셀로 내보냅니다"
           className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-          📑 {exporting ? '생성 중…' : `내보내기 (${filtered.length})`}
+          📑 {exporting ? <span className="inline-flex items-center gap-1.5"><Spin />생성 중…</span> : `내보내기 (${filtered.length})`}
         </button>
         <span className="text-[11px] text-slate-400 whitespace-nowrap">
           🟢 일치 · 🟠 도면 요청 · 🟡 PO 구버전 · 🔴 도면 없음
         </span>
       </div>
 
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
+      {isLoading ? (
+        <ResizableTable cols={COLS} storageKey="cpo_cols" fill fillMin={360}>
+          {()=>(<tbody data-cpo-loading><SkeletonRows cols={COLS.length} rows={10} two={[4]} /></tbody>)}
+        </ResizableTable>
+      ) : (
         <ResizableTable cols={COLS} storageKey="cpo_cols" fill fillMin={360}>
           {()=>(
             <tbody>
@@ -637,9 +648,9 @@ export default function CustomerPO() {
                         ? <button onClick={()=>materialMut.mutate({id:p.id,val:false})} title="자재불출 해제" className="px-2 py-1 text-xs font-semibold rounded border border-teal-200 text-teal-600 bg-teal-50 hover:bg-teal-100">불출됨</button>
                         : <button onClick={()=>materialMut.mutate({id:p.id,val:true})} title="자재불출 처리(부족계산서 제외, PO는 진행중 유지)" className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-teal-300 hover:text-teal-600">자재불출</button>}
                       {p.status==='완료'
-                        ? <button onClick={()=>{if(window.confirm('진행중으로 되돌릴까요?'))unissueMut.mutate(p.id)}} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-amber-500 hover:border-amber-300">되돌리기</button>
-                        : <button onClick={()=>{if(window.confirm('이 PO를 완료처리할까요? (목록에서 숨겨집니다)'))issueMut.mutate(p.id)}} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-emerald-300 hover:text-emerald-600">완료처리</button>}
-                      <button onClick={()=>{if(window.confirm('삭제할까요?'))deleteMut.mutate(p.id)}} className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
+                        ? <button onClick={async()=>{if(await ask({ title:`${p.po_number||'이 PO'} 를 진행중으로 되돌릴까요?`, desc:'PO 상태가 「진행중」으로 바뀌고, 이 PO 에 연결된 생산 호기는 「납품대기」로 돌아갑니다.', items:[poLine(p)], okText:'진행중으로 되돌리기' }))unissueMut.mutate(p.id)}} data-cpo-unissue className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-amber-500 hover:border-amber-300">되돌리기</button>
+                        : <button onClick={async()=>{if(await ask({ title:`${p.po_number||'이 PO'} 를 완료처리할까요?`, desc:'PO 상태가 「완료」가 되어 목록에서 숨겨지고(「완료 포함」에서 보임), 이 PO 에 연결된 생산 호기도 「완료」로 바뀝니다. 「되돌리기」로 다시 진행중으로 돌릴 수 있습니다.', items:[poLine(p)], okText:'완료처리' }))issueMut.mutate(p.id)}} data-cpo-issue className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-emerald-300 hover:text-emerald-600">완료처리</button>}
+                      <button onClick={async()=>{if(await ask({ title:`${p.po_number||'이 PO'} 줄을 삭제할까요?`, desc:'고객사 PO 목록에서 이 줄이 지워지고 되돌릴 수 없습니다. 내용만 틀렸다면 지우지 말고 「수정」을 쓰세요.', items:[poLine(p)], okText:'삭제', danger:true }))deleteMut.mutate(p.id)}} data-cpo-del className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
                     </div>
                   </td>
                 </tr>

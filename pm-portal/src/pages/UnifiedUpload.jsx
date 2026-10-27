@@ -1,6 +1,8 @@
 import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
+import { Stepper } from '../components/ux/Stepper'
+import Spin from '../components/ux/Spin'
 
 // 업로드 창구를 하나로.
 //
@@ -145,6 +147,12 @@ export default function UnifiedUpload() {
         </p>
       </div>
 
+      {/* 지금 어디쯤인지 — 놓기 → 종류 판별 → 맞는지 확인 → 그 화면에서 올리기 (v4.104.0) */}
+      <div className="max-w-[760px]" data-upload-stepper>
+        <Stepper steps={['파일 놓기', '종류 판별', '맞는지 확인', '그 화면에서 올리기']}
+          cur={busy ? 1 : items.length ? 2 : 0} />
+      </div>
+
       {/* 놓는 곳 */}
       <div
         onDragOver={e => { e.preventDefault(); setOver(true) }}
@@ -163,7 +171,7 @@ export default function UnifiedUpload() {
           onChange={e => { handleFiles([...e.target.files]); e.target.value = '' }} />
       </div>
 
-      {busy && <p className="text-center text-sm text-slate-400 py-2">확인 중…</p>}
+      {busy && <p className="text-center text-sm text-slate-400 py-2 flex items-center justify-center gap-1.5" data-upload-busy><Spin />확인 중…</p>}
 
       {/* 판별 결과 */}
       {items.map((it, i) => (

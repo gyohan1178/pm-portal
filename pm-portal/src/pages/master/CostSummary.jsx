@@ -5,6 +5,9 @@ import { toastError } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
 import { downloadCostExcel, isPriced, sumPriced, COVER_MIN } from '../../lib/costExcel'
 import { useCustomers } from '../../hooks/useCustomers'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString('ko-KR')
 const n0 = n => (Number(n) || 0).toLocaleString('ko-KR')
@@ -154,21 +157,27 @@ export default function CostSummary({ csId, csName }) {
   }
 
   if (!csId) return <p className="text-center text-slate-400 text-sm py-12">고객사를 골라 주세요.</p>
+  const first = isFetching && !rows.length   // 처음 받는 중 — 카드 숫자 · 표 모양만 먼저 (v4.104.0)
+  const pctMin = Math.round(COVER_MIN * 100)
 
   return (
     <div className="space-y-3">
       {/* 지표 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card label="원자재 매입 합계" value={won(sumP.total) + '원'}
-              sub={`상위품번 ${n0(list.length - hold)}개 산출 · BOM ${n0(sum.rows)}행`} accent="slate" />
-        <Card label="파트" value={won(sumP.part) + '원'}
-              sub={sumP.total > 0 ? `${Math.round(sumP.part / sumP.total * 100)}%` : '—'} accent="sky" />
-        <Card label="가공물" value={won(sumP.mach) + '원'}
-              sub={sumP.total > 0 ? `${Math.round(sumP.mach / sumP.total * 100)}%` : '—'} accent="amber" />
-        <Card label="단가 반영률"
+        <Card label="원자재 매입 합계" value={won(sumP.total) + '원'} loading={first}
+              sub={`상위품번 ${n0(list.length - hold)}개 산출 · BOM ${n0(sum.rows)}행`} accent="slate"
+              tip={`지금 목록(검색 반영)의 상위품번 중 단가 반영률 ${pctMin}% 이상인 것만 「원자재 합계」를 더한 값. 「단가 확인중」(반영률 ${pctMin}% 미만)은 빠집니다. 엑셀 총괄과 같은 숫자입니다.`} />
+        <Card label="파트" value={won(sumP.part) + '원'} loading={first}
+              sub={sumP.total > 0 ? `${Math.round(sumP.part / sumP.total * 100)}%` : '—'} accent="sky"
+              tip={`반영률 ${pctMin}% 이상 상위품번의 「파트」 칸 합. % 는 원자재 매입 합계 중 비중. 무엇이 파트인지는 아래 설명을 보세요.`} />
+        <Card label="가공물" value={won(sumP.mach) + '원'} loading={first}
+              sub={sumP.total > 0 ? `${Math.round(sumP.mach / sumP.total * 100)}%` : '—'} accent="amber"
+              tip={`반영률 ${pctMin}% 이상 상위품번의 「가공물」 칸 합. % 는 원자재 매입 합계 중 비중.`} />
+        <Card label="단가 반영률" loading={first}
               value={coverAll == null ? '—' : `${(coverAll * 100).toFixed(1)}%`}
               sub={`등록 ${n0(sum.priced)}종 · 미등록 ${n0(sum.noPrice)}종`}
-              accent={coverAll != null && coverAll >= 0.9 ? 'emerald' : 'rose'} />
+              accent={coverAll != null && coverAll >= 0.9 ? 'emerald' : 'rose'}
+              tip={`매입단가가 등록된 품목 종수 ÷ (등록 + 미등록 종수). 지금 목록의 모든 상위품번(단가 확인중 포함)에서 상위품번마다 센 종수를 더해 계산합니다. 상위품번 하나의 반영률이 ${pctMin}% 미만이면 그 상위품번은 금액을 내지 않습니다.`} tipAlign="right" />
       </div>
 
       {/* 반영률이 낮으면 숫자를 믿을 수 없다는 것을 먼저 알린다 */}
@@ -189,11 +198,11 @@ export default function CostSummary({ csId, csName }) {
           placeholder="상위품번 · 어셈블리명 검색"
           className="px-3 py-2 text-sm rounded-lg border border-slate-200 w-64" />
         <span className="text-xs text-slate-400">{n0(list.length)}개</span>
-        {isFetching && <span className="text-xs text-slate-400">불러오는 중…</span>}
+        {isFetching && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400"><Spin />불러오는 중…</span>}
         <button onClick={() => setXlAsk('scope')} disabled={xlBusy}
           title="표지와 총괄표가 있는 제출용 엑셀"
           className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40 whitespace-nowrap">
-          {xlBusy ? '…' : '📥 엑셀'}
+          {xlBusy ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : '📥 엑셀'}
         </button>
       </div>
 
@@ -259,6 +268,12 @@ export default function CostSummary({ csId, csName }) {
           <p className="text-3xl mb-2">💵</p>
           <p className="text-sm font-bold text-slate-600">BOM 이 등록된 상위품번이 없습니다</p>
         </div>
+      )}
+
+      {first && (
+        <ResizableTable cols={SUM_COLS} storageKey="cost_summary_cols">
+          {() => <tbody data-cost-loading><SkeletonRows cols={SUM_COLS.length} rows={8} /></tbody>}
+        </ResizableTable>
       )}
 
       {list.length > 0 && (
@@ -327,12 +342,19 @@ export default function CostSummary({ csId, csName }) {
             <span className="font-mono font-bold text-indigo-800">{open.code}</span>
             <span className="text-xs text-slate-500">{open.name || '(이름 없음)'}</span>
             <span className="text-xs text-slate-400">· {n0(detail.length)}행</span>
-            {dBusy && <span className="text-xs text-slate-400">불러오는 중…</span>}
+            {dBusy && <span className="inline-flex items-center gap-1.5 text-xs text-slate-400"><Spin />불러오는 중…</span>}
             <button onClick={() => setOpen(null)}
               className="ml-auto px-2 py-1 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500">
               닫기
             </button>
           </div>
+          {dBusy && (
+            <div className="p-2">
+              <ResizableTable cols={DET_COLS} storageKey="cost_detail_cols">
+                {() => <tbody data-cost-detail-loading><SkeletonRows cols={DET_COLS.length} rows={6} /></tbody>}
+              </ResizableTable>
+            </div>
+          )}
           {!dBusy && detail.length > 0 && (
             <div className="p-2">
               <ResizableTable cols={DET_COLS} storageKey="cost_detail_cols">
@@ -380,14 +402,15 @@ export default function CostSummary({ csId, csName }) {
   )
 }
 
-function Card({ label, value, sub, accent }) {
+function Card({ label, value, sub, accent, tip, tipAlign, loading }) {
   const ac = { emerald: 'text-emerald-600', rose: 'text-rose-600', sky: 'text-sky-600',
                amber: 'text-amber-600', slate: 'text-slate-900' }[accent] || 'text-slate-800'
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-3">
-      <div className="text-[11px] font-semibold text-slate-400">{label}</div>
-      <div className={`text-lg font-bold ${ac}`}>{value}</div>
-      {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+    <div className="bg-white rounded-xl border border-slate-200 p-3" data-cost-card={label}>
+      <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">{label}{tip && <InfoTip text={tip} align={tipAlign} />}</div>
+      {loading ? <div className="h-7 flex items-center" data-skeleton><SkelBar w={90} h={16} /></div>
+        : <div className={`text-lg font-bold ${ac}`}>{value}</div>}
+      {sub && !loading && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
     </div>
   )
 }

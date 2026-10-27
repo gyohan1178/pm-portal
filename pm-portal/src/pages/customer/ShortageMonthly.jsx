@@ -10,6 +10,10 @@ import { createPurchaseOrders } from '../../lib/createPO'
 import * as XLSX from 'xlsx'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 // 확정 고객사 PO 기준 월별 소요/부족 (RPC: get_shortage_monthly) — range 페이징
 export async function fetchMonthly(csId) {
@@ -38,6 +42,13 @@ function tierOf(firstShort, ltWeeks) {
   if (days <= 14) return '임박'
   return '여유'
 }
+// 긴급도 카드 기준 (v4.104.0) — tierOf · items 계산 그대로
+const TIER_BASE = '첫 부족월 = 현재고에 달마다 입고예정을 더하고 소요(확정 고객사 PO × BOM)를 빼 나가다 처음 마이너스가 되는 달. 발주 데드라인 = 그 달 1일 − LT(주). 숫자는 부족이 생기는 품목 전체 기준이며 검색 · 카테고리 · 「긴급·임박만」 · 방금 제외한 품목은 반영하지 않습니다.'
+const TIER_TIP = {
+  '긴급': '발주 데드라인이 오늘보다 지난 품목 수. ' + TIER_BASE,
+  '임박': '발주 데드라인이 오늘부터 14일 안인 품목 수. ' + TIER_BASE,
+  '여유': '발주 데드라인이 15일 이상 남은 품목 수. ' + TIER_BASE,
+}
 const TIER_META = {
   '긴급': { color: '#DC2626', bg: '#FEF2F2', border: '#FECACA', icon: '🔴', desc: '데드라인 지남 · 즉시발주' },
   '임박': { color: '#D97706', bg: '#FFFBEB', border: '#FDE68A', icon: '🟠', desc: '2주 내 발주' },
@@ -59,15 +70,17 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
   const [metric, setMetric] = useState('stock')   // stock | demand | all
   const [catSel, setCatSel] = useState(() => new Set())
   const [selEx, setSelEx] = useState(() => new Set())   // 다중선택 제외 대상
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
 
   // 관리대상 제외 — 재고관리하지 않을 품목을 부족 목록에서 뺀다.
   // 소요예측(포캐스트) 탭과 같은 방식으로 items.stock_managed 를 끈다.
   const [excluded, setExcluded] = useState(new Set())
   const excludedRef = useRef(excluded)
   excludedRef.current = excluded
-  const handleExclude = useCallback((itemId, stdCode) => {
+  //   ask 는 매 렌더 새로 만들어지지만 처음 것도 똑같이 동작한다 (상태 setter · ref 만 씀) → 의존성 [] 그대로
+  const handleExclude = useCallback(async (itemId, stdCode) => {
     if (excludedRef.current.has(itemId)) return
-    if (!window.confirm(`${stdCode}를 재고관리 제외할까요?\n부족 목록에서 빠집니다.`)) return
+    if (!(await ask({ title: `${stdCode}를 재고관리 제외할까요?`, desc: '부족 목록에서 바로 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.', okText: '재고관리 제외', danger: true }))) return
     setExcluded(prev => new Set(prev).add(itemId))
     supabase.from('items').update({ stock_managed: false }).eq('id', itemId)
       .then(({ error }) => {
@@ -228,9 +241,20 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
   // 수천 건을 한 번에 그리면 검색·필터 조작이 밀린다
   const vis = useVisibleRows(filtered, 300, [dq, urgentOnly, tierFilter, catSel, excluded])
 
-  if (isLoading) return <div className="text-center py-12 text-slate-400 text-sm">쇼티지 계산 중...</div>
+  if (isLoading) return (
+    <div className="space-y-3" data-shortage-monthly-loading>
+      <div className="kpi-grid grid grid-cols-3 gap-2">
+        {[0, 1, 2].map(i => <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2" data-skeleton><SkelBar w={48} /><SkelBar w={36} h={22} /><SkelBar w={90} h={9} /></div>)}
+      </div>
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="px-3 py-2 text-[11.5px] text-slate-500 border-b border-slate-100 flex items-center gap-2 bg-slate-50"><Spin />쇼티지 계산 중...</div>
+        <table className="w-full text-xs"><tbody><SkeletonRows cols={10} rows={8} two={[0]} /></tbody></table>
+      </div>
+    </div>
+  )
   if (!items.length) return (
     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center text-sm text-slate-400">
+      {confirmEl}
       부족 예상 품목이 없습니다 (고객사 PO·BOM 데이터 확인)
     </div>
   )
@@ -263,6 +287,7 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
 
   return (
     <div className="space-y-3">
+      {confirmEl}
       {/* 긴급도 요약 카드 (클릭 필터) */}
       <div className="kpi-grid grid grid-cols-3 gap-2">
         {['긴급', '임박', '여유'].map(t => {
@@ -271,7 +296,7 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
             <button key={t} onClick={() => setTierFilter(on ? null : t)}
               className="rounded-xl border p-3 text-left transition-all"
               style={{ borderColor: on ? m.color : m.border, background: m.bg, boxShadow: on ? `0 0 0 2px ${m.color}` : 'none' }}>
-              <p className="text-xs font-bold" style={{ color: m.color }}>{m.icon} {t}</p>
+              <p className="text-xs font-bold flex items-center gap-1" style={{ color: m.color }}>{m.icon} {t} <InfoTip align={t === '여유' ? 'right' : 'left'} text={TIER_TIP[t]} /></p>
               <p className="text-2xl font-bold" style={{ color: m.color }}>{counts[t]}</p>
               <p className="text-[10px] text-slate-400">{m.desc}</p>
             </button>
@@ -302,8 +327,11 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
         <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length}건</span>
         <button onClick={exportShortageExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">📥 엑셀</button>
         {selEx.size > 0 && (
-          <button onClick={() => {
-              if (!window.confirm(`선택한 ${selEx.size}건을 재고관리 제외할까요?\n부족 목록에서 빠집니다.`)) return
+          <button onClick={async () => {
+              const pick = items.filter(it => selEx.has(it.item_id))
+              if (!(await ask({ title: `선택한 ${selEx.size}건을 재고관리 제외할까요?`, desc: '부족 목록에서 바로 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.',
+                items: pick.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''}`), more: Math.max(0, pick.length - 5),
+                okText: '재고관리 제외', danger: true }))) return
               bulkExclude()
             }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 whitespace-nowrap">
@@ -311,10 +339,15 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
           </button>
         )}
         {checkedItems.length > 0 && (
-          <button onClick={() => { if (window.confirm(`${checkedItems.length}건 구매발주를 생성할까요? (발주필요 수량으로 생성)`)) orderMut.mutate(checkedItems) }}
+          <button onClick={async () => {
+              const sel = checkedItems
+              if (await ask({ title: `${sel.length}건 구매발주를 생성할까요?`, desc: '발주필요 수량으로 만들어집니다. 발주번호 · 납기 · 단가는 구매발주 화면에서 채웁니다.',
+                items: sel.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''} · ${it.orderNeed}${it.unit || ''}`), more: Math.max(0, sel.length - 5),
+                okText: '발주 생성' })) orderMut.mutate(sel)
+            }}
             disabled={orderMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            🛒 발주 생성 ({checkedItems.length})
+            {orderMut.isPending && <Spin />}🛒 발주 생성 ({checkedItems.length})
           </button>
         )}
       </div>

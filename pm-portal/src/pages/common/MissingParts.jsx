@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
+import { SkeletonRows } from '../../components/ux/Skeleton'
 
 const MP_COLS = [
   { key:'cs',     label:'고객사',    defaultWidth:70  },
@@ -89,7 +90,9 @@ export default function MissingParts() {
 
       {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">불러오지 못했습니다 — {error.message}</p>}
       {isLoading ? (
-        <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">불러오는 중…</p></div>
+        <ResizableTable cols={MP_COLS} storageKey="missing_cols" fill fillMin={360}>
+          {() => <tbody data-mp-loading><SkeletonRows cols={MP_COLS.length} rows={8} two={[3]} /></tbody>}
+        </ResizableTable>
       ) : rows.length === 0 ? (
         <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">결품이 없습니다 👍</p></div>
       ) : (

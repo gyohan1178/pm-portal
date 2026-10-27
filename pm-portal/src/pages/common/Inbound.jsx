@@ -24,6 +24,9 @@ import { pendingHay, histHay, histMemo } from '../../lib/inboundSearch'
 import LotInboundModal from '../../components/LotInboundModal'
 import { ilikeAny } from '../../lib/pgFilter'
 import { fetchVendors } from '../../lib/vendorsQuery'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 function todayStr() { return todayISO() }
 function monthAgoStr() {
@@ -202,7 +205,8 @@ export default function Inbound() {
     return data || []
   }
   const iCanEdit = useCanEdit()
-  const { remember, bar: undoBar, undo, run: runUndo, busy: undoBusy, clear: clearUndo } = useUndo()
+  const { remember, bar: undoBar, undo, run: runUndo, busy: undoBusy, clear: clearUndo, dialog: undoDialog } = useUndo()
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
   // 입고 처리 칸 높이 = 화면에 남은 높이 (노트북에서도 표가 넉넉하게, 페이지 스크롤 없이) (v4.62.0)
   const [procRef, procH] = useFillHeight(tab === 'process', 420)
   const compact = useCompact()
@@ -522,6 +526,9 @@ export default function Inbound() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
+      {/* 되돌리기 확인 창 — 「발주외 입고」 탭은 undoBar 안에 같이 그려지므로 그 밖의 탭에서만 */}
+      {tab !== 'direct' && undoDialog}
       {lotAsk && <LotInboundModal rows={lotAsk.rows} date={lotAsk.date} onClose={() => setLotAsk(null)}
         onDone={() => { qc.invalidateQueries({ queryKey: ['lotSummary'] }); qc.invalidateQueries({ queryKey: ['lotList'], exact: false }) }} />}
       <PageHead crumb="자재 · 일일 업무" title="입고"
@@ -538,11 +545,13 @@ export default function Inbound() {
         // 노트북 화면에서도 표가 넉넉히 보이게 (v4.62.0) — 위 칸은 한 줄로 줄이고, 표가 남은 높이를 다 쓰고, 담은 품목 · 입고 처리는 맨 아래
         <div ref={procRef} data-inb-process className="flex flex-col gap-2" style={{ height: procH ? procH + 'px' : undefined }}>
           <div className="flex items-center gap-2 flex-wrap shrink-0">
-            <CsTabs className="" sel={selCustomer} customers={customers} onSel={(v) => {
+            <CsTabs className="" sel={selCustomer} customers={customers} onSel={async (v) => {
               // 고객사를 바꾸면 담은 발주가 목록에서 빠져 입고 대상에서도 말없이 사라졌다 → 묻고 비운다 (2026-10-08)
               const n = Object.values(checked).filter(Boolean).length
               if (v !== selCustomer && n > 0) {
-                if (!window.confirm(`담은 발주 ${n}건이 있습니다.\n고객사를 바꾸면 담은 목록이 비워집니다. 바꿀까요?`)) return
+                if (!(await ask({ title: `고객사를 바꿀까요? 담은 발주 ${n}건이 비워집니다`, desc: '다른 고객사 목록에서는 지금 담은 발주가 보이지 않아 담은 목록을 비웁니다. 입고는 아직 처리되지 않았고, 다시 돌아와 담으면 됩니다.',
+                  items: checkedRows.slice(0, 5).map(r => `${r.items?.std_code || '-'} · ${r.items?.name || ''} · 입고 ${inboundData[r.id]?.qty ?? '-'}`), more: Math.max(0, checkedRows.length - 5),
+                  okText: '바꾸고 비우기', cancelText: '그대로 두기' }))) return
                 setChecked({})
               }
               setSelCustomer(v)
@@ -567,7 +576,11 @@ export default function Inbound() {
           </div>
 
           <div className="flex-1 min-h-0 flex flex-col">
-            {isLoading && !pendingPOs.length ? <div className="text-center py-8 text-slate-400 text-xs">불러오는 중...</div>
+            {isLoading && !pendingPOs.length ? (
+              <div data-inb-loading className="rounded-xl border border-slate-200 overflow-hidden">
+                <div className="bg-slate-100 border-b border-slate-200 px-3 py-2.5 flex gap-6" data-skeleton>{[40, 56, 90, 80, 60, 44].map((w, i) => <SkelBar key={i} w={w} h={9} />)}</div>
+                <table className="w-full text-xs"><tbody><SkeletonRows cols={PROC_COLS.length + 1} rows={8} first={1} two={[3, 4]} /></tbody></table>
+              </div>)
             : rows.length === 0
               ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400 text-xs">
                   미입고 발주가 없습니다
@@ -729,19 +742,18 @@ export default function Inbound() {
                     <p className="text-xs text-slate-400 whitespace-nowrap">
                       입고일 <span className="font-semibold text-indigo-600">{inboundDate}</span>
                     </p>
-                    <button onClick={()=>{
+                    <button onClick={async ()=>{
                       // 잔량보다 많이 받으면 한 번 확인한다 — MOQ 로 일부러 더 받는 건 그대로 진행,
                       //   부분입고 뒤 주문 수량을 통째로 다시 넣는 실수(예: 150 받은 뒤 1600 입력)를 막는다
                       const over = checkedRows.filter(r => Number(inboundData[r.id]?.qty || 0) > Number(r.qty_remaining || 0))
-                      if (over.length && !window.confirm(
-                        `잔량보다 많이 입고합니다 (${over.length}건)\n\n` +
-                        over.slice(0, 6).map(r => `· ${r.items?.std_code || ''} 잔량 ${Number(r.qty_remaining || 0)} → 입고 ${Number(inboundData[r.id]?.qty || 0)}`).join('\n') +
-                        (over.length > 6 ? `\n… 외 ${over.length - 6}건` : '') +
-                        '\n\nMOQ 등으로 더 받은 게 맞으면 확인을 누르세요.')) return
+                      if (over.length && !(await ask({ title: `잔량보다 많이 입고합니다 (${over.length}건) — 맞나요?`,
+                        desc: 'MOQ 등으로 더 받은 게 맞으면 「그대로 입고」를 누르세요. 부분입고 뒤 발주 수량을 통째로 다시 넣은 거라면 「수량 다시 보기」를 눌러 고쳐 주세요.',
+                        items: over.slice(0, 5).map(r => `${r.items?.std_code || '-'} · 잔량 ${Number(r.qty_remaining || 0)} → 입고 ${Number(inboundData[r.id]?.qty || 0)}`),
+                        more: Math.max(0, over.length - 5), okText: '그대로 입고', cancelText: '수량 다시 보기' }))) return
                       inboundMut.mutate()
                     }} disabled={inboundMut.isPending||!hasInput}
                       className="px-6 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
-                      {inboundMut.isPending?'처리 중...':`✅ 선택 ${checkedRows.length}건 입고 처리`}
+                      {inboundMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />처리 중...</span>:`✅ 선택 ${checkedRows.length}건 입고 처리`}
                     </button>
               </div>
             </div>
@@ -816,7 +828,7 @@ export default function Inbound() {
             <button onClick={()=>directMut.mutate()}
               disabled={!dItem || !dQty || Number(dQty)<=0 || directMut.isPending}
               className="w-full px-4 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {directMut.isPending?'처리 중...':'📥 발주외 입고 처리'}
+              {directMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />처리 중...</span>:'📥 발주외 입고 처리'}
             </button>
           </div>
 
@@ -872,12 +884,17 @@ export default function Inbound() {
                 title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
                 📅 입고일 변경 {selShown.length}건</button>
-              <button data-hist-del onClick={()=>{
-                  if(window.confirm(`선택한 입고 이력 ${selShown.length}건을 삭제할까요?\n재고와 입고수량(qty_received)도 그만큼 되돌립니다.`))
-                    delHistMut.mutate([...selShown])
+              <button data-hist-del onClick={async ()=>{
+                  const ids = [...selShown]
+                  const pick = histShown.filter(r => selHist.has(r.id))
+                  if(await ask({ title: `선택한 입고 이력 ${ids.length}건을 삭제할까요?`,
+                    desc: '재고와 발주 입고수량(qty_received)도 그만큼 되돌립니다. 지우기 전 내용은 복구 기록으로 남습니다 (완료 알림에 번호 표시).',
+                    items: pick.slice(0, 5).map(r => `${r.movement_date} · ${r.items?.std_code || '-'} · ${r.items?.name || ''} · ${r.qty}${r.items?.unit || ''}`),
+                    more: Math.max(0, ids.length - 5), okText: '삭제', danger: true }))
+                    delHistMut.mutate(ids)
                 }} disabled={delHistMut.isPending}
-                className="px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
-                🗑 선택 {selShown.length}건 삭제</button>
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
+                {delHistMut.isPending && <Spin />}🗑 선택 {selShown.length}건 삭제</button>
             </>)}
             <div className="ml-auto text-xs text-slate-400 self-center">
               총 {histShown.length}건 / {histTotal.toLocaleString()} {history[0]?.items?.unit||''}
@@ -901,7 +918,11 @@ export default function Inbound() {
             </div>
           </div>
 
-          {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
+          {histLoading ? (
+            <div data-hist-loading className="rounded-xl border border-slate-200 overflow-hidden">
+              <div className="bg-slate-50 border-b border-slate-200 px-3 py-3 flex gap-6" data-skeleton>{[50, 70, 90, 60, 80, 40].map((w, i) => <SkelBar key={i} w={w} h={9} />)}</div>
+              <table className="w-full text-xs"><tbody><SkeletonRows cols={15} rows={8} first={1} /></tbody></table>
+            </div>) : (
             <div ref={histRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={histH ? { height: histH + 'px' } : undefined}>
               <div className={histH ? 'flex-1 min-h-0 overflow-auto' : 'overflow-x-auto'}>
                 <table className="w-full text-xs">
@@ -1017,7 +1038,7 @@ export default function Inbound() {
                 }}
                 disabled={dateMut.isPending}
                 className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {dateMut.isPending ? '처리 중…' : `${selShown.length}건 변경`}
+                {dateMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />처리 중…</span> : `${selShown.length}건 변경`}
               </button>
             </div>
           </div>

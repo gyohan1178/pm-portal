@@ -24,6 +24,10 @@ import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
 import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows, revCmp, normRev } from '../../lib/bomVersion'
 import { buildSubBomsFor } from '../../lib/bomSubExpand'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -547,6 +551,10 @@ export default function BOM() {
   const [imgOpen, setImgOpen] = useState(false)   // 📐 도면용 이미지 (v4.75.0)
   const [result, setResult] = useState(null)
   const [progress, setProgress] = useState('')
+  // 확인 창 (v4.104.0) — 브라우저 기본 confirm 대신
+  const [ask, confirmEl] = useConfirm()
+  // 저장 진행 글자에 「12/40」이 들어 있으면 진행 바로도 보여 준다 (BOM 저장 · 하위 어셈블리 만들기)
+  const progNum = (() => { const m = String(progress || '').match(/(\d+)\s*\/\s*(\d+)\s*$/); return m ? { done: +m[1], total: +m[2], label: progress.slice(0, m.index).trim() } : null })()
 
   const { data: cs } = useCustomer(csCode)
   const { data: assemblies = [], isLoading: asmLoading } = useQuery({
@@ -614,10 +622,12 @@ export default function BOM() {
   // 한 번에 모두 만들면 큰 BOM 에서 타임아웃이 나므로 순서대로 나눠 호출한다.
   async function buildSubBom() {
     if (!selAssembly?.code) return
-    const msg = subOverwrite
-      ? `${selAssembly.code} 안의 하위 어셈블리 BOM 을 다시 만듭니다.\n\n· 신규 ${subStat.new_count}건\n· 기존 ${subStat.existing_count}건은 지우고 새로 생성\n\n⚠ 대체품 교체 등 직접 수정한 내용도 함께 사라집니다.\n되돌릴 수 없습니다. 계속할까요?`
-      : `${selAssembly.code} 안의 하위 어셈블리 ${subStat.new_count}건에 BOM 을 생성합니다.\n\n· 상위 BOM 의 모자관계를 그대로 가져옵니다\n· 이미 BOM 이 있는 어셈블리는 건너뜁니다\n\n계속할까요?`
-    if (!confirm(msg)) return
+    if (!(await ask(subOverwrite
+      ? { title: `${selAssembly.code} 안의 하위 어셈블리 BOM 을 다시 만들까요?`,
+          desc: '기존 하위 BOM 은 지우고 새로 생성합니다. 대체품 교체 등 직접 수정한 내용도 함께 사라지고 되돌릴 수 없습니다.',
+          items: [`신규 ${subStat.new_count}건`, `기존 ${subStat.existing_count}건 — 지우고 새로 생성`], okText: '다시 생성', danger: true }
+      : { title: `${selAssembly.code} 안의 하위 어셈블리 ${subStat.new_count}건에 BOM 을 생성할까요?`,
+          desc: '상위 BOM 의 모자관계를 그대로 가져옵니다. 이미 BOM 이 있는 어셈블리는 건너뜁니다.', okText: 'BOM 생성' }))) return
 
     setSubBomBusy(true); setSubBomResult(null); setSubProgress(null)
     try {
@@ -786,9 +796,11 @@ export default function BOM() {
   }, [detailVis.hasMore, detailVis.visible, detailMore])
   const openEdit = useCallback((b) => { setEditRow(b); setPnHit(null) }, [])
   const partMutate = partMut.mutate
-  const askDelete = useCallback((b) => {
-    if (window.confirm(`${b.items?.std_code} 을 이 BOM 에서 뺄까요?`)) partMutate({ id: b.id, del: true })
-  }, [partMutate])
+  // ask 는 화면이 다시 그려져도 같은 창을 띄운다 (상태 함수 · ref 만 씀) — 줄(memo)을 다시 그리지 않게 의존성에서 뺀다
+  const askDelete = useCallback(async (b) => {
+    if (await ask({ title: `${b.items?.std_code} 을 이 BOM 에서 뺄까요?`, desc: `${selAssembly?.code || '이 BOM'} 에서 이 줄이 지워지고 되돌릴 수 없습니다. 원가 · 소요량 계산에서도 빠집니다.`,
+      items: [`${b.items?.std_code || '-'} · ${b.items?.name || ''} · 소요 ${b.qty_per_unit ?? '-'}${b.items?.unit ? ' ' + b.items.unit : ''}`], okText: '빼기', danger: true })) partMutate({ id: b.id, del: true })
+  }, [partMutate, selAssembly?.code]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 품번으로 items 조회 (AX- 접두 자동 처리)
   async function lookupItem(code) {
@@ -995,7 +1007,7 @@ export default function BOM() {
           <button onClick={() => downloadHistory(selAssembly)} disabled={histBusy}
             title="초도품 승인용 — 하위품목의 구매처·발주번호·입고일 (단가 제외)"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-            {histBusy ? '만드는 중…' : '📄 구매이력 (밀시트 대체)'}
+            {histBusy ? <><Spin />만드는 중…</> : '📄 구매이력 (밀시트 대체)'}
           </button>
         )}
         <div className="flex-1" />
@@ -1004,15 +1016,24 @@ export default function BOM() {
           ⬇ 양식 다운로드
         </button>
         <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 cursor-pointer ${uploading?'opacity-50':''}`}>
-          📤 {uploading ? '파싱 중...' : 'BOM CSV 업로드'}
+          {uploading ? <Spin /> : '📤'} {uploading ? '파싱 중...' : 'BOM CSV 업로드'}
           <input type="file" accept=".xlsx,.csv,.xls" className="hidden" onChange={handleFile} disabled={uploading} />
         </label>
         <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-200 text-sky-600 bg-white hover:bg-sky-50 cursor-pointer ${uploading?'opacity-50':''}`}
           title="고객사에서 받은 Part Report(HTM) 나 BOM 엑셀(Structure Level · Number …)을 그대로 올리면 BOM 이 들어갑니다. 제조사 정보는 HTM 에만 있습니다">
-          📄 {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM·엑셀)'}
+          {uploading ? <Spin /> : '📄'} {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM·엑셀)'}
           <input type="file" accept=".htm,.html,.xlsx,.xls" className="hidden" onChange={handleHtmFile} disabled={uploading} />
         </label>
       </div>
+
+      {/* 올리기 단계 — 파일 고르기 → 읽고 점검 → 미리보기 확인 → DB 저장 (v4.104.0) */}
+      {(uploading || preview || saveMut.isPending || result) && (
+        <div className="max-w-[760px]" data-bom-stepper>
+          <Stepper steps={['파일 고르기', '읽고 점검', '미리보기 확인', 'DB 저장']}
+            cur={saveMut.isPending ? 3 : preview ? 2 : uploading ? 1 : result ? 4 : 0} />
+        </div>
+      )}
+      {confirmEl}
 
       {/* HTM 리포트 정보 */}
       {htmInfo && (
@@ -1158,14 +1179,19 @@ export default function BOM() {
               <button onClick={() => { setPreview(null); setRawRows([]) }}
                 className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">취소</button>
               <button onClick={() => saveMut.mutate(rawRows)} disabled={saveMut.isPending || !cs?.id || preview.groups.length===0}
-                className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {saveMut.isPending ? '저장 중...' : '⚡ DB에 저장'}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+                {saveMut.isPending ? <><Spin />저장 중...</> : '⚡ DB에 저장'}
               </button>
-              {saveMut.isPending && progress && (
-                <span className="text-xs text-indigo-500 font-semibold self-center">{progress}</span>
+              {saveMut.isPending && progress && !progNum && (
+                <span className="text-xs text-indigo-500 font-semibold self-center" data-bom-progress-text>{progress}</span>
               )}
             </div>
           </div>
+          {saveMut.isPending && progNum && (
+            <div className="max-w-[560px]" data-bom-progress>
+              <ProgressBar done={progNum.done} total={progNum.total} label={progNum.label} unit={/하위/.test(progNum.label) ? '개' : '행'} />
+            </div>
+          )}
 
           {/* 어셈블리 그룹 요약 */}
           <div className="flex flex-wrap gap-2">
@@ -1242,7 +1268,7 @@ export default function BOM() {
             </thead>
             <tbody>
               {asmLoading ? (
-                <tr><td colSpan={6} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+                <SkeletonRows cols={6} rows={8} />
               ) : assemblies.length === 0 ? (
                 <tr><td colSpan={6} className="text-center py-10 text-slate-400">등록된 BOM이 없습니다. CSV를 업로드해주세요.</td></tr>
               ) : assemblies.filter(a=>{
@@ -1264,11 +1290,13 @@ export default function BOM() {
                   </td>
                   <td className="px-3 py-2.5">
                     <button
-                      onClick={e => {
+                      onClick={async e => {
                         e.stopPropagation()
-                        if (window.confirm(`${a.code} BOM 전체를 삭제할까요?\n(하위 ${a.itemCount}개 품목 모두 삭제)`))
+                        if (await ask({ title: `${a.code} BOM 전체를 삭제할까요?`,
+                          desc: `하위 ${a.itemCount}개 품목 줄과 어셈블리 자체가 함께 지워지고 되돌릴 수 없습니다. REV 만 바뀐 것이면 지우지 말고 새 리포트를 올리세요.`,
+                          items: [`${a.code} · ${a.name || ''} · REV ${a.rev || 'A'} · ${a.itemCount}개 품목`], okText: 'BOM 삭제', danger: true }))
                           deleteMut.mutate({ customerId: cs?.id, projectId: a.id })
-                      }}
+                      }} data-asm-del
                       className="opacity-0 group-hover:opacity-100 px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500 transition-opacity">
                       삭제
                     </button>
@@ -1364,7 +1392,7 @@ export default function BOM() {
                         ? 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100'
                         : 'border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100'}`}>
                       {subBomBusy
-                        ? (subProgress ? `생성 중… ${subProgress.done}/${subProgress.total}` : '준비 중…')
+                        ? <span className="inline-flex items-center gap-1.5"><Spin />{subProgress ? `생성 중… ${subProgress.done}/${subProgress.total}` : '준비 중…'}</span>
                         : `🧬 하위 ASSY BOM ${subOverwrite ? '다시 생성' : '생성'} (${subPending})`}
                     </button>
                     {subStat.existing_count > 0 && (
@@ -1379,15 +1407,8 @@ export default function BOM() {
                 )}
               </div>
               {subProgress && (
-                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold">{subProgress.done} / {subProgress.total} 처리 중</span>
-                    <span className="font-mono text-[11px]">{subProgress.now}</span>
-                  </div>
-                  <div className="h-1.5 bg-indigo-100 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-500 transition-all"
-                      style={{ width: `${Math.round(subProgress.done / subProgress.total * 100)}%` }} />
-                  </div>
+                <div className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800" data-sub-progress>
+                  <ProgressBar done={subProgress.done} total={subProgress.total} label={<>하위 어셈블리 BOM 만드는 중 · <span className="font-mono">{subProgress.now}</span></>} unit="건" />
                 </div>
               )}
               {subBomResult && (
@@ -1427,7 +1448,7 @@ export default function BOM() {
                   )}
                   <button onClick={downloadMissing} disabled={missBusy} title="모든 BOM 에서 전개가 빠진 조립품 목록 — 고객사 요청용"
                     className="px-2 py-0.5 rounded-lg border border-violet-200 bg-white text-[11px] font-bold text-violet-700 hover:bg-violet-50 disabled:opacity-40">
-                    {missBusy ? '만드는 중…' : '📋 전개 누락 목록 (엑셀)'}
+                    {missBusy ? <span className="inline-flex items-center gap-1"><Spin />만드는 중…</span> : '📋 전개 누락 목록 (엑셀)'}
                   </button>
                   {canEdit && supSel.size > 0 && (
                     <span className="ml-auto flex items-center gap-1.5">
@@ -1460,7 +1481,7 @@ export default function BOM() {
                       </thead>
                       <tbody>
                         {detailLoading ? (
-                          <tr><td colSpan={11} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+                          <SkeletonRows cols={11} rows={10} first={1} two={[3]} />
                         ) : bomDetail.length === 0 ? (
                           <tr><td colSpan={11} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
                         ) : detailVis.shown.map(b => { const st = supTree.get(b.id); const open = openSubs.has(b.id); return (
@@ -1524,7 +1545,7 @@ export default function BOM() {
                   }}
                   disabled={asmMut.isPending}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {asmMut.isPending ? '저장 중…' : '저장'}
+                  {asmMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
                 </button>
                 <button onClick={() => setEditAsm(null)}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
@@ -1606,7 +1627,7 @@ export default function BOM() {
                   })}
                   disabled={!addPart.item || !(Number(addPart.qty) > 0) || addPartMut.isPending}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {addPartMut.isPending ? '넣는 중…' : '넣기'}
+                  {addPartMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />넣는 중…</span> : '넣기'}
                 </button>
                 <button onClick={() => { setAddPart(null); setPartQ(''); setPartHits([]) }}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
@@ -1625,8 +1646,9 @@ export default function BOM() {
           onLookup={lookupItem} hit={pnHit} setHit={setPnHit}
           busy={rowMut.isPending}
           onSave={(patch) => rowMut.mutate({ action: 'update', row: editRow, patch })}
-          onDelete={() => {
-            if (!confirm(`${editRow.items?.std_code} 행을 BOM에서 삭제할까요?\n(원가·견적에서도 빠집니다)`)) return
+          onDelete={async () => {
+            if (!(await ask({ title: `${editRow.items?.std_code} 행을 BOM에서 삭제할까요?`, desc: '원가 · 견적에서도 빠지고 되돌릴 수 없습니다.',
+              items: [`${editRow.items?.std_code || '-'} · ${editRow.items?.name || ''} · 소요 ${editRow.qty_per_unit ?? '-'}`], okText: '행 삭제', danger: true }))) return
             rowMut.mutate({ action: 'delete', row: editRow })
           }}
         />
@@ -1762,7 +1784,8 @@ function SubBomRows({ csId, parent, st, asm, supMap, onOpen }) {
       </td>
     </tr>
   )
-  if (isLoading || error) return <>{head}<tr><td /><td colSpan={10} className="px-3 py-2 text-[11px] text-slate-400">{error ? '불러오기 실패: ' + error.message : '불러오는 중…'}</td></tr></>
+  if (error) return <>{head}<tr><td /><td colSpan={10} className="px-3 py-2 text-[11px] text-slate-400">{'불러오기 실패: ' + error.message}</td></tr></>
+  if (isLoading) return <>{head}<SkeletonRows cols={11} rows={3} first={1} /></>
   return (
     <>
       {head}
@@ -1895,7 +1918,7 @@ function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setH
           </button>
           <button onClick={save} disabled={busy || !canSave}
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '저장 중…' : '저장'}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
           </button>
         </div>
       </div>

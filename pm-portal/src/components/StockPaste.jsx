@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { logActivity } from '../lib/activityLog'
+import { useConfirm } from './ux/ConfirmDialog'
+import Spin from './ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -19,6 +21,7 @@ export default function StockPaste({ onClose }) {
   const [rows, setRows] = useState(null)     // 대조 결과
   const [busy, setBusy] = useState(false)
   const [onlyDiff, setOnlyDiff] = useState(true)
+  const [ask, confirmEl] = useConfirm()   // 반영 전 확인 — 포털 확인 창 (v4.104.0)
 
   // 붙여넣은 내용을 품번·수량으로 나눈다.
   // 탭·쉼표·여러 칸 띄어쓰기를 모두 구분자로 본다.
@@ -102,12 +105,13 @@ export default function StockPaste({ onClose }) {
   async function apply() {
     const target = rows.filter(r => r.status === 'ok' && r.diff !== 0)
     if (!target.length) { toastError('반영할 차이가 없습니다'); return }
-    if (!confirm(
-      `${target.length}건의 재고를 실사 수량으로 바꿉니다.\n\n` +
-      `증가 ${target.filter(r => r.diff > 0).length}건 · ` +
-      `감소 ${target.filter(r => r.diff < 0).length}건\n\n` +
-      `되돌릴 수 없습니다. 계속할까요?`
-    )) return
+    if (!(await ask({
+      title: `${n(target.length)}건의 재고를 실사 수량으로 바꿀까요?`,
+      desc: `증가 ${n(target.filter(r => r.diff > 0).length)}건 · 감소 ${n(target.filter(r => r.diff < 0).length)}건. 장부 재고를 실사 수량으로 덮어쓰며 되돌릴 수 없습니다.`,
+      items: target.slice(0, 5).map(r => `${r.std_code} · ${r.name || ''} · 장부 ${n(r.book)} → 실사 ${n(r.qty)}`),
+      more: Math.max(0, target.length - 5),
+      okText: '재고에 반영', danger: true,
+    }))) return
 
     setBusy(true)
     try {
@@ -156,7 +160,8 @@ export default function StockPaste({ onClose }) {
     ? (onlyDiff ? rows.filter(r => r.status !== 'ok' || r.diff !== 0) : rows)
     : []
 
-  return (
+  return (<>
+    {confirmEl}
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
       onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col"
@@ -187,7 +192,7 @@ export default function StockPaste({ onClose }) {
               <button onClick={check} disabled={busy || !text.trim()}
                 className="w-full mt-3 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white
                   hover:bg-indigo-700 disabled:opacity-40">
-                {busy ? '대조 중…' : '장부와 대조하기'}
+                {busy ? <span className="inline-flex items-center gap-1.5"><Spin />대조 중…</span> : '장부와 대조하기'}
               </button>
             </>
           ) : (
@@ -273,11 +278,11 @@ export default function StockPaste({ onClose }) {
             <button onClick={apply} disabled={busy || !stat.diff}
               className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white
                 hover:bg-indigo-700 disabled:opacity-40">
-              {busy ? '반영 중…' : `차이 ${n(stat.diff)}건 재고에 반영`}
+              {busy ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : `차이 ${n(stat.diff)}건 재고에 반영`}
             </button>
           </div>
         )}
       </div>
     </div>
-  )
+  </>)
 }

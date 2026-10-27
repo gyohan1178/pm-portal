@@ -1,4 +1,5 @@
 import { useUndo } from '../../components/UndoBar'
+import Spin from '../../components/ux/Spin'
 import PageHead from '../../components/PageHead'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { refreshProcurement } from '../../lib/refresh'
@@ -674,7 +675,7 @@ export default function Outbound() {
                     <button onClick={()=>outMut.mutate({mode:'strict'})}
                       disabled={outMut.isPending||Object.values(outQtys).every(q=>!q||Number(q)<=0)}
                       className="w-56 py-2 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
-                      {outMut.isPending?'처리 중...':'📤 출고 처리'}
+                      {outMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />처리 중...</span>:'📤 출고 처리'}
                     </button>
                   </div>
                 )}>

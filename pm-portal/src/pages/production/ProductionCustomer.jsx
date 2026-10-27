@@ -9,6 +9,8 @@ import ProductionHarness from './ProductionHarness'
 import ProductionPDBox from './ProductionPDBox'
 import { syncThirdPartyProduction } from '../../lib/thirdParty'
 import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 const CUST_NAME = { AX: 'AXCELIS', ED: 'Edwards', VM: 'VM', CSK: 'CSK' }
 const STATUS_COLOR = {
@@ -101,6 +103,7 @@ function ProductionCustomerInner() {
   const dq = useDebounced(search, 250)
   const [showDone, setShowDone] = useState(false)
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()   // PO 연동 확인 창 (v4.104.0)
 
   const syncMut = useMutation({
     mutationFn: async () => {
@@ -162,6 +165,7 @@ function ProductionCustomerInner() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <div className="flex items-center gap-1 mb-1.5">
@@ -183,10 +187,14 @@ function ProductionCustomerInner() {
           {/* PO 연동은 AXCELIS 만. 11번대 품번 기준이라 다른 고객사엔 걸리지 않는다.
               Edwards 는 생산관리 안의 '월간 실적 올리기' 를 쓴다. */}
           {isAx && (
-          <button onClick={() => { if(window.confirm('11번대 PO를 호기에 연동할까요?\\n납품요청일·REV가 갱신되고, 부족한 호기는 새로 생성됩니다.')) syncMut.mutate() }}
+          <button onClick={async () => {
+              if (await ask({ title: '11번대 PO를 호기에 연동할까요?',
+                desc: '납품이 끝난 PO 의 호기를 먼저 완료로 바꾸고, 품번 기준으로 호기에 맞춰 납품요청일 · REV 를 갱신합니다. 부족한 호기는 새로 생성되고, 3rd party PO(동신 · 동원파츠 등)도 함께 맞춥니다.',
+                okText: 'PO 연동' })) syncMut.mutate()
+            }} data-sync-po
             disabled={syncMut.isPending}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
-            {syncMut.isPending ? '연동 중...' : '↻ PO 연동'}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50 disabled:opacity-40">
+            {syncMut.isPending ? <><Spin />연동 중...</> : '↻ PO 연동'}
           </button>
           )}
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
@@ -200,7 +208,7 @@ function ProductionCustomerInner() {
 
       {tab === 'cal' && <ProductionCalendar rows={rows} />}
 
-      {tab === 'hns' && <ProductionHarness rows={rows} csCode={cs} />}
+      {tab === 'hns' && <ProductionHarness rows={rows} csCode={cs} isLoading={isLoading} />}
 
       {tab === 'list' && <ProductionPDBox rows={rows} csCode={cs} isLoading={isLoading} />}
     </div>

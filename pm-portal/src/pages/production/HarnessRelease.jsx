@@ -14,6 +14,8 @@ import { useCompact } from '../../hooks/useCompact'
 import PlanBadge from '../../components/PlanBadge'
 import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
 import { useCanEdit } from '../../hooks/useProfile'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
@@ -116,12 +118,13 @@ function DBadge({ d }) {
   if (d === 0) return <Badge tone="red">오늘</Badge>
   return <Badge tone={d <= 7 ? 'red' : d <= 14 ? 'orange' : d <= 21 ? 'yellow' : 'green'}>D-{d}</Badge>
 }
-function Kpi({ tone, label, value, note, onClick, on }) {
+function Kpi({ tone, label, value, note, onClick, on, loading }) {
   const T = { amber: 'bg-amber-50 border-amber-200 text-amber-700', blue: 'bg-sky-50 border-sky-200 text-sky-700', red: 'bg-rose-50 border-rose-200 text-rose-600', green: 'bg-emerald-50 border-emerald-200 text-emerald-700' }[tone]
   return (
     <button type="button" onClick={onClick} className={`text-left rounded-xl border px-4 py-3 ${T} ${on ? 'ring-2 ring-offset-1 ring-slate-300' : ''}`}>
       <div className="text-[12px] font-bold opacity-70">{label}</div>
-      <div className="text-2xl font-extrabold leading-tight">{value}</div>
+      {loading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={48} h={20} /></div>
+        : <div className="text-2xl font-extrabold leading-tight">{value}</div>}
       {note && <div className="text-[11px] text-slate-400">{note}</div>}
     </button>
   )
@@ -140,6 +143,7 @@ export default function HarnessRelease() {
   const [sel, setSel] = useState(() => new Set())
   const [copied, setCopied] = useState(null)   // { text, n, at }
   const [busy, setBusy] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 (v4.104.0)
 
   // 진행 중 AXCELIS 하네스 PO 줄
   //   = 구분이 하네스(16번대)인 줄 + 하네스 공정관리에 등록된(완료 안 된) 줄 — 12번대 구매품 · 11번대 전장도 공정관리에서 만들면 여기서 출도 · 불출한다
@@ -214,11 +218,16 @@ export default function HarnessRelease() {
   })
   const hasBom = (p) => !bomCnt || (bomCnt[p.items?.std_code] || 0) > 0
 
-  function sendIssue(list) {
+  async function sendIssue(list) {
     const ok = list.filter(p => hasBom(p) && leftOf(p) > 0)
     const noBom = list.filter(p => !hasBom(p))
     if (!ok.length) { toastError(noBom.length ? 'BOM 이 등록된 하네스가 없습니다 — 고객사 BOM 을 먼저 올려 주세요' : '잔량이 있는 줄이 없습니다'); return }
-    if (noBom.length && !confirm(`BOM 이 없는 ${noBom.length}줄은 빼고 보냅니다 (${[...new Set(noBom.map(p => pnOf(p.items?.std_code)))].slice(0, 5).join(', ')}${noBom.length > 5 ? ' …' : ''}).\n계속할까요?`)) return
+    if (noBom.length) {
+      const pns = [...new Set(noBom.map(p => pnOf(p.items?.std_code)))]
+      if (!(await ask({ title: `BOM 이 없는 ${noBom.length}줄은 빼고 보낼까요?`,
+        desc: `고객사 BOM 이 없는 하네스는 다품목 출고에서 전개되지 않아 빼고, 나머지 ${ok.length}줄만 다품목 출고로 넘깁니다.`,
+        items: pns.slice(0, 5).map(c => `BOM 없음 — ${c}`), more: Math.max(0, pns.length - 5), okText: `${ok.length}줄 보내기` }))) return
+    }
     // v4.57.0: 출고가 끝난 뒤 다품목 출고 화면이 「넘겨받은 줄 불출 처리할까요?」를 묻는다 (아직 불출 안 된 줄만)
     //   → 출고 없이 불출만 먼저 찍혀 쇼티지에서 빠지는데 재고는 그대로인 일을 막는다
     const poIssue = ok.filter(p => !p.material_issued).map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) }))
@@ -258,10 +267,12 @@ export default function HarnessRelease() {
   async function setIssued(val) {
     const list = selRows.filter(p => !!p.material_issued !== val)
     if (!list.length) return
-    const msg = val
-      ? `${list.length}줄을 「불출」로 표시할까요?\n\n· 고객사 PO 자재불출 체크 → 쇼티지 계산에서 빠집니다\n· 재고 수량은 바뀌지 않습니다 (출고는 출고 화면에서)`
-      : `${list.length}줄의 불출 표시를 풀까요?\n\n· 쇼티지 계산에 다시 들어갑니다`
-    if (!confirm(msg)) return
+    const lines = list.slice(0, 5).map(p => `${p.po_number} · ${N(p.order_line) || '-'}/${N(p.del_line) || '-'} · ${pnOf(p.items?.std_code)} · 잔량 ${n(leftOf(p))}`)
+    if (!(await ask(val
+      ? { title: `${list.length}줄을 「불출」로 표시할까요?`, desc: '고객사 PO 자재불출 체크 → 쇼티지 계산에서 빠집니다. 재고 수량은 바뀌지 않습니다 (출고는 출고 화면에서). 처리 뒤 위에 뜨는 「↩ 되돌리기」로 되돌릴 수 있습니다.',
+          items: lines, more: Math.max(0, list.length - 5), okText: '불출 표시' }
+      : { title: `${list.length}줄의 불출 표시를 풀까요?`, desc: '쇼티지 계산에 다시 들어갑니다. 처리 뒤 위에 뜨는 「↩ 되돌리기」로 되돌릴 수 있습니다.',
+          items: lines, more: Math.max(0, list.length - 5), okText: '불출 표시 풀기', danger: true }))) return
     setBusy(true)
     try {
       const snap = await snapIssued(list.map(p => p.id))   // 되돌리기용 — 바꾸기 전 값 (v4.58.0)
@@ -321,10 +332,10 @@ export default function HarnessRelease() {
       )}
 
       <div className="kpi-grid grid grid-cols-2 md:grid-cols-4 gap-3" data-hr-kpi>
-        <Kpi tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} />
-        <Kpi tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} />
-        <Kpi tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} />
-        <Kpi tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} />
+        <Kpi tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} loading={isLoading} />
+        <Kpi tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} loading={isLoading} />
+        <Kpi tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} loading={isLoading} />
+        <Kpi tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} loading={isLoading} />
       </div>
 
       {/* 일 순서 안내 — 노트북 화면에선 숨겨 표에 자리를 준다 (v4.65.0) */}
@@ -337,7 +348,7 @@ export default function HarnessRelease() {
             </div>))}
       </div>
 
-      {undoBar}
+      {undoBar}{confirmEl}
       {justIssued && justIssued.length > 0 && (
         <div data-hr-just className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-800">
           <b>✅ {justIssued.length}줄 불출 처리했습니다.</b>
@@ -390,7 +401,7 @@ export default function HarnessRelease() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={9} className="py-6 text-center text-slate-400">불러오는 중…</td></tr>}
+              {isLoading && <SkeletonRows cols={9} rows={8} first={1} two={[3]} />}
               {!isLoading && !rows.length && <tr><td colSpan={9} className="py-6 text-center text-slate-400">{tab === 'wait' ? '공정관리에서 출력한 미불출 건이 없습니다.' : '해당하는 하네스 PO 가 없습니다.'}</td></tr>}
               {rows.map(p => (
                 <tr key={p.id} data-hr-row={p.id} onClick={() => toggle(p.id)} className={`border-t border-slate-100 cursor-pointer ${sel.has(p.id) ? 'bg-indigo-50/70' : 'hover:bg-slate-50'}`}>

@@ -13,6 +13,8 @@ import {
 } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import CostSummary from './CostSummary'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
 
 const won = n => (Math.round(Number(n) || 0)).toLocaleString()
 const usd = n => (Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -196,16 +198,30 @@ export default function CostAnalysis() {
       </div>
 
       {!projectId && <div className="text-center text-slate-400 text-sm py-12">어셈블리를 선택하면 원가가 분석됩니다.</div>}
-      {projectId && isLoading && <div className="text-center text-slate-400 text-sm py-12">불러오는 중…</div>}
+      {projectId && isLoading && (
+        <div className="space-y-3" data-ca-loading>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {[0, 1, 2, 3].map(i => <div key={i} className="bg-white rounded-xl border border-slate-200 p-3 space-y-2" data-skeleton><SkelBar w={64} h={9} /><SkelBar w={110} h={18} /><SkelBar w={140} h={9} /></div>)}
+          </div>
+          <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+            <table className="w-full text-sm"><tbody><SkeletonRows cols={11} rows={10} /></tbody></table>
+          </div>
+        </div>
+      )}
 
       {projectId && !isLoading && (
         <>
           {/* 요약 카드 */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Card label="총 매입원가" value={won(cost.totalBuyKrw) + '원'} sub={`수입 ${won(cost.impKrw)} · 국내 ${won(cost.domKrw)} · 작업 ${won(cost.laborKrw)}`} />
-            <Card label={usingTarget ? '목표 매출가' : '권장 판매가'} value={'$' + usd(sellUsd)} sub={usingTarget ? '입력값 기준' : '구간마진 자동'} accent={usingTarget ? 'amber' : 'sky'} />
-            <Card label="매출 (KRW)" value={won(margin.revenueKrw) + '원'} sub={`@${cfg.sellRate}`} />
-            <Card label="마진" value={won(margin.marginKrw) + '원'} sub={pct(margin.marginPct)} accent={margin.marginKrw >= 0 ? 'emerald' : 'rose'} />
+            <Card label="총 매입원가" value={won(cost.totalBuyKrw) + '원'} sub={`수입 ${won(cost.impKrw)} · 국내 ${won(cost.domKrw)} · 작업 ${won(cost.laborKrw)}`}
+              tip="BOM 을 레벨 수량대로 곱해 펼친 뒤, 줄마다 「품목 매입가 × 전개수량」을 더하고 작업비(원)를 더한 값. 「제외」가 체크된 줄은 빠지고 (L0(KIT 자신) · 하위가 딸린 중간 어셈블리 줄은 처음부터 체크됨), 매입가 미등록 · 품목 미등록 · 단가 제외 줄은 0 으로 셉니다. 수입/국내는 품목 기본 구매처 이름으로 나눕니다." />
+            <Card label={usingTarget ? '목표 매출가' : '권장 판매가'} value={'$' + usd(sellUsd)} sub={usingTarget ? '입력값 기준' : '구간마진 자동'} accent={usingTarget ? 'amber' : 'sky'}
+              tip={usingTarget ? '위 「목표 매출가($)」 칸에 넣은 값 그대로입니다. 비우면 권장 판매가로 돌아갑니다.'
+                : '합산에 들어간 줄마다 「매입가 ÷ (1 − 구간마진) ÷ 판매환율 × 전개수량」을 더한 달러 값. 구간마진은 매입 단가 기준 100만원 이상 20% · 10만원 이상 25% · 1만원 이상 35% · 그 아래 45%. 작업비는 「작업비 ÷ (1 − 25%) ÷ 판매환율」로 더합니다.'} />
+            <Card label="매출 (KRW)" value={won(margin.revenueKrw) + '원'} sub={`@${cfg.sellRate}`}
+              tip="매출가($) × 판매환율. 매출가는 목표 매출가를 넣었으면 그 값, 아니면 권장 판매가입니다." />
+            <Card label="마진" value={won(margin.marginKrw) + '원'} sub={pct(margin.marginPct)} accent={margin.marginKrw >= 0 ? 'emerald' : 'rose'}
+              tip="매출(KRW) − 총 매입원가. % 는 마진 ÷ 매출(KRW) 입니다." tipAlign="right" />
           </div>
 
           {/* 견적서 */}
@@ -319,11 +335,11 @@ export default function CostAnalysis() {
 function Field({ label, children }) {
   return <label className="flex flex-col gap-1"><span className="text-[11px] font-semibold text-slate-400">{label}</span>{children}</label>
 }
-function Card({ label, value, sub, accent }) {
+function Card({ label, value, sub, accent, tip, tipAlign }) {
   const ac = { emerald: 'text-emerald-600', rose: 'text-rose-600', sky: 'text-sky-600', amber: 'text-amber-600' }[accent] || 'text-slate-800'
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-3">
-      <div className="text-[11px] font-semibold text-slate-400">{label}</div>
+    <div className="bg-white rounded-xl border border-slate-200 p-3" data-ca-card={label}>
+      <div className="text-[11px] font-semibold text-slate-400 flex items-center gap-1">{label}{tip && <InfoTip text={tip} align={tipAlign} />}</div>
       <div className={`text-lg font-bold ${ac}`}>{value}</div>
       {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
     </div>

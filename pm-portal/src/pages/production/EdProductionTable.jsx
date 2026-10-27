@@ -12,6 +12,7 @@ import { useState } from 'react'
 import { supabase } from '../../lib/supabase'
 import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf } from '../../lib/edForecast'
 import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
+import Spin from '../../components/ux/Spin'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -454,7 +455,7 @@ export function MissingModal({ row, onClose, onSave, saving }) {
         <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
           <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
           <button disabled={saving} onClick={() => onSave(list.filter(m => String(m.pn || '').trim() || String(m.name || '').trim()))}
-            className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? '저장 중…' : '저장'}</button>
+            className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}</button>
         </div>
       </div>
     </div>
@@ -586,7 +587,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
               if (h !== null || e !== null) w[k] = { harn: h, elec: e }
             }
             onSave({ weeks: w, map, bom })
-          }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? '저장 중…' : '저장'}</button>
+          }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}</button>
         </div>
       </div>
     </div>

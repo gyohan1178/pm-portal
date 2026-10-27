@@ -10,6 +10,8 @@ import { fetchAll } from '../../lib/paginate'
 import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
 import AutoInput from '../../components/AutoInput'
 import { ilikeAny } from '../../lib/pgFilter'
+import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
+import { useCoach } from '../../components/ux/CoachMarks'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
 //    노출: 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM
@@ -138,14 +140,30 @@ export default function FieldSearch() {
 
   function openBOM(code) { setBq(code); setBSubmitted(code); setTab('bom') }
 
+  // 처음 쓰는 현장 직원 안내 (v4.104.0) — 검색 결과가 처음 나왔을 때 한 번, 「💡 안내」로 다시
+  //   휴대폰은 카드, 넓은 화면은 표 — 보이는 쪽을 가리킨다 (md = 768px)
+  const narrow = typeof window !== 'undefined' && window.innerWidth < 768
+  const coach = useCoach('field-search', [
+    { sel: '[data-fs-search="product"]', title: '① 품번 · 품명으로 찾기', body: '품명 · 기준코드 · 제조사품번 아무거나 두 글자 넘게 치면 아래에 후보가 뜹니다. 고르거나 엔터를 누르세요.' },
+    { sel: narrow ? '[data-fs-card]' : '[data-fs-row]', title: '② 위치 · 재고 확인', body: narrow ? '검은 칸이 보관 위치, 초록 숫자가 재고입니다. 카드를 누르면 창고 어느 랙 몇 칸인지 그림으로 나옵니다.' : '위치 칸이 보관 위치, 재고 칸이 지금 수량입니다.' },
+    { sel: narrow ? '[data-fs-card-bom]' : '[data-fs-row-bom]', title: '③ BOM 전개', body: '이 품번이 조립품이면 들어가는 부품 목록(BOM)을 바로 봅니다.' },
+  ], tab === 'product' && !!pSubmitted && !pLoading && items.length > 0)
+
   const TABS = [['product', '🔎 제품 검색'], ['where', '🔍 역전개 (사용처)'], ['bom', '📋 BOM 조회']]
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">🏭 현장 검색</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">품목 정보·사용처·BOM 조회 (현장용)</p>
+      <div className="flex items-start gap-2">
+        <div className="flex-1 min-w-0">
+          <h1 className="text-lg font-bold text-slate-900">🏭 현장 검색</h1>
+          <p className="page-desc text-xs text-slate-400 mt-0.5">품목 정보·사용처·BOM 조회 (현장용)</p>
+        </div>
+        {tab === 'product' && (
+          <button type="button" onClick={coach.start} data-coach-again
+            className="shrink-0 whitespace-nowrap px-3 py-2 rounded-full text-sm font-bold border bg-white text-slate-500 border-slate-200 hover:border-slate-300">💡 안내</button>
+        )}
       </div>
+      {coach.el}
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {TABS.map(([k, l]) => (
@@ -157,6 +175,7 @@ export default function FieldSearch() {
       {/* 제품 검색 */}
       {tab === 'product' && (
         <>
+          <div data-fs-search="product">
           <AutoInput value={pq} setValue={setPq} onSubmit={() => setPSubmitted(pq)}
             onPick={s => { setPq(s.std_code); setPSubmitted(s.std_code) }}
             fetchSuggest={suggestItems} keyName="fieldSuggestProduct"
@@ -168,16 +187,22 @@ export default function FieldSearch() {
               </div>
               <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
             </>)} />
+          </div>
 
           {pSubmitted && (pLoading
-            ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            ? <div data-fs-loading="product">
+                <div className="md:hidden space-y-2"><SkeletonCards n={4} /></div>
+                <div className="hidden md:block rounded-xl border border-slate-200 overflow-hidden">
+                  <table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={6} /></tbody></table>
+                </div>
+              </div>
             : items.length === 0
               ? <div className="text-center py-12 text-slate-300 text-sm">결과가 없습니다</div>
               : <>
                 {/* 📱 모바일: 카드형 (QR→폰 조회 대비) */}
                 <div className="md:hidden space-y-2">
                   {items.map(it => (
-                    <div key={it.id} onClick={() => setDetail(it)}
+                    <div key={it.id} onClick={() => setDetail(it)} data-fs-card
                       className="rounded-xl border border-slate-200 bg-white p-3 cursor-pointer active:bg-slate-50">
                       <div className="flex items-center gap-2 flex-wrap">
                         <span className="font-mono text-sm font-bold text-indigo-600">{it.std_code}</span>
@@ -196,7 +221,7 @@ export default function FieldSearch() {
                       <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
                       <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono">{it.manufacturer_code || '-'}</span></div>
                       {it.spec && <div className="text-[11px] text-slate-400 truncate">{it.spec}</div>}
-                      <button onClick={() => openBOM(it.std_code)} className="mt-2 text-[11px] text-indigo-500 font-semibold">📋 BOM 전개 ↗</button>
+                      <button onClick={() => openBOM(it.std_code)} data-fs-card-bom className="mt-2 text-[11px] text-indigo-500 font-semibold">📋 BOM 전개 ↗</button>
                     </div>
                   ))}
                 </div>
@@ -210,7 +235,7 @@ export default function FieldSearch() {
                       </tr></thead>
                       <tbody>
                         {items.map(it => (
-                          <tr key={it.id} className="border-b border-slate-100 hover:bg-slate-50">
+                          <tr key={it.id} data-fs-row className="border-b border-slate-100 hover:bg-slate-50">
                             <td className="px-3 py-2 font-mono text-indigo-600">{it.std_code}</td>
                             <td className="px-3 py-2 text-slate-700 max-w-[240px] truncate">{it.name}</td>
                             <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span></td>
@@ -223,7 +248,7 @@ export default function FieldSearch() {
                             </td>
                             <td className="px-3 py-2 font-semibold text-slate-700">{it.location || '-'} <AuxLocs aux={it.aux} /></td>
                             <td className="px-3 py-2">
-                              <button onClick={() => openBOM(it.std_code)} className="text-[11px] text-indigo-500 hover:underline font-semibold">전개 ↗</button>
+                              <button onClick={() => openBOM(it.std_code)} data-fs-row-bom className="text-[11px] text-indigo-500 hover:underline font-semibold">전개 ↗</button>
                             </td>
                           </tr>
                         ))}
@@ -255,7 +280,10 @@ export default function FieldSearch() {
           </div>
 
           {rSubmitted && (rLoading
-            ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+            ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-fs-loading="where">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2" data-skeleton><SkelBar w={120} h={14} /><SkelBar w={150} /></div>
+                <table className="w-full text-xs"><tbody><SkeletonRows cols={5} rows={4} /></tbody></table>
+              </div>
             : grouped.length === 0
               ? <div className="text-center py-12 text-slate-300 text-sm">사용처가 없습니다</div>
               : <div className="space-y-3">
@@ -318,7 +346,10 @@ export default function FieldSearch() {
           </div>
 
           {bSubmitted && (bLoading
-            ? <div className="text-center py-10 text-slate-400 text-sm">조회 중...</div>
+            ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-fs-loading="bom">
+                <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2" data-skeleton><SkelBar w={130} h={14} /><SkelBar w={60} /></div>
+                <table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={8} /></tbody></table>
+              </div>
             : !bom.assembly
               ? <div className="text-center py-12 text-slate-300 text-sm">해당 어셈블리를 찾을 수 없습니다</div>
               : bom.rows.length === 0
