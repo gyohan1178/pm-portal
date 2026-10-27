@@ -5,6 +5,8 @@ import ItemPicker from '../../components/ItemPicker'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 import { parsePaste, matchItems, saveQuotes, bigJump, ltWeeksOf } from '../../lib/quoteBulk'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 const n = (v) => (v == null || v === '' ? '' : Math.round(Number(v)).toLocaleString('ko-KR'))
 const plus30 = (d) => { const t = new Date(`${d}T12:00:00Z`); t.setUTCDate(t.getUTCDate() + 30); return t.toISOString().slice(0, 10) }
@@ -24,6 +26,9 @@ export default function QuoteBulk() {
   const [rows, setRows] = useState([])        // [{ line, raw, key, price, lead, moq, cands:[], item, on, upd }]
   const [busy, setBusy] = useState(false)
   const [done, setDone] = useState(null)
+  // v4.104.0 — 확인 창 · 빠진 칸(협력사)은 그 칸 아래에 표시
+  const [ask, confirmEl] = useConfirm()
+  const [tried, setTried] = useState(false)
 
   async function analyze(t = text) {
     const parsed = parsePaste(t)
@@ -53,10 +58,15 @@ export default function QuoteBulk() {
   const leadOf = (r) => r.lead || defLead
 
   async function save() {
-    if (!vendorId) { toastError('협력사를 고르세요'); return }
+    if (!vendorId) { setTried(true); setTimeout(() => document.querySelector('[data-field-error="vendor"]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 30); return }
     if (!sel.length) { toastError('저장할 줄이 없습니다 — 품목을 찾은 줄을 체크하세요'); return }
     const ids = sel.map((r) => r.item.id)
-    if (new Set(ids).size !== ids.length && !window.confirm('같은 품목이 두 줄 이상 있습니다. 매입가는 아래 줄 값으로 남습니다. 계속할까요?')) return
+    if (new Set(ids).size !== ids.length) {
+      const dup = [...new Set(ids.filter((id, k) => ids.indexOf(id) !== k))]
+      const lines = dup.map((id) => { const rs = sel.filter((r) => r.item.id === id); return `${rs[0].item.std_code} · ${rs[0].item.name || ''} · ${rs.map((r) => n(r.price)).join(' / ')}원` })
+      if (!(await ask({ title: '같은 품목이 두 줄 이상 있습니다 — 계속 저장할까요?', desc: '견적 이력은 줄마다 남고, 최근 매입가는 아래 줄 값으로 남습니다.',
+        items: lines.slice(0, 5), more: Math.max(0, lines.length - 5), okText: '계속 저장' }))) return
+    }
     setBusy(true)
     try {
       const r = await saveQuotes(sel.map((x) => ({
@@ -69,17 +79,20 @@ export default function QuoteBulk() {
       qc.invalidateQueries({ queryKey: ['items'], exact: false })
       qc.invalidateQueries({ queryKey: ['quoteHistory'], exact: false })
       qc.invalidateQueries({ queryKey: ['quotePriceReqs'] })   // 영업 단가 요청 목록 (v4.99.2)
-      setRows([]); setText('')
+      setRows([]); setText(''); setTried(false)
     } catch (e) { toastError('저장 실패: ' + e.message) } finally { setBusy(false) }
   }
 
   const box = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500'
   return (
     <div className="space-y-3" data-quote-bulk>
+      {confirmEl}
       <div className="rounded-xl border border-slate-200 bg-white p-4">
         <p className="text-xs font-bold text-slate-700 mb-2.5">① 견적 공통 정보</p>
         <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-          <div><label className="block text-xs font-bold text-slate-500 mb-1">협력사 <span className="text-rose-500">*</span></label><VendorPicker value={vendorId} onChange={setVendorId} /></div>
+          <div><label className="block text-xs font-bold text-slate-500 mb-1">협력사 <span className="text-rose-500">*</span></label>
+            <div className={(tried || rows.length) && !vendorId ? 'rounded-lg ring-2 ring-rose-200 [&_input]:!border-rose-400' : ''}><VendorPicker value={vendorId} onChange={setVendorId} /></div>
+            {(tried || rows.length > 0) && !vendorId && <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error="vendor">협력사를 골라 주세요</p>}</div>
           <div><label className="block text-xs font-bold text-slate-500 mb-1">견적일</label><input type="date" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className={box} /></div>
           <div>
             <label className="block text-xs font-bold text-slate-500 mb-1">유효기간</label>
@@ -104,7 +117,7 @@ export default function QuoteBulk() {
           className="w-full px-3 py-2 text-xs font-mono border-2 border-dashed border-indigo-200 bg-indigo-50/30 rounded-lg focus:outline-none focus:border-indigo-400" />
         <div className="flex items-center gap-2">
           <button data-bulk-analyze type="button" onClick={() => analyze()} disabled={busy || !text.trim()}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 disabled:opacity-40">{busy ? '찾는 중…' : '🔍 품목 찾기'}</button>
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 disabled:opacity-40">{busy ? <span className="inline-flex items-center gap-1.5"><Spin />찾는 중…</span> : '🔍 품목 찾기'}</button>
           {!!rows.length && <button type="button" onClick={() => { setRows([]); setText('') }} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500">지우기</button>}
           {done && <span className="text-xs font-semibold text-emerald-600">✅ 견적 {done.saved}건 저장 · 매입가 {done.priced}건 갱신{done.lt ? ` · LT ${done.lt}건` : ''}</span>}
         </div>
@@ -182,7 +195,7 @@ export default function QuoteBulk() {
             <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-slate-600"><input type="checkbox" data-bulk-lt checked={applyLt} onChange={(e) => setApplyLt(e.target.checked)} /> 품목 LT(주)도 납기로 반영 <span className="font-normal text-slate-400">(2~3주 → 3주)</span></label>
             <button data-bulk-save type="button" onClick={save} disabled={busy || !sel.length || !vendorId}
               className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {busy ? '저장 중…' : `💾 견적 ${sel.length}건 저장 · 매입가 ${updN}건 갱신`}
+              {busy ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : `💾 견적 ${sel.length}건 저장 · 매입가 ${updN}건 갱신`}
             </button>
           </div>
           {!vendorId && <p className="text-right text-[11px] text-rose-500">협력사를 먼저 고르세요</p>}

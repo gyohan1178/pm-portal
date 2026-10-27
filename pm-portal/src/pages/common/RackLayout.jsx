@@ -8,6 +8,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
 import { todayISO } from '../../lib/utils'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 // 3D 보기 — three 라이브러리가 커서 탭을 열 때만 받는다
 const RackLayout3D = lazy(() => import('./RackLayout3D'))
@@ -173,6 +176,7 @@ export default function RackLayout() {
   const [pick, setPick] = useState(null)   // 편집 중 선택한 대상
   const boardRef = useRef(null)
 
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 편집 이어하기 확인 창
   const { data: racks = NO_ROWS, isLoading } = useQuery({
     queryKey: ['rackUsage'],
     queryFn: async () => {
@@ -273,11 +277,14 @@ export default function RackLayout() {
     } catch (e) { toastError('실패: ' + e.message) }
   }
 
-  function startEdit() {
+  async function startEdit() {
     // 저장하지 못하고 나간 작업이 있으면 이어서 할지 묻는다
+    //   이어서 하기 → 그 편집 내용 · 새로 시작 → 저장된 배치부터 · Esc/바깥 → 아무것도 안 함 (v4.104.0)
     try {
       const saved = sessionStorage.getItem('rackDraft')
-      if (saved && confirm('저장하지 않은 편집 내용이 있습니다.\n이어서 하시겠습니까?\n\n(취소하면 현재 저장된 배치부터 시작합니다)')) {
+      const go = saved ? await ask({ title: '저장하지 않은 편집 내용이 있습니다 — 이어서 할까요?', desc: '「새로 시작」을 누르면 그 편집 내용은 버리고 지금 저장된 배치부터 시작합니다.', okText: '이어서 하기', cancelText: '새로 시작' }) : false
+      if (go === null) return
+      if (saved && go) {
         setDraft(JSON.parse(saved)); setEditing(true); return
       }
       sessionStorage.removeItem('rackDraft')
@@ -458,6 +465,7 @@ export default function RackLayout() {
 
   return (
     <div className="space-y-3">
+      {confirmEl}
       <style>{`
         @media print {
           body.printing-sheet > * { display: none !important; }
@@ -645,7 +653,7 @@ export default function RackLayout() {
       </div>
 
       {tab === '3d' && (
-        <Suspense fallback={<p className="no-print text-xs text-slate-500 p-4">3D 화면을 불러오는 중…</p>}>
+        <Suspense fallback={<p className="no-print text-xs text-slate-500 p-4 inline-flex items-center gap-2"><Spin />3D 화면을 불러오는 중…</p>}>
           <RackLayout3D racks={racks} objs={objs} gw={GW} gh={GH} sel={sel} cells={cells}
             onSelect={setSel}
             onOpenSheet={(c) => { setSel(c); setTab('sheet') }} />
@@ -708,7 +716,11 @@ export default function RackLayout() {
             </div>
           )}
 
-          {isLoading && <p className="text-center py-10 text-slate-400 text-sm">불러오는 중…</p>}
+          {isLoading && (
+            <div className="no-print bg-white rounded-xl border-2 border-slate-200 p-3 mb-2 grid grid-cols-4 sm:grid-cols-8 gap-2" data-skeleton>
+              {Array.from({ length: 16 }, (_, i) => <div key={i} className="rounded-lg border border-slate-100 p-2 space-y-1.5"><SkelBar w={28} h={12} /><SkelBar w="80%" h={40} /></div>)}
+            </div>
+          )}
 
           <p className="no-print sm:hidden text-[11px] text-slate-400 mb-1.5">
             좌우로 밀어 보세요 · 랙을 누르면 칸별 현황이 열립니다

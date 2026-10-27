@@ -11,6 +11,10 @@ import { supabase } from '../../lib/supabase'
 import CustomerTabs from '../../components/CustomerTabs'
 import { parseEdForecastDetail, loadRules, fetchEdProduction, planFcApply, applyFcPlan, planSummary } from '../../lib/edForecast'
 import { useFillHeight } from '../../hooks/useFillHeight'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 const AX = (pn, prefix) => {
   const t = String(pn || '').replace(/\.0$/, '').trim()
@@ -269,6 +273,7 @@ export default function Forecast() {
   const [result, setResult] = useState(null)
   const [search, setSearch] = useState('')
   const [qview, setQview] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 생산관리(Edwards) 반영 확인 창
 
   const { data: cs } = useCustomer(csCode)
   const { data: fc = { latest: [], months: [] }, isLoading, error: fcErr } = useQuery({
@@ -351,7 +356,12 @@ export default function Forecast() {
           const [rules, prodRows] = await Promise.all([loadRules(supabase), fetchEdProduction(supabase)])
           const plan = planFcApply(ed.rows, prodRows, rules)
           if (!plan.upd.length && !plan.ins.length && !plan.goneIds.length) prod = ' · 생산관리: 바뀐 날짜 없음'
-          else if (window.confirm(`포캐스트는 저장했습니다.\n\n생산관리(Edwards)의 정한 납기에도 반영할까요?\n\n${planSummary(plan)}\n\n확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다.`)) {
+          else if (await ask({
+            title: '포캐스트는 저장했습니다 — 생산관리(Edwards)의 정한 납기에도 반영할까요?',
+            desc: '확정 납기 · 발주서 체크 · 불출 · 미불출 · 비고 · 담당자 · 상태는 그대로 둡니다. 「반영 안 함」이면 생산관리 「📅 포캐스트 반영」으로 나중에 할 수 있습니다.',
+            items: planSummary(plan).split('\n').map(t => t.trim()).filter(Boolean),
+            okText: '생산관리에도 반영', cancelText: '반영 안 함',
+          })) {
             const a = await applyFcPlan(supabase, plan)
             prod = ` · 생산관리 반영 — 갱신 ${a.updated ?? 0}줄 · 새 줄 ${a.inserted ?? 0}줄`
             qc.invalidateQueries({ queryKey: ['production', 'ED'] })
@@ -379,6 +389,7 @@ export default function Forecast() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <CustomerTabs />
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
@@ -392,6 +403,11 @@ export default function Forecast() {
         </label>
       </div>
 
+      {/* 지금 어디쯤인지 — 엑셀 고르기 → 미리보기 확인 → 접수 → 완료 (v4.104.0) */}
+      {(preview || result) && (
+        <div className="max-w-[640px]"><Stepper steps={['엑셀 고르기', '미리보기 확인', '접수 (새 회차 저장)', '완료']}
+          cur={saveMut.isPending ? 2 : preview ? 1 : 4} /></div>
+      )}
       {result && <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold">✅ {result}</div>}
 
       {/* 업로드 미리보기 */}
@@ -404,7 +420,7 @@ export default function Forecast() {
               <button onClick={() => setPreview(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">취소</button>
               <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
                 className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {saveMut.isPending ? '저장 중...' : '⚡ 접수 (새 회차로 저장)'}
+                {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span> : '⚡ 접수 (새 회차로 저장)'}
               </button>
             </div>
           </div>
@@ -441,7 +457,11 @@ export default function Forecast() {
         {fc.latestBatch && <span className="text-xs text-slate-400 ml-auto">최신 접수 {fc.latestBatch.received_date}{fc.prevBatch && ` · 직전 ${fc.prevBatch.received_date} 대비 증감 (겹치는 달만)`}</span>}
       </div>
 
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
+      {isLoading ? (
+        <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+          <table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={10} two={[0]} /></tbody></table>
+        </div>
+      )
         : fc.latest.length === 0
           ? <div className="text-center py-16 text-slate-300 text-sm">접수된 포캐스트가 없습니다. 엑셀을 업로드해주세요.</div>
           : <div ref={fillRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={fillH ? { height: fillH + 'px' } : undefined}>

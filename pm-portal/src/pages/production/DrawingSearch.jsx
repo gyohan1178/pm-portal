@@ -4,6 +4,8 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { useCustomer } from '../../hooks/useCustomers'
 import { compareRev, REV_STATE } from '../../lib/revCompare'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import Spin from '../../components/ux/Spin'
 
 // ── 품번 정규화: 접두 AX- 자동 처리 ──
 const AX = (s) => {
@@ -464,7 +466,13 @@ export default function DrawingSearch() {
         </div>
       )}
 
-      {!csCfg.browse && isFetching && <p className="text-sm text-slate-500">조회 중...</p>}
+      {/* 처음 조회 → 표 모양 먼저 · 이미 결과가 있을 때 다시 조회 → 작은 표시만 (v4.104.0) */}
+      {!csCfg.browse && isFetching && !rows.length && (
+        <div className="overflow-hidden border border-slate-200 rounded-xl bg-white">
+          <table className="w-full text-sm"><tbody><SkeletonRows cols={9} rows={8} /></tbody></table>
+        </div>
+      )}
+      {!csCfg.browse && isFetching && !!rows.length && <p className="text-sm text-slate-500 inline-flex items-center gap-1.5"><Spin />조회 중...</p>}
       {!csCfg.browse && error && <p className="text-sm text-rose-600">조회 실패: {error.message}</p>}
 
       {/* 결과 */}
@@ -688,7 +696,14 @@ function VmBrowse({ onCopy, say }) {
       && words.every((w) => `${f.file_name} ${f.sub} ${f.std_code || ''}`.toLowerCase().includes(w)))
   }, [list, model, zone, text])
 
-  if (isLoading) return <p className="text-sm text-slate-500">불러오는 중...</p>
+  if (isLoading) return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap gap-1.5" data-skeleton>{[0, 1, 2, 3, 4].map((i) => <SkelBar key={i} w={70 + i * 8} h={24} className="!rounded-full" />)}</div>
+      <div className="overflow-hidden border border-slate-200 rounded-xl bg-white">
+        <table className="w-full text-sm"><tbody><SkeletonRows cols={7} rows={8} /></tbody></table>
+      </div>
+    </div>
+  )
   if (error) return (
     <p data-vm-notready className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
       VM 도면을 아직 읽을 수 없습니다 — SQL(pm_drawings_customers_261007.sql) 실행과 스캐너 교체가 필요합니다. ({error.message})

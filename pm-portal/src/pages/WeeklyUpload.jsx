@@ -6,6 +6,9 @@ import { supabase } from '../lib/supabase'
 import EcountUpload from './EcountUpload'
 import * as XLSX from 'xlsx'
 import { todayISO } from '../lib/utils'
+import { useConfirm } from '../components/ux/ConfirmDialog'
+import { Stepper } from '../components/ux/Stepper'
+import Spin from '../components/ux/Spin'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -175,6 +178,7 @@ export default function WeeklyUpload() {
   // 확정매입(ecount)은 주 1회 올리는 작업이라 주간보고 안에 탭으로 둔다.
   const [mainTab, setMainTab] = useState('weekly')   // weekly=담당자 엑셀 / ecount=확정매입
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [weekOffset, setWeekOffset] = useState(0)
   const week = getWeekRange(weekOffset)
   const [selCustomer, setSelCustomer] = useState('AXCELIS')
@@ -315,6 +319,7 @@ export default function WeeklyUpload() {
 
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
+      {confirmEl}
       <PageHead crumb="주간 / 분석" title="주간업무보고 올리기"
         desc="담당자별 발주입고내역 엑셀과 자재 불출 현황을 올려 주간업무보고에 반영합니다. 확정매입(ecount) 파일도 여기서 올립니다."></PageHead>
       {/* 담당자 엑셀(예상) / ecount(확정) */}
@@ -350,7 +355,7 @@ export default function WeeklyUpload() {
                   <span className="text-xs font-semibold text-slate-700">{r.submitted_by}</span>
                   <span className="text-xs text-slate-400">{new Date(r.created_at).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}</span>
                 </div>
-                <button onClick={()=>{ if(window.confirm('삭제할까요?')) deleteMut.mutate(r.id) }}
+                <button onClick={async()=>{ if(await ask({ title:'이 제출 기록을 삭제할까요?', desc:'이번 주 제출 현황에서 지워지며 되돌릴 수 없습니다.', items:[`${r.submitted_by} · ${new Date(r.created_at).toLocaleString('ko-KR',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'})}`], okText:'삭제', danger:true })) deleteMut.mutate(r.id) }}
                   className="text-xs text-red-400 hover:text-red-600">삭제</button>
               </div>
             ))}
@@ -361,6 +366,7 @@ export default function WeeklyUpload() {
       {/* 업로드 폼 */}
       <div className="rounded-xl border border-slate-200 p-5 space-y-4">
         <p className="text-sm font-bold text-slate-700">주간보고 업로드</p>
+        <div className="max-w-[560px]" data-weekly-stepper><Stepper steps={['담당자 · 엑셀 고르기', '미리보기 · 고객사 분류', '제출']} cur={submitMut.isPending ? 2 : preview ? 1 : submitMut.isSuccess ? 3 : 0} /></div>
 
         <div className="grid grid-cols-2 gap-3">
           <div>
@@ -499,7 +505,7 @@ export default function WeeklyUpload() {
         <button onClick={()=>submitMut.mutate()}
           disabled={submitMut.isPending||!submitter||(!preview&&outbounds.every(o=>!o.qty))}
           className="w-full py-2.5 text-sm font-bold rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-          {submitMut.isPending?'제출 중...':'📤 주간보고 제출'}
+          {submitMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />제출 중...</span>:'📤 주간보고 제출'}
         </button>
       </div>
       </>)}

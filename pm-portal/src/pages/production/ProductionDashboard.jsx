@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { todayISO, ymdKST } from '../../lib/utils'
+import { SkelBar, SkeletonCards } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
 
 // production 테이블: ax_pdbox 이관 + customer_code. 날짜는 'YYYY-MM-DD' text.
 async function fetchProduction() {
@@ -44,7 +46,20 @@ export default function ProductionDashboard() {
   const byCust = {}
   rows.forEach(r => { const c = r.customer_code || 'AX'; byCust[c] = (byCust[c] || 0) + 1 })
 
-  if (isLoading) return <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div>
+  // 불러오는 동안 — 글자 대신 카드 모양 먼저 (v4.104.0)
+  if (isLoading) return (
+    <div className="space-y-4 max-w-4xl">
+      <div>
+        <h1 className="text-lg font-bold text-slate-900">생산 대시보드</h1>
+        <p className="page-desc text-xs text-slate-400 mt-0.5">전 고객사 호기 현황 — 납기·자재불출 중심</p>
+      </div>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {[0, 1, 2, 3].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2" data-skeleton><SkelBar w={70} h={10} /><SkelBar w={44} h={22} /></div>)}
+      </div>
+      <div className="flex gap-2 flex-wrap" data-skeleton>{[0, 1, 2, 3].map((i) => <SkelBar key={i} w={84} h={28} />)}</div>
+      <div className="space-y-1.5"><SkeletonCards n={4} /></div>
+    </div>
+  )
 
   return (
     <div className="space-y-4 max-w-4xl">
@@ -56,13 +71,17 @@ export default function ProductionDashboard() {
       {/* 요약 카드 (모바일 2열) */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
         {[
-          { label: '진행 중 호기', value: rows.length, color: 'border-slate-200', v: 'text-slate-800' },
-          { label: '납기 지연', value: delayed.length, color: 'border-red-200 bg-red-50', v: 'text-red-600' },
-          { label: 'D-7 임박', value: urgent.length, color: 'border-orange-200 bg-orange-50', v: 'text-orange-600' },
-          { label: '이번주 자재불출', value: issueWeek.length, color: 'border-indigo-200 bg-indigo-50', v: 'text-indigo-600' },
+          { label: '진행 중 호기', value: rows.length, color: 'border-slate-200', v: 'text-slate-800',
+            tip: '생산관리에 올라온 모든 고객사 호기 중 상태가 적혀 있고 「완료」가 아닌 호기 수 (상태가 빈 호기는 빠짐).' },
+          { label: '납기 지연', value: delayed.length, color: 'border-red-200 bg-red-50', v: 'text-red-600',
+            tip: '납품요청일이 오늘보다 지난 진행 중 호기 수. VM 「현장작업」(이미 납품하고 현장 설치 중)은 빼고 셉니다.', right: true },
+          { label: 'D-7 임박', value: urgent.length, color: 'border-orange-200 bg-orange-50', v: 'text-orange-600',
+            tip: '납품요청일이 오늘부터 7일 뒤까지(오늘 포함)인 진행 중 호기 수. VM 「현장작업」은 빼고 셉니다.' },
+          { label: '이번주 자재불출', value: issueWeek.length, color: 'border-indigo-200 bg-indigo-50', v: 'text-indigo-600',
+            tip: '가공물 입고예정일이 오늘부터 7일 뒤까지(오늘 포함)이고 아직 가공물 입고가 안 된 호기 수. 달력의 이번 주가 아니라 오늘부터 7일입니다.', right: true },
         ].map(c => (
           <div key={c.label} className={`rounded-xl border p-3 ${c.color}`}>
-            <p className="text-[11px] text-slate-500 font-semibold">{c.label}</p>
+            <p className="text-[11px] text-slate-500 font-semibold flex items-center gap-1">{c.label}<InfoTip text={c.tip} align={c.right ? 'right' : 'left'} /></p>
             <p className={`text-2xl font-bold ${c.v}`}>{c.value}<span className="text-xs font-semibold text-slate-400 ml-1">건</span></p>
           </div>
         ))}

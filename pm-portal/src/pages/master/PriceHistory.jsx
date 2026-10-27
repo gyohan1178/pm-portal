@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { useDebounced } from '../../hooks/useDebounced'
 import FillBox from '../../components/FillBox'
+import { SkeletonRows } from '../../components/ux/Skeleton'
 
 async function fetchPriceHistory(search) {
   // 이력은 계속 쌓인다. 예전 .limit(2000) 은 실제로 1000행에서 잘렸다(Supabase 기본 제한) — 끝까지 나눠 받는다.
@@ -67,7 +68,7 @@ export default function PriceHistory() {
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={10} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+              <SkeletonRows cols={3 + years.length + (years.length >= 2 ? 1 : 0)} rows={8} />
             ) : Object.keys(grouped).length === 0 ? (
               <tr><td colSpan={10} className="text-center py-10 text-slate-400">단가 이력이 없습니다</td></tr>
             ) : Object.entries(grouped).map(([itemId, g]) => {

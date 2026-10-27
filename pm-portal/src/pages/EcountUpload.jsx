@@ -7,6 +7,8 @@ import {
   parseEcountWorkbook, summarize, normCustomer,
   CUSTOMERS, FORECAST_CUSTOMERS,
 } from '../lib/ecountPurchase'
+import { Stepper, ProgressBar } from '../components/ux/Stepper'
+import Spin from '../components/ux/Spin'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 const eok = (v) => (Number(v) / 100000000).toFixed(2)
@@ -89,6 +91,9 @@ export default function EcountUpload() {
   }
 
   const unclassified = parsed?.rows.filter((r) => !r.customer) || []
+  // 단계 표시 — 기존 상태에서 읽기만 한다
+  const stepCur = result && !parsed ? 4 : parsed ? (busy ? 3 : 2) : busy ? 1 : 0
+  const [pDone, pTotal] = String(progress || '').split(' / ').map(Number)
   const shown = csFilter === '전체' ? unclassified
     : unclassified.filter((r) => (csFilter === '거래처별' ? true : true))
 
@@ -124,9 +129,10 @@ export default function EcountUpload() {
 
       {/* 업로드 */}
       <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="max-w-[640px] pb-3" data-ecount-stepper><Stepper steps={['파일 고르기', '읽고 점검', '확인 · 고객사 지정', '반영']} cur={stepCur} /></div>
         <label className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg
           border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 cursor-pointer ${busy ? 'opacity-50' : ''}`}>
-          📤 {busy && !parsed ? '읽는 중…' : 'ecount 매입 파일 업로드'}
+          📤 {busy && !parsed ? <><Spin />읽는 중…</> : 'ecount 매입 파일 업로드'}
           <input type="file" accept=".xlsx,.xls,.xlsm" className="hidden" onChange={handleFile} disabled={busy} />
         </label>
         {file && <span className="ml-3 text-xs text-slate-500">{file.name}</span>}
@@ -283,10 +289,11 @@ export default function EcountUpload() {
             </div>
           )}
 
+          {busy && pTotal > 0 && <div className="max-w-[420px]"><ProgressBar done={pDone || 0} total={pTotal} label="확정매입 저장 중" /></div>}
           <div className="flex items-center gap-3">
             <button onClick={save} disabled={busy}
-              className="px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {busy ? `저장 중… ${progress}` : `💾 확정매입 ${sum.count.toLocaleString()}건 반영`}
+              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+              {busy ? <><Spin />{`저장 중… ${progress}`}</> : `💾 확정매입 ${sum.count.toLocaleString()}건 반영`}
             </button>
             <button onClick={() => { setParsed(null); setFile(null) }} disabled={busy}
               className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">

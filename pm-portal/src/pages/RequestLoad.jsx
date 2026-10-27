@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import AnalysisTabs from '../components/AnalysisTabs'
+import { SkelBar, SkeletonRows } from '../components/ux/Skeleton'
 
 // 자재요청 업무량 — 잔건 대응에 얼마나 시간을 쓰는지 보여 주는 화면.
 //
@@ -172,15 +173,15 @@ export default function RequestLoad() {
 
       {/* 이번 기간 요약 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <Card label={`${cur.period || '-'} 처리 품목`} value={n0(cur.req_items)}
+        <Card loading={isLoading} label={`${cur.period || '-'} 처리 품목`} value={n0(cur.req_items)}
               sub={prev.period ? `지난 기간 ${n0(prev.req_items)}` : ''}
               delta={delta(cur.req_items, prev.req_items)} accent="slate" />
-        <Card label="요청서 장수" value={n0(cur.req_sheets)}
+        <Card loading={isLoading} label="요청서 장수" value={n0(cur.req_sheets)}
               sub={`절차가 돈 횟수 · 요청자 ${n0(cur.requesters)}명`} accent="sky" />
-        <Card label="불출" value={n0(cur.issued)}
+        <Card loading={isLoading} label="불출" value={n0(cur.issued)}
               sub={cur.req_items ? `${Math.round(cur.issued / cur.req_items * 100)}%` : ''}
               accent="emerald" />
-        <Card label="반려 + 취소" value={n0(cur.wasted)}
+        <Card loading={isLoading} label="반려 + 취소" value={n0(cur.wasted)}
               sub={`반려 ${n0(cur.rejected)} · 취소 ${n0(cur.cancelled)}`}
               accent="rose" />
       </div>
@@ -259,7 +260,7 @@ export default function RequestLoad() {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-400">불러오는 중…</td></tr>}
+              {isLoading && <SkeletonRows cols={12} rows={6} />}
               {!isLoading && !rows.length && <tr><td colSpan={12} className="px-3 py-6 text-center text-slate-400">자료가 없습니다</td></tr>}
               {rows.map((r, i) => (
                 <tr key={r.period} className={`border-b border-slate-100 ${i % 2 ? 'bg-slate-50/30' : ''}`}>
@@ -388,12 +389,13 @@ export default function RequestLoad() {
   )
 }
 
-function Card({ label, value, sub, delta, accent }) {
+function Card({ label, value, sub, delta, accent, loading }) {
   const ac = { emerald: 'text-emerald-600', rose: 'text-rose-600', sky: 'text-sky-600',
                slate: 'text-slate-900' }[accent] || 'text-slate-800'
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-3">
       <div className="text-[11px] font-semibold text-slate-400">{label}</div>
+      {loading ? <div className="h-[28px] flex items-center" data-skeleton><SkelBar w={54} h={18} /></div> : <>
       <div className="flex items-baseline gap-1.5">
         <span className={`text-lg font-bold ${ac}`}>{value}</span>
         {delta != null && (
@@ -403,6 +405,7 @@ function Card({ label, value, sub, delta, accent }) {
         )}
       </div>
       {sub && <div className="text-[11px] text-slate-400 mt-0.5">{sub}</div>}
+      </>}
     </div>
   )
 }

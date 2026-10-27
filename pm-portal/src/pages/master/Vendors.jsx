@@ -7,6 +7,10 @@ import { logActivity } from '../../lib/activityLog'
 import { useDebounced } from '../../hooks/useDebounced'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 // 품의서 결제방식과 값이 같아야 자동으로 이어진다
 export const PAY_TERMS = ['정기 결제', '선급 결제', '카드 결제', '해외 송금']
@@ -35,6 +39,7 @@ async function fetchVendors(search) {
 
 export default function Vendors() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [search, setSearch] = useState('')
   const [checked, setChecked] = useState({})   // 선택 삭제용
   // 타이핑 중 매 글자마다 조회되지 않게 입력이 멈춘 뒤 한 번만 조회
@@ -44,6 +49,7 @@ export default function Vendors() {
   const [editId, setEditId] = useState(null)
   const fileRef = useRef(null)
   const [importMsg, setImportMsg] = useState('')
+  const [impProg, setImpProg] = useState(null)   // 업로드 반영 진행 { done, total } — 화면 표시용
 
   const { data: vendors = [], isLoading } = useQuery({
     queryKey: ['vendors', dq], queryFn: () => fetchVendors(dq),
@@ -155,11 +161,15 @@ export default function Vendors() {
     mutationFn: async (rows) => {
       // ecount_code 기준 50건씩 upsert
       const chunk = 100
-      for (let i=0; i<rows.length; i+=chunk) {
-        const { error } = await supabase.from('vendors')
-          .upsert(rows.slice(i,i+chunk), { onConflict:'ecount_code' })
-        if (error) throw error
-      }
+      setImpProg({ done: 0, total: rows.length })
+      try {
+        for (let i=0; i<rows.length; i+=chunk) {
+          const { error } = await supabase.from('vendors')
+            .upsert(rows.slice(i,i+chunk), { onConflict:'ecount_code' })
+          if (error) throw error
+          setImpProg({ done: Math.min(rows.length, i + chunk), total: rows.length })
+        }
+      } finally { setImpProg(null) }
       return rows.length
     },
     onSuccess: (n) => { qc.invalidateQueries(['vendors']); setImportMsg(`✅ ${n}개 반영 완료`) },
@@ -232,17 +242,20 @@ export default function Vendors() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <PageHead crumb="기초자료" title="협력사"
         desc="구매처 · 가공 협력사의 연락처 · 결제조건 · 해외 여부를 관리합니다. 결제조건은 품의서 · 결제 계획과 연결됩니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="협력사명 검색"
           className="w-56 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <div className="flex-1" />
-        {importMsg && <span className="text-xs font-semibold text-slate-500">{importMsg}</span>}
+        {impProg && impProg.total > 100
+          ? <div className="w-56" data-vendor-import-progress><ProgressBar done={impProg.done} total={impProg.total} label="거래처 반영 중" unit="곳" /></div>
+          : importMsg && <span className="text-xs font-semibold text-slate-500 inline-flex items-center gap-1.5">{importMsg === '읽는 중...' && <Spin />}{importMsg}</span>}
         <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} className="hidden" />
         <button onClick={()=>fileRef.current?.click()} disabled={importMut.isPending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
-          {importMut.isPending ? '반영 중...' : '📤 거래처정보 업로드'}
+          {importMut.isPending ? <><Spin />반영 중...</> : '📤 거래처정보 업로드'}
         </button>
         {vendors.length > 0 && (
           <label className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white cursor-pointer hover:bg-slate-50">
@@ -255,11 +268,13 @@ export default function Vendors() {
         )}
         {checkedIds.length > 0 && (
           <select defaultValue="" disabled={bulkTermsMut.isPending}
-            onChange={(e) => {
+            onChange={async (e) => {
               const t = e.target.value
               e.target.value = ''
               if (!t) return
-              if (!window.confirm(`선택한 ${checkedIds.length}곳의 결제조건을 '${t}' 로 바꿀까요?`)) return
+              const sel = vendors.filter(v => checked[v.id])
+              if (!(await ask({ title: `선택한 ${checkedIds.length}곳의 결제조건을 '${t}' 로 바꿀까요?`, desc: '품의서 결제방식에 이 값이 이어집니다.',
+                items: sel.slice(0, 5).map(v => `${v.name} · ${v.payment_terms || '(미지정)'} → ${t}`), more: Math.max(0, checkedIds.length - 5), okText: '바꾸기' }))) return
               bulkTermsMut.mutate({ ids: checkedIds, terms: t })
             }}
             className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50">
@@ -268,19 +283,21 @@ export default function Vendors() {
           </select>
         )}
         {checkedIds.length > 0 && (
-          <button onClick={() => {
-              if (!window.confirm(`선택한 ${checkedIds.length}곳을 삭제할까요?\n\n발주·품목·견적에 쓰인 협력사는 건너뜁니다.\n되돌릴 수 없습니다.`)) return
+          <button onClick={async () => {
+              const sel = vendors.filter(v => checked[v.id])
+              if (!(await ask({ title: `선택한 ${checkedIds.length}곳을 삭제할까요?`, desc: '발주·품목·견적·이슈에 쓰인 협력사는 건너뜁니다. 되돌릴 수 없습니다.',
+                items: sel.slice(0, 5).map(v => [v.name, v.category, v.ecount_code].filter(Boolean).join(' · ')), more: Math.max(0, checkedIds.length - 5), okText: '삭제', danger: true }))) return
               bulkDeleteMut.mutate(checkedIds)
             }}
             disabled={bulkDeleteMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 disabled:opacity-40">
-            {bulkDeleteMut.isPending ? '삭제 중...' : `🗑 선택 삭제 (${checkedIds.length})`}
+            {bulkDeleteMut.isPending ? <><Spin />삭제 중...</> : `🗑 선택 삭제 (${checkedIds.length})`}
           </button>
         )}
-        <button onClick={() => { if (window.confirm('어디에도 연결 안 된 미사용 협력사를 모두 삭제할까요?\n(발주/견적/이슈에 쓰인 협력사는 안 지워집니다.)')) cleanupMut.mutate() }}
+        <button onClick={async () => { if (await ask({ title: '어디에도 연결 안 된 미사용 협력사를 모두 삭제할까요?', desc: '발주 · 견적 · 이슈에 쓰인 협력사는 안 지워집니다. 지운 협력사는 되돌릴 수 없습니다.', okText: '정리', danger: true })) cleanupMut.mutate() }}
           disabled={cleanupMut.isPending}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:border-red-300 hover:text-red-500 disabled:opacity-40">
-          {cleanupMut.isPending ? '정리 중...' : '🧹 미사용 정리'}
+          {cleanupMut.isPending ? <><Spin />정리 중...</> : '🧹 미사용 정리'}
         </button>
         <button onClick={() => { setForm(EMPTY); setEditId(null); setShowForm(!showForm) }}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
@@ -326,7 +343,7 @@ export default function Vendors() {
               className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
             <button onClick={() => saveMut.mutate(form)} disabled={!form.name.trim() || saveMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {saveMut.isPending ? '저장 중...' : editId ? '수정 완료' : '저장'}
+              {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span> : editId ? '수정 완료' : '저장'}
             </button>
           </div>
         </div>
@@ -336,7 +353,7 @@ export default function Vendors() {
         {() => (
           <tbody>
             {isLoading ? (
-              <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">불러오는 중...</td></tr>
+              <SkeletonRows cols={COLS.length} rows={8} first={1} />
             ) : vendors.length === 0 ? (
               <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">협력사를 추가해주세요</td></tr>
             ) : vendors.map(v => (
@@ -362,7 +379,7 @@ export default function Vendors() {
                   <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                     <button onClick={() => handleEdit(v)}
                       className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
-                    <button onClick={() => { if(window.confirm('삭제할까요?')) deleteMut.mutate(v.id) }}
+                    <button onClick={async () => { if(await ask({ title: '이 협력사를 삭제할까요?', desc: '발주 · 견적 · 이슈 · 품목에 쓰인 협력사는 지워지지 않고 안내만 나옵니다. 지우면 되돌릴 수 없습니다.', items: [[v.name, v.category, v.ecount_code].filter(Boolean).join(' · ')], okText: '삭제', danger: true })) deleteMut.mutate(v.id) }}
                       className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
                   </div>
                 </td>

@@ -6,6 +6,9 @@ import { supabase } from '../lib/supabase'
 import { toastError } from '../lib/toast'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { todayISO } from '../lib/utils'
+import { SkelBar } from '../components/ux/Skeleton'
+import InfoTip from '../components/ux/InfoTip'
+import Spin from '../components/ux/Spin'
 
 const CS_COLORS = {
   '에드워드': { light:'bg-rose-50',    border:'border-rose-200',    text:'text-rose-700',    hex:'#f43f5e' },
@@ -112,7 +115,20 @@ export default function PurchaseDashboard({ embed = false }) {
   const [rptBusy, setRptBusy] = useState(null)
   const { data: d, isLoading } = useQuery({ queryKey:['purchaseDash'], queryFn: fetchDashboard, staleTime: 0, refetchOnMount: 'always' })
 
-  if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
+  if (isLoading) return (
+    <div className="space-y-5 max-w-5xl mx-auto" data-purchase-loading>
+      {!embed && <AnalysisTabs />}
+      <div className="flex items-center justify-between" data-skeleton><SkelBar w={140} h={20} /><SkelBar w={200} h={12} /></div>
+      <div className="rounded-xl border-2 border-slate-200 bg-white p-5 space-y-3" data-skeleton>
+        <SkelBar w={150} h={11} /><SkelBar w={130} h={34} />
+        <div className="flex gap-8"><div className="space-y-1.5"><SkelBar w={60} h={10} /><SkelBar w={80} h={22} /></div><div className="space-y-1.5"><SkelBar w={60} h={10} /><SkelBar w={80} h={22} /></div></div>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {[0, 1, 2, 3].map((i) => <div key={i} className="rounded-xl border-2 border-slate-100 bg-white p-4 space-y-2" data-skeleton><SkelBar w={70} h={13} /><SkelBar w={80} h={20} /><SkelBar w="90%" h={10} /><SkelBar w="90%" h={10} /></div>)}
+      </div>
+      <div className="rounded-xl border border-slate-200 bg-white p-4" data-skeleton><SkelBar w={160} h={13} /><SkelBar w="100%" h={200} className="mt-3" /></div>
+    </div>
+  )
   if (!d) return null
 
   const totalActual = d.csChart.reduce((a,c)=>a+c.actual,0)
@@ -158,7 +174,7 @@ export default function PurchaseDashboard({ embed = false }) {
               disabled={!!rptBusy}
               title="화면 그대로 HTML 파일로 저장 — 월·고객사별 세부 내역까지 담깁니다"
               className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-50 whitespace-nowrap">
-              {rptBusy ? '만드는 중…' : '📄 보고서 저장'}
+              {rptBusy ? <><Spin />만드는 중…</> : '📄 보고서 저장'}
             </button>
           )}
           {!embed && <button onClick={() => window.print()} className="no-print inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-700 whitespace-nowrap">🖨️ 출력</button>}
@@ -167,15 +183,15 @@ export default function PurchaseDashboard({ embed = false }) {
 
       {/* 총합계 */}
       <div className="rounded-xl border-2 border-slate-700 bg-slate-50 p-5">
-        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">올해 총 매입 예상금액</p>
+        <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center gap-1">올해 총 매입 예상금액<InfoTip text="올해(1~12월) 「매입 완료」 + 「매입 예정」의 합. 금액은 만원 단위로 반올림해 더한 뒤 억원으로 보입니다." /></p>
         <p className="text-4xl font-bold text-slate-900 mb-3">{fmt(grandTotal)}<span className="text-lg text-slate-400 ml-1">억</span></p>
         <div className="flex gap-8">
           <div>
-            <p className="text-xs text-slate-500 mb-0.5">✅ 매입 완료</p>
+            <p className="text-xs text-slate-500 mb-0.5 flex items-center gap-1">✅ 매입 완료<InfoTip text="ecount 에서 올린 올해 확정매입(회계 확정치)의 공급가액 합계. 월은 ecount 매입 월 기준입니다." /></p>
             <p className="text-2xl font-bold text-indigo-700">{fmt(totalActual)}<span className="text-xs ml-1 text-indigo-400">억</span></p>
           </div>
           <div>
-            <p className="text-xs text-slate-500 mb-0.5">📋 매입 예정</p>
+            <p className="text-xs text-slate-500 mb-0.5 flex items-center gap-1">📋 매입 예정<InfoTip text="아직 확정되지 않은 올해 매입 — 분할 결제 계획이 있으면 결제 달로 나눈 금액, 없으면 미입고 발주 잔량을 납기 달에 넣은 금액입니다. 표의 숫자를 누르면 확정 · 결제계획 · 발주잔으로 나눠 볼 수 있습니다." /></p>
             <p className="text-2xl font-bold text-amber-600">+{fmt(totalPending)}<span className="text-xs ml-1 text-amber-400">억</span></p>
           </div>
         </div>
@@ -354,7 +370,12 @@ function BreakdownModal({ month, cs, onClose }) {
         </div>
 
         <div className="p-5 space-y-4">
-          {isLoading && <p className="text-center py-8 text-sm text-slate-400">불러오는 중…</p>}
+          {isLoading && [0, 1].map((i) => (
+            <div key={i} className="rounded-xl border-2 border-slate-100 p-3 space-y-2" data-skeleton>
+              <div className="flex justify-between"><SkelBar w={80} h={13} /><SkelBar w={90} h={13} /></div>
+              {[0, 1, 2].map((j) => <div key={j} className="flex justify-between"><SkelBar w={`${50 - j * 8}%`} h={10} /><SkelBar w={60} h={10} /></div>)}
+            </div>
+          ))}
           {!isLoading && !rows.length && (
             <p className="text-center py-8 text-sm text-slate-400">해당 내역이 없습니다.</p>
           )}

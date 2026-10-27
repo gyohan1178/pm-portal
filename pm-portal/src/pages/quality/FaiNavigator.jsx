@@ -12,6 +12,10 @@ import { ResizableTable } from '../../components/ResizableTable'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { matMatchText, revCheck, faTypeLabel } from '../../lib/faTemplate'
 import { useRowSelect } from '../../hooks/useRowSelect'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 import { buildFaiPpt, pickSaveTarget, saveBytes, pptName } from '../../lib/fai/pptBuild'
 import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle, saveList, loadList, dirPermission, askDirPermission } from '../../lib/fai/drawings'
 import {
@@ -158,6 +162,7 @@ export default function FaiNavigator() {
   const faParam = Number(sp.get('fa')) || null
   const [faSel, setFaSel] = useState(null)
   const [faBusy, setFaBusy] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — PPT · 되살리기 확인 창
 
   function loadFile(f) {
     if (!f) return
@@ -184,6 +189,7 @@ export default function FaiNavigator() {
     enabled: !!rep,
     staleTime: 5 * 60 * 1000,
   })
+  const judging = !!rep && !buy && buyLoading   // 발주 이력을 처음 받는 중 — 판정이 아직 안 나옴
 
   // ── 불필요한 하위파트 빼기 (2026-10-01) ──
   //   BOM 전개 순서에서 줄을 골라 「빼기」 → 그 자리와 하위 전체가 목록 · 지표 · 엑셀 · PPT · 결과 반영에서 빠진다.
@@ -381,7 +387,7 @@ export default function FaiNavigator() {
     if (ppt) return
     const out = selRows.length ? selRows : outRows
     if (!out.length) { toastError('내보낼 품목이 없습니다'); return }
-    if (out.length > 150 && !window.confirm(`${out.length}건을 만듭니다. 몇 분 걸릴 수 있습니다. 계속할까요?\n(일부만 필요하면 표에서 골라서 다시 누르세요)`)) return
+    if (out.length > 150 && !(await ask({ title: `PPT ${out.length.toLocaleString('ko-KR')}건을 만들까요?`, desc: '몇 분 걸릴 수 있습니다. 일부만 필요하면 표에서 골라서 다시 누르세요.', okText: '만들기' }))) return
     const name = pptName(rep)
     const target = await pickSaveTarget(name)
     if (!target) return // 저장 창에서 취소
@@ -395,7 +401,11 @@ export default function FaiNavigator() {
         askStop: async (i) => {
           if (!stopRef.current) return null
           stopRef.current = false
-          return i && window.confirm(`${i}건까지 만들었습니다.\n\n[확인] 지금까지 만든 ${i}건만 PPT로 저장\n[취소] 저장하지 않고 멈춤`) ? 'save' : 'cancel'
+          if (!i) return 'cancel'
+          // 확인 = 지금까지 저장 · 취소(또는 Esc · 바깥) = 저장 없이 멈춤 — 예전 확인 창과 같은 뜻 (v4.104.0)
+          const m = await ask({ title: `${i}건까지 만들었습니다 — 어떻게 할까요?`, desc: '「중지」를 눌러 멈추는 중입니다.',
+            okText: `지금까지 만든 ${i}건만 저장`, cancelText: '저장하지 않고 멈춤' })
+          return m === true ? 'save' : 'cancel'
         },
       })
       const saved = await saveBytes(target, res.blob, name)
@@ -423,6 +433,7 @@ export default function FaiNavigator() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       {/* 머리 */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
@@ -469,6 +480,10 @@ export default function FaiNavigator() {
         <input ref={fileRef} type="file" accept=".htm,.html" className="hidden"
           onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = '' }} />
       </div>
+      {/* 지금 어디쯤인지 — 리포트 올리기 → 발주 이력 맞대기 → 판정 확인 · 반영 (v4.104.0) */}
+      <div className="max-w-[620px]" data-fai-stepper>
+        <Stepper steps={['Part Report 올리기', '발주 이력 맞대기', '판정 확인 · 반영']} cur={!rep ? 0 : judging ? 1 : 2} />
+      </div>
 
       {(faFrom || faMatch.length > 0) && (
         <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-3 flex items-center gap-3 flex-wrap" data-fa-link>
@@ -502,7 +517,7 @@ export default function FaiNavigator() {
             <button onClick={pushFa} disabled={faBusy || buyLoading}
               title="판정 숫자와 Part Report Rev 를 그 건 「자재 매칭」 항목에 넣습니다. 완료 표시는 품질이 검토 뒤 직접 합니다"
               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">
-              {faBusy ? '반영 중…' : '결과 반영'}
+              {faBusy ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '결과 반영'}
             </button>
           )}
           {(faTarget || faFrom) && (
@@ -594,7 +609,8 @@ export default function FaiNavigator() {
                   onClick={() => k.g !== '__cov' && setFilt((f) => ({ ...f, grp: f.grp === k.g ? null : k.g }))}
                   className={`text-left rounded-xl border p-3 transition ${KPI_STYLE[k.s]} ${on ? 'ring-2 ring-indigo-400' : ''} ${k.g === '__cov' ? 'cursor-default' : 'hover:shadow-sm'}`}>
                   <div className="text-[12px] font-semibold text-slate-400">{k.t}</div>
-                  <div className={`text-2xl font-extrabold tabular-nums ${KPI_NUM[k.s]}`}>{typeof k.v === 'number' ? k.v.toLocaleString('ko-KR') : k.v}</div>
+                  {judging ? <div className="py-1.5" data-skeleton><SkelBar w={48} h={22} /></div>
+                    : <div className={`text-2xl font-extrabold tabular-nums ${KPI_NUM[k.s]}`}>{typeof k.v === 'number' ? k.v.toLocaleString('ko-KR') : k.v}</div>}
                   <div className="text-[10.5px] text-slate-400 leading-snug">{k.n}</div>
                 </button>
               )
@@ -646,7 +662,7 @@ export default function FaiNavigator() {
                 {opt.mode === 'tree'
                   ? <label className="flex items-center gap-1 cursor-pointer"><input type="checkbox" checked={showExcl} onChange={(e) => setShowExcl(e.target.checked)} /> 뺀 줄 보기</label>
                   : <span className="text-[11px] text-slate-400">(합산에서도 빠짐 · 되살리기는 BOM 전개 순서에서)</span>}
-                <button onClick={() => { if (window.confirm(`뺀 ${exArr.length}자리를 모두 되살릴까요?`)) saveEx([]) }}
+                <button onClick={async () => { if (await ask({ title: `뺀 ${exArr.length}자리를 모두 되살릴까요?`, desc: '목록 · 지표 · 엑셀 · PPT · 결과 반영에 다시 들어갑니다. 다시 빼려면 줄을 골라 「빼기」를 눌러야 합니다.', okText: '모두 되살리기' })) saveEx([]) }}
                   className="px-2 py-0.5 rounded border border-slate-200 bg-white text-[11px] hover:bg-slate-50">모두 되살리기</button>
               </span>
             )}
@@ -677,7 +693,8 @@ export default function FaiNavigator() {
           <ResizableTable cols={COLS} storageKey="fai-navigator-cols" sortKey={sort.k} sortDir={sort.d} onSort={onSort} fill fillMin={360}>
             {() => (
               <tbody>
-                {view.map((r) => {
+                {judging && <SkeletonRows cols={COLS.length} rows={8} two={[1]} />}
+                {!judging && view.map((r) => {
                   const P = r.P, a = r.e.act, assy = r.e.v === 'ASSY', on = !!sel[r.key], isOpen = !!open[r.key]
                   const pars = parentList(r, rep.top.pn)
                   return (
@@ -785,7 +802,7 @@ export default function FaiNavigator() {
                     </Fragment>
                   )
                 })}
-                {!view.length && (
+                {!judging && !view.length && (
                   <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">조건에 맞는 품목이 없습니다.</td></tr>
                 )}
               </tbody>

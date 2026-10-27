@@ -7,6 +7,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit } from '../../hooks/useProfile'
 import { todayISO } from '../../lib/utils'
 import { ilikeAny } from '../../lib/pgFilter'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -51,6 +54,7 @@ export default function LotManage() {
   const [showDone, setShowDone] = useState(false)  // 소진분 포함
   const [q, setQ] = useState('')                   // 품번·형번·제조사·시리얼로 찾기
   const [only, setOnly] = useState('')             // '' | 초과 | 임박 | 차이 | 미설정
+  const [ask, confirmEl] = useConfirm()            // v4.104.0 — 로트관리 대상 빼기 확인 창
 
   // 로트관리 대상 품목 관리.
   //   ⚠ 지금까지 화면에 켜는 곳이 없어 SQL 로 직접 바꿔야 했다.
@@ -80,9 +84,12 @@ export default function LotManage() {
         // 끄기 전에 남은 로트가 있는지 본다.
         //   화면에 이미 불러온 목록으로 센다 — 조회를 한 번 줄이고 권한도 안 탄다.
         const alive = (byItem[id] || []).filter(l => Number(l.qty_left) > 0)
-        if (alive.length && !confirm(
-          `${std_code} 에 잔량이 남은 로트가 ${alive.length}건 있습니다.\n\n`
-          + '대상에서 빼도 로트 기록은 지워지지 않지만 화면에 보이지 않게 됩니다.\n계속할까요?')) {
+        if (alive.length && !(await ask({
+          title: `${std_code} 에 잔량이 남은 로트가 ${alive.length}건 있습니다 — 대상에서 뺄까요?`,
+          desc: '대상에서 빼도 로트 기록은 지워지지 않지만 이 화면에 보이지 않게 됩니다. 다시 대상으로 켜면 보입니다.',
+          items: alive.slice(0, 5).map(l => `${l.serial_no || '-'} · 잔량 ${n(l.qty_left)}${l.in_date ? ` · 입고 ${l.in_date}` : ''}`), more: Math.max(0, alive.length - 5),
+          okText: '대상에서 빼기',
+        }))) {
           throw new Error('__CANCEL__')
         }
       }
@@ -256,6 +263,7 @@ export default function LotManage() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">🏷 로트 관리</h1>
@@ -268,7 +276,7 @@ export default function LotManage() {
           <button onClick={downloadAudit} disabled={auditBusy}
             title="실물을 세어 적어 넣는 표 — 로트관리 시작 이후 출고 목록도 함께"
             className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40">
-            {auditBusy ? '만드는 중…' : '📋 실사표'}
+            {auditBusy ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : '📋 실사표'}
           </button>
           <button onClick={exportXl}
             className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">📥 엑셀</button>
@@ -336,7 +344,16 @@ export default function LotManage() {
         <span className="text-xs text-slate-400">{n(view.length)}종 / 전체 {n(sum.length)}종</span>
       </div>
 
-      {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
+      {isLoading && (
+        <div className="space-y-2">
+          {[0, 1, 2, 3, 4].map(i => (
+            <div key={i} className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-4" data-skeleton>
+              <div className="space-y-1.5"><SkelBar w={120} h={13} /><SkelBar w={180} h={9} /></div>
+              <SkelBar w={60} h={20} className="ml-auto" /><SkelBar w={60} h={20} /><SkelBar w={44} h={20} />
+            </div>
+          ))}
+        </div>
+      )}
       {!isLoading && !sum.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">등록된 로트가 없습니다</p>
@@ -608,6 +625,10 @@ function LotAdd({ preset, onClose, onDone }) {
   const [hits, setHits] = useState([])
   const timer = useRef(null)
   const serialRef = useRef(null)
+  // v4.104.0 — 빠진 칸은 그 칸 아래에 (예전엔 위에 알림 하나씩)
+  const [ferr, setFerr] = useState({})
+  const clrErr = (k) => setFerr(p => (p[k] ? { ...p, [k]: undefined } : p))
+  const FErr = ({ k }) => (ferr[k] ? <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error={k}>{ferr[k]}</p> : null)
 
   const search = useCallback((v) => {
     setSq(v)
@@ -636,9 +657,12 @@ function LotAdd({ preset, onClose, onDone }) {
   }
 
   async function submit() {
-    if (!item?.item_id && !item?.id) { toastError('품목을 고르세요'); return }
-    if (!serial.trim()) { toastError('시리얼을 입력하세요'); return }
-    if (!(Number(qty) > 0)) { toastError('수량을 입력하세요'); return }
+    const e = {}
+    if (!item?.item_id && !item?.id) e.item = '품목을 찾아 골라 주세요'
+    if (!serial.trim()) e.serial = '시리얼을 적어 주세요'
+    if (!(Number(qty) > 0)) e.qty = '수량을 1 이상으로 넣어 주세요'
+    if (Object.keys(e).length) { setFerr(e); return }
+    setFerr({})
     setBusy(true)
     try {
       const { data, error } = await supabase.rpc('pm_lot_add', {
@@ -689,7 +713,7 @@ function LotAdd({ preset, onClose, onDone }) {
                     {item.shelf_months ? ` · 보증 ${item.shelf_months}개월` : ''}
                   </p>
                 </div>
-                <button onClick={() => { setItem(null); setSq(''); setHits([]) }}
+                <button onClick={() => { setItem(null); setSq(''); setHits([]); setFerr({}) }}
                   className="text-indigo-400 text-xs px-1">변경</button>
               </div>
             </div>
@@ -698,12 +722,13 @@ function LotAdd({ preset, onClose, onDone }) {
               <label className="block text-[11px] font-bold text-slate-500 mb-1">품목 *</label>
               <input value={sq} onChange={e => search(e.target.value)} autoFocus
                 placeholder="형번 · 품명으로 검색 (2자 이상)"
-                className="w-full px-3 py-2.5 text-sm border-2 border-slate-200 rounded-lg" />
+                className={`w-full px-3 py-2.5 text-sm border-2 rounded-lg ${ferr.item ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'}`} />
+              <FErr k="item" />
               <p className="text-[11px] text-slate-400 mt-1">로트 관리 대상 품목만 나옵니다</p>
               <div className="mt-1.5 space-y-1">
                 {hits.map(it => (
                   <button key={it.id}
-                    onClick={() => { setItem(it); setSq(''); setHits([]); setTimeout(()=>serialRef.current?.focus(),50) }}
+                    onClick={() => { setItem(it); setSq(''); setHits([]); clrErr('item'); setTimeout(()=>serialRef.current?.focus(),50) }}
                     className="w-full text-left px-3 py-2 rounded-lg border border-slate-200 hover:bg-indigo-50">
                     <p className="text-sm font-bold text-indigo-600" style={{ fontFamily: MONO }}>
                       {it.manufacturer_code || it.std_code}
@@ -723,20 +748,22 @@ function LotAdd({ preset, onClose, onDone }) {
               <div>
                 <label className="block text-[11px] font-bold text-slate-500 mb-1">시리얼 *</label>
                 <input ref={serialRef} value={serial}
-                  onChange={e => setSerial(e.target.value.toUpperCase())}
+                  onChange={e => { setSerial(e.target.value.toUpperCase()); clrErr('serial') }}
                   onBlur={e => autoMade(e.target.value)}
                   placeholder="5125B309"
-                  className="w-full px-3 py-3 text-lg font-bold border-2 border-slate-200 rounded-lg"
+                  className={`w-full px-3 py-3 text-lg font-bold border-2 rounded-lg ${ferr.serial ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'}`}
                   style={{ fontFamily: MONO }} />
+                <FErr k="serial" />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 mb-1">수량 *</label>
                   <input type="number" min="1" value={qty}
-                    onChange={e => setQty(e.target.value)}
+                    onChange={e => { setQty(e.target.value); clrErr('qty') }}
                     onKeyDown={e => e.key === 'Enter' && submit()}
-                    className="w-full px-3 py-3 text-lg text-right font-bold border-2 border-slate-200 rounded-lg" />
+                    className={`w-full px-3 py-3 text-lg text-right font-bold border-2 rounded-lg ${ferr.qty ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'}`} />
+                  <FErr k="qty" />
                 </div>
                 <div>
                   <label className="block text-[11px] font-bold text-slate-500 mb-1">입고일</label>
@@ -763,7 +790,7 @@ function LotAdd({ preset, onClose, onDone }) {
 
               <button onClick={submit} disabled={busy}
                 className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
-                {busy ? '등록 중…' : '등록하고 이어서 입력'}
+                {busy ? <span className="inline-flex items-center gap-1.5"><Spin />등록 중…</span> : '등록하고 이어서 입력'}
               </button>
               <p className="text-[11px] text-slate-400 text-center">
                 등록 후 시리얼·수량만 지워져 같은 품목을 이어서 넣을 수 있습니다
@@ -888,7 +915,7 @@ function LotEdit({ lot, onClose, onDone }) {
 
           <button onClick={save} disabled={busy}
             className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
-            {busy ? '저장 중…' : '저장'}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
           </button>
 
           <div className="pt-2 border-t border-slate-100">
@@ -982,7 +1009,7 @@ function ShelfEdit({ item, onClose, onDone }) {
 
           <button onClick={save} disabled={busy}
             className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
-            {busy ? '저장 중…' : '저장'}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
           </button>
         </div>
       </div>

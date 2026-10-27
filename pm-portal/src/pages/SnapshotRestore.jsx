@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { useCanEdit } from '../hooks/useProfile'
+import { SkelBar } from '../components/ux/Skeleton'
+import { useConfirm } from '../components/ux/ConfirmDialog'
+import Spin from '../components/ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -27,7 +30,8 @@ export default function SnapshotRestore() {
   const canEdit = useCanEdit()
   const [days, setDays] = useState(30)
   const [kind, setKind] = useState('')
-  const [ask, setAsk] = useState(null)
+  const [ask, confirmEl] = useConfirm()
+  const [busyKey, setBusyKey] = useState('')   // 되돌리는 중인 기록 — 버튼에 표시
 
   const { data: snaps = [], isLoading } = useQuery({
     queryKey: ['snapList', days, kind],
@@ -55,6 +59,7 @@ export default function SnapshotRestore() {
   })
 
   async function restore(row) {
+    setBusyKey(`${row.src}-${row.id}`)
     try {
       const { data, error } = row.src === 'rack'
         ? await supabase.rpc('pm_rack_restore', { p_snap_id: row.id })
@@ -66,14 +71,26 @@ export default function SnapshotRestore() {
       ;['bom', 'inventory', 'inboundHistory', 'rackMap', 'rackUsage',
         'weeklyItems', 'shortage'].forEach(k =>
         qc.invalidateQueries({ queryKey: [k], exact: false }))
-      setAsk(null)
     } catch (e) { toastError('복구 실패: ' + e.message) }
+    finally { setBusyKey('') }
+  }
+  async function askRestore(s) {
+    const ok = await ask({
+      title: '이 삭제 기록을 되돌릴까요?',
+      desc: `${n(s.cnt)}건을 되돌립니다.` + (s.src === 'rack'
+        ? ' 위치가 비어 있는 품목만 복구되며, 그 사이 다른 자리가 잡혔으면 건드리지 않습니다.'
+        : ' 이미 같은 내용이 있으면 건너뜁니다.'),
+      items: [s.label, s.preview ? `${s.preview} …` : '', `${String(s.created_at).slice(0, 16).replace('T', ' ')}${s.who ? ` · ${s.who}` : ''}`].filter(Boolean),
+      okText: '되돌리기', danger: true,
+    })
+    if (ok) restore(s)
   }
 
   const live = snaps.filter(s => !s.restored)
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div>
         <h1 className="text-lg font-bold text-slate-900">↩ 삭제 기록</h1>
         <p className="page-desc text-xs text-slate-400">
@@ -111,7 +128,16 @@ export default function SnapshotRestore() {
         <span className="text-xs text-slate-400">{n(snaps.length)}건</span>
       </div>
 
-      {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
+      {isLoading && (
+        <div className="space-y-2" data-snap-loading>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl border border-slate-200 bg-white p-3.5 space-y-1.5" data-skeleton>
+              <div className="flex gap-2"><SkelBar w={44} h={14} /><SkelBar w={`${45 - i * 5}%`} h={14} /><SkelBar w={36} h={12} /></div>
+              <SkelBar w="60%" h={9} /><SkelBar w={130} h={9} />
+            </div>
+          ))}
+        </div>
+      )}
       {!isLoading && !snaps.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">기록이 없습니다</p>
@@ -151,9 +177,9 @@ export default function SnapshotRestore() {
                   </p>
                 </div>
                 {!s.restored && canEdit && (
-                  <button onClick={() => setAsk(s)}
-                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">
-                    되돌리기
+                  <button onClick={() => askRestore(s)} disabled={!!busyKey}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 disabled:opacity-50">
+                    {busyKey === `${s.src}-${s.id}` ? <><Spin />되돌리는 중…</> : '되돌리기'}
                   </button>
                 )}
               </div>
@@ -162,36 +188,6 @@ export default function SnapshotRestore() {
         })}
       </div>
 
-      {ask && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setAsk(null)}>
-          <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden"
-            onClick={e => e.stopPropagation()}>
-            <div className="px-4 py-3 bg-emerald-50 border-b border-emerald-100">
-              <h3 className="text-base font-bold text-emerald-800">되돌리기</h3>
-            </div>
-            <div className="p-4 space-y-3">
-              <p className="text-sm font-semibold text-slate-800">{ask.label}</p>
-              <p className="text-xs text-slate-500">
-                <b>{n(ask.cnt)}건</b>을 되돌립니다.
-                {ask.src === 'rack'
-                  ? ' 위치가 비어 있는 품목만 복구되며, 그 사이 다른 자리가 잡혔으면 건드리지 않습니다.'
-                  : ' 이미 같은 내용이 있으면 건너뜁니다.'}
-              </p>
-              <div className="flex gap-2">
-                <button onClick={() => restore(ask)}
-                  className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white">
-                  되돌리기
-                </button>
-                <button onClick={() => setAsk(null)}
-                  className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">
-                  취소
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

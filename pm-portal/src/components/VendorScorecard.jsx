@@ -4,6 +4,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { SkeletonRows } from './ux/Skeleton'
 
 export default function VendorScorecard({ onClose }) {
   const [months, setMonths] = useState(3)
@@ -31,7 +32,7 @@ export default function VendorScorecard({ onClose }) {
         <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
       </div>
       {error && <p className="px-4 py-3 text-[12.5px] text-amber-700">{error.message}</p>}
-      {isLoading && <p className="px-4 py-3 text-[12.5px] text-slate-400">불러오는 중…</p>}
+      {isLoading && <div className="overflow-x-auto max-h-[320px]"><table className="w-full"><tbody data-score-loading><SkeletonRows cols={7} rows={5} /></tbody></table></div>}
       {!error && !isLoading && (
         <div className="overflow-x-auto max-h-[320px]">
           <table className="w-full text-[12.5px]">

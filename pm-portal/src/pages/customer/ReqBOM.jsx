@@ -14,6 +14,10 @@ import CustomerTabs from '../../components/CustomerTabs'
 import ShortageTabs from '../../components/ShortageTabs'
 import { getCategoryCode, ITEM_CATEGORIES, catOf, PROC_CATS, todayISO } from '../../lib/utils'
 import PoCart, { addItemsToCart, fetchCart } from '../common/PoCart'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import InfoTip from '../../components/ux/InfoTip'
+import Spin from '../../components/ux/Spin'
 
 // 입력 디바운스
 function useDebounced(val, ms=250) {
@@ -302,6 +306,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   const [activeManual, setActiveManual] = useState([])
   // 체크박스 → 구매발주
   const [checked, setChecked] = useState({})
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 담기함 중복 확인 창
 
   const { data: cs } = useCustomer(csCode)
   const { data: projects=[] } = useQuery({
@@ -346,7 +351,12 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
   async function putInCart() {
     if (!checkedItems.length) return
     const dup = checkedItems.filter(r => cartQtyOf[r.item_id] > 0)
-    if (dup.length && !window.confirm(`담기함에 이미 있는 품목 ${dup.length}개가 있습니다 (${dup.slice(0,3).map(r=>r.std_code).join(', ')}${dup.length>3?' …':''}).\n담으면 같은 품목 줄이 하나 더 생깁니다 — 담기함에서 합치거나 빼세요.\n\n계속 담을까요?`)) return
+    if (dup.length && !(await ask({
+      title: `담기함에 이미 있는 품목 ${dup.length}개 — 계속 담을까요?`,
+      desc: '담으면 같은 품목 줄이 하나 더 생깁니다. 🛒 담기함에서 합치거나 빼세요.',
+      items: dup.slice(0, 5).map(r => `${r.std_code} · ${r.name || ''} · 담기함 ${cartQtyOf[r.item_id]}`), more: Math.max(0, dup.length - 5),
+      okText: '계속 담기',
+    }))) return
     setCarting(true)
     try {
       const zero = checkedItems.filter(r => !(qtyOf(r) > 0)).length
@@ -426,6 +436,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       {/* 통합검색 안에서는 고객사 탭이 어울리지 않아 숨긴다 */}
       {!embedded && <>
         <PageHead crumb="소요 · 부족" title="소요량 조회"
@@ -494,7 +505,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
               <button data-req-order onClick={putInCart} disabled={carting}
                 title="담기함에 담습니다 — 수량 · 구매처 · 납기는 🛒 담기함에서 고쳐 구매처별로 한꺼번에 발주 등록 (자재요청과 같은 담기함)"
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {carting ? '담는 중…' : `🛒 선택 ${checkedItems.length}건 발주 담기`}
+                {carting ? <><Spin />담는 중…</> : `🛒 선택 ${checkedItems.length}건 발주 담기`}
               </button>
             )}
             {(
@@ -559,13 +570,17 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
           )}
 
           <div className="kpi-grid grid grid-cols-4 gap-3">
-            <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">전체 품목</p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
-            <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1">발주필요</p><p className="text-xl font-bold text-red-600">{filtered.filter(r=>r.order_need>0).length}</p></div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1">입력 품목</p><p className="text-xl font-bold text-amber-700">{activeManual.length}개</p></div>
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">선택됨</p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
+            <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">전체 품목<InfoTip text="입력한 상위 품번의 BOM 을 전개(단품은 그대로)해 나온 부품 종류 수. 위에서 관리부서를 고르면 그 부서 것만 셉니다." /></p><p className="text-xl font-bold text-slate-900">{filtered.length}</p></div>
+            <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">발주필요<InfoTip text="총소요량 − 현재고 − 구매발주 미입고 가 0보다 큰 부품 수. 구매발주 미입고 = 이 고객사의 구매 발주 중 완료 · 취소가 아닌 것의 남은 수량. 관리부서 필터를 따릅니다." /></p><p className="text-xl font-bold text-red-600">{filtered.filter(r=>r.order_need>0).length}</p></div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">입력 품목<InfoTip align="right" text="「소요량 조회」를 누를 때 품번과 수량이 둘 다 들어 있던 입력 줄 수." /></p><p className="text-xl font-bold text-amber-700">{activeManual.length}개</p></div>
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">선택됨<InfoTip align="right" text="아래 표에서 체크한 부품 수 (지금 고른 관리부서 안에서). 「🛒 발주 담기」로 담기함에 담깁니다." /></p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
           </div>
 
-          {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">계산 중...</div> : (<>
+          {isLoading ? (
+            <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+              <table className="w-full text-xs"><tbody><SkeletonRows cols={COLS.length + 1} rows={8} first={1} two={[1]} /></tbody></table>
+            </div>
+          ) : (<>
             <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto">
                 <table className="text-xs" style={{tableLayout:'fixed',width:COLS.reduce((a,c)=>a+(widths[c.key]||COL_DEFAULTS[c.key]||80),44)+'px'}}>
@@ -685,7 +700,11 @@ function ReverseExplode({ csId, csCode }) {
       </div>
 
       {submitted.trim() && (
-        isLoading ? <div className="text-center py-10 text-slate-400 text-sm">검색 중...</div>
+        isLoading ? (
+          <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+            <table className="w-full text-xs"><tbody><SkeletonRows cols={5} rows={6} /></tbody></table>
+          </div>
+        )
         : rows.length === 0
           ? <div className="text-center py-12 text-slate-400 text-sm">이 부품을 쓰는 상위 어셈블리가 없습니다</div>
           : (

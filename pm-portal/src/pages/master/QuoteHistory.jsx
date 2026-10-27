@@ -8,6 +8,8 @@ import { fetchAll } from '../../lib/paginate'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO } from '../../lib/utils'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const won = (v) => Math.round(num(v)).toLocaleString('ko-KR')
@@ -76,6 +78,7 @@ export default function QuoteHistory({ onRevise } = {}) {
   const isSales = kind === 'sales'
   // 매출견적 화면의 작성기는 매출 전용이라 매입 견적은 거기서 고칠 수 없다
   const canRevise = !!onRevise && isSales
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 견적 삭제 확인 창
 
   const { data: quotes = [], isLoading } = useQuery({
     queryKey: ['quoteHistory', kind],
@@ -136,7 +139,13 @@ export default function QuoteHistory({ onRevise } = {}) {
 
   // 견적 삭제 — 품목·작업비 이력까지 함께 정리된다
   async function deleteQuote(q) {
-    if (!confirm(`${q.quote_no} 견적을 삭제할까요?\n\n· 견적 품목이 모두 삭제됩니다\n· 이 견적에서 기록된 작업비 이력도 삭제됩니다\n· 되돌릴 수 없습니다`)) return
+    const nLines = items.filter((it) => it.quote_id === q.id).length
+    if (!(await ask({
+      title: `${q.quote_no} 견적을 삭제할까요?`,
+      desc: `견적 품목${nLines ? ` ${nLines}줄` : ''}이 모두 삭제되고, 이 견적에서 기록된 작업비 이력도 함께 삭제됩니다. 되돌릴 수 없습니다.`,
+      items: [[q.quote_date, q.project_name, q.issued_to].filter(Boolean).join(' · ') || q.quote_no],
+      okText: '삭제', danger: true,
+    }))) return
     const { error } = await supabase.rpc('pm_delete_quote', { p_quote_id: q.id })
     if (error) { toastError('삭제 실패: ' + error.message); return }
     logActivity('delete', 'pm_quotes', q.quote_no, `견적 삭제 · ${q.issued_to || ''} ${q.quote_date || ''}`)
@@ -302,6 +311,7 @@ export default function QuoteHistory({ onRevise } = {}) {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 견적 이력</h1>
@@ -362,7 +372,11 @@ export default function QuoteHistory({ onRevise } = {}) {
         </span>
       </div>
 
-      {isLoading && <p className="text-sm text-slate-400 py-8 text-center">불러오는 중…</p>}
+      {isLoading && (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+          <table className="w-full"><tbody><SkeletonRows cols={view === 'item' ? ITEM_COLS.length : (isSales ? 8 : 7) + (canRevise ? 1 : 0)} rows={8} two={view === 'item' ? [1] : []} /></tbody></table>
+        </div>
+      )}
 
       {/* 품번별 */}
       {!isLoading && view === 'item' && (

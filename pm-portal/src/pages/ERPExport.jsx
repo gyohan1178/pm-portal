@@ -6,6 +6,7 @@ import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
 import * as XLSX from 'xlsx'
 import { todayISO } from '../lib/utils'
+import Spin from '../components/ux/Spin'
 
 const CUSTOMERS = [
   { id: 'ax', name: 'AXCELIS' }, { id: 'ed', name: 'Edwards' },
@@ -163,7 +164,7 @@ export default function ERPExport() {
 
       <button onClick={handleExport} disabled={exporting}
         className="w-full py-3 text-sm font-700 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 flex items-center justify-center gap-2">
-        {exporting ? '추출 중...' : '📥 엑셀 추출'}
+        {exporting ? <><Spin />추출 중...</> : '📥 엑셀 추출'}
       </button>
     </div>
   )

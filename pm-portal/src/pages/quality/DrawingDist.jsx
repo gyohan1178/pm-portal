@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -11,6 +11,9 @@ import { isLead } from '../../lib/workflow'
 import FillBox from '../../components/FillBox'
 import { useLocation, useNavigate } from 'react-router-dom'
 import InternalDist from './InternalDist'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 // 도면 배포이력대장 — 「외주품 도면 배포 관리 지침」(에드워드 오디트 6.1.2 대응)
 //
@@ -155,6 +158,13 @@ function ExternalDist() {
   // 방금 한 작업 되돌리기 (v4.57.0) — { label, run } 하나만 기억한다. 다른 작업을 하면 그것으로 바뀐다
   const [undo, setUndo] = useState(null)
   const [undoBusy, setUndoBusy] = useState(false)
+  // v4.104.0 — 확인 창 · 빠진 칸은 그 칸 아래에 (예전엔 위에 알림)
+  const [ask, confirmEl] = useConfirm()
+  const [ferr, setFerr] = useState({})   // { vendor, drawing, contactName, contactVendor }
+  const clrErr = (...ks) => setFerr((p) => (ks.some((k) => p[k]) ? Object.fromEntries(Object.entries(p).filter(([k]) => !ks.includes(k))) : p))
+  const formOpen = !!form
+  useEffect(() => { if (!formOpen) setFerr({}) }, [formOpen])
+  const FErr = ({ k }) => (ferr[k] ? <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error={k}>{ferr[k]}</p> : null)
 
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['drawDist'], queryFn: fetchDist })
   const { data: vendors = [] } = useQuery({ queryKey: ['vendorsAll'], queryFn: fetchVendors, staleTime: 5 * 60 * 1000 })
@@ -211,10 +221,16 @@ function ExternalDist() {
   /* ---- 저장 ---- */
   async function save() {
     const f = form
-    if (!f.vendor_name?.trim()) { toastError('협력사를 고르세요'); return }
     const many = !f.id && Array.isArray(f.drawings)
     const dwgs = many ? uniqDrawings(f.drawings) : []
-    if (many ? !dwgs.length : !f.drawing_no?.trim()) { toastError('도면번호를 적으세요'); return }
+    const e = {}
+    if (!f.vendor_name?.trim()) e.vendor = '협력사를 골라 주세요'
+    if (many ? !dwgs.length : !f.drawing_no?.trim()) e.drawing = many ? '도면번호를 한 장 이상 적어 주세요' : '도면번호를 적어 주세요'
+    if (Object.keys(e).length) {
+      setFerr((p) => ({ ...p, ...e }))
+      setTimeout(() => document.querySelector('[data-field-error]')?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 30)
+      return
+    }
     const payload = {
       dist_date: f.dist_date, dept: f.dept, requester: f.requester || me?.name || null,
       reason: f.reason,
@@ -245,7 +261,9 @@ function ExternalDist() {
   }
 
   async function del(id) {
-    if (!window.confirm('이 줄을 지울까요? 대장은 증적입니다 — 바로 위 「↩ 되돌리기」로만 살릴 수 있습니다.')) return
+    const row = rows.find((x) => x.id === id)
+    if (!(await ask({ title: '이 줄을 지울까요?', desc: '대장은 증적입니다 — 지운 뒤에는 바로 위 「↩ 되돌리기」로만 살릴 수 있습니다 (다른 작업을 하면 되돌리기도 사라집니다).',
+      items: row ? [`${row.dist_date || ''} · ${row.drawing_no || ''}${row.issue_no ? ` Rev ${row.issue_no}` : ''} · ${row.vendor_name || ''}`] : [], okText: '지우기', danger: true }))) return
     try {
       const old = rows.find((x) => x.id === id)
       must(await supabase.from('pm_drawing_dist').delete().eq('id', id), '배포이력 삭제')
@@ -293,13 +311,14 @@ function ExternalDist() {
       const r = must(await supabase.from('vendors').insert({ name, category: newVendorCat }).select('id,name').single(), '거래처 등록')
       qc.invalidateQueries({ queryKey: ['vendorsAll'] })
       setForm((f) => ({ ...f, vendor_id: r.id, vendor_name: r.name, contact_id: '', contact_name: '', contact_email: '' }))
+      clrErr('vendor', 'contactVendor')
       setNewVendor(''); toastSuccess(`거래처 「${r.name}」 등록`)
     } catch (e) { toastError(e.message) }
   }
   async function addContact() {
     const c = newContact
-    if (!c?.name?.trim()) { toastError('담당자 이름을 적으세요'); return }
-    if (!form?.vendor_id) { toastError('먼저 거래처를 고르세요'); return }
+    if (!c?.name?.trim()) { setFerr((p) => ({ ...p, contactName: '담당자 이름을 적어 주세요' })); return }
+    if (!form?.vendor_id) { setFerr((p) => ({ ...p, contactVendor: '담당자를 등록하려면 먼저 거래처를 골라 주세요' })); return }
     try {
       const r = must(await supabase.from('pm_vendor_contact').insert({
         vendor_id: form.vendor_id, name: c.name.trim(), email: c.email?.trim() || null, phone: c.phone?.trim() || null,
@@ -338,6 +357,7 @@ function ExternalDist() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🧾 품질</p>
@@ -368,7 +388,7 @@ function ExternalDist() {
       {undo && canEdit && (
         <div data-dd-undo className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12.5px] text-amber-800">
           <span>방금 한 작업: <b>{undo.label}</b></span>
-          <button data-dd-undo-run disabled={undoBusy} onClick={runUndo} className="ml-auto px-3 py-1 text-xs font-bold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40">{undoBusy ? '되돌리는 중…' : '↩ 되돌리기'}</button>
+          <button data-dd-undo-run disabled={undoBusy} onClick={runUndo} className="ml-auto px-3 py-1 text-xs font-bold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40">{undoBusy ? <span className="inline-flex items-center gap-1.5"><Spin />되돌리는 중…</span> : '↩ 되돌리기'}</button>
           <button onClick={() => setUndo(null)} className="px-2 py-1 text-[11px] text-amber-500">닫기</button>
         </div>
       )}
@@ -434,7 +454,7 @@ function ExternalDist() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={12} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>}
+            {isLoading && <SkeletonRows cols={12} rows={8} two={[4]} />}
             {!isLoading && !view.length && <tr><td colSpan={12} className="py-10 text-center text-slate-400">해당하는 줄이 없습니다.</td></tr>}
             {view.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
@@ -543,11 +563,14 @@ function ExternalDist() {
 
             {/* 협력사 */}
             <L t="협력사">
+              <div className={ferr.vendor || ferr.contactVendor ? 'rounded-lg ring-2 ring-rose-200 [&_input]:!border-rose-400' : ''}>
               <VendorPick vendors={vendors} value={form.vendor_id} name={form.vendor_name}
-                onPick={(v) => setForm({
+                onPick={(v) => { setForm({
                   ...form, vendor_id: v?.id || '', vendor_name: v?.name || '',
                   contact_id: '', contact_name: '', contact_email: '',
-                })} />
+                }); if (v?.name) clrErr('vendor', 'contactVendor') }} />
+              </div>
+              <FErr k="vendor" /><FErr k="contactVendor" />
               {form.vendor_name && !form.vendor_id && (
                 <p className="text-[11px] text-rose-500 mt-1">{form.vendor_name} — 거래처에 없습니다. 아래에서 등록하면 연결됩니다.</p>
               )}
@@ -586,12 +609,15 @@ function ExternalDist() {
               {canEdit && form.vendor_id && (
                 newContact ? (
                   <div className="flex gap-2 mt-1.5">
-                    <input value={newContact.name} onChange={(e) => setNewContact({ ...newContact, name: e.target.value })} placeholder="이름"
-                      className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
+                    <div className="flex-1">
+                      <input value={newContact.name} onChange={(e) => { setNewContact({ ...newContact, name: e.target.value }); clrErr('contactName') }} placeholder="이름"
+                        className={`w-full px-2.5 py-1.5 text-xs border rounded-lg ${ferr.contactName ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'}`} />
+                      <FErr k="contactName" />
+                    </div>
                     <input value={newContact.email} onChange={(e) => setNewContact({ ...newContact, email: e.target.value })} placeholder="이메일"
                       className="flex-1 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
                     <button onClick={addContact} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">저장</button>
-                    <button onClick={() => setNewContact(null)} className="text-xs text-slate-400">취소</button>
+                    <button onClick={() => { setNewContact(null); clrErr('contactName') }} className="text-xs text-slate-400">취소</button>
                   </div>
                 ) : (
                   <button onClick={() => setNewContact({ name: form.contact_name || '', email: form.contact_email || '', phone: '' })}
@@ -601,10 +627,13 @@ function ExternalDist() {
             </L>
 
             {!form.id && Array.isArray(form.drawings) ? (
-              <DrawingRows list={form.drawings} onChange={(drawings) => setForm({ ...form, drawings })} />
+              <div>
+                <DrawingRows list={form.drawings} onChange={(drawings) => { setForm({ ...form, drawings }); clrErr('drawing') }} />
+                <FErr k="drawing" />
+              </div>
             ) : (
             <div className="grid grid-cols-3 gap-3">
-              <L t="도면번호"><input value={form.drawing_no || ''} onChange={(e) => setForm({ ...form, drawing_no: e.target.value })} placeholder="NRYBVU400" className={INP + ' font-mono'} /></L>
+              <L t="도면번호"><input value={form.drawing_no || ''} onChange={(e) => { setForm({ ...form, drawing_no: e.target.value }); clrErr('drawing') }} placeholder="NRYBVU400" className={INP + ' font-mono' + (ferr.drawing ? ' !border-rose-400 bg-rose-50/40' : '')} /><FErr k="drawing" /></L>
               <L t="품명"><input value={form.item_name || ''} onChange={(e) => setForm({ ...form, item_name: e.target.value })} className={INP} /></L>
               <L t="ISSUE NO (Rev)"><input value={form.issue_no || ''} onChange={(e) => setForm({ ...form, issue_no: e.target.value })} placeholder="A" className={INP} /></L>
             </div>

@@ -3,6 +3,9 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { ACTION_LABEL, ACTION_STYLE, TARGET_LABEL } from '../../lib/activityLog'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -20,6 +23,7 @@ const when = (ts) => {
 // 3명이 함께 쓰면서 "이거 왜 이렇게 됐지?" 를 추적하기 위한 화면.
 export default function ActivityLog() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [days, setDays] = useState(7)
   const [action, setAction] = useState('')
   const [busy, setBusy] = useState('')
@@ -74,8 +78,8 @@ export default function ActivityLog() {
     staleTime: 5 * 60 * 1000,
   })
 
-  async function runCleanup(key, label, cnt) {
-    if (!confirm(`${label} ${n(cnt)}건을 삭제합니다.\n되돌릴 수 없습니다. 계속할까요?`)) return
+  async function runCleanup(key, label, cnt, note) {
+    if (!(await ask({ title: `${label} ${n(cnt)}건을 삭제할까요?`, desc: `${note ? note + ' — ' : ''}되돌릴 수 없습니다.`, okText: '삭제', danger: true }))) return
     setBusy(key)
     try {
       const { data, error } = await supabase.rpc('pm_cleanup_run', { p_target: key })
@@ -94,6 +98,7 @@ export default function ActivityLog() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div>
         <h1 className="text-lg font-bold text-slate-900">🗂 활동 이력 · 용량</h1>
         <p className="page-desc text-xs text-slate-400">
@@ -180,9 +185,7 @@ export default function ActivityLog() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={6} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
-            )}
+            {isLoading && <SkeletonRows cols={6} rows={8} />}
             {rows.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50">
                 <td className="px-3 py-2 text-slate-400" title={new Date(r.created_at).toLocaleString('ko-KR')}>
@@ -253,10 +256,10 @@ export default function ActivityLog() {
                 <span className={`text-xs font-bold ${cnt > 0 ? 'text-amber-600' : 'text-slate-300'}`}>
                   {cnt > 0 ? `${n(cnt)}건` : '없음'}
                 </span>
-                <button onClick={() => runCleanup(key, c.target, cnt)}
+                <button onClick={() => runCleanup(key, c.target, cnt, c.note)}
                   disabled={!cnt || busy === key}
                   className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:border-rose-300 hover:text-rose-600 disabled:opacity-30 whitespace-nowrap">
-                  {busy === key ? '정리 중…' : '정리'}
+                  {busy === key ? <span className="inline-flex items-center gap-1.5"><Spin />정리 중…</span> : '정리'}
                 </button>
               </div>
             )

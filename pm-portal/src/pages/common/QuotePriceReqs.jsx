@@ -9,6 +9,8 @@ import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
 import { isOpenLine, checkRfq, dday } from '../master/rfq'
+import { SkelBar } from '../../components/ux/Skeleton'
+import Spin from '../../components/ux/Spin'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
@@ -96,7 +98,11 @@ export default function QuotePriceReqs({ onPick }) {
   }
 
   if (error) return <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800" data-price-reqs>영업 단가 요청을 불러오지 못했습니다 — {error.message}</div>
-  if (isLoading) return <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-xs text-slate-400" data-price-reqs>영업 단가 요청 불러오는 중…</div>
+  if (isLoading) return (
+    <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-2" data-price-reqs data-skeleton>
+      <SkelBar w={150} h={14} /><SkelBar w={64} h={18} className="rounded-full" /><SkelBar w={84} h={18} className="rounded-full" /><SkelBar w={50} h={11} className="ml-auto" />
+    </div>
+  )
 
   return (
     <div className="rounded-xl border border-amber-200 bg-white overflow-hidden" data-price-reqs>
@@ -122,7 +128,7 @@ export default function QuotePriceReqs({ onPick }) {
               <button type="button" onClick={copyCodes} disabled={!left.length} data-price-reqs-copy
                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">📋 남은 품번 복사 (협력사 견적 요청용)</button>
               {editable && <button type="button" onClick={recheckAll} disabled={busy} data-price-reqs-recheck
-                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{busy ? '점검 중…' : `🔍 다시 점검 (${n(reqs.length)}건)`}</button>}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{busy ? <span className="inline-flex items-center gap-1.5"><Spin />점검 중…</span> : `🔍 다시 점검 (${n(reqs.length)}건)`}</button>}
             </div>
           </div>
           <div className="overflow-x-auto max-h-[360px] overflow-y-auto rounded-lg border border-slate-100">

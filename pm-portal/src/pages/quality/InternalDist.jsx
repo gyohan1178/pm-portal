@@ -8,6 +8,8 @@ import { CUSTOMERS } from '../../lib/customers'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { RCV_DEPTS, REASONS, myRcvDepts, fetchDwgInt, stateOf, STATE_LABEL, STATE_TONE, lastRev, parseDwgPaste, shareDwg, distribute, markRcpt, cancelDwg, fetchExtDist, revMap } from './dwgInt'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
@@ -25,6 +27,7 @@ export default function InternalDist() {
 
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['dwgInt'], queryFn: fetchDwgInt, staleTime: 30 * 1000 })
   const refresh = () => { qc.invalidateQueries({ queryKey: ['dwgInt'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] }) }
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 배포 기록 취소 확인 창
 
   const [only, setOnly] = useState('live')        // live 진행 중 · shared · unrcv · unret · all
   const [dept, setDept] = useState('all')
@@ -108,6 +111,7 @@ export default function InternalDist() {
 
   return (
     <div className="space-y-3" data-dwg-int>
+      {confirmEl}
       <p className="page-desc text-[13px] text-slate-400">
         영업이 고객사에서 받은 새 Rev 도면을 생산기술에 <b>공유</b>하면, 생산기술이 받을 부서를 골라 <b>사내 배포</b>합니다. 받은 부서는 <b>수령 확인</b>, Rev 가 바뀌었으면 옛 도면을 <b>반납</b>합니다.
         {mine.length > 0 && <span className="ml-1 text-violet-600 font-semibold">내가 확인하는 부서: {mine.length === RCV_DEPTS.length ? '전체 (팀장급)' : mine.join(' · ')}</span>}
@@ -201,7 +205,7 @@ export default function InternalDist() {
             <th className="px-3 font-bold">받는 부서 · 수령 확인</th><th className="px-3 font-bold">옛 Rev 반납</th><th className="px-3 font-bold">공유 · 배포</th><th className="px-3 font-bold">상태</th>
           </tr></thead>
           <tbody>
-            {isLoading && <tr><td colSpan={8} className="p-8 text-center text-slate-400">불러오는 중…</td></tr>}
+            {isLoading && <SkeletonRows cols={8} rows={6} two={[0, 1]} />}
             {!isLoading && !shown.length && <tr><td colSpan={8} className="p-10 text-center text-slate-400">{rows.length ? '조건에 맞는 배포가 없습니다' : '아직 사내 배포 기록이 없습니다 — 영업은 「📤 도면 공유」, 생산기술은 「＋ 사내 배포」로 시작하세요'}</td></tr>}
             {shown.map((r) => {
               const myOpen = r.rcpts.filter((x) => mine.includes(x.dept) && !x.received_at)
@@ -250,7 +254,7 @@ export default function InternalDist() {
                     <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${STATE_TONE[r.st]}`} data-dwg-state={r.st}>{STATE_LABEL[r.st]}</span>
                     <div className="mt-1.5 flex gap-1.5">
                       {editable && r.status === '공유됨' && <button type="button" onClick={() => openDist(r)} data-dwg-dist-it className="px-2.5 py-1 rounded-lg text-[11.5px] font-bold bg-violet-600 text-white">사내 배포하기 →</button>}
-                      {editable && r.status !== '취소' && r.rcpts.every((x) => !x.received_at) && <button type="button" onClick={() => { if (window.confirm(`${r.drawing_no} Rev ${r.rev || ''} 기록을 취소할까요?`)) run(r.id, () => cancelDwg(r.id), '취소했습니다') }} className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-red-500">취소</button>}
+                      {editable && r.status !== '취소' && r.rcpts.every((x) => !x.received_at) && <button type="button" onClick={async () => { if (await ask({ title: `${r.drawing_no} Rev ${r.rev || ''} 기록을 취소할까요?`, desc: '이 배포 기록이 「취소」 상태가 됩니다 (지워지지는 않음). 아직 수령한 부서가 없는 기록만 취소할 수 있습니다.', items: [`${r.drawing_no}${r.item_name ? ` · ${r.item_name}` : ''} · Rev ${r.rev || '-'}`], okText: '기록 취소', cancelText: '그대로 두기', danger: true })) run(r.id, () => cancelDwg(r.id), '취소했습니다') }} className="px-2 py-1 rounded-lg text-[11px] text-slate-400 hover:text-red-500">취소</button>}
                     </div>
                   </td>
                 </tr>

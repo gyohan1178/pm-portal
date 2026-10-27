@@ -6,6 +6,10 @@ import { supabase } from '../lib/supabase'
 import PurchaseDashboard from './PurchaseDashboard'
 import { ymdKST } from '../lib/utils'
 import { fetchWeekRequests, summarizeRequests } from '../lib/weeklyRequest'
+import { SkelBar } from '../components/ux/Skeleton'
+import { useConfirm } from '../components/ux/ConfirmDialog'
+import InfoTip from '../components/ux/InfoTip'
+import Spin from '../components/ux/Spin'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -212,6 +216,7 @@ function getWeekDays(from) {
 
 export default function WeeklyReport() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [weekOffset, setWeekOffset] = useState(0)
   const week = useMemo(()=>getWeekRange(weekOffset),[weekOffset])
   const today = new Date()
@@ -327,7 +332,21 @@ export default function WeeklyReport() {
     setTimeout(()=>{ document.title = orig },1000)
   }
 
-  if (isLoading) return <div className="text-center py-20 text-slate-400">불러오는 중...</div>
+  if (isLoading) return (
+    <div className="space-y-4 max-w-5xl mx-auto" data-wk-loading>
+      <div className="flex items-center gap-2" data-skeleton><SkelBar w={56} h={28} /><SkelBar w={56} h={28} /><SkelBar w={64} h={28} /><SkelBar w={150} h={12} className="ml-1" /></div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2" data-skeleton><SkelBar w={90} h={10} /><SkelBar w={220} h={20} /><SkelBar w={150} h={11} /></div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {[0, 1, 2, 3].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 space-y-2" data-skeleton><SkelBar w={90} h={11} /><SkelBar w={70} h={22} /></div>)}
+      </div>
+      {[0, 1].map((i) => (
+        <div key={i} className="rounded-xl border border-slate-200 bg-white" data-skeleton>
+          <div className="px-4 py-3 border-b border-slate-100"><SkelBar w={130} h={14} /></div>
+          {[0, 1, 2, 3].map((j) => <div key={j} className="flex items-center gap-4 px-4 py-2.5 border-b border-slate-50 last:border-0"><SkelBar w={70} h={11} /><SkelBar w={110} h={11} /><SkelBar w="30%" h={11} /><SkelBar w={40} h={11} /></div>)}
+        </div>
+      ))}
+    </div>
+  )
 
   const byCustomer = (items, key='customer') => {
     const map = {}
@@ -385,6 +404,7 @@ export default function WeeklyReport() {
 
   return (
     <>
+      {confirmEl}
       <style>{`
         @media print {
           @page { size: A4 portrait; margin: 8mm; }
@@ -461,7 +481,7 @@ export default function WeeklyReport() {
           </div>
           {/* 자재요청 대응 — 자재요청 화면에서 그 주에 불출 처리한 것 */}
           <div data-req-sum className="rounded-xl border border-purple-100 bg-gradient-to-br from-purple-50 to-white px-3.5 py-2.5 shadow-sm">
-            <p className="text-[11px] font-bold text-purple-600">🙋 자재요청 대응 불출</p>
+            <p className="text-[11px] font-bold text-purple-600 flex items-center gap-1">🙋 자재요청 대응 불출<InfoTip text="자재요청 화면에서 처리 방법이 「불출」이고 상태가 「완료」인 요청 줄 중, 처리일이 이 주(월~일, 한국 시간)인 것. 큰 숫자는 줄(품목) 수, 옆의 「요청」은 요청번호 수입니다." /></p>
             {d?.reqErr ? (
               <p className="text-xs text-rose-600 mt-1">집계를 못 불러왔습니다 ({d.reqErr})</p>
             ) : (
@@ -470,7 +490,7 @@ export default function WeeklyReport() {
             )}
           </div>
           <div className={`rounded-xl border px-3.5 py-2.5 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
-            <p className={`text-[11px] font-bold ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연</p>
+            <p className={`text-[11px] font-bold flex items-center gap-1 ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연<InfoTip align="right" text="포털이 자동으로 모은 요청 납기가 지난 건(AXCELIS · Edwards · VM · CSK) + 이 주 주간보고에 직접 적은 지연 건. 변경 납기가 오늘 이후면 「변경 약속」, 그 밖(변경 납기 없음 · 이미 지남 · 직접 입력)은 「독촉」으로 셉니다. 변경 납기를 적어도 지연 합계에서는 빠지지 않습니다." /></p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{delayCount}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
               <span className="text-xs text-slate-400 ml-2">{delayCount>0?`독촉 ${delayG1.length} · 변경 약속 ${delayG2.length}`:'지난 납기 없음'}</span></p>
           </div>
@@ -503,7 +523,7 @@ export default function WeeklyReport() {
                   </p>
                   <span className="flex items-center flex-shrink-0">
                     {item.qty&&<span className={`font-bold tabular-nums ${csColor(item.customer).text}`}>{Number(item.qty).toLocaleString()}</span>}
-                    <button onClick={e=>{e.stopPropagation();if(window.confirm('삭제?'))deleteCalMut.mutate(item.id)}}
+                    <button onClick={async e=>{e.stopPropagation();if(await ask({ title:'이 일정을 삭제할까요?', desc:'주간 일정에서 바로 지워지며 되돌릴 수 없습니다.', items:[[item.customer, item.project, item.name, item.qty?`${Number(item.qty).toLocaleString()}개`:''].filter(Boolean).join(' · ')], okText:'삭제', danger:true }))deleteCalMut.mutate(item.id)}}
                       className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-500 no-print text-xs ml-1">×</button>
                   </span>
                 </div>
@@ -676,7 +696,7 @@ export default function WeeklyReport() {
                   disabled={!calForm.name||addCalMut.isPending}
                   className={`flex-1 py-2 text-xs font-bold rounded-lg text-white disabled:opacity-40
                     ${calModal.type==='outbound'?'bg-purple-600 hover:bg-purple-700':'bg-amber-600 hover:bg-amber-700'}`}>
-                  {addCalMut.isPending?(calModal.editId?'수정 중...':'추가 중...'):(calModal.editId?'수정 완료':'추가')}
+                  {addCalMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />{calModal.editId?'수정 중...':'추가 중...'}</span>:(calModal.editId?'수정 완료':'추가')}
                 </button>
               </div>
             </div>
@@ -695,7 +715,7 @@ export default function WeeklyReport() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-red-500 font-semibold">{delayCount}건</span>
                   {checkedIds.length>0&&(
-                    <button onClick={()=>{ if(window.confirm(`선택 ${checkedIds.length}건 삭제할까요?`)) deleteItemMut.mutate(checkedIds) }}
+                    <button onClick={async()=>{ const sel=(d?.delay||[]).filter(r=>checkedIds.includes(r.id)); if(await ask({ title:`선택 ${checkedIds.length}건 삭제할까요?`, desc:'주간보고 항목에서 지워지며 되돌릴 수 없습니다.', items:sel.slice(0,5).map(r=>[r.pn||'-', r.vendor, r.qty?`${r.qty}개`:''].filter(Boolean).join(' · ')), more:Math.max(0,checkedIds.length-5), okText:'삭제', danger:true })) deleteItemMut.mutate(checkedIds) }}
                       className="text-xs font-bold px-2 py-0.5 rounded border border-red-300 text-red-600 bg-red-50 hover:bg-red-100 no-print">
                       선택 삭제 ({checkedIds.length})
                     </button>

@@ -12,19 +12,22 @@ import {
   PT_CUSTS, ptCust, GROUP_TONES, GROUP_COLORS, PT_SQL_HINT, fetchPtGroups, fetchPtTargets, fetchPtProd, fetchPtLinks, fetchAxOpenPo,
   linkSummary, addPtGroup, updatePtGroup, deletePtGroup, addPtTarget, updatePtTarget,
 } from '../../lib/prodTargets'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '—')
 const DONE = (st) => st === '완료'
 const isReal = (gid) => gid !== 'all' && gid !== 'none'   // 진짜 그룹 (전체 · 미분류가 아닌 것)
 
-function Kpi({ tone = '', label, value, sub, data }) {
+function Kpi({ tone = '', label, value, sub, data, loading }) {
   const T = { green: 'bg-emerald-50 border-emerald-200 text-emerald-600', amber: 'bg-amber-50 border-amber-200 text-amber-600', red: 'bg-red-50 border-red-200 text-red-500', '': 'bg-white border-slate-200 text-slate-800' }[tone]
   return (
     <div className={`rounded-xl border px-4 py-3 ${T}`} data-pt-kpi={data}>
       <div className="text-[12px] text-slate-500">{label}</div>
-      <div className="text-[26px] font-extrabold leading-tight tabular-nums">{value}</div>
-      {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
+      {loading ? <div className="py-1.5 space-y-2" data-skeleton><SkelBar w={56} h={24} /><SkelBar w="70%" h={9} /></div> : <>
+        <div className="text-[26px] font-extrabold leading-tight tabular-nums">{value}</div>
+        {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
+      </>}
     </div>
   )
 }
@@ -45,6 +48,7 @@ export default function ProdTargets() {
   const linksQ = useQuery({ queryKey: ['ptLinks', cust], queryFn: () => fetchPtLinks(cust), enabled: !hold, retry: false })
   const axPoQ = useQuery({ queryKey: ['ptAxPo'], queryFn: fetchAxOpenPo, enabled: cust === 'AX', staleTime: 5 * 60 * 1000 })
   const sqlMissing = [groupsQ, targetsQ, linksQ].some((q) => q.error?.missing)
+  const linkLoading = prodQ.isLoading || linksQ.isLoading
   const refresh = () => ['ptGroups', 'ptTargets', 'ptLinks', 'ptProd', 'lineProdMap'].forEach((k) => qc.invalidateQueries({ queryKey: [k], exact: false }))
 
   const prod = prodQ.data || []
@@ -117,12 +121,16 @@ export default function ProdTargets() {
             <span className="text-[12px] text-slate-400">연결 기준: {C.rule}</span>
           </div>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <Kpi label="생산관리 진행 중" value={fmt(sum.open)} sub={`완료 포함 전체 ${fmt(sum.total)}줄`} data="open" />
-            <Kpi tone="green" label="수주와 연결됨" value={fmt(sum.linkedOpen)} sub={`진행 중 기준 · 완료 포함 ${fmt(sum.linkedAll)}줄`} data="linked" />
-            <Kpi tone={sum.unlinked.length ? 'amber' : 'green'} label="연결 안 됨" value={fmt(sum.unlinked.length)} sub={sum.unlinked.length ? '아래 목록 — 왜 안 됐는지 같이' : '진행 중 전부 연결'} data="unlinked" />
-            <Kpi label="연결된 수주 PO" value={fmt(sum.pos)} sub={sum.guess ? `그중 「추정」 연결 호기 ${fmt(sum.guess)} — 이름 앞부분만 같음` : '수주대장 진행 중 줄에 「🏭 호기」로 보임'} data="lines" />
+            <Kpi label="생산관리 진행 중" value={fmt(sum.open)} sub={`완료 포함 전체 ${fmt(sum.total)}줄`} data="open" loading={linkLoading} />
+            <Kpi tone="green" label="수주와 연결됨" value={fmt(sum.linkedOpen)} sub={`진행 중 기준 · 완료 포함 ${fmt(sum.linkedAll)}줄`} data="linked" loading={linkLoading} />
+            <Kpi tone={linkLoading ? '' : sum.unlinked.length ? 'amber' : 'green'} label="연결 안 됨" value={fmt(sum.unlinked.length)} sub={sum.unlinked.length ? '아래 목록 — 왜 안 됐는지 같이' : '진행 중 전부 연결'} data="unlinked" loading={linkLoading} />
+            <Kpi label="연결된 수주 PO" value={fmt(sum.pos)} sub={sum.guess ? `그중 「추정」 연결 호기 ${fmt(sum.guess)} — 이름 앞부분만 같음` : '수주대장 진행 중 줄에 「🏭 호기」로 보임'} data="lines" loading={linkLoading} />
           </div>
-          {(prodQ.isLoading || linksQ.isLoading) && <div className="text-xs text-slate-400">불러오는 중…</div>}
+          {linkLoading && (
+            <div className="rounded-lg border border-slate-200 overflow-hidden">
+              <table className="w-full text-[12px]"><tbody><SkeletonRows cols={6} rows={4} /></tbody></table>
+            </div>
+          )}
           {sum.unlinked.length > 0 && (
             <div className="rounded-lg border border-amber-200 overflow-hidden" data-pt-unlinked>
               <div className="px-3 py-2 bg-amber-50 text-[12px] font-bold text-amber-800">연결 안 된 진행 중 생산관리 줄 {fmt(sum.unlinked.length)}</div>
@@ -237,7 +245,7 @@ export default function ProdTargets() {
                     <th className="px-3 py-2 font-bold">상태</th>
                   </tr></thead>
                   <tbody>
-                    {targetsQ.isLoading && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">불러오는 중…</td></tr>}
+                    {targetsQ.isLoading && <SkeletonRows cols={cust === 'AX' ? 5 : 4} rows={6} two={[0]} />}
                     {!targetsQ.isLoading && !shown.length && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">{C.mode === 'auto' ? '이 그룹에 품번이 없습니다' : '아직 지정한 품번이 없습니다 — 위에서 품번을 넣으세요'}</td></tr>}
                     {shown.map((t) => {
                       const k = key(t.pn), po = poBy.get(k), pr = prodBy.get(k)

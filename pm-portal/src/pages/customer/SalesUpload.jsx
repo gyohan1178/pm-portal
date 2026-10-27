@@ -3,6 +3,8 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 // 헤더 유연 매칭
 const pick = (row, keys) => {
@@ -35,6 +37,7 @@ export default function SalesUpload() {
   const [only2026, setOnly2026] = useState(false)
   const [fileName, setFileName] = useState('')
   const [result, setResult] = useState(null)
+  const [prog, setProg] = useState(null)   // 반영 진행 { done, total } — 화면 표시용
 
   function parse(file) {
     setResult(null)
@@ -94,13 +97,17 @@ export default function SalesUpload() {
       const stamp = new Date().toISOString()
       const withStamp = targetRows.map(r => ({ ...r, updated_at: stamp }))
       let done = 0
-      for (let i = 0; i < withStamp.length; i += 500) {
-        const chunk = withStamp.slice(i, i + 500)
-        const { error } = await supabase.from('pm_sales')
-          .upsert(chunk, { onConflict: 'part_no,po_number,order_line,del_line' })
-        if (error) throw error
-        done += chunk.length
-      }
+      setProg({ done: 0, total: withStamp.length })
+      try {
+        for (let i = 0; i < withStamp.length; i += 500) {
+          const chunk = withStamp.slice(i, i + 500)
+          const { error } = await supabase.from('pm_sales')
+            .upsert(chunk, { onConflict: 'part_no,po_number,order_line,del_line' })
+          if (error) throw error
+          done += chunk.length
+          setProg({ done, total: withStamp.length })
+        }
+      } finally { setProg(null) }
       return done
     },
     onSuccess: (done) => {
@@ -129,6 +136,7 @@ export default function SalesUpload() {
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
+        <div className="max-w-[520px] pb-1" data-sales-stepper><Stepper steps={['엑셀 고르기', '점검 · 확인', '매출 반영']} cur={result?.saved != null ? 3 : saveMut.isPending ? 2 : result ? 1 : 0} /></div>
         <div className="flex items-center gap-3 flex-wrap">
           <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">
             📎 엑셀 선택
@@ -171,10 +179,11 @@ export default function SalesUpload() {
           </div>
         )}
 
+        {prog && prog.total > 500 && <ProgressBar done={prog.done} total={prog.total} label="매출 반영 중" />}
         {targetRows.length > 0 && (
           <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending}
             className="w-full py-2.5 text-sm font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
-            {saveMut.isPending ? '저장 중...' : `💾 ${targetRows.length}건 매출 반영 (4키 중복은 자동 갱신)`}
+            {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span> : `💾 ${targetRows.length}건 매출 반영 (4키 중복은 자동 갱신)`}
           </button>
         )}
       </div>

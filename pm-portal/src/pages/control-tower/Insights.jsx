@@ -5,6 +5,8 @@ import { computePPV, computeVendorScorecard, computeActivity, computeNorthStar }
 import { ResizableTable } from '../../components/ResizableTable'
 import { useTableSort } from '../../hooks/useTableSort'
 import AnalysisTabs from '../../components/AnalysisTabs'
+import { SkelBar } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
 
 const VENDOR_COLS = [
   { key:'_rank',      label:'순위',     defaultWidth:60,  sortable:false },
@@ -48,25 +50,32 @@ export default function Insights() {
         ))}
       </div>
 
-      {isLoading ? <div className="text-center py-16 text-slate-400 text-sm">분석 중...</div> : (
+      {isLoading ? (
+        <div className="space-y-4" data-insights-loading>
+          <div className="rounded-2xl border-2 border-slate-200 bg-white p-6 flex flex-col items-center gap-3" data-skeleton><SkelBar w={180} h={11} /><SkelBar w={120} h={52} /><SkelBar w={110} h={10} /></div>
+          <div className="grid grid-cols-2 gap-3">
+            {[0, 1].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 space-y-2" data-skeleton><SkelBar w={90} h={11} /><SkelBar w={50} h={28} /><SkelBar w={80} h={9} /></div>)}
+          </div>
+        </div>
+      ) : (
         <>
           {/* ⭐ North Star */}
           {tab === 'north' && ns && (
             <div className="space-y-4">
               <div className="rounded-2xl border-2 border-slate-800 bg-gradient-to-br from-slate-50 to-indigo-50/40 p-6 text-center">
-                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">⭐ NORTH STAR — 적시 납품률</p>
+                <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2 flex items-center justify-center gap-1">⭐ NORTH STAR — 적시 납품률<InfoTip text="완료 ÷ (완료 + 지연) × 100. 완료 = 상태가 「완료」인 PO (실제 입고일과 비교하지 않고 완료를 준수로 봅니다). 지연 = 상태가 「지연」이거나, 완료가 아닌데 납기(약속일)가 지난 PO. 발주 표 전체 기준이라 고객사 PO 줄도 함께 셉니다." /></p>
                 <p className="text-6xl font-bold text-slate-900">{ns.onTimeRate != null ? ns.onTimeRate : '—'}<span className="text-2xl text-slate-400">%</span></p>
                 <p className="text-xs text-slate-400 mt-2">완료 {ns.completedPO} · 지연 {ns.delayedPO}</p>
               </div>
               <p className="text-xs font-bold text-slate-500">받침 지표 (입력)</p>
               <div className="grid grid-cols-2 gap-3">
                 <div className={`rounded-xl border p-4 ${ns.shortageRiskItems === 0 ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'}`}>
-                  <p className="text-xs font-bold text-slate-400 mb-1">쇼티지 위험 품목</p>
+                  <p className="text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">쇼티지 위험 품목<InfoTip text="부족 예측(계산해 둔 결과)에서 이번 달 이후 어느 달이든 예상 재고가 0 아래로 내려가는 품목 수. 같은 품목은 한 번만 셉니다." /></p>
                   <p className={`text-3xl font-bold ${ns.shortageRiskItems === 0 ? 'text-emerald-600' : 'text-amber-700'}`}>{ns.shortageRiskItems}</p>
                   <p className="text-[10px] text-slate-400 mt-1">{ns.shortageRiskItems === 0 ? '✓ 부족 없음 — 건강' : '부족 예정 품목'}</p>
                 </div>
                 <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-                  <p className="text-xs font-bold text-slate-400 mb-1">진행 중 PO</p>
+                  <p className="text-xs font-bold text-slate-400 mb-1 flex items-center gap-1">진행 중 PO<InfoTip align="right" text="발주 표에서 상태가 「완료」가 아닌 줄 수 (취소 · 고객사 PO 줄도 함께 셉니다)." /></p>
                   <p className="text-3xl font-bold text-indigo-700">{(data.pos || []).filter(p => p.status !== '완료').length}</p>
                   <p className="text-[10px] text-slate-400 mt-1">관리 중인 발주</p>
                 </div>

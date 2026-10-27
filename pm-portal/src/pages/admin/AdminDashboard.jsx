@@ -3,6 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
 const PRIORITY = ['높음', '보통', '낮음']
@@ -52,6 +55,7 @@ async function fetchTodos() {
 //   회의 자리에서 열어 두고 상태를 바꾸는 쓰임을 생각했다.
 export default function AdminDashboard() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [view, setView] = useState('open')     // open = 남은 것 | all = 전부
   const [q, setQ] = useState('')
   const [draft, setDraft] = useState(null)     // 추가·수정 중인 항목
@@ -118,6 +122,7 @@ export default function AdminDashboard() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-center gap-2 flex-wrap">
         <div>
           <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
@@ -162,7 +167,17 @@ export default function AdminDashboard() {
         <span className="text-xs text-slate-400">{list.length}건</span>
       </div>
 
-      {isLoading && <p className="text-center py-10 text-sm text-slate-400">불러오는 중…</p>}
+      {isLoading && (
+        <div className="space-y-2" data-todo-loading>
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 flex items-start gap-2.5" data-skeleton>
+              <SkelBar w={14} h={14} className="mt-0.5" />
+              <div className="flex-1 space-y-1.5"><SkelBar w={`${60 - i * 8}%`} h={13} /><SkelBar w={120} h={9} /></div>
+              <SkelBar w={48} h={22} />
+            </div>
+          ))}
+        </div>
+      )}
       {!isLoading && !list.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">
@@ -233,7 +248,7 @@ export default function AdminDashboard() {
                 </select>
                 <button onClick={() => setDraft({ ...r })}
                   className="text-slate-300 hover:text-indigo-500 px-1" title="수정">✎</button>
-                <button onClick={() => { if (window.confirm(`"${r.title}" 을 지울까요?`)) delMut.mutate(r.id) }}
+                <button onClick={async () => { if (await ask({ title: `"${r.title}" 을 지울까요?`, desc: '할 일 목록에서 지워지며 되돌릴 수 없습니다.', items: [[r.title, r.owner, r.due_date].filter(Boolean).join(' · ')], okText: '삭제', danger: true })) delMut.mutate(r.id) }}
                   className="text-slate-300 hover:text-rose-500 px-1" title="삭제">✕</button>
               </div>
             </div>
@@ -308,7 +323,7 @@ export default function AdminDashboard() {
               <div className="flex gap-2 pt-1">
                 <button onClick={() => saveMut.mutate(draft)} disabled={saveMut.isPending}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
-                  {saveMut.isPending ? '저장 중…' : '저장'}
+                  {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
                 </button>
                 <button onClick={() => setDraft(null)}
                   className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600">

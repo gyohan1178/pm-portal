@@ -9,6 +9,8 @@ import { todayISO } from '../../lib/utils'
 import { ilikeAny } from '../../lib/pgFilter'
 import { ltWeeksOf, saveQuotes } from '../../lib/quoteBulk'
 import QuoteBulk from './QuoteBulk'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import Spin from '../../components/ux/Spin'
 import QuotePriceReqs, { PRICE_REQ_KEY } from './QuotePriceReqs'
 
 async function searchItems(keyword) {
@@ -77,7 +79,7 @@ function QuoteOne({ pick }) {
   const [saved, setSaved] = useState(false)
 
   const lt = ltWeeksOf(leadTime)
-  const { data: history=[], refetch: refetchHistory } = useQuery({
+  const { data: history=[], refetch: refetchHistory, isLoading: histLoading } = useQuery({
     queryKey:['quoteHistory', selItem?.id],
     queryFn:()=>fetchQuoteHistory(selItem?.id),
     enabled:!!selItem?.id,
@@ -217,7 +219,7 @@ function QuoteOne({ pick }) {
               <button data-quote-save onClick={()=>saveMut.mutate()}
                 disabled={!unitPrice||saveMut.isPending}
                 className="w-full py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {saveMut.isPending?'저장 중...':updatePrice?'💾 견적 저장 + 매입가 갱신':'💾 견적 저장 (매입가 그대로)'}
+                {saveMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span>:updatePrice?'💾 견적 저장 + 매입가 갱신':'💾 견적 저장 (매입가 그대로)'}
               </button>
             </div>
           )}
@@ -230,7 +232,9 @@ function QuoteOne({ pick }) {
               {/* 기존 단가 요약 */}
               <div className="rounded-xl border border-slate-200 p-4 space-y-3">
                 <p className="text-xs font-bold text-slate-700">기존 견적 요약</p>
-                {history.length === 0 ? (
+                {histLoading ? (
+                  <div className="grid grid-cols-3 gap-3">{[0, 1, 2].map((i) => <div key={i} className="rounded-lg bg-slate-50 p-3 space-y-2" data-skeleton><SkelBar w={40} h={9} /><SkelBar w={70} h={14} /></div>)}</div>
+                ) : history.length === 0 ? (
                   <p className="text-xs text-slate-400">견적 이력이 없습니다</p>
                 ) : (
                   <>
@@ -269,7 +273,7 @@ function QuoteOne({ pick }) {
                     <th className="px-3 py-2 text-left font-bold text-slate-400">메모</th>
                   </tr></thead>
                   <tbody>
-                    {history.length===0 ? (
+                    {histLoading ? <SkeletonRows cols={7} rows={4} /> : history.length===0 ? (
                       <tr><td colSpan={7} className="text-center py-6 text-slate-400">이력 없음</td></tr>
                     ) : history.map((h,i)=>(
                       <tr key={h.id} className={`border-b border-slate-100 ${i===0?'bg-indigo-50/30':''}`}>

@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import { ROLE_LABEL, SECTIONS, allowedSections, DEPTS } from '../../hooks/useProfile'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useTableSort } from '../../hooks/useTableSort'
+import { SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
 
 const USER_COLS = [
   { key:'name',       label:'이름',   defaultWidth:120 },
@@ -91,7 +92,12 @@ export default function UserManagement() {
         ))}
       </div>
 
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> :
+      {isLoading ? (
+        <div data-users-loading>
+          <div className="sm:hidden space-y-2"><SkeletonCards n={4} /></div>
+          <div className="hidden sm:block rounded-xl border border-slate-200 bg-white overflow-hidden"><table className="w-full"><tbody><SkeletonRows cols={USER_COLS.length} rows={6} /></tbody></table></div>
+        </div>
+      ) :
         list.length === 0 ? <div className="text-center py-12 text-slate-300 text-sm">해당 회원이 없습니다</div> : (
         <>
           {/* 모바일: 카드 */}

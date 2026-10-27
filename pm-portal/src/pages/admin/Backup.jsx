@@ -3,6 +3,8 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import { todayISO } from '../../lib/utils'
+import { ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 // 🗄 데이터 백업 — Supabase 무료플랜용. PM 포털 표를 한 번에 내려받는다.
 // 주 1회 클릭 → 파일을 회사 NAS/드라이브에 보관하는 루틴 권장.
@@ -11,6 +13,7 @@ import { todayISO } from '../../lib/utils'
 //            · 엑셀 칸 하나는 32,767자까지라 긴 칸(BOM 버전 · CN 문서 · 되돌리기 스냅샷)은 엑셀에서 잘린다
 //              → 잘림 없는 원본을 JSON 파일로 함께 내려받는다 (복구는 JSON 으로)
 //            · 페이지 나눠 읽을 때 기본 키 순서로 읽어 빠지거나 겹치는 행이 없게
+//   v4.106.1 빠져 있던 표 추가: 자료 요청 · 발주 납기 변경 이력 · 입고일 변경 이력 · 생산관리 대상(그룹 · 품번)
 //   넣지 않는 표: ax_* · harness_*(다른 시스템) · profiles · *_backup_* / *_bak_*(작업 전 임시 백업) · 다시 계산되는 캐시
 const G = (group, list) => list.map(([name, label, order]) => ({ name, label, group, order }))
 export const BACKUP_TABLES = [
@@ -26,14 +29,16 @@ export const BACKUP_TABLES = [
     ['purchase_orders', '발주 · 고객사 PO'], ['pm_po_cart', '발주 장바구니'], ['pm_payment_plan', '결제 계획'],
     ['pm_ecount_purchases', '확정매입 (이카운트)'], ['confirmed_purchases', '확정 매입 (예전)'], ['pm_vendor_contact', '협력사 담당자'],
     ['pm_cost_saving', '원가절감'], ['pm_cost_saving_skip', '원가절감 제외'], ['pm_labor_costs', '인건비'],
+    ['pm_po_date_log', '발주 납기 변경 이력'], ['pm_movement_date_log', '입고일 변경 이력'],
   ]),
   ...G('BOM · 생산', [
     ['bom', 'BOM'], ['projects', '프로젝트(어셈블리)'], ['pm_bom_notes', 'BOM 메모', ['customer_id', 'project_id', 'item_id']], ['pm_bom_version', 'BOM 버전'],
     ['production', '생산(호기)'], ['pm_material_request', '자재 요청'], ['pm_picking', '피킹'], ['forecasts', '포캐스트'],
     ['pm_ed_demand', 'Edwards 소요', null], ['pm_cell_aux', '셀 보조 정보'], ['pm_cell_check', '셀 점검'],
+    ['pm_prod_group', '생산관리 그룹'], ['pm_prod_target', '생산관리 대상 품번'],
   ]),
   ...G('영업', [
-    ['pm_order', '수주대장 PO'], ['pm_order_line', '수주대장 품목'], ['pm_order_change', '수주대장 변경 이력'], ['pm_order_alias', '수주대장 품명 기억', ['customer_code', 'alias_key']], ['pm_order_pn_flag', '수주대장 비품목 표시'], ['pm_bom_need', 'BOM 필요 · 요청', ['item_id']], ['pm_rfq', '견적 접수'], ['pm_rfq_line', '견적 접수 품목'],
+    ['pm_order', '수주대장 PO'], ['pm_order_line', '수주대장 품목'], ['pm_order_change', '수주대장 변경 이력'], ['pm_order_alias', '수주대장 품명 기억', ['customer_code', 'alias_key']], ['pm_order_pn_flag', '수주대장 비품목 표시'], ['pm_bom_need', 'BOM 필요 · 요청', ['item_id']], ['pm_rfq', '견적 접수'], ['pm_rfq_line', '견적 접수 품목'], ['pm_doc_request', '자료 요청'],
     ['pm_quotes', '견적'], ['pm_quote_items', '견적 품목'], ['pm_quote_drafts', '견적 임시저장'], ['quotes', '견적 (예전)'], ['pm_sales', '매출'],
   ]),
   ...G('품질 · 도면', [
@@ -115,6 +120,7 @@ export default function Backup() {
   }
 
   const groups = [...new Set(BACKUP_TABLES.map(t => t.group))]
+  const finished = progress.filter(t => t.status === '완료' || t.status.startsWith('실패')).length
 
   return (
     <div className="space-y-4 max-w-3xl">
@@ -141,8 +147,12 @@ export default function Backup() {
 
       <button onClick={runBackup} disabled={running}
         className="px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-        {running ? '백업 생성 중…' : '📥 전체 백업 다운로드 (.xlsx + .json)'}
+        {running ? <span className="inline-flex items-center gap-1.5"><Spin />백업 생성 중…</span> : '📥 전체 백업 다운로드 (.xlsx + .json)'}
       </button>
+
+      {running && progress.length > 0 && (
+        <div className="max-w-[480px]" data-backup-progress><ProgressBar done={finished} total={progress.length} label="표 내려받는 중" unit="개" /></div>
+      )}
 
       {progress.length > 0 && (
         <div className="rounded-xl border border-slate-200 overflow-x-auto">
@@ -162,7 +172,7 @@ export default function Backup() {
                   <td className="px-3 py-1.5 text-slate-600">{t.label}</td>
                   <td className="px-3 py-1.5 text-right font-semibold text-slate-700 tabular-nums">{t.rows ? t.rows.toLocaleString() : '-'}</td>
                   <td className={`px-3 py-1.5 ${t.status === '완료' ? 'text-emerald-600 font-semibold' : t.status.startsWith('실패') ? 'text-rose-500' : 'text-slate-400'}`}>
-                    {t.status}{t.cut ? <span className="ml-1 text-amber-600 font-normal">(엑셀 잘림 {t.cut}칸 · JSON 전체)</span> : null}
+                    {t.status === '내려받는 중…' && <Spin className="mr-1.5" />}{t.status}{t.cut ? <span className="ml-1 text-amber-600 font-normal">(엑셀 잘림 {t.cut}칸 · JSON 전체)</span> : null}
                   </td>
                 </tr>
               ))}

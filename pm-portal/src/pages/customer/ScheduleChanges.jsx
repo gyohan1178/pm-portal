@@ -5,6 +5,8 @@ import { supabase } from '../../lib/supabase'
 import { isMainPn, useMainPns } from '../production/mainPns'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import InfoTip from '../../components/ux/InfoTip'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const dday = (d) => {
@@ -115,23 +117,27 @@ export default function ScheduleChanges() {
       {/* 요약 */}
       <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-2">
         <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <p className="text-[11px] font-bold text-slate-400">전체</p>
-          <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>
+          <p className="text-[11px] font-bold text-slate-400 flex items-center gap-1">전체<InfoTip text="전주 월요일 시점의 납기와 지금 납기가 다른 납품 예정 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
+          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
+  <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>)}
           <p className="text-[10px] text-slate-400">지난주 대비 납기가 바뀐 줄</p>
         </div>
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-          <p className="text-[11px] font-bold text-rose-500">당겨짐</p>
-          <p className="text-2xl font-bold text-rose-700">{n(earlier.length)}</p>
+          <p className="text-[11px] font-bold text-rose-500 flex items-center gap-1">당겨짐<InfoTip text="지금 납기가 전주 월요일 납기보다 앞선 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
+          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
+  <p className="text-2xl font-bold text-rose-700">{n(earlier.length)}</p>)}
           <p className="text-[10px] text-rose-400">제조 일정 확인 필요</p>
         </div>
         <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-          <p className="text-[11px] font-bold text-sky-500">밀림</p>
-          <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>
+          <p className="text-[11px] font-bold text-sky-500 flex items-center gap-1">밀림<InfoTip text="지금 납기가 전주 월요일 납기보다 뒤인 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
+          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
+  <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>)}
           <p className="text-[10px] text-sky-500">납기가 뒤로 미뤄진 줄</p>
         </div>
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
-          <p className="text-[11px] font-bold text-amber-600">이번 주 3회+</p>
-          <p className="text-2xl font-bold text-amber-700">{n(repeated.length)}</p>
+          <p className="text-[11px] font-bold text-amber-600 flex items-center gap-1">이번 주 3회+<InfoTip align="right" text="표의 「이번 주 변경」 횟수가 3회 이상인 줄 수. 당겨짐 · 밀림과 겹쳐 셀 수 있습니다. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
+          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
+  <p className="text-2xl font-bold text-amber-700">{n(repeated.length)}</p>)}
           <p className="text-[10px] text-amber-500">3회 이상</p>
         </div>
       </div>
@@ -152,9 +158,7 @@ export default function ScheduleChanges() {
             </tr>
           </thead>
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={8} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
-            )}
+            {isLoading && <SkeletonRows cols={8} rows={6} two={[2]} />}
             {!isLoading && !rows.length && (
               <tr><td colSpan={8} className="py-12 text-center text-slate-400">
                 최근 변경된 납품 일정이 없습니다.
@@ -253,7 +257,7 @@ function HistoryRows({ po, code, order, del }) {
     staleTime: 10 * 60 * 1000,
   })
 
-  if (isLoading) return <p className="text-[11px] text-slate-400">불러오는 중…</p>
+  if (isLoading) return <div className="flex items-center gap-1.5" data-skeleton><SkelBar w={80} h={22} /><SkelBar w={80} h={22} /><SkelBar w={80} h={22} /></div>
   if (!rows.length) return <p className="text-[11px] text-slate-400">이력이 없습니다.</p>
 
   return (

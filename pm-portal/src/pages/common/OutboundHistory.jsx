@@ -10,6 +10,7 @@ import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { todayISO, ymdKST } from '../../lib/utils'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
+import { SkeletonRows } from '../../components/ux/Skeleton'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -218,7 +219,11 @@ export default function OutboundHistory() {
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size.toLocaleString()}</p><p className="text-[11px] text-indigo-400 mt-0.5">출고된 품목 종류</p></div>
       </div>
 
-      {histLoading ? <div className="text-center py-10 text-slate-400 text-sm">불러오는 중...</div> : (
+      {histLoading ? (
+        <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+          <table className="w-full text-xs"><tbody><SkeletonRows cols={11} rows={10} /></tbody></table>
+        </div>
+      ) : (
         <div ref={tblRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={tblH ? { height: tblH + 'px' } : undefined}>
           <div className={tblH ? 'flex-1 min-h-0 overflow-auto' : 'overflow-x-auto'}>
             <table className="w-full text-xs">

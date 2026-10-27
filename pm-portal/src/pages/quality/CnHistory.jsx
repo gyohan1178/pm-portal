@@ -10,6 +10,10 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useDebounced } from '../../hooks/useDebounced'
 import FillBox from '../../components/FillBox'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 import {
   parseCN, derive, decodeCN, summarize, searchText, repData, subTree,
   usDate, toKo, koName, DISP, TYPE_KO, revsOf,
@@ -140,6 +144,9 @@ function CnList({ onOpen }) {
   const dq = useDebounced(q.trim(), 300)
   const [f, setF] = useState('all')
   const [busy, setBusy] = useState(false)
+  // v4.104.0 — 확인 창 · 올리기 단계 표시 (1 읽고 분석 · 2 덮어쓰기 확인 · 3 저장 — 화면 표시용)
+  const [ask, confirmEl] = useConfirm()
+  const [upStep, setUpStep] = useState(0)
 
   const { data: res, isLoading, error } = useQuery({
     queryKey: ['cnDocs', dq],
@@ -202,14 +209,19 @@ function CnList({ onOpen }) {
 
   async function upload(file) {
     if (!file) return
-    setBusy(true)
+    setBusy(true); setUpStep(1)
     try {
       const buf = await file.arrayBuffer()
       const { row } = await buildCnRow(buf, file.name)
       const who = me?.name || me?.email || null
       const old = must(await supabase.from('pm_cn_docs').select('*').eq('cn_no', row.cn_no).maybeSingle(), 'CN 조회')
       if (old) {
-        if (!confirm(`${row.cn_no} 은(는) 이미 있습니다 (${yy(old.created_at)} ${old.created_name || ''} · ${old.version}판).\n\n새 판으로 덮어쓸까요? 이전 판은 이력으로 남고, 메모 · 리뷰 · 적용 호기는 그대로 둡니다.`)) return
+        setUpStep(2)
+        if (!(await ask({ title: `${row.cn_no} 은(는) 이미 있습니다 — 새 판으로 덮어쓸까요?`,
+          desc: '이전 판은 이력으로 남고, 메모 · 리뷰 · 적용 호기는 그대로 둡니다.',
+          items: [`지금: ${old.version || 1}판 · ${yy(old.created_at)} ${old.created_name || ''}`, `새로: ${(old.version || 1) + 1}판 · ${file.name}`],
+          okText: `${(old.version || 1) + 1}판으로 덮어쓰기` }))) return
+        setUpStep(3)
         must(await supabase.from('pm_cn_doc_versions').insert({
           doc_id: old.id, cn_no: old.cn_no, version: old.version || 1, file_name: old.file_name,
           parsed: old.parsed, raw_html: old.raw_html, created_name: old.updated_name || old.created_name,
@@ -223,6 +235,7 @@ function CnList({ onOpen }) {
         qc.invalidateQueries({ queryKey: ['cnDoc', old.id] })
         onOpen(old.id)
       } else {
+        setUpStep(3)
         const ins = must(await supabase.from('pm_cn_docs').insert({ ...row, created_name: who, updated_name: who }).select('id').single(), 'CN 저장')
         toastSuccess(`${row.cn_no} 을(를) 올렸습니다 — 변경 품목 ${row.summary.parts} · BOM ${n(row.summary.bom)}행`)
         qc.invalidateQueries({ queryKey: ['cnDocs'], exact: false })
@@ -230,7 +243,7 @@ function CnList({ onOpen }) {
       }
     } catch (e) {
       toastError(missingTable(e) ? 'CN 이력 테이블이 아직 없습니다 — pm_cn_docs SQL 을 먼저 실행해 주세요' : '올리기 실패: ' + e.message)
-    } finally { setBusy(false) }
+    } finally { setBusy(false); setUpStep(0) }
   }
 
   const yr = new Date().getFullYear()
@@ -239,6 +252,7 @@ function CnList({ onOpen }) {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🔬 품질 · AXCELIS</p>
@@ -251,13 +265,18 @@ function CnList({ onOpen }) {
         <span className="ml-auto"><DocRequestButton preset={{ kind: '도면', customer_code: 'AX', source: 'cn', reason: '설계변경(CN) — 새 Rev 도면 필요' }} /></span>
         {canEdit && (
           <label data-cn-upload className={`px-3 py-2 text-xs font-bold rounded-lg text-white cursor-pointer ${busy ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
-            {busy ? '분석 중…' : '＋ CN 파일 올리기'}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />분석 중…</span> : '＋ CN 파일 올리기'}
             <input type="file" accept=".html,.htm" className="hidden" disabled={busy}
               onChange={(e) => { const fl = e.target.files?.[0]; e.target.value = ''; upload(fl) }} />
           </label>
         )}
       </div>
 
+      {upStep > 0 && (
+        <div className="max-w-[640px]" data-cn-stepper>
+          <Stepper steps={['CN 파일 고르기', '읽고 분석', '덮어쓰기 확인', '저장 → 상세 열기']} cur={upStep} />
+        </div>
+      )}
       {error && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           {missingTable(error) ? '⚠ CN 이력 테이블이 아직 없습니다 — Supabase 에서 pm_cn_docs SQL 을 먼저 실행해 주세요.' : '⚠ 목록을 못 불러왔습니다: ' + error.message}
@@ -299,7 +318,7 @@ function CnList({ onOpen }) {
               </tr>
             </thead>
             <tbody>
-              {isLoading && <tr><td colSpan={10}><Empty>불러오는 중…</Empty></td></tr>}
+              {isLoading && <SkeletonRows cols={10} rows={8} two={[0]} />}
               {!isLoading && !rows.length && <tr><td colSpan={10}><Empty>{docs.length ? '조건에 맞는 CN 이 없습니다.' : '아직 올린 CN 이 없습니다. 오른쪽 위 「＋ CN 파일 올리기」로 시작하세요.'}</Empty></td></tr>}
               {rows.map(x => {
                 const s = x.summary || {}
@@ -367,11 +386,12 @@ function OurRevs({ ours, revs }) {
 function ReviewBox({ doc, canEdit, me, compact, needSql }) {
   const qc = useQueryClient()
   const [saving, setSaving] = useState(false)
+  const [ask, confirmEl] = useConfirm()
   const cur = reviewOf(doc) || ''
   async function pick(v) {
     if (!canEdit || v === cur) return
     if (needSql && v === 'na') { toastError(SQL_NOTE); return }
-    if (!v && !confirm(`${doc.cn_no} 리뷰를 「대기」로 되돌릴까요?`)) return
+    if (!v && !(await ask({ title: `${doc.cn_no} 리뷰를 「대기」로 되돌릴까요?`, desc: `지금 「${REVIEW_TXT[cur] || cur}」${doc.reviewed_name ? ` (${doc.reviewed_name})` : ''} 표시가 지워집니다.`, okText: '대기로 되돌리기' }))) return
     setSaving(true)
     try {
       const patch = { reviewed: v === 'done', reviewed_name: v ? (me?.name || me?.email || null) : null, reviewed_at: v ? new Date().toISOString() : null }
@@ -385,6 +405,7 @@ function ReviewBox({ doc, canEdit, me, compact, needSql }) {
   return (
     <span data-cn-review={doc.cn_no} className="inline-flex items-center gap-1.5"
       title={cur ? `${REVIEW_TXT[cur]} · ${doc.reviewed_name || ''} ${yy(doc.reviewed_at)}` : '생산기술팀이 검토하면 완료 · 필요 없으면 불필요를 고릅니다'}>
+      {confirmEl}
       <select value={cur} disabled={!canEdit || saving} onChange={(e) => pick(e.target.value)}
         className={`px-1.5 py-0.5 text-[11px] font-bold rounded border ${tone} ${canEdit ? 'cursor-pointer' : 'cursor-default'}`}>
         <option value="">대기</option>
@@ -427,6 +448,7 @@ function CnDetail({ id, onBack }) {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
   const me = useMe()
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 적용 호기 덮어쓰기 · 삭제 확인 창
   const { data: res, isLoading, error } = useQuery({
     queryKey: ['cnDoc', id],
     queryFn: () => withCols(async (cols) => must(await supabase.from('pm_cn_docs').select(cols + ',parsed').eq('id', id).maybeSingle(), 'CN 조회')),
@@ -501,7 +523,9 @@ function CnDetail({ id, onBack }) {
       // 같은 품번을 그사이 다른 사람이 바꿨으면 묻는다
       if (vOf(latest[pn]) !== vOf(cur) && vOf(latest[pn]) !== val) {
         const who = latest[pn] && typeof latest[pn] === 'object' && latest[pn].by ? ` (${latest[pn].by})` : ''
-        if (!window.confirm(`${pn} 적용 호기를 그사이 다른 사람이 바꿨습니다${who}.\n\n지금 값: ${vOf(latest[pn]) || '(비어 있음)'}\n내 값: ${val || '(지우기)'}\n\n내 값으로 덮어쓸까요?`)) {
+        if (!(await ask({ title: `${pn} 적용 호기를 그사이 다른 사람이 바꿨습니다${who} — 내 값으로 덮어쓸까요?`,
+          items: [`지금 값: ${vOf(latest[pn]) || '(비어 있음)'}`, `내 값: ${val || '(지우기)'}`],
+          desc: '「그만두기」를 누르면 저장하지 않고 화면을 지금 값으로 다시 읽습니다.', okText: '내 값으로 덮어쓰기', cancelText: '그만두기' }))) {
           qc.invalidateQueries({ queryKey: ['cnDoc', id] })
           return false
         }
@@ -525,7 +549,8 @@ function CnDetail({ id, onBack }) {
     } catch (e) { toastError(e.message) }
   }
   async function remove() {
-    if (!confirm(`${doc.cn_no} 을(를) 삭제할까요?\n\n· 분석 결과 · 원본 · 메모 · 이전 판이 모두 지워집니다\n· 되돌릴 수 없습니다`)) return
+    if (!(await ask({ title: `${doc.cn_no} 을(를) 삭제할까요?`, desc: '분석 결과 · 원본 · 메모 · 이전 판이 모두 지워지고 되돌릴 수 없습니다.',
+      items: [`${doc.cn_no}${doc.title ? ` · ${doc.title}` : ''}`], okText: '삭제', danger: true }))) return
     try {
       must(await supabase.from('pm_cn_docs').delete().eq('id', id), 'CN 삭제')
       toastSuccess(`${doc.cn_no} 삭제됨`)
@@ -534,7 +559,16 @@ function CnDetail({ id, onBack }) {
     } catch (e) { toastError(e.message) }
   }
 
-  if (isLoading) return <Empty>불러오는 중…</Empty>
+  if (isLoading) return (
+    <div className="space-y-4">
+      <button onClick={onBack} className="text-xs font-bold text-indigo-600 hover:underline">← 설계변경(CN) 이력</button>
+      <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3" data-skeleton>
+        <SkelBar w={240} h={20} /><SkelBar w="55%" h={11} />
+        <div className="flex gap-2">{[0, 1, 2, 3].map((i) => <SkelBar key={i} w={90} h={26} />)}</div>
+      </div>
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden"><table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={6} two={[0]} /></tbody></table></div>
+    </div>
+  )
   if (error || !doc || !cn) return (
     <div className="space-y-3">
       <button onClick={onBack} className="text-xs text-indigo-600">← 설계변경(CN) 이력</button>
@@ -553,6 +587,7 @@ function CnDetail({ id, onBack }) {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <button onClick={onBack} className="text-xs font-bold text-indigo-600 hover:underline">← 설계변경(CN) 이력</button>
 
       <Card>
@@ -862,7 +897,7 @@ function OurStatus({ ctx, p, pr }) {
         {canEdit && <button data-cn-apply-save disabled={!dirty} onClick={() => saveApply(target, val)}
           className={`px-2.5 py-1 text-[11.5px] font-bold rounded ${dirty ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-slate-100 text-slate-400'}`}>저장</button>}
       </div>
-      {!pr ? <Empty>불러오는 중…</Empty> : !pr.rows.length && !pr.loose.length ? <Empty>진행 중인 고객사 PO · 호기가 없습니다.</Empty> : (<>
+      {!pr ? <div className="space-y-2 py-2" data-skeleton><SkelBar w="60%" h={12} /><SkelBar w="80%" h={12} /><SkelBar w="45%" h={12} /></div> : !pr.rows.length && !pr.loose.length ? <Empty>진행 중인 고객사 PO · 호기가 없습니다.</Empty> : (<>
         {sum.length > 0 && (
           <div className="flex flex-wrap gap-1.5 mb-2" data-cn-brev-sum>
             {sum.map(([k, e]) => <span key={k} className="px-2 py-0.5 rounded-full border border-slate-200 bg-slate-50 text-[11px]">BREV <b className={`font-mono ${revCls(k === '-' ? '' : k)}`}>{k}</b> · PO {e.n}줄 · 잔량 {n(e.q)}</span>)}

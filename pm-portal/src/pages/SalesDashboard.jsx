@@ -7,6 +7,8 @@ import { fetchAll } from '../lib/paginate'
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { ResizableTable } from '../components/ResizableTable'
 import { useTableSort } from '../hooks/useTableSort'
+import { SkelBar } from '../components/ux/Skeleton'
+import InfoTip from '../components/ux/InfoTip'
 
 // 매출 대시보드 — 고객사 PO(order_type='customer_po') 기반 월별·고객사별 매출 현황
 const CS_COLOR = { AXCELIS:'#4F46E5', Edwards:'#3B82F6', VM:'#059669', CSK:'#D97706' }
@@ -107,7 +109,16 @@ export default function SalesDashboard() {
     { key:'rate',  label:'완료율',    defaultWidth:80,  style:{textAlign:'right'} },
   ]
 
-  if (isLoading) return <div className="p-8 text-center text-sm text-slate-400">불러오는 중...</div>
+  if (isLoading) return (
+    <div className="p-4 max-w-5xl mx-auto space-y-4" data-sales-loading>
+      <AnalysisTabs />
+      <div className="flex items-end justify-between" data-skeleton><div className="space-y-2"><SkelBar w={140} h={20} /><SkelBar w={300} h={11} /></div><SkelBar w={220} h={30} /></div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
+        {[0, 1, 2].map((i) => <div key={i} className="bg-white rounded-xl border border-slate-200 p-4 space-y-2" data-skeleton><SkelBar w={90} h={11} /><SkelBar w={80} h={24} /><SkelBar w={110} h={9} /></div>)}
+      </div>
+      <div className="bg-white rounded-xl border border-slate-200 p-4" data-skeleton><SkelBar w={130} h={11} /><SkelBar w="100%" h={220} className="mt-3" /></div>
+    </div>
+  )
 
   return (
     <div className="p-4 max-w-5xl mx-auto space-y-4 print-root">
@@ -151,17 +162,17 @@ export default function SalesDashboard() {
 
       <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
         <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-bold text-slate-500">예상 매출 (전체)</p>
+          <p className="text-xs font-bold text-slate-500 flex items-center gap-1">예상 매출 (전체)<InfoTip text="고른 연도의 「기매출」 + 「잔여」. 각 줄은 수량 × 단가이고, CCN 이 B 인 줄은 달러라 위 USD 칸의 환율을 곱해 원화로 바꿉니다(나머지는 원화 그대로). 단가가 없는 줄은 0원으로 들어갑니다." /></p>
           <p className="text-2xl font-bold text-slate-900 mt-1">{fmtEok(d.total)}<span className="text-sm text-slate-400 ml-1">억</span></p>
           <p className="text-[11px] text-slate-400 mt-0.5">{year}년 PO 총액</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-bold text-emerald-600">기매출 (납품완료)</p>
+          <p className="text-xs font-bold text-emerald-600 flex items-center gap-1">기매출 (납품완료)<InfoTip text="「실적 업로드」로 올린 매출 실적 중 납기가 고른 연도인 줄의 합계 (「발주 취소」 줄 제외). 달러(CCN=B)는 위 환율로 바꿔 더합니다." /></p>
           <p className="text-2xl font-bold text-emerald-700 mt-1">{fmtEok(d.doneTotal)}<span className="text-sm text-slate-400 ml-1">억</span></p>
           <p className="text-[11px] text-slate-400 mt-0.5">완료·납품 처리된 금액</p>
         </div>
         <div className="bg-white rounded-xl border border-slate-200 p-4">
-          <p className="text-xs font-bold text-indigo-600">잔여 (진행중)</p>
+          <p className="text-xs font-bold text-indigo-600 flex items-center gap-1">잔여 (진행중)<InfoTip align="right" text="아직 완료되지 않은 고객사 PO(상태 「완료」 · 「취소」 제외)의 금액. 납기일이 고른 연도인 것만 — 납기일이 없으면 발주일로 봅니다. 달러(CCN=B)는 위 환율로 바꿔 더합니다." /></p>
           <p className="text-2xl font-bold text-indigo-700 mt-1">{fmtEok(d.total - d.doneTotal)}<span className="text-sm text-slate-400 ml-1">억</span></p>
           <p className="text-[11px] text-slate-400 mt-0.5">아직 납품 안 된 예정액</p>
         </div>

@@ -90,7 +90,7 @@ export default function ProductionBoard() {
   }
 
   const { ver: mainVer } = useMainPns()   // 주요 관리 품번 (생산관리 › 모델별에서 바꿈)
-  const { data, dataUpdatedAt, error } = useQuery({
+  const { data, dataUpdatedAt, error, isLoading } = useQuery({
     queryKey: ['prodBoard2'], queryFn: fetchBoard,
     refetchInterval: 5 * 60 * 1000, refetchIntervalInBackground: true,
   })
@@ -225,8 +225,7 @@ export default function ProductionBoard() {
           {view.hot > 0 && <div data-board-hotcnt style={chip('rgba(255,107,94,0.18)')}><span style={{ color: '#FF8A80' }}>HOT {view.hot}대</span></div>}
           <div style={chip(revChg.length ? 'rgba(255,107,94,0.18)' : '#121B2B')}>
             <span style={{ color: revChg.length ? '#FF8A80' : '#93A3BD' }}>Rev 변경 {revChg.length}</span>
-            <span style={{ fontSize: '0.8em', fontWeight: 600, color: '#93A3BD' }}>최근 7일</span>
-          </div>
+            <span style={{ fontSize: '0.8em', fontWeight: 600, color: '#93A3BD' }}>최근 7일</span></div>
           <div style={{ ...chip('#12241E'), marginLeft: narrow ? 0 : 'auto', gap: 20 }}>
             <span style={{ color: '#9FE8C8', fontWeight: 700 }}>오늘 출하 <b style={{ ...big, fontSize: '1.4em', color: '#4FD6A1' }}>{data?.shippedToday ?? '-'}</b></span>
             <span style={{ color: '#9FE8C8', fontWeight: 700 }}>이번 주 <b style={{ ...big, fontSize: '1.4em', color: '#4FD6A1' }}>{data?.shippedWeek ?? '-'}</b></span>
@@ -244,7 +243,15 @@ export default function ProductionBoard() {
                 </div>
                 <span style={{ fontSize: narrow ? 13 : 17, color: '#C3CEDF' }}>{view.next[L.k]}</span>
               </div>
-              {L.list.length === 0 && <div style={{ textAlign: 'center', color: '#6F809B', fontSize: 18, padding: 20 }}>없음</div>}
+              {/* 처음 불러오는 동안 — 「없음」 대신 카드 모양 (v4.104.0) */}
+              {isLoading && [0, 1, 2].map((i) => (
+                <div key={i} data-skeleton className="animate-pulse" style={{ borderRadius: 12, padding: '12px', background: '#182338', display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}><span style={{ width: '55%', height: 22, borderRadius: 6, background: '#243149' }} /><span style={{ width: 54, height: 22, borderRadius: 6, background: '#243149' }} /></div>
+                  <span style={{ width: '40%', height: 14, borderRadius: 6, background: '#243149' }} />
+                  <span style={{ width: '75%', height: 14, borderRadius: 6, background: '#243149' }} />
+                </div>
+              ))}
+              {!isLoading && L.list.length === 0 && <div style={{ textAlign: 'center', color: '#6F809B', fontSize: 18, padding: 20 }}>없음</div>}
               {L.list.slice(0, maxCards).map((c) => {
                 const late = c._d != null && c._d < 0
                 const near = c._d === 0 || c._d === 1

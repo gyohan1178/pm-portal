@@ -10,6 +10,8 @@ import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
 import { useCanEdit } from '../../hooks/useProfile'
 import CostReport, { printCostReport } from './CostReport'
+import { SkelBar } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { computeSaving, candKey, byItem, byVendor, byCustomer, byBase, byMonth, custOf, CUST_NAME, stdTotals, suspects, SAVING_KINDS } from '../../lib/costSaving'
 
 // 원가절감 — 부서 KPI 보고용
@@ -67,6 +69,7 @@ const KPI = ({ t, v, n: note, tone = '' }) => (
 export default function CostSaving() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
+  const [ask, confirmEl] = useConfirm()
   const [tab, setTab] = useState('kpi')     // kpi | ledger
   const [form, setForm] = useState(null)    // 등록 모달
   const [targetOpen, setTargetOpen] = useState(false)
@@ -217,7 +220,9 @@ export default function CostSaving() {
     } catch (e) { toastError(e.message) }
   }
   async function delStd(code) {
-    if (!window.confirm(`${code} 표준단가를 지울까요?`)) return
+    const r0 = stdRows.find((r) => r.std_code === code)
+    if (!(await ask({ title: `${code} 표준단가를 지울까요?`, desc: '기준단가 표에서 이 품목 줄이 지워지며 되돌릴 수 없습니다. 지표는 다시 계산됩니다.',
+      items: [[code, nameOf.get(code), r0 ? `${n(r0.price)}원` : ''].filter(Boolean).join(' · ')], okText: '지우기', danger: true }))) return
     try {
       must(await supabase.from('pm_std_price').delete().eq('std_code', code), '표준단가 삭제')
       reloadStd(); toastSuccess('지웠습니다')
@@ -311,7 +316,9 @@ export default function CostSaving() {
     } catch (e) { toastError(e.message) }
   }
   async function del(id) {
-    if (!window.confirm('이 실적을 지울까요?')) return
+    const l0 = ledger.find((l) => l.id === id)
+    if (!(await ask({ title: '이 실적을 지울까요?', desc: '실적 대장에서 지워지며 되돌릴 수 없습니다.',
+      items: l0 ? [[l0.ym, l0.kind, l0.std_code, l0.item_name, won(l0.amount)].filter(Boolean).join(' · ')] : [], okText: '지우기', danger: true }))) return
     try {
       must(await supabase.from('pm_cost_saving').delete().eq('id', id), '실적 삭제')
       qc.invalidateQueries({ queryKey: ['csLedger'] }); toastSuccess('지웠습니다')
@@ -369,6 +376,7 @@ export default function CostSaving() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] font-semibold text-slate-400">📊 분석</p>
@@ -420,6 +428,11 @@ export default function CostSaving() {
       )}
 
       {/* 지표 */}
+      {isLoading ? (
+        <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2" data-cs-kpi-loading>
+          {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white p-3 space-y-2" data-skeleton><SkelBar w={80} h={11} /><SkelBar w={90} h={22} /><SkelBar w="85%" h={9} /></div>)}
+        </div>
+      ) : (
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
         <KPI t="단가 변동액" v={man(st.net) + '원'} tone={st.net >= 0 ? 'ok' : 'warn'}
           n={`내린 품목 +${man(st.save)} · 오른 품목 −${man(st.loss)} · ${n(st.n)}건`} />
@@ -434,6 +447,7 @@ export default function CostSaving() {
         <KPI t="단가 검증 필요" v={n(susp.length) + '건'} tone={susp.length ? 'warn' : ''}
           n={susp.length ? '기준단가와 5배 넘게 차이 — 지표에서 뺐습니다. 아래 표 확인' : '기준단가가 크게 어긋난 건 없음'} />
       </div>
+      )}
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['kpi', '지표'], ['report', '📄 보고서'], ['ledger', `실적 대장 ${yLedger.length ? `(${yLedger.length})` : ''}`], ['std', `기준단가 ${stdRows.length ? `(${stdRows.length})` : ''}`]].map(([k, l]) => (
@@ -445,7 +459,12 @@ export default function CostSaving() {
         )}
       </div>
 
-      {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p> : tab === 'kpi' ? (
+      {isLoading ? (
+        <div className="rounded-xl border border-slate-200 bg-white" data-cs-loading>
+          <div className="px-4 py-3 border-b border-slate-100" data-skeleton><SkelBar w={150} h={13} /></div>
+          {[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="flex items-center gap-4 px-4 py-2.5 border-b border-slate-50 last:border-0" data-skeleton><SkelBar w={70} h={11} /><SkelBar w={110} h={11} /><SkelBar w="30%" h={11} /><SkelBar w={60} h={11} className="ml-auto" /></div>)}
+        </div>
+      ) : tab === 'kpi' ? (
         <>
           {susp.length > 0 && (
             <div className="rounded-xl border border-rose-200 bg-rose-50/50 p-4">

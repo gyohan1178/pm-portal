@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
+import { SkelBar } from '../../components/ux/Skeleton'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase, fetchAllRows } from '../../lib/supabase'
@@ -54,7 +55,17 @@ export default function WhatIfSim() {
   const reset = () => { setDelay(0); setDemand(0); setSafety(0) }
   const changed = delay !== 0 || demand !== 0 || safety !== 0
 
-  if (isLoading) return <div className="text-center py-16 text-slate-400 text-sm">데이터를 불러오는 중...</div>
+  if (isLoading) return (
+    <div className="space-y-5" data-whatif-loading>
+      <AnalysisTabs />
+      <div className="flex items-end justify-between" data-skeleton><div className="space-y-2"><SkelBar w={170} h={20} /><SkelBar w={300} h={11} /></div><SkelBar w={240} h={30} /></div>
+      <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4" data-skeleton>
+        <SkelBar w={110} h={13} />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">{[0, 1, 2].map((i) => <div key={i} className="space-y-2"><SkelBar w={90} h={11} /><SkelBar w="100%" h={8} /></div>)}</div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">{[0, 1, 2, 3].map((i) => <div key={i} className="rounded-xl border border-slate-200 bg-white p-4 space-y-2" data-skeleton><SkelBar w={80} h={11} /><SkelBar w={50} h={24} /></div>)}</div>
+    </div>
+  )
 
   return (
     <div className="space-y-5">

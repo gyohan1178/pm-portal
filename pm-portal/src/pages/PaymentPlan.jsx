@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { ResizableTable } from '../components/ResizableTable'
 import { todayISO } from '../lib/utils'
+import { SkeletonRows } from '../components/ux/Skeleton'
 
 // 표 열 너비 — 마우스로 조정 가능하며 브라우저에 저장된다
 const COLS = [
@@ -244,9 +245,7 @@ export default function PaymentPlan() {
         <ResizableTable cols={COLS} storageKey="payment_plan_cols" fill fillMin={360}>
           {() => (
           <tbody>
-            {isLoading && (
-              <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">불러오는 중…</td></tr>
-            )}
+            {isLoading && <SkeletonRows cols={COLS.length} rows={8} two={[0]} />}
             {shown.map((g) => {
               const has = num(g.planned_amt) > 0
               // ⚠ 발주액이 아니라 미입고 잔액과 견준다.

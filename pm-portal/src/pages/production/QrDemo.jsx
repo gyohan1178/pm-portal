@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import QRCode from 'qrcode'
 import { toastError } from '../../lib/toast'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { WoSheet, WorkOrderPrinter, useWoQr } from '../../components/WorkOrderPrint'
 import ScanView, { useDemoRows, useDemoStore, hm } from './ScanView'
 import { QR_STEPS, nextStep, qrText, revInfo, laneOf, LANES, md } from '../../lib/prodFlow'
@@ -55,7 +57,7 @@ export default function QrDemo() {
       </div>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">생산관리 데이터를 못 불러왔습니다 — {error.message}</div>}
-      {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p>
+      {isLoading ? <div className="rounded-xl border border-slate-200 bg-white overflow-hidden"><table className="w-full text-sm"><tbody><SkeletonRows cols={6} rows={6} first={1} two={[2]} /></tbody></table></div>
         : tab === 'wo' ? <WorkOrders rows={rows} />
         : tab === 'scan' ? <ScanTab rows={rows} store={store} />
         : <FlowTab rows={rows} st={st} put={put} doneOf={doneOf} />}
@@ -160,6 +162,7 @@ function ScanTab({ rows, store }) {
 /* ───────── ③ 공정 흐름 ───────── */
 function FlowTab({ rows, st, put, doneOf }) {
   const [all, setAll] = useState(false)
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 데모 기록 지우기 확인 창
   const now = Date.now()
   const touched = new Set(st.events.map((e) => String(e.pid)))
   const list = rows.filter((r) => all || touched.has(String(r.id)))
@@ -173,13 +176,14 @@ function FlowTab({ rows, st, put, doneOf }) {
 
   return (
     <div className="space-y-3">
+      {confirmEl}
       <div className="flex items-center gap-x-3 gap-y-2 flex-wrap text-xs">
         <label className="inline-flex items-center gap-1.5 font-semibold text-slate-600 whitespace-nowrap">
           <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> 찍지 않은 호기도 보기 ({rows.length})
         </label>
         <span className="text-slate-400">데모 기록 {st.events.length}건</span>
         {st.events.length > 0 && (
-          <button onClick={() => { if (window.confirm('이 기기의 데모 기록을 모두 지울까요? (생산관리 데이터는 그대로)')) put({ ...st, events: [] }) }}
+          <button onClick={async () => { if (await ask({ title: '이 기기의 데모 기록을 모두 지울까요?', desc: `데모 기록 ${st.events.length}건이 이 기기에서 지워지고 되돌릴 수 없습니다. 생산관리 데이터는 그대로입니다.`, okText: '모두 지우기', danger: true })) put({ ...st, events: [] }) }}
             className="ml-auto px-3 py-1.5 font-bold rounded-lg border border-slate-200 text-slate-500 hover:text-rose-600">데모 기록 지우기</button>
         )}
       </div>

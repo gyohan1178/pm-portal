@@ -6,6 +6,9 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import {
   parseCodeWorkbook, mergeDetail, summarizeCodes, CS_PREFIX,
 } from '../../lib/codeMap'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -13,6 +16,7 @@ const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 // 적재 후 items 등록·고객사 코드 연결까지 단계별로 진행할 수 있다.
 export default function CodeMapUpload() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [rel, setRel] = useState(null)      // 품목관계리스트 파싱 결과
   const [detail, setDetail] = useState(null) // 품목등록 상세
   const [files, setFiles] = useState({ rel: '', mst: '' })
@@ -97,7 +101,7 @@ export default function CodeMapUpload() {
 
   // STEP 3 — 미등록 품목 등록 (ED/CSK/VM)
   async function createItems() {
-    if (!confirm('매핑에는 있고 품목에는 없는 것을 모두 등록합니다.\n계속할까요?')) return
+    if (!(await ask({ title: '미등록 품목을 모두 등록할까요?', desc: '매핑에는 있고 품목에는 없는 것(Edwards · CSK · VM)을 기준코드 DB 에 새 품목으로 등록합니다. 이미 있는 품목은 건너뜁니다.', okText: '등록' }))) return
     setBusy('items'); setErr('')
     try {
       const { data, error } = await supabase.rpc('pm_create_items_from_map')
@@ -125,9 +129,17 @@ export default function CodeMapUpload() {
   }
 
   const sum = merged?.sum
+  // 단계 표시 — 기존 상태에서 읽기만 한다
+  const stepCur = busy === 'read' || !rel ? 0
+    : busy === 'map' ? 2
+    : result?.step === 'link' ? 4
+    : result?.step ? 3
+    : 1
+  const [pDone, pTotal] = String(progress || '').split(' / ').map(Number)
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div>
         <h1 className="text-lg font-bold text-slate-900">🔢 기준코드 매핑</h1>
         <p className="page-desc text-xs text-slate-400">
@@ -154,9 +166,10 @@ export default function CodeMapUpload() {
 
       {/* 업로드 */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-2">
+        <div className="max-w-[640px] pb-2" data-codemap-stepper><Stepper steps={['엑셀 올리기', '미리보기 점검', '매핑 적재', '후속 반영']} cur={stepCur} /></div>
         <label className={`inline-flex items-center gap-2 px-4 py-2.5 text-sm font-bold rounded-lg
           border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 cursor-pointer ${busy ? 'opacity-50' : ''}`}>
-          📤 {busy === 'read' ? '읽는 중…' : '엑셀 업로드'}
+          📤 {busy === 'read' ? <><Spin />읽는 중…</> : '엑셀 업로드'}
           <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} disabled={!!busy} />
         </label>
         <div className="flex flex-wrap gap-3 text-xs">
@@ -214,9 +227,10 @@ export default function CodeMapUpload() {
             </div>
           </div>
 
+          {busy === 'map' && pTotal > 0 && <div className="max-w-[420px]"><ProgressBar done={pDone || 0} total={pTotal} label="매핑 적재 중" /></div>}
           <button onClick={saveMap} disabled={!!busy}
-            className="px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy === 'map' ? `적재 중… ${progress}` : `💾 매핑 ${n(sum.total)}건 적재`}
+            className="inline-flex items-center gap-1.5 px-5 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+            {busy === 'map' ? <><Spin />{`적재 중… ${progress}`}</> : `💾 매핑 ${n(sum.total)}건 적재`}
           </button>
         </div>
       )}
@@ -240,7 +254,7 @@ export default function CodeMapUpload() {
               </div>
               <button onClick={fn} disabled={!!busy}
                 className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40 whitespace-nowrap">
-                {busy === key ? '처리 중…' : '실행'}
+                {busy === key ? <span className="inline-flex items-center gap-1.5"><Spin />처리 중…</span> : '실행'}
               </button>
             </div>
           ))}

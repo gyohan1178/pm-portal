@@ -4,6 +4,8 @@ import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
 import { toastError, toastSuccess } from '../lib/toast'
 import { useCanEdit } from '../hooks/useProfile'
+import { SkeletonRows } from './ux/Skeleton'
+import Spin from './ux/Spin'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const sign = (v) => (v > 0 ? `+${n(v)}` : v < 0 ? `−${n(-v)}` : '0')
@@ -104,7 +106,7 @@ export default function AuditApplyModal({ onClose }) {
         </div>
 
         <div className="px-5 pb-2 max-h-[60vh] overflow-auto">
-          {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p>
+          {isLoading ? <table className="w-full text-xs"><tbody><SkeletonRows cols={10} rows={6} first={1} two={[2]} /></tbody></table>
            : shown.length === 0 ? <p className="py-10 text-center text-sm text-slate-400">반영할 실사가 없습니다</p>
            : (
             <table className="w-full text-xs whitespace-nowrap">
@@ -142,7 +144,7 @@ export default function AuditApplyModal({ onClose }) {
           <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">닫기</button>
           <button onClick={() => apply(pickedDiff, '재고 반영')} disabled={busy || !pickedDiff.length}
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '반영 중…' : `고른 ${n(pickedDiff.length)}건 재고에 반영`}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : `고른 ${n(pickedDiff.length)}건 재고에 반영`}
           </button>
         </div>
       </div>

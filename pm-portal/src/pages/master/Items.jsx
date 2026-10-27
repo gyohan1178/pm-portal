@@ -9,6 +9,10 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import VendorPicker from '../../components/VendorPicker'
 import * as XLSX from 'xlsx'
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import Spin from '../../components/ux/Spin'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
@@ -106,6 +110,7 @@ const COLS = [
 
 export default function Items() {
   const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
   const [search, setSearch] = useState('')
   const [searchField, setSearchField] = useState('전체')  // 전체/코드/품명/규격/구매처
   const [catFilter, setCatFilter] = useState('전체')
@@ -260,6 +265,7 @@ export default function Items() {
   }
 
   const [vendorImport, setVendorImport] = useState(null)
+  const [vProg, setVProg] = useState(null)   // 적용 진행 { done, total } — 화면 표시용
   const vendorFileRef = useRef(null)
 
   async function handleVendorFile(e) {
@@ -299,12 +305,18 @@ export default function Items() {
     mutationFn: async () => {
       const byVendor = {}
       for (const u of vendorImport.toUpdate) { (byVendor[u.vendor_id] ||= []).push(u.std_code) }
-      for (const [vid, list] of Object.entries(byVendor)) {
-        for (let i = 0; i < list.length; i += 200) {
-          const { error } = await supabase.from('items').update({ vendor_id: vid }).in('std_code', list.slice(i, i + 200))
-          if (error) throw error
+      let done = 0
+      setVProg({ done: 0, total: vendorImport.toUpdate.length })
+      try {
+        for (const [vid, list] of Object.entries(byVendor)) {
+          for (let i = 0; i < list.length; i += 200) {
+            const { error } = await supabase.from('items').update({ vendor_id: vid }).in('std_code', list.slice(i, i + 200))
+            if (error) throw error
+            done += list.slice(i, i + 200).length
+            setVProg({ done, total: vendorImport.toUpdate.length })
+          }
         }
-      }
+      } finally { setVProg(null) }
     },
     onSuccess: () => { qc.invalidateQueries(['items']); const n = vendorImport.toUpdate.length; setVendorImport(null); toastSuccess(`구매처 일괄 업데이트 완료 — ${n}건`) },
     onError: (e) => toastError('업데이트 오류: ' + e.message),
@@ -329,6 +341,7 @@ export default function Items() {
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <PageHead crumb="기초자료" title="기준코드 DB"
         desc="모든 품목의 기준코드(JS-) · 품명 · 제조사 · 구매처를 관리합니다. 고객사 코드와의 연결은 「기준코드 매핑」에서 합니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
@@ -377,14 +390,16 @@ export default function Items() {
       </div>
 
       {vendorImport && (
-        <div className="rounded-xl border border-emerald-300 bg-emerald-50/40 p-4 space-y-3">
+        <div className="rounded-xl border border-emerald-300 bg-emerald-50/40 p-4 space-y-3" data-vendor-import>
+          <div className="max-w-[520px]"><Stepper steps={['엑셀 고르기', '미리보기 점검', '적용']} cur={applyVendorMut.isPending ? 2 : 1} /></div>
+          {vProg && vProg.total > 200 && <div className="max-w-[520px]"><ProgressBar done={vProg.done} total={vProg.total} label="구매처 적용 중" /></div>}
           <div className="flex items-center justify-between flex-wrap gap-2">
             <p className="text-sm font-bold text-emerald-800">📤 구매처 일괄매칭 미리보기 <span className="text-slate-400 font-normal">· 파일 {vendorImport.total}행</span></p>
             <div className="flex gap-2">
               <button onClick={()=>setVendorImport(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">취소</button>
               <button onClick={()=>applyVendorMut.mutate()} disabled={applyVendorMut.isPending || !vendorImport.toUpdate.length}
                 className="px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-40">
-                {applyVendorMut.isPending ? '적용 중...' : `⚡ ${vendorImport.toUpdate.length}건 적용`}
+                {applyVendorMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />적용 중...</span> : `⚡ ${vendorImport.toUpdate.length}건 적용`}
               </button>
             </div>
           </div>
@@ -481,7 +496,7 @@ export default function Items() {
             <button onClick={()=>bulkMut.mutate()}
               disabled={selected.size===0 || (bulkForm.lt_weeks===''&&bulkForm.safety_stock===''&&bulkForm.dept.trim()===''&&bulkForm.prod_managed===''&&bulkForm.stock_managed==='') || bulkMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40">
-              {bulkMut.isPending ? '수정 중...' : `선택 ${selected.size}건 일괄수정`}
+              {bulkMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />수정 중...</span> : `선택 ${selected.size}건 일괄수정`}
             </button>
           </div>
         </div>
@@ -603,7 +618,7 @@ export default function Items() {
             <button onClick={()=>saveMut.mutate(form)}
               disabled={!form.std_code.trim()||!form.name.trim()||saveMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-              {saveMut.isPending ? '저장 중...' : editId ? '수정 완료' : '등록'}
+              {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span> : editId ? '수정 완료' : '등록'}
             </button>
           </div>
         </div>
@@ -648,7 +663,7 @@ export default function Items() {
               <button onClick={()=>addCodeMut.mutate({itemId:codeModal.itemId,...codeForm})}
                 disabled={!codeForm.customer_id||!codeForm.customer_code||addCodeMut.isPending}
                 className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {addCodeMut.isPending ? '추가 중...' : '추가'}
+                {addCodeMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />추가 중...</span> : '추가'}
               </button>
             </div>
           </div>
@@ -663,7 +678,11 @@ export default function Items() {
           </button>
         </div>
       )}
-      {isLoading ? <div className="text-center py-12 text-slate-400 text-sm">불러오는 중...</div> : (
+      {isLoading ? (
+        <ResizableTable cols={COLS} storageKey="items_cols" fill fillMin={360}>
+          {() => <tbody data-items-loading><SkeletonRows cols={COLS.length} rows={10} two={[1]} /></tbody>}
+        </ResizableTable>
+      ) : (
         <ResizableTable cols={COLS} storageKey="items_cols" fill fillMin={360}>
           {() => (
             <tbody>
@@ -748,7 +767,7 @@ export default function Items() {
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button onClick={()=>handleEdit(item)}
                           className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
-                        <button onClick={()=>{ if(window.confirm('삭제할까요?')) deleteMut.mutate(item.id) }}
+                        <button onClick={async()=>{ if(await ask({ title:'이 품목을 삭제할까요?', desc:'기준코드 DB 에서 품목이 지워지며 되돌릴 수 없습니다.', items:[[item.js_code||item.std_code, item.name, item.manufacturer].filter(Boolean).join(' · ')], okText:'삭제', danger:true })) deleteMut.mutate(item.id) }}
                           className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">삭제</button>
                       </div>
                     </td>

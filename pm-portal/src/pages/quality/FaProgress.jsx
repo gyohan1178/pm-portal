@@ -11,6 +11,9 @@ import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useCustomer } from '../../hooks/useCustomers'
 import { ResizableTable } from '../../components/ResizableTable'
 import { customerRows, customerSummary, custTone, CUST_COLS, exportFaCustomer } from '../../lib/faCustomerReport'
+import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
+import Spin from '../../components/ux/Spin'
 import {
   FA_TYPES, FA_GATES, faTypeLabel, faTypeTone, gatesOf, gateInfo, stepsOf, stepLabel, stepState, stepText,
   faProgress, faStage, faApproved, faDelay, dayDiff, parseFaPaste,
@@ -89,6 +92,7 @@ export default function FaProgress() {
   const { data: ax } = useCustomer('ax')
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['faList'], queryFn: fetchFa })
   const { data: logs = [], isSuccess: logOk } = useQuery({ queryKey: ['faLog'], queryFn: fetchLog })
+  const [ask, confirmEl] = useConfirm()   // v4.104.0 — 이슈 · 초도품 지우기 확인 창
   const [sp, setSp] = useSearchParams()
 
   const [q, setQ] = useState('')
@@ -240,7 +244,8 @@ export default function FaProgress() {
     if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return false }
     try {
       if (act === 'delete') {
-        if (!window.confirm(`이 이슈를 지울까요? 달린 답변 ${issue.replies?.length || 0}개도 같이 지워집니다.\n\n${issue.body}`)) return false
+        if (!(await ask({ title: '이 이슈를 지울까요?', desc: `달린 답변 ${issue.replies?.length || 0}개도 같이 지워지고 되돌릴 수 없습니다.`,
+          items: [`${issue.cat ? `[${issue.cat}] ` : ''}${issue.body}`], okText: '이슈 지우기', danger: true }))) return false
         must(await supabase.from('pm_fa_log').delete().eq('id', issue.id), '이슈 지우기')
       } else {
         const close = act === 'close'
@@ -254,7 +259,8 @@ export default function FaProgress() {
   }
 
   async function remove(fa) {
-    if (!window.confirm(`${fa.item_code} (${fa.po_number}) 를 지울까요? 단계 · 체크 · 이슈 기록도 같이 지워집니다.`)) return
+    if (!(await ask({ title: `${fa.item_code} (${fa.po_number}) 를 지울까요?`, desc: '단계 · 체크 · 이슈 기록도 같이 지워지고 되돌릴 수 없습니다.',
+      items: [`${fa.item_code} · ${fa.item_desc || ''} · FA PO ${fa.po_number}`], okText: '삭제', danger: true }))) return
     try {
       must(await supabase.from('pm_fa').delete().eq('id', fa.id), '초도품 삭제')
       reload(); setOpenId(null); toastSuccess('지웠습니다')
@@ -290,12 +296,18 @@ export default function FaProgress() {
       return (
         <div className="space-y-3">
           <button onClick={() => setOpenId(null)} className="text-sm font-bold text-indigo-600 hover:underline">← 돌아가기</button>
-          <p className="py-10 text-center text-sm text-slate-400">{isLoading ? '불러오는 중…' : '이 건을 찾지 못했습니다 (지워졌을 수 있습니다)'}</p>
+          {isLoading ? (
+            <div className="rounded-xl border border-slate-200 bg-white p-4 space-y-3" data-skeleton>
+              <SkelBar w={220} h={18} /><SkelBar w="60%" h={11} />
+              {[0, 1, 2, 3, 4].map((i) => <div key={i} className="flex items-center gap-3"><SkelBar w={90} h={12} /><SkelBar w="50%" h={10} /></div>)}
+            </div>
+          ) : <p className="py-10 text-center text-sm text-slate-400">이 건을 찾지 못했습니다 (지워졌을 수 있습니다)</p>}
         </div>
       )
     }
     const i = order.findIndex((r) => r.id === open.id)
-    return (
+    return (<>
+      {confirmEl}
       <FaSheet key={open.id} fa={open} today={today} canEdit={canEdit}
         logs={logs.filter((l) => l.fa_id === open.id)}
         pos={i >= 0 ? `${i + 1} / ${order.length}` : ''}
@@ -303,13 +315,14 @@ export default function FaProgress() {
         backLabel={{ board: '보드', list: '목록', meet: '주간 회의' }[view] || '보드'}
         onGo={setOpenId} onBack={() => setOpenId(null)}
         onStep={setStep} onSave={saveInfo} onLog={addLog} onIssue={setIssue} onDelete={remove} />
-    )
+    </>)
   }
 
   const chip = (on) => `px-3 py-1.5 border-r last:border-r-0 border-slate-200 ${on ? 'bg-indigo-600 text-white' : 'bg-white text-slate-500 hover:bg-slate-50'}`
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <p className="text-[11px] font-semibold text-slate-400">🔬 품질</p>
@@ -382,8 +395,20 @@ export default function FaProgress() {
         {view !== 'meet' && <span className="text-xs text-slate-400 ml-auto">{n(base.length)}건</span>}
       </div>
 
-      {isLoading ? <p className="py-10 text-center text-sm text-slate-400">불러오는 중…</p>
-        : rows.length === 0 ? (
+      {isLoading ? (
+        view === 'list' ? (
+          <div className="rounded-xl border border-slate-200 bg-white overflow-hidden"><table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={8} two={[1]} /></tbody></table></div>
+        ) : (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+            {[0, 1, 2, 3, 4].map((c) => (
+              <div key={c} className="rounded-xl bg-slate-100 p-2 space-y-2" data-skeleton>
+                <SkelBar w={80} h={13} />
+                {[0, 1, 2].map((i) => <div key={i} className="rounded-lg bg-white p-2.5 space-y-1.5"><SkelBar w="70%" h={11} /><SkelBar w="45%" h={9} /></div>)}
+              </div>
+            ))}
+          </div>
+        )
+      ) : rows.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-300 p-10 text-center text-sm text-slate-400">
             아직 초도품이 없습니다. 오른쪽 위 「📋 FA 목록 붙여넣기」로 고객사 FA 목록을 붙여 넣으세요.
           </div>
@@ -492,7 +517,7 @@ function CustomerExport({ view, all, today, filtered, onClose }) {
           <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">닫기</button>
           <button onClick={run} disabled={busy || !rows.length}
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '만드는 중…' : `영문 엑셀 내려받기 — ${rows.length}건`}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : `영문 엑셀 내려받기 — ${rows.length}건`}
           </button>
         </div>
       </div>
@@ -783,7 +808,11 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
     const rd = revDiff(fa, { srev: info.srev.trim(), brev: info.brev.trim() })
     if (ok && rd.length) await onLog(fa, 'Rev', `${rd.join(' · ')} (직접 수정)`)
   }
-  const go = (id) => { if (dirty && !window.confirm('저장하지 않은 정보가 있습니다. 그냥 넘어갈까요?')) return; onGo(id) }
+  const [ask, confirmEl] = useConfirm()   // v4.104.0
+  const go = async (id) => {
+    if (dirty && !(await ask({ title: '저장하지 않은 정보가 있습니다 — 그냥 넘어갈까요?', desc: '넘어가면 이 화면에서 고친 정보는 사라집니다.', okText: '저장 안 하고 넘어가기', cancelText: '계속 고치기', danger: true }))) return
+    onGo(id)
+  }
 
   const gates = gateInfo(fa, today)
   const pct = faProgress(fa)
@@ -823,6 +852,7 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
   const inp = 'px-2 py-1.5 text-sm border border-slate-200 rounded-lg disabled:bg-slate-50'
   return (
     <div className="space-y-4">
+      {confirmEl}
       <div className="flex items-center gap-2 flex-wrap">
         <button onClick={() => go(null)} className="px-3 py-1.5 text-sm font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">← {backLabel}</button>
         <div className="ml-auto flex items-center gap-2">
@@ -1285,7 +1315,7 @@ function PasteModal({ rows, csId, me, onClose, onDone }) {
           <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">닫기</button>
           <button onClick={run} disabled={busy || !parsed.rows.length}
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {busy ? '넣는 중…' : `넣기 — 새로 ${news.length} · 갱신 ${upds.length}`}
+            {busy ? <span className="inline-flex items-center gap-1.5"><Spin />넣는 중…</span> : `넣기 — 새로 ${news.length} · 갱신 ${upds.length}`}
           </button>
         </div>
       </div>
