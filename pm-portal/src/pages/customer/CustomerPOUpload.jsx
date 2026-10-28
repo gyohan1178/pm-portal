@@ -589,6 +589,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
                           {sm.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>구매자재 재회신 필요</b> {sm.resets}건</div>}
                         </div>}
                     {op && sm.missing > 0 && <div className="mt-1 text-amber-700">· 엑셀 어디에도 없는 수주대장 진행 중 줄 {sm.missing} — 바꾸지 않음</div>}
+                    {op && sm.skippedTp > 0 && <div className="mt-1 text-slate-500" data-skip-tp>· 3rd party PO {sm.skippedTp}건 — 수주대장 「기타」 업체로 따로 관리해 건너뜀</div>}
                   </div>
                 )
               })()}

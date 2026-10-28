@@ -441,6 +441,15 @@ export async function axSyncPreview(fileRows) {
   const rows = await axRowsOfFile(fileRows)
   const brevReady = await brevColReady()   // BREV 칸(SQL 전이면 없음) — 없으면 BREV 는 건너뛴다
   const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
+  // 3rd party (동신 · 동원파츠 …) PO 는 수주대장에서 「기타」 업체 — AXCELIS 로 다시 들이지 않는다 (v4.111.0)
+  //   ① 기타로 등록된 PO 번호 ② 고객사 PO 의 3rd party 줄 PO 번호 — 이 엑셀에 섞여 있어도 건너뛴다
+  const skipNos = new Set()
+  try {
+    const etc = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'ETC').order('id'))
+    etc.forEach((o) => skipNos.add(o.po_no))
+    const tp = await fetchAll(() => supabase.from('purchase_orders').select('id,po_number').eq('order_type', 'customer_po').not('third_party', 'is', null).order('id'))
+    tp.forEach((r) => r.po_number && skipNos.add(r.po_number))
+  } catch { /* 3rd party 칸이 없는 옛 DB — 건너뛸 것 없음 */ }
   const hids = heads.map((h) => h.id)
   const lines = []
   for (let i = 0; i < hids.length; i += 200) {
@@ -453,8 +462,9 @@ export async function axSyncPreview(fileRows) {
   rows.forEach((r) => { if (!r.po_number) return; if (!byPo.has(r.po_number)) byPo.set(r.po_number, []); byPo.get(r.po_number).push(r) })
   const headByNo = new Map(heads.map((h) => [h.po_no, h]))
 
-  const newPos = [], upd = [], add = []; const hist = []; let resets = 0
+  const newPos = [], upd = [], add = []; const hist = []; let resets = 0, skippedTp = 0
   for (const [po_no, ls] of byPo) {
+    if (skipNos.has(po_no) && !headByNo.has(po_no)) { skippedTp++; continue }
     const h = headByNo.get(po_no)
     if (!h) {
       if (ls.some((l) => l.status !== '취소')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중') })
@@ -510,7 +520,7 @@ export async function axSyncPreview(fileRows) {
       missing: missing.length,
       changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), brev: cnt('brev'), price: cnt('unit_price'),
-      delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets,
+      delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets, skippedTp,
     },
   }
 }
@@ -680,7 +690,7 @@ export function bizDaysSince(ts, now = new Date()) {
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
 // 특이사항 메모 칸 (pm_order.note) — SQL 전이면 이 안내 (v4.109.0)
 export const NOTE_SQL_HINT = '특이사항 메모 칸이 아직 없습니다 — Supabase SQL Editor 에서 수주대장_특이사항메모_반영_261028.sql 을 먼저 실행해 주세요'
-export const FIELD_LABEL = { note: '특이사항 메모', po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
+export const FIELD_LABEL = { customer: '고객사', note: '특이사항 메모', po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
 
 // 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
 //   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })

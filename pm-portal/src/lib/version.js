@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.110.0'
+export const APP_VERSION = 'v4.111.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.110.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.111.0',
+    date: '2026-10-29',
+    changes: [
+      '수주대장 3rd party(동신 · 동원파츠) PO 는 「기타」 업체로 — AXCELIS PO 엑셀을 올릴 때 기타로 옮긴 PO · 고객사 PO 의 3rd party PO 번호는 AXCELIS 로 다시 들이지 않고 「3rd party PO n건 — 건너뜀」으로 알림 (수주대장_3rdparty_기타_반영_261029.sql 로 기존 9건 옮김)',
+    ],
+  },
   {
     version: 'v4.110.0',
     date: '2026-10-28',

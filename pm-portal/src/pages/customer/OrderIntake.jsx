@@ -833,6 +833,7 @@ export default function OrderIntake() {
                 )}
               </div>
             )}
+            {s.skippedTp > 0 && <div className="mt-2 text-xs text-slate-500" data-skip-tp>· 3rd party PO {s.skippedTp}건 — 수주대장 「기타」 업체로 따로 관리해 건너뜀</div>}
             {s.missing > 0 && (
               <details className="mt-2 text-xs text-amber-700" data-ax-missing>
                 <summary className="cursor-pointer">⚠ 엑셀 어디에도 없는 수주대장 진행 중 줄 {s.missing} — 바꾸지 않음 (줄 번호가 바뀌었거나 Received 반영 전일 수 있음)</summary>
