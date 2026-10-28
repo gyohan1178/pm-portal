@@ -21,7 +21,7 @@ import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
+  replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
@@ -488,6 +488,21 @@ export default function OrderIntake() {
     patchLines((l) => r.patches.get(l.id) || null)
     if (unconfirm.length) patchHead(unconfirm, () => ({ confirmed_at: null, confirmed_name: null }))
     if (fields === REPLY_FIELDS) qc.invalidateQueries({ queryKey: ['menuAlerts'] })   // 메뉴 「미확인」 숫자
+    // 납품 되돌림 — CSK 생산관리 호기도 맞춘다 (v4.110.0)
+    if (fields === DLV_FIELDS) await syncProd(prev)
+  }
+  // 수주대장 납품 → CSK 생산관리 호기 완료 · 되돌림 (v4.110.0). 실패해도 납품 저장은 그대로 — 안내만
+  const syncProd = async (ls) => {
+    const plnds = cskPlndsOf(ls)
+    if (!plnds.length) return null
+    try {
+      const r = await syncCskProdDone(plnds, meName)
+      if (r.done.length || r.undone.length) { qc.invalidateQueries({ queryKey: ['production', 'CSK'] }); toastSuccess(cskProdMsg(r)) }
+      return r
+    } catch (e) {
+      toastError('생산관리 호기 반영 실패 — 생산관리에서 상태를 직접 바꿔 주세요: ' + (e?.message || e))
+      return null
+    }
   }
   const replyMut = useMutation({
     // 이 회신으로 처음 「확인」되는 PO — 되돌리면 다시 미확인으로
@@ -520,6 +535,7 @@ export default function OrderIntake() {
     mutationFn: ({ ls, on }) => markDelivered(ls, on, meName),
     onSuccess: (r, v) => {
       patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set())
+      syncProd(v.ls)   // CSK — 생산관리 호기 완료 · 취소 (결과는 따로 안내)
       const msg = `${v.on ? '납품 표시' : '납품 취소'} ${v.ls.length}품목`
       if (v.ls.length && undoable(v.ls)) snack.show(msg, () => undoMut(v.ls, DLV_FIELDS, { field: 'delivered', textOf: (l) => String(+l.delivered_qty || 0), label: v.on ? '납품 표시' : '납품 취소' }))
       else if (v.ls.length) toastSuccess(msg)

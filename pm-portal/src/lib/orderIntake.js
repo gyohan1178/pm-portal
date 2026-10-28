@@ -862,6 +862,83 @@ export async function setReleaseDate(lines, date, meName) {
   return { ids, patch: { release_date: date || null, updated_at: now } }
 }
 
+// ── 수주대장 납품 → CSK 생산관리 호기 완료 (v4.110.0) ─────────────────
+//   CSK 는 발주 1건 = 1대 — 생산관리 줄(production.csk.plnd)과 수주대장 줄(plnd_no)이 Plnd 번호로 이어져 있다.
+//   그 Plnd 의 진행 중 수주 줄이 다 납품되면 생산관리 호기를 「완료」로 (납품일 = 수주대장 납품일).
+//   납품을 취소 · 되돌려 다시 덜 납품되면, 이 기능이 완료로 바꾼 호기만 예전 상태로 돌린다
+//   (사람이 생산관리에서 직접 완료로 바꾼 호기는 건드리지 않음).
+//   VM 은 납품 뒤 「현장작업」이 있고, Edwards 는 부품 PO 여럿이 장비 한 대에 붙어 있어 자동으로 하지 않는다.
+//   plnds — 방금 납품 상태가 바뀐 CSK 줄들의 Plnd 번호. 지금 DB 상태를 다시 읽어 판단한다.
+export async function syncCskProdDone(plnds, meName) {
+  const want = [...new Set((plnds || []).map((p) => String(p || '').trim()).filter(Boolean))]
+  const out = { done: [], undone: [] }
+  if (!want.length) return out
+  const lines = []
+  for (let i = 0; i < want.length; i += 150) {
+    const { data, error } = await supabase.from('pm_order_line')
+      .select('id,order_id,plnd_no,qty,delivered_qty,delivered_at,cancelled').in('plnd_no', want.slice(i, i + 150))
+    if (error) throw error
+    lines.push(...(data || []))
+  }
+  const oids = [...new Set(lines.map((l) => l.order_id))]
+  const heads = new Map()
+  for (let i = 0; i < oids.length; i += 150) {
+    const { data, error } = await supabase.from('pm_order').select('id,po_no,customer_code,planned,cancelled').in('id', oids.slice(i, i + 150))
+    if (error) throw error
+    ;(data || []).forEach((o) => heads.set(o.id, o))
+  }
+  // Plnd 마다 — 진행 중(발주 예정 · 취소 제외) 줄이 하나라도 있고 그게 다 납품됐는지
+  const st = new Map()
+  for (const l of lines) {
+    const o = heads.get(l.order_id)
+    if (!o || o.customer_code !== 'CSK' || o.planned || o.cancelled || l.cancelled || !(+l.qty > 0)) continue
+    const k = String(l.plnd_no)
+    if (!st.has(k)) st.set(k, { all: true, n: 0, date: null, pos: new Set() })
+    const s = st.get(k)
+    s.n++; s.pos.add(o.po_no)
+    if ((+l.delivered_qty || 0) < +l.qty) s.all = false
+    else if (l.delivered_at && (!s.date || l.delivered_at > s.date)) s.date = l.delivered_at
+  }
+  const prods = []
+  for (let i = 0; i < want.length; i += 150) {
+    const { data, error } = await supabase.from('production')
+      .select('id,hogi,status,shipped_date,changes,csk').eq('customer_code', 'CSK').in('csk->>plnd', want.slice(i, i + 150))
+    if (error) throw error
+    prods.push(...(data || []))
+  }
+  const now = new Date().toISOString()
+  const today = now.slice(0, 10)
+  const patches = []
+  for (const r of prods) {
+    const s = st.get(String(r.csk?.plnd || ''))
+    const ch = Array.isArray(r.changes) ? r.changes : []
+    const last = ch[ch.length - 1]
+    if (s && s.n && s.all && r.status !== '완료') {
+      const po = [...s.pos].join(', ')
+      patches.push({ id: r.id, hogi: r.hogi, kind: 'done', v: {
+        status: '완료', shipped_date: r.shipped_date || s.date || today, updated_at: now,
+        changes: [...ch, { type: '납품완료', msg: `수주대장 납품 반영 (${po}) — 이전 상태 ${r.status || 'PO접수'}`, src: '수주대장', prev: r.status || 'PO접수', prevShip: r.shipped_date || null, by: meName || null, at: now }],
+      } })
+    } else if (!(s && s.n && s.all) && r.status === '완료' && last?.src === '수주대장' && last?.type === '납품완료') {
+      patches.push({ id: r.id, hogi: r.hogi, kind: 'undone', v: {
+        status: last.prev || '납품대기', shipped_date: last.prevShip || null, updated_at: now,
+        changes: [...ch, { type: '납품취소', msg: `수주대장 납품 취소로 되돌림 — ${last.prev || '납품대기'}`, src: '수주대장', by: meName || null, at: now }],
+      } })
+    }
+  }
+  await pool(patches, (p) => supabase.from('production').update(p.v).eq('id', p.id))
+  patches.forEach((p) => out[p.kind].push(p.hogi))
+  if (patches.length) logActivity('update', 'production', [...out.done, ...out.undone].slice(0, 5).join(', '), `수주대장 납품 → CSK 생산관리 완료 ${out.done.length} · 되돌림 ${out.undone.length}`, null, 'CSK')
+  return out
+}
+// 고른 줄 중 CSK 의 Plnd 번호
+export const cskPlndsOf = (ls) => [...new Set((ls || []).filter((l) => (l.o?.customer_code || l.customer_code) === 'CSK' && l.plnd_no).map((l) => String(l.plnd_no)))]
+// 결과 한 줄 안내 — 「생산관리 JS2610-46 · 47 완료」
+export const cskProdMsg = (r) => [
+  r?.done?.length ? `생산관리 ${r.done.slice(0, 3).join(' · ')}${r.done.length > 3 ? ` 외 ${r.done.length - 3}` : ''} 완료` : '',
+  r?.undone?.length ? `생산관리 ${r.undone.slice(0, 3).join(' · ')}${r.undone.length > 3 ? ` 외 ${r.undone.length - 3}` : ''} 완료 취소` : '',
+].filter(Boolean).join(' · ')
+
 export async function markDelivered(lines, delivered, meName) {
   const now = new Date().toISOString()
   const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: now.slice(0, 10), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
