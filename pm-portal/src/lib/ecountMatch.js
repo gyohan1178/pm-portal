@@ -8,7 +8,7 @@
 //   품목코드는 이카운트 코드(기준코드 JS-…)가 기본 — 포털 코드 · 고객사 품번으로도 맞춘다.
 import { supabase } from './supabase'
 import { logActivity } from './activityLog'
-import { ORDER_CUSTOMERS, normKey, lineKey } from './orderIntake'
+import { normKey, lineKey, orderCustName, orderCustKey } from './orderIntake'
 import { custOf, kindOf, ymd } from './orderEntry'
 
 // 이카운트 판매입력 양식 머리글 — 받은 Template 그대로 (순서 · 글자)
@@ -90,7 +90,9 @@ export function matchEcount({ rows, orders, month, cust = 'all' }) {
   for (const r of rows.filter((x) => inMonth(x.date, month))) {
     const nameCust = custOfName(r.cust_name)
     const cand = byPo.get(normKey(r.po_no)) || []
-    let o = cand.find((x) => x.customer_code === nameCust) || cand[0] || (r.slip ? bySlip.get(normSlip(r.slip)) : null) || null
+    // 기타 업체끼리 PO번호가 겹치면 이카운트 거래처명에 업체 이름이 든 쪽 (v4.107.0)
+    const etcHit = cand.find((x) => x.customer_code === 'ETC' && normKey(x.customer_name) && normKey(r.cust_name).includes(normKey(x.customer_name)))
+    let o = etcHit || cand.find((x) => x.customer_code === nameCust) || cand[0] || (r.slip ? bySlip.get(normSlip(r.slip)) : null) || null
     if (!want(o ? o.customer_code : nameCust)) continue
     if (!o) { items.push({ kind: 'only_ecount', r, cust: nameCust }); continue }
     const code = normKey(r.code)
@@ -160,7 +162,7 @@ export function salesInputRows(lines, custCodes = {}) {
     const q = shipQty(l), price = +l.unit_price || 0, usd = isUsd(o)
     const amt = Math.round(q * price * (usd ? 100 : 1)) / (usd ? 100 : 1)
     const row = {
-      일자: date.replace(/-/g, ''), 순번: seqOf.get(k), 거래유형: '', 거래처코드: custCodes[o.customer_code] || '', 거래처명: ORDER_CUSTOMERS[o.customer_code]?.name || o.customer_code,
+      일자: date.replace(/-/g, ''), 순번: seqOf.get(k), 거래유형: '', 거래처코드: custCodes[orderCustKey(o)] || '', 거래처명: orderCustName(o),
       통화: usd ? 'USD' : '', 환율: '', 담당자: '', 출하창고: '', 배송방법: '', 프로젝트: '', 메모: '', 'PO No.': o.po_no, '임시(구 메모)': '',
       품목코드: l.items?.js_code || l.items?.std_code || l.raw_pn || '', 품목명: l.items?.name || l.raw_desc || '', 규격: l.spec || '',
       수량: q, 단가: price || '', '단가(vat포함)': '', 외화공급가액: usd ? amt : '', 공급가액: usd ? '' : amt, 부가세: '', 적요: `${o.po_no} ${lineKey(l)}`, 생산전표생성: '',

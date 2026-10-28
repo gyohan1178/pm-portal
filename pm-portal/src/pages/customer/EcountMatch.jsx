@@ -2,7 +2,7 @@
 //   ① 판매입력 파일 만들기 — 납품했는데 판매입력 안 된 줄 → 이카운트 판매입력 업로드 양식
 //   ② 판매 자료 올려 대조 — PO No. · 품목코드로 맞추고, 맞은 줄은 「판매입력 마감」 + 명세서번호
 import { useState, useMemo, useRef } from 'react'
-import { ORDER_CUSTOMERS, lineKey } from '../../lib/orderIntake'
+import { ORDER_CUSTOMERS, lineKey, orderCustName, orderCustKey } from '../../lib/orderIntake'
 import { parseEcountSales, matchEcount, applyEcount, salesInputWorkbook, normSlip } from '../../lib/ecountMatch'
 import { KINDS, kindOf } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
@@ -91,7 +91,9 @@ export default function EcountMatch({ orders, editable, meName, onChanged }) {
   }
 
   const C = res?.counts
-  const custs = cust === 'all' ? Object.keys(ORDER_CUSTOMERS) : [cust]
+  // 거래처코드 칸 — 4개 고객사 + 이번 판매입력에 든 기타 업체마다 (기타는 업체마다 이카운트 거래처가 다르다, v4.107.0)
+  const etcKeys = [...new Map(toInput.filter((l) => l.o.customer_code === 'ETC').map((l) => [orderCustKey(l.o), orderCustName(l.o)])).entries()]
+  const custs = [...(cust === 'all' ? Object.keys(ORDER_CUSTOMERS) : [cust]).filter((k) => !ORDER_CUSTOMERS[k].manual).map((k) => [k, ORDER_CUSTOMERS[k].name]), ...etcKeys]
   return (
     <div className="space-y-4" data-ecount>
       <p className="page-desc text-xs text-slate-400 leading-relaxed">
@@ -119,7 +121,7 @@ export default function EcountMatch({ orders, editable, meName, onChanged }) {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11.5px] text-slate-500">이카운트 거래처코드</span>
-          {custs.map((k) => <label key={k} className="flex items-center gap-1 text-[11.5px] text-slate-600">{ORDER_CUSTOMERS[k].name}<input value={codes[k] || ''} onChange={(e) => setCodes({ ...codes, [k]: e.target.value })} data-ec-code={k} className="w-24 h-7 px-1.5 text-[11.5px] font-mono border border-slate-200 rounded" /></label>)}
+          {custs.map(([k, nm]) => <label key={k} className="flex items-center gap-1 text-[11.5px] text-slate-600">{nm}<input value={codes[k] || ''} onChange={(e) => setCodes({ ...codes, [k]: e.target.value })} data-ec-code={k} className="w-24 h-7 px-1.5 text-[11.5px] font-mono border border-slate-200 rounded" /></label>)}
           <span className="flex-1" />
           <button type="button" onClick={exportInput} disabled={!toInput.length} data-ec-export className="h-8 px-3 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">판매입력 파일 받기 ({pick.size || toInput.length}줄)</button>
         </div>
@@ -178,7 +180,7 @@ export default function EcountMatch({ orders, editable, meName, onChanged }) {
                       <tr key={i} className="border-t border-slate-100 align-top" data-ec-row={x.kind}>
                         <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${RESULT[x.kind][1]}`}>{x.kind === 'ok' && l?.sales_done_at ? '마감' : RESULT[x.kind][0]}</span></td>
                         <td className="px-3 py-2 font-mono">{r?.slip || (o?.slip_no ? normSlip(o.slip_no) : '—')}</td>
-                        <td className="px-3 py-2">{o ? <><div className="font-mono font-bold text-[#5b6ee8]">{o.po_no}</div><div className="text-[10.5px] text-slate-400">{KINDS[kindOf(o)]} · {ORDER_CUSTOMERS[o.customer_code]?.name}{l?.delivered_at ? ` · 납품 ${l.delivered_at.slice(5)}` : ''}</div></> : <><div className="font-mono text-slate-500">{r?.po_no || '(PO No. 없음)'}</div><div className="text-[10.5px] text-slate-400">{r?.cust_name}</div></>}</td>
+                        <td className="px-3 py-2">{o ? <><div className="font-mono font-bold text-[#5b6ee8]">{o.po_no}</div><div className="text-[10.5px] text-slate-400">{KINDS[kindOf(o)]} · {orderCustName(o)}{l?.delivered_at ? ` · 납품 ${l.delivered_at.slice(5)}` : ''}</div></> : <><div className="font-mono text-slate-500">{r?.po_no || '(PO No. 없음)'}</div><div className="text-[10.5px] text-slate-400">{r?.cust_name}</div></>}</td>
                         <td className="px-3 py-2"><div className="font-mono font-bold">{l?.items?.std_code || l?.raw_pn || r?.code}</div><div className="text-[10.5px] text-slate-400 truncate max-w-[260px]">{l?.items?.name || l?.raw_desc || r?.name}</div></td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{l ? <>{fmt(q)} · {money(o, q * (+l.unit_price || 0))}</> : '—'}</td>
                         <td className="px-3 py-2 text-right font-mono tabular-nums">{r ? <>{fmt(r.qty)} · {money(o || {}, isUsd(o) ? (r.fsupply ?? r.supply) : r.supply)}</> : '—'}</td>

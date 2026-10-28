@@ -14,7 +14,7 @@ const STATE_TONE = { need: 'bg-red-50 text-red-600 border-red-200', unknown: 'bg
 
 export default function OrderCleanup({ orders, editable, meName, onChanged }) {
   const qc = useQueryClient()
-  const custList = Object.keys(ORDER_CUSTOMERS)
+  const custList = Object.keys(ORDER_CUSTOMERS).filter((k) => !ORDER_CUSTOMERS[k].manual)   // 기타는 접두 규칙이 없어 코드 부여 대상 아님 (v4.107.0)
   const { data: flags = new Map(), refetch: refetchFlags } = useQuery({ queryKey: ['orderPnFlags'], queryFn: fetchFlags, staleTime: 60 * 1000 })
   const all = useMemo(() => unregGroups(orders, flags), [orders, flags])
   const [cust, setCust] = useState(() => {

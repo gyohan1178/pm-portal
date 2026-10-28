@@ -2,8 +2,8 @@
 //   PDF 가 없는 주문(정식 PO · 구두 발주 · 선진행 · 발주 예정)을 한 건씩 또는 엑셀 양식으로 여러 건 올린다.
 //   품번은 포털 코드로 바로 찾고(matchLines), 못 찾으면 「미등록」으로 들어가 「코드 · BOM 정리」 탭에서 코드를 준다.
 import { useState, useEffect, useRef } from 'react'
-import { ORDER_CUSTOMERS, matchLines } from '../../lib/orderIntake'
-import { KINDS, KIND_HELP, CHANNELS, parseEntryPaste, parseEntryWorkbook, templateWorkbook, registerEntry } from '../../lib/orderEntry'
+import { ORDER_CUSTOMERS, matchLines, isManualCust } from '../../lib/orderIntake'
+import { KINDS, KIND_HELP, CHANNELS, parseEntryPaste, parseEntryWorkbook, templateWorkbook, registerEntry, fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
 
@@ -31,7 +31,13 @@ export default function OrderEntry({ mode = 'one', onClose, onSaved, meName }) {
 function OneEntry({ onClose, onSaved, meName }) {
   const [kind, setKind] = useState('verbal')
   const [cust, setCust] = useState('VM')
-  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: '', req_channel: '메일', req_person: '', po_due: '' })
+  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: '', req_channel: '메일', req_person: '', po_due: '', customer_name: '' })
+  // 기타 고객사 (동원파츠 · 동신 · 두웰 …) — 업체 이름 직접 입력 · 전에 쓴 이름은 고르기 목록 (v4.107.0)
+  const etc = isManualCust(cust)
+  const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
+  const [tried, setTried] = useState(false)
+  useEffect(() => { if (etc) fetchEtcNames().then(setEtcNames).catch(() => {}) }, [etc])
+  const pickCust = (c) => { setCust(c); if (isManualCust(c) && kind === 'planned') setKind('po') }
   const [paste, setPaste] = useState('')
   const [lines, setLines] = useState([])         // matchLines 결과
   const [one, setOne] = useState({ pn: '', qty: '', price: '', due: '', desc: '', plnd: '' })
@@ -57,9 +63,10 @@ function OneEntry({ onClose, onSaved, meName }) {
   const unreg = lines.filter((l) => !l.item).length
 
   async function save() {
+    if (etc && !f.customer_name.trim()) { setTried(true); return }
     setBusy(true)
     try {
-      const r = await registerEntry({ kind, cust, ...f, lines }, meName)
+      const r = await registerEntry({ kind, cust, ...f, customer_name: etc ? f.customer_name : null, lines }, meName)
       toastSuccess(`${KINDS[kind]} 등록 — ${r.po_no} · 품목 ${r.lines}`)
       onSaved?.(r); onClose()
     } catch (e) { toastError(e.message) }
@@ -78,23 +85,37 @@ function OneEntry({ onClose, onSaved, meName }) {
           <div>
             <Label req>이 주문은</Label>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-              {Object.entries(KINDS).map(([k, l]) => (
-                <button key={k} type="button" onClick={() => setKind(k)} data-kind={k}
-                  className={`text-left rounded-xl px-3 py-2.5 bg-white border ${kind === k ? 'border-2 border-violet-600' : 'border-slate-200 hover:border-slate-300'}`}>
+              {Object.entries(KINDS).map(([k, l]) => {
+                const off = etc && k === 'planned'     // 발주 예정은 4개 고객사만
+                return (
+                <button key={k} type="button" onClick={() => setKind(k)} data-kind={k} disabled={off} title={off ? '발주 예정은 AXCELIS · Edwards · CSK · VM 만' : undefined}
+                  className={`text-left rounded-xl px-3 py-2.5 bg-white border disabled:opacity-40 ${kind === k ? 'border-2 border-violet-600' : 'border-slate-200 hover:border-slate-300'}`}>
                   <div className={`text-[13px] font-extrabold ${kind === k ? 'text-violet-700' : 'text-slate-800'}`}>{l}</div>
-                  <div className="text-[11.5px] text-slate-500 mt-0.5">{KIND_HELP[k]}</div>
+                  <div className="text-[11.5px] text-slate-500 mt-0.5">{off ? '4개 고객사만' : KIND_HELP[k]}</div>
                 </button>
-              ))}
+                )
+              })}
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 bg-[#f9fafc]">
             <div>
               <Label req>고객사</Label>
-              <select value={cust} onChange={(e) => setCust(e.target.value)} className={inCls} data-entry-cust>
-                {Object.entries(ORDER_CUSTOMERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+              <select value={cust} onChange={(e) => pickCust(e.target.value)} className={inCls} data-entry-cust>
+                {Object.entries(ORDER_CUSTOMERS).map(([k, v]) => <option key={k} value={k}>{v.manual ? '기타 — 업체 직접 입력' : v.name}</option>)}
               </select>
             </div>
+            {etc && (
+              <div>
+                <Label req>업체 이름</Label>
+                <input value={f.customer_name} onChange={(e) => set('customer_name', e.target.value)} list="etc-cust-names" data-entry-cust-name
+                  placeholder="예: 동원파츠" className={`${inCls} ${tried && !f.customer_name.trim() ? 'border-rose-400' : ''}`} />
+                <datalist id="etc-cust-names">{etcNames.map((n) => <option key={n} value={n} />)}</datalist>
+                {tried && !f.customer_name.trim()
+                  ? <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error="customer_name">업체 이름을 넣으세요</p>
+                  : <Help>전에 쓴 이름은 칸을 누르면 고를 수 있습니다. 같은 업체는 같은 이름으로 써야 수주대장에서 한 업체로 묶입니다.</Help>}
+              </div>
+            )}
             {kind !== 'planned' && (
               <div>
                 <Label req={kind === 'po'}>PO 번호</Label>
@@ -193,6 +214,7 @@ function OneEntry({ onClose, onSaved, meName }) {
           <h3 className="text-[14px] font-extrabold mb-2.5">등록 요약</h3>
           <div className="space-y-2">
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">구분</div><div className="text-[16px] font-extrabold text-violet-700" data-sum-kind>{KINDS[kind]}</div></div>
+            <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">고객사</div><div className="text-[15px] font-extrabold text-slate-800 truncate" data-sum-cust>{etc ? (f.customer_name.trim() ? `${f.customer_name.trim()}` : <span className="text-slate-400">업체 이름 —</span>) : ORDER_CUSTOMERS[cust]?.name}{etc && <span className="ml-1.5 px-1.5 py-[1px] rounded bg-slate-200 text-slate-600 text-[10.5px] align-middle">기타</span>}</div></div>
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">품목</div><div className="text-[22px] font-extrabold font-mono" data-sum-lines>{lines.length}</div></div>
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">미등록 품번</div><div className={`text-[22px] font-extrabold font-mono ${unreg ? 'text-red-500' : 'text-slate-800'}`} data-sum-unreg>{unreg}</div></div>
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">금액</div><div className="text-[17px] font-extrabold font-mono">₩{Math.round(amount).toLocaleString('ko-KR')}</div></div>
@@ -271,7 +293,7 @@ function ExcelEntry({ onClose, onSaved, meName }) {
                 {pv.orders.map((o, i) => (
                   <tr key={i} className="border-t border-slate-100" data-excel-order={o.po_no || `${o.kind}|${o.cust}`}>
                     <td className="px-3 py-2 font-bold">{KINDS[o.kind]}</td>
-                    <td className="px-3 py-2">{ORDER_CUSTOMERS[o.cust]?.name}</td>
+                    <td className="px-3 py-2">{o.customer_name ? <>{o.customer_name}<span className="ml-1.5 px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10.5px]" data-excel-etc>기타</span></> : ORDER_CUSTOMERS[o.cust]?.name}</td>
                     <td className="px-3 py-2 font-mono">{o.result?.po_no || o.po_no || <span className="text-slate-400">{o.kind === 'planned' ? '발주 예정' : '임시 번호 자동'}</span>}</td>
                     <td className="px-3 py-2 font-mono">{o.slip_no || '—'}</td>
                     <td className="px-3 py-2 text-right font-mono">{o.lines.length}</td>

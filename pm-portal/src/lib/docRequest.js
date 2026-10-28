@@ -13,7 +13,8 @@ export const kindLabel = (r) => (r?.kind === '기타' ? (s(r.kind_label) || '기
 export const DOC_LABEL_SQL_HINT = '「직접 입력」 칸이 아직 없습니다 — Supabase SQL Editor 에서 자료요청_직접입력_반영_261026.sql 을 먼저 실행해 주세요'
 export const DOC_STEPS = ['요청됨', '고객사에 요청함', '받음', '확인 완료']
 export const DOC_DEPTS = ['구매자재', '생산기술', '제조', '품질', '영업']
-export const DOC_CUSTOMERS = [...Object.entries(ORDER_CUSTOMERS).map(([code, c]) => ({ code, name: c.name, badge: c.badge })), { code: 'ETC', name: '기타', badge: 'bg-slate-100 text-slate-600' }]
+// 기타(ETC)는 수주대장에도 생겨 ORDER_CUSTOMERS 에 들어 있다 (v4.107.0) — 두 번 넣지 않게
+export const DOC_CUSTOMERS = [...Object.entries(ORDER_CUSTOMERS).filter(([code]) => code !== 'ETC').map(([code, c]) => ({ code, name: c.name, badge: c.badge })), { code: 'ETC', name: '기타', badge: 'bg-slate-100 text-slate-600' }]
 export const custName = (code) => DOC_CUSTOMERS.find((c) => c.code === code)?.name || code || '—'
 export const custBadge = (code) => DOC_CUSTOMERS.find((c) => c.code === code)?.badge || 'bg-slate-100 text-slate-600'
 export const KIND_BADGE = { 도면: 'bg-blue-50 text-blue-700', BOM: 'bg-violet-50 text-violet-700', 사양서: 'bg-emerald-50 text-emerald-700', 기타: 'bg-slate-100 text-slate-600' }

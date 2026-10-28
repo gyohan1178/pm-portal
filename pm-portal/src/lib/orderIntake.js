@@ -21,7 +21,15 @@ export const ORDER_CUSTOMERS = {
   ED:  { name: 'Edwards', prefix: 'ED-', color: '#3b82f6', badge: 'bg-blue-50 text-blue-700' },
   CSK: { name: 'CSK',     prefix: 'CS-', color: '#f59e0b', badge: 'bg-amber-50 text-amber-700' },
   VM:  { name: 'VM',      prefix: 'VM-', color: '#10b981', badge: 'bg-emerald-50 text-emerald-700' },
+  // 기타 — 동원파츠 · 동신 · 두웰처럼 4개 고객사 밖의 업체. 직접 등록만 · 업체 이름은 pm_order.customer_name (v4.107.0)
+  //   발주서 PDF · AX 엑셀 · 코드 정리(접두 규칙)에는 안 나온다 (manual)
+  ETC: { name: '기타',    prefix: '',    color: '#64748b', badge: 'bg-slate-100 text-slate-700', manual: true },
 }
+export const isManualCust = (code) => !!ORDER_CUSTOMERS[code]?.manual
+// 화면에 보일 고객사 이름 — 기타는 업체 이름
+export const orderCustName = (o) => (o?.customer_code === 'ETC' ? (String(o.customer_name || '').trim() || '기타') : ORDER_CUSTOMERS[o?.customer_code]?.name || o?.customer_code || '')
+// 같은 고객사로 묶는 열쇠 — 기타는 업체마다 따로 (특이사항 · 이카운트 거래처코드)
+export const orderCustKey = (o) => (o?.customer_code === 'ETC' ? `ETC:${String(o.customer_name || '').trim()}` : o?.customer_code || '')
 export const AX_CUSTOMER_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
 
 // 묶음 표기 — Edwards 품명의 「_PK2」 「PK10」 = 한 개 주문에 2개 · 10개 들어감 (수량 1 이어도 실제 2개). PK1 은 표시 안 함 (v4.90.0)
@@ -47,8 +55,10 @@ export function candidatesOf(cust, l) {
   const make = (p) => codes.flatMap((c) => [p + c, ...(l.rev ? [`${p}${c}-${l.rev}`] : [])])
   // CSK 완제품은 이카운트에서 하이픈 없이 「CS + 품번」으로 들어와 있다 (SCS0195S-0L1-ON084 → CSSCS0195S0L1ON084, v4.93.2)
   const squash = cust === 'CSK' ? codes.map((c) => 'CS' + c.replace(/[^0-9A-Z]/g, '')) : []
+  // 기타 업체는 AXCELIS · Edwards … 품목을 그대로 사 간다 → 모든 접두가 「자기 것」, ⚠ 다른 고객사 표시 없음 (v4.107.0)
+  if (isManualCust(cust)) return { own: ['', ...Object.values(ORDER_CUSTOMERS).filter((v) => !v.manual).map((v) => v.prefix)].flatMap(make), other: [] }
   const own = [...make(ORDER_CUSTOMERS[cust]?.prefix || ''), ...squash]
-  const other = Object.entries(ORDER_CUSTOMERS).filter(([k]) => k !== cust).flatMap(([, v]) => make(v.prefix))
+  const other = Object.entries(ORDER_CUSTOMERS).filter(([k, v]) => k !== cust && !v.manual).flatMap(([, v]) => make(v.prefix))
   return { own, other }
 }
 export const aliasKeyOf = (l) => normKey(l.desc || l.spec || l.pn)
@@ -176,9 +186,13 @@ export function fillPlan(existing, po, newLines, pair) {
   return { head, lines, labels, any: Object.keys(head).length > 0 || lines.length > 0 }
 }
 
-export async function loadOrderByNo(cust, poNo) {
-  const { data, error } = await supabase.from('pm_order')
-    .select(`*, pm_order_line(*, items(${ITEM_COLS}))`).eq('customer_code', cust).eq('po_no', poNo).maybeSingle()
+export async function loadOrderByNo(cust, poNo, custName) {
+  let q = supabase.from('pm_order')
+    .select(`*, pm_order_line(*, items(${ITEM_COLS}))`).eq('customer_code', cust).eq('po_no', poNo)
+  // 기타는 업체마다 PO번호가 겹칠 수 있다 — 같은 업체 것만 (v4.107.0)
+  if (isManualCust(cust)) q = q.eq('customer_name', String(custName || '').trim())
+  const { data, error } = await q.maybeSingle()
+  if (error && isManualCust(cust) && /customer_name/.test(error.message || '')) throw new Error('「기타」 고객사 칸이 아직 없습니다 — 수주대장_기타고객사_반영_261028.sql 을 먼저 실행하세요')
   if (error) throw error
   return data
 }
@@ -294,6 +308,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       delete head.ship_to;
       ({ data: o, error } = await supabase.from('pm_order').insert(head).select('id').single())
     }
+    if (error && po.extra?.customer_name && /customer_name|customer_code_check/.test(error.message || '')) throw new Error('「기타」 고객사 칸이 아직 없습니다 — 수주대장_기타고객사_반영_261028.sql 을 먼저 실행하세요')
     if (error && po.extra && /kind|slip_no|req_channel|req_person|po_due/.test(error.message || '')) throw new Error('구분 · 명세서번호 칸이 아직 없습니다 — 수주대장_직접등록_반영_261023.sql 을 먼저 실행하세요')
     if (error) {
       if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${po.po_no} 는 이미 수주대장에 있습니다 — 파일을 다시 올려 비교하세요`)
@@ -306,7 +321,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
     }
     let linked = 0
     for (const n of lines.filter((l) => l.plan)) linked += await movePlanned(o.id, po.po_no, n, meName, source)
-    logActivity('create', 'pm_order', po.po_no, `${SOURCE_LABEL[source] || source} 등록 · 품목 ${lines.length}${linked ? ` · 발주 예정 ${linked}건 확정` : ''}`, null, ORDER_CUSTOMERS[cust]?.name)
+    logActivity('create', 'pm_order', po.po_no, `${SOURCE_LABEL[source] || source} 등록 · 품목 ${lines.length}${linked ? ` · 발주 예정 ${linked}건 확정` : ''}`, null, orderCustName({ customer_code: cust, customer_name: po.extra?.customer_name }))
     return { id: o.id, created: true, lines: lines.length, linked }
   }
   // 같은 PO — 바뀐 줄만 고치고 이력 남김
@@ -671,7 +686,7 @@ export function oddsOf(lines) {
     if (l.cancelled || l.o?.cancelled || l.o?.planned) continue
     const pn = normKey(l.raw_pn)
     if (!l.item_id && !pn) continue
-    const k = `${l.o?.customer_code}|${l.item_id || 'pn:' + pn}`
+    const k = `${orderCustKey(l.o)}|${l.item_id || 'pn:' + pn}`
     if (!groups.has(k)) groups.set(k, [])
     groups.get(k).push(l)
   }
@@ -819,7 +834,7 @@ export const replyTextOf = (l) => replyText(l)
 
 // 활동 이력용 — 고른 줄들의 PO번호 · 고객사 (v4.90.3)
 const poNosOf = (ls) => { const n = [...new Set(ls.map((l) => l.o?.po_no).filter(Boolean))]; return n.length ? `${n.slice(0, 3).join(', ')}${n.length > 3 ? ` 외 ${n.length - 3}` : ''}` : null }
-const custNameOf = (ls) => { const c = [...new Set(ls.map((l) => l.o?.customer_code).filter(Boolean))]; return c.length === 1 ? ORDER_CUSTOMERS[c[0]]?.name : null }
+const custNameOf = (ls) => { const c = [...new Set(ls.map((l) => (l.o ? orderCustName(l.o) : null)).filter(Boolean))]; return c.length === 1 ? c[0] : null }
 
 // 협력사 불출일 — 협력사에 자재를 내줘야 하는 날 (Edwards 엑셀 「납품 요청일」). 납기(고객사 납품일)와 따로 관리 (v4.90.0)
 export async function setReleaseDate(lines, date, meName) {

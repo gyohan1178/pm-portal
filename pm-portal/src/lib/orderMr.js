@@ -27,10 +27,13 @@ export function mrHeadOf(lines, meName) {
   const dues = (lines || []).map((l) => l.due_date).filter(Boolean).sort()
   const pos = [...new Set((lines || []).map((l) => l.o?.po_no).filter(Boolean))]
   const custs = [...new Set((lines || []).map((l) => l.o?.customer_code).filter(Boolean))]
+  const etcNames = [...new Set((lines || []).filter((l) => l.o?.customer_code === 'ETC').map((l) => String(l.o?.customer_name || '').trim()).filter(Boolean))]
+  const etcName = custs.length === 1 && etcNames.length === 1 ? etcNames[0] : ''
   return {
     requester_name: meName || '', check_dept: '구매자재팀', req_kind: '', urgency: '보통',
     need_date: dues[0] ? (dues[0] < today ? today : dues[0]) : '',
-    purpose: `수주 단품 납품 — PO ${pos[0] || ''}${pos.length > 1 ? ` 외 ${pos.length - 1}건` : ''}`,
+    // 기타 고객사(동원파츠 …)는 고객사 칸이 「ETC」 뿐이라 목적에 업체 이름을 같이 (v4.107.0)
+    purpose: `수주 단품 납품 — ${etcName ? etcName + ' ' : ''}PO ${pos[0] || ''}${pos.length > 1 ? ` 외 ${pos.length - 1}건` : ''}`,
     customer_code: custs.length === 1 ? custs[0] : '',
   }
 }

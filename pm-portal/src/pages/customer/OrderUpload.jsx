@@ -78,6 +78,9 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   // 이미 있는 PO — 바뀐 것이 없어도 빈 칸(납품처 · Rev · 품목 연결 …)을 채울 것이 있으면 저장 가능 (v4.90.1)
   const fillOf = (f) => (f?.existing && f.diff ? fillPlan(f.existing, f.po, f.lines, f.diff.pair) : null)
   const canSave = (f) => f && !f.saved && !blocked(f) && !(f.existing && f.diff?.same && !fillOf(f)?.any)
+  // 할 일이 끝난 파일 — 등록했거나, 이미 있는 PO 인데 바뀐 것 · 채울 빈 칸이 없는 것 (v4.107.0)
+  //   「변경 없음」 파일은 누를 것이 없는데도 끝난 것으로 안 쳐서, 단계 표시가 「확인 · 고치기」에 멈춰 있었다
+  const settled = (f) => !!f.saved || (!!f.existing && !!f.diff?.same && !fillOf(f)?.any)
 
   async function save(f, idx) {
     const lines = f.lines.map((l) => ({ ...l, deliveredAll: l.deliveredAll || f.allDelivered }))
@@ -122,6 +125,9 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   }
 
   const okCount = files.filter((f) => canSave(f) && !f.po.warns.length).length
+  const allDone = files.length > 0 && !busy && files.every(settled)
+  const doneN = { saved: files.filter((f) => f.saved).length, same: files.filter((f) => !f.saved && settled(f)).length }
+  const leftN = files.filter((f) => !settled(f)).length
   const cust = cur?.po.customer ? ORDER_CUSTOMERS[cur.po.customer] : null
   const unmatched = cur ? cur.lines.filter((l) => !l.item).length : 0
   const addedKeys = new Set((cur?.diff?.added || []).map(lineKey))
@@ -149,8 +155,21 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
         {/* 지금 어디쯤인지 — 고르기 → 읽고 점검 → 확인 · 고치기 → 등록 (v4.104.0) */}
         <div className="px-4 md:px-6 pt-4 space-y-3">
           <div className="max-w-[760px]"><Stepper steps={['PDF 고르기', '읽고 점검', '확인 · 고치기', '등록']}
-            cur={!files.length ? (prog ? 1 : 0) : files.every((f) => f.saved) ? 4 : prog?.label === '등록하는 중' ? 3 : 2} /></div>
+            cur={!files.length ? (prog ? 1 : 0) : allDone ? 4 : prog?.label === '등록하는 중' ? 3 : 2} /></div>
           {prog && prog.total > 1 && <div className="max-w-[760px]"><ProgressBar done={prog.done} total={prog.total} label={prog.label} unit="개" /></div>}
+          {/* 다 끝났으면 끝났다고 · 남았으면 몇 개 남았는지 — 「다음에 누를 버튼이 없다」 헷갈림 (v4.107.0) */}
+          {allDone && (
+            <div className="flex flex-wrap items-center gap-3 px-4 py-3 rounded-xl bg-emerald-50 border border-emerald-200" data-upload-done>
+              <span className="text-sm font-bold text-emerald-700">✓ 다 끝났습니다</span>
+              <span className="text-xs text-emerald-700/80">{[doneN.saved ? `등록 · 반영 ${doneN.saved}개` : '', doneN.same ? `이미 같은 내용이라 그대로 ${doneN.same}개` : ''].filter(Boolean).join(' · ')} — 더 누를 것은 없습니다. 수주대장에 이미 들어가 있습니다.</span>
+              <button type="button" onClick={onClose} data-upload-close className="ml-auto px-4 py-1.5 rounded-lg text-sm font-bold bg-emerald-600 text-white">닫기</button>
+            </div>
+          )}
+          {!allDone && files.length > 0 && !busy && doneN.saved + doneN.same > 0 && (
+            <div className="text-xs text-slate-500" data-upload-left>
+              남은 파일 <b className="text-violet-700">{leftN}개</b> — 왼쪽 목록에서 ✓ 표시가 없는 파일을 골라 아래 버튼으로 등록하세요{okCount > 1 ? ' (또는 「한 번에 등록」)' : ''}
+            </div>
+          )}
         </div>
         <div className="flex flex-col lg:flex-row gap-4 p-3 md:p-5">
           {/* 왼쪽 — 파일 목록 (휴대폰 · 좁은 화면은 위아래로, v4.90.7) */}
@@ -205,7 +224,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   <select value={cur.po.customer || ''} disabled={!cur.po.kind || busy || !!cur.saved} onChange={(e) => changeCustomer(e.target.value)} data-cust-select
                     className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1">
                     <option value="" disabled>고객사?</option>
-                    {Object.entries(ORDER_CUSTOMERS).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                    {Object.entries(ORDER_CUSTOMERS).filter(([, v]) => !v.manual).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
                   </select>
                   <span className="text-xs text-slate-400">{cur.po.kind ? FORMAT_LABEL[cur.po.kind] : '양식 모름'}{cur.po.order_date ? ` · 발주일 ${cur.po.order_date}` : ''}{cur.po.currency ? ` · ${cur.po.currency}` : ''}{cur.po.ccn ? ` (CCN ${cur.po.ccn})` : ''}</span>
                   {cur.po.total != null && !cur.po.warns.some((w) => /합계/.test(w)) && <span className="ml-auto px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700">합계 {fmt(cur.po.total)} = 읽은 줄 합계</span>}

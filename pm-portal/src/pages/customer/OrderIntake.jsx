@@ -6,7 +6,7 @@
 //   v4.90.0  CSK 발주 예정(Plnd order number) — 실제 발주서가 오면 그 PO 로 옮김 · 열 너비 끌어서 조절
 //            협력사 불출일(release_date) — 납기(고객사 납품일)와 따로. Edwards 엑셀 「납품 요청일」
 //   v4.104.0 표 모양 먼저(스켈레톤) · 지표 ⓘ 설명 · 회신 · 납품 · 특이사항 확인 6초 되돌리기 · PO 삭제 확인 창 · 회신 칸 안내 · 처음 안내(영업)
-//   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만
+//   구매자재 부서: 회신 입력 · 납품 표시 · PO 파일 반영 / 그 밖: 회신 결론만 · 납품 표시 (v4.107.0, 고칠 권한이 있는 사람)
 import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -20,7 +20,7 @@ import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
-  ORDER_CUSTOMERS, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
+  ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
@@ -202,7 +202,7 @@ function CustCell({ o }) {
   const c = ORDER_CUSTOMERS[o.customer_code]
   return (
     <div className="whitespace-nowrap">
-      <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${c.badge}`}>{c.name}</span>
+      <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${c.badge}`}>{orderCustName(o)}</span>
       {o.customer_code === 'AX' && o.ccn && <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] font-bold" title="CCN">CCN {o.ccn}</span>}
       <div className="text-[11px] text-slate-400 mt-0.5">{o.ship_to || (o.customer_code === 'AX' ? (o.ccn === 'B' ? '미국' : '') : '')}</div>
     </div>
@@ -381,7 +381,7 @@ export default function OrderIntake() {
   }, [poOpen, openFull]) // eslint-disable-line react-hooks/exhaustive-deps
   // 코드 없는 고객사 품번 수 (진행 중 줄) — 「코드 · BOM 정리」 탭 숫자
   const unregCount = useMemo(() => new Set(allLines.filter((l) => l.st.live && !l.item_id && String(l.raw_pn || '').trim()).map((l) => `${l.o.customer_code}|${String(l.raw_pn).trim().toUpperCase()}`)).size, [allLines])
-  const hit = (l) => !k || [l.o.po_no, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
+  const hit = (l) => !k || [l.o.po_no, l.o.customer_name, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const today = todayISO()
@@ -537,7 +537,7 @@ export default function OrderIntake() {
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error },
-    onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, ORDER_CUSTOMERS[o.customer_code]?.name); setPoOpen(null); patchLocal((os) => os.filter((x) => x.id !== id)); toastSuccess('삭제했습니다') },
+    onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, orderCustName(o)); setPoOpen(null); patchLocal((os) => os.filter((x) => x.id !== id)); toastSuccess('삭제했습니다') },
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
 
@@ -737,7 +737,7 @@ export default function OrderIntake() {
             ))}
           </div>
           <span className="w-px h-5 bg-slate-200 mx-1" />
-          {[['all', '전체'], ...Object.entries(ORDER_CUSTOMERS).map(([k2, v]) => [k2, v.name])].map(([k2, l]) => (
+          {[['all', '전체'], ...Object.entries(ORDER_CUSTOMERS).filter(([k2, v]) => !v.manual || counts[k2] || cust === k2).map(([k2, v]) => [k2, v.name])].map(([k2, l]) => (
             <button key={k2} type="button" onClick={() => setCust(k2)} data-cust={k2}
               className={`px-3 py-1.5 rounded-full text-xs font-bold border ${cust === k2 ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
               {k2 !== 'all' && <span className="inline-block w-1.5 h-1.5 rounded-full mr-1.5 align-middle" style={{ background: ORDER_CUSTOMERS[k2].color }} />}{l}<span className={`ml-1 ${cust === k2 ? 'text-slate-300' : 'text-slate-400'}`}>{(counts[k2] || 0).toLocaleString('ko-KR')}</span>
@@ -759,7 +759,7 @@ export default function OrderIntake() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 PO번호 · 품번 · 품명 · 납품처 · 관리번호 · Plnd 번호 검색" data-search
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="🔍 PO번호 · 품번 · 품명 · 납품처 · 기타 업체 이름 · 관리번호 · Plnd 번호 검색" data-search
             className="flex-1 min-w-0 basis-full md:basis-auto md:min-w-[240px] px-3 py-2 text-xs border border-slate-200 rounded-lg" />
           <select value={view} onChange={(e) => { setView(e.target.value); setKpi(null) }} className={sel} data-viewsel>
             <option value="live">진행 중 (전체)</option><option value="po">진행 중 · 발주 확정만</option><option value="temp">구두 발주 · 선진행만</option><option value="plan">발주 예정만</option><option value="done">납품 완료</option><option value="cancel">취소된 줄</option><option value="all">전체</option>
@@ -827,8 +827,10 @@ export default function OrderIntake() {
       {!isBuy && checkedLines.length > 0 && (
         <div className="sticky top-0 z-20 rounded-xl border border-violet-300 bg-white shadow-md px-4 py-3 flex flex-wrap items-center gap-3" data-bulk>
           <b className="text-xs text-violet-700 whitespace-nowrap">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</b>
-          <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다</span>
-          <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="ml-auto px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white">📦 자재 요청 {checkedLines.length}</button>
+          <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다{editable ? ' · 나간 품목은 「납품 표시」' : ''}</span>
+          {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
+          {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
+          <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청 {checkedLines.length}</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
         </div>
       )}
@@ -1014,7 +1016,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
         {<div className="pt-0.5 w-5 shrink-0">{!l.st.cancelled && <input type="checkbox" className="w-4 h-4" checked={checked} onChange={onToggle} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</div>}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
-            <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{orderCustName(l.o)}</span>
             <button type="button" onClick={onOpen} className={`font-mono font-bold text-[13px] ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button>
             <span className="text-[10.5px] text-slate-400">{l.o.planned ? (l.plnd_no ? `Plnd ${l.plnd_no}` : '') : `Line ${l.line_no}${l.del_line !== '1' ? `/${l.del_line}` : ''}`}</span>
             {regBy(l.o) && <span className="text-[10.5px] text-slate-500" title={regTitle(l.o)} data-reg-by>· {regBy(l.o)}</span>}
@@ -1054,7 +1056,7 @@ function PoCard({ o, ls, amount, onOpen }) {
   return (
     <button type="button" onClick={onOpen} className="w-full text-left bg-white border border-slate-200 rounded-xl p-3" data-order={o.po_no}>
       <div className="flex items-center gap-1.5 flex-wrap">
-        <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{c.name}</span>
+        <span className={`px-2 py-0.5 rounded-full text-[10.5px] font-bold ${c.badge}`}>{orderCustName(o)}</span>
         <span className={`font-mono font-bold text-[13px] ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}</span>
         {o.ship_to && <span className="text-[10.5px] text-slate-400">{o.ship_to}</span>}
         <span className="ml-auto text-[11px] text-slate-500">{replied ? `회신 ${replied}/${rp.length}` : '회신 전'}</span>
@@ -1101,7 +1103,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
       <div className="w-full max-w-[920px] h-full bg-[#f7f8fb] shadow-2xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 z-10">
           <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${c.badge}`}>{c.name}</span>
+            <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${c.badge}`}>{orderCustName(o)}</span>
             <b className="font-mono text-lg text-slate-800">{o.po_no}</b>
             {o.migrated && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">이관</span>}
             {k !== 'po' && <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-bold ${KIND_TONE[k]}`} data-drawer-kind={k}>{KINDS[k]}</span>}
@@ -1164,7 +1166,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                 <th className="px-3 font-bold" title="협력사에 자재를 내줘야 하는 날">협력사 불출</th>
                 {o.customer_code === 'AX' && <th className="px-3 font-bold">구분</th>}
                 <th className="px-3 font-bold">회신</th>
-                {isBuy && <th className="px-3 font-bold text-center">납품</th>}
+                {(isBuy || editable) && <th className="px-3 font-bold text-center">납품</th>}
               </tr></thead>
               <tbody>
                 {ls.map((l) => (
@@ -1194,7 +1196,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                           {editable && <button type="button" onClick={() => onUncancel([l])} data-uncancel={`${l.line_no}/${l.del_line}`} className="mt-0.5 text-[10.5px] text-violet-600 font-bold hover:underline">취소 되돌리기</button>}
                         </div>
                       : <ReplyCell l={l} memo />}</td>
-                    {isBuy && <td className="px-3 py-2 text-center">{!l.st.cancelled && <input type="checkbox" checked={l.st.delivered} disabled={dlvBusy} onChange={(e) => onDlv([l], e.target.checked)} data-dlv={`${l.line_no}/${l.del_line}`} />}</td>}
+                    {(isBuy || editable) && <td className="px-3 py-2 text-center">{!l.st.cancelled && <input type="checkbox" checked={l.st.delivered} disabled={dlvBusy} onChange={(e) => onDlv([l], e.target.checked)} data-dlv={`${l.line_no}/${l.del_line}`} />}</td>}
                   </tr>
                 ))}
               </tbody>

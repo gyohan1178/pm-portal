@@ -9,7 +9,7 @@
 //   줄 취소는 지우지 않고 표시 + 사유 · 이력. 편집 권한이면 누구나 (납품 끝난 줄은 못 함)
 import { supabase } from './supabase'
 import { logActivity } from './activityLog'
-import { ORDER_CUSTOMERS, saveOrder, loadOrderByNo, lineKey } from './orderIntake'
+import { ORDER_CUSTOMERS, saveOrder, loadOrderByNo, lineKey, isManualCust, orderCustName } from './orderIntake'
 
 export const KINDS = { po: '정식 PO', verbal: '구두 발주', advance: '선진행', planned: '발주 예정' }
 export const KIND_SHORT = { verbal: '구두', advance: '선진행', planned: '예정' }
@@ -63,6 +63,23 @@ export function custOf(v) {
   if (/^(CSK|CS|씨에스케이)/.test(t)) return 'CSK'
   return null
 }
+// 엑셀 양식 「고객사」 칸 — 4개 고객사가 아니면 그 글자를 업체 이름으로 「기타」 (v4.107.0)
+//   「기타」 · 「ETC」 만 쓰면 어느 업체인지 몰라 받지 않는다
+export function custOfCell(v) {
+  const c = custOf(v)
+  if (c) return { cust: c, name: null }
+  const t = s(v)
+  if (!t) return null
+  if (/^(기타|ETC)$/i.test(t.replace(/\s/g, ''))) return { cust: 'ETC', name: null }
+  return { cust: 'ETC', name: t }
+}
+// 기타 업체 이름 — 전에 쓴 이름 (직접 등록 칸의 고르기 목록). 칸이 없으면(SQL 전) 기본 이름만
+export const ETC_NAME_SEED = ['동원파츠', '동신', '두웰']
+export async function fetchEtcNames() {
+  const { data, error } = await supabase.from('pm_order').select('customer_name').eq('customer_code', 'ETC').limit(1000)
+  const used = error ? [] : (data || []).map((x) => s(x.customer_name)).filter(Boolean)
+  return [...new Set([...used, ...ETC_NAME_SEED])].sort((a, b) => a.localeCompare(b, 'ko'))
+}
 export function kindOfText(v) {
   const t = s(v).replace(/\s/g, '')
   if (!t || /^(정식|정식PO|PO)$/i.test(t)) return 'po'
@@ -87,12 +104,13 @@ const TEMPLATE_SAMPLE = [
   ['구두', 'VM', '', '2026/10/23-4', '2026-10-23', '', '메일', 'VM 구매 박책임', '2026-10-30', '790-3003-320', '1', 'EDA PC ETHERNET', 11, 48000, '2026-11-20', '', ''],
   ['선진행', 'ED', '', '', '2026-10-23', '아산', '회의', '', '2026-11-06', 'NKB364074', '', 'FAC MOD ACC ELEC ASSY', 2, 1250000, '2026-12-04', '', ''],
   ['정식', 'AX', '47900KF', '', '2026-10-22', '평택', '', '', '', '110153030', 'P', '', 3, 1000000, '2026-12-30', '', ''],
+  ['정식', '동원파츠', 'DW-2610-01', '', '2026-10-28', '', '', '', '', '110153030', '', '', 2, 1000000, '2026-12-15', '', '기타 업체 — 고객사 칸에 업체 이름'],
   ['예정', 'CSK', '', '', '', '안성', '', '', '', 'SCS0195S-0L1-ON084', '', 'SCSB116084AF', 1, 3502200, '2026-11-30', '505104554', '관리번호 JS2611-40'],
 ]
 const TEMPLATE_GUIDE = [
   ['칸', '설명'],
   ['구분', '정식 · 구두 · 선진행 · 예정 (비우면 정식)'],
-  ['고객사', 'AX · ED · VM · CSK'],
+  ['고객사', 'AX · ED · VM · CSK — 그 밖의 업체(동원파츠 · 동신 · 두웰 …)는 업체 이름을 그대로 쓰면 「기타」 고객사로 들어감. 발주 예정은 4개 고객사만'],
   ['PO번호', '정식은 필수. 구두 · 선진행은 비우면 임시 번호(구두-VM-2610-01)를 붙임. 같은 PO번호 줄은 한 PO 로 묶음'],
   ['명세서번호', '이카운트 거래명세서 번호(일자-순번) — 구두 발주는 필수. PO 당 하나'],
   ['정식 PO 받을 날', '구두 · 선진행 — 이 날이 지나도 정식 PO 가 없으면 업무 흐름에 뜸'],
@@ -124,9 +142,12 @@ export function parseEntryWorkbook(XLSX, wb) {
     const pn = s(at(r, '품번'))
     if (!pn && !s(at(r, '고객사'))) return
     const kind = kindOfText(at(r, '구분'))
-    const cust = custOf(at(r, '고객사'))
+    const cc = custOfCell(at(r, '고객사'))
+    const cust = cc?.cust || null, custName = cc?.name || null
     if (!kind) { errors.push(`${rowNo}행: 구분 「${s(at(r, '구분'))}」 — 정식 · 구두 · 선진행 · 예정 중 하나`); return }
-    if (!cust) { errors.push(`${rowNo}행: 고객사 「${s(at(r, '고객사'))}」 — AX · ED · VM · CSK 중 하나`); return }
+    if (!cust) { errors.push(`${rowNo}행: 고객사가 비었습니다 — AX · ED · VM · CSK 또는 업체 이름`); return }
+    if (cust === 'ETC' && !custName) { errors.push(`${rowNo}행: 고객사 「${s(at(r, '고객사'))}」 — 기타 업체는 업체 이름을 쓰세요 (예: 동원파츠)`); return }
+    if (cust === 'ETC' && kind === 'planned') { errors.push(`${rowNo}행: 발주 예정은 4개 고객사만 — ${custName} 은 정식 · 구두 · 선진행으로`); return }
     if (!pn) { errors.push(`${rowNo}행: 품번이 비었습니다`); return }
     const qty = num(at(r, '수량'))
     if (!(qty > 0)) { errors.push(`${rowNo}행: 수량이 없습니다`); return }
@@ -134,10 +155,11 @@ export function parseEntryWorkbook(XLSX, wb) {
     if (kind === 'po' && !po) { errors.push(`${rowNo}행: 정식 PO 는 PO번호가 필요합니다`); return }
     if (kind === 'verbal' && !slip) { errors.push(`${rowNo}행: 구두 발주는 명세서번호가 필요합니다`); return }
     // 묶는 열쇠 — PO번호가 있으면 그 번호, 없으면 같은 구분 · 고객사 · 명세서번호 · 요청자 · 받을 날
-    const key = kind === 'planned' ? `planned|${cust}` : po ? `${cust}|${po}` : `${kind}|${cust}|${slip}|${s(at(r, '요청한 사람'))}|${ymd(at(r, '정식 PO 받을 날')) || ''}`
+    const ck = custName ? `${cust}:${custName}` : cust
+    const key = kind === 'planned' ? `planned|${ck}` : po ? `${ck}|${po}` : `${kind}|${ck}|${slip}|${s(at(r, '요청한 사람'))}|${ymd(at(r, '정식 PO 받을 날')) || ''}`
     if (!groups.has(key)) {
       groups.set(key, {
-        kind, cust, po_no: kind === 'planned' ? '' : po, slip_no: slip || null, order_date: ymd(at(r, '발주일')), ship_to: s(at(r, '납품처')) || null,
+        kind, cust, customer_name: custName, po_no: kind === 'planned' ? '' : po, slip_no: slip || null, order_date: ymd(at(r, '발주일')), ship_to: s(at(r, '납품처')) || null,
         req_channel: s(at(r, '받은 경로')) || null, req_person: s(at(r, '요청한 사람')) || null, po_due: ymd(at(r, '정식 PO 받을 날')), lines: [], rows: [],
       })
     }
@@ -158,6 +180,10 @@ export async function registerEntry(e, meName) {
   const cust = e.cust
   if (!ORDER_CUSTOMERS[cust]) throw new Error('고객사를 고르세요')
   if (!KINDS[e.kind]) throw new Error('구분을 고르세요')
+  const etc = isManualCust(cust)
+  const custName = etc ? s(e.customer_name) : null
+  if (etc && !custName) throw new Error('기타 고객사는 업체 이름을 넣으세요 (예: 동원파츠)')
+  if (etc && e.kind === 'planned') throw new Error('발주 예정은 4개 고객사만 — 기타 업체는 정식 · 구두 · 선진행으로 등록하세요')
   const lines = (e.lines || []).filter((l) => s(l.pn) || l.item)
   if (!lines.length) throw new Error('품목을 넣으세요')
   if (lines.some((l) => !(Number(l.qty) > 0))) throw new Error('수량이 없는 품목이 있습니다')
@@ -172,8 +198,8 @@ export async function registerEntry(e, meName) {
     if (error) throw error
     poNo = tempPoNo(e.kind, cust, (data || []).map((x) => x.po_no))
   }
-  if (await loadOrderByNo(cust, poNo)) throw new Error(`${poNo} 는 이미 수주대장에 있습니다 — 그 PO 를 열어 고치세요`)
-  const extra = { kind: e.kind, slip_no: s(e.slip_no) || null, req_channel: e.req_channel || null, req_person: s(e.req_person) || null, po_due: e.po_due || null }
+  if (await loadOrderByNo(cust, poNo, custName)) throw new Error(`${custName ? custName + ' ' : ''}${poNo} 는 이미 수주대장에 있습니다 — 그 PO 를 열어 고치세요`)
+  const extra = { kind: e.kind, slip_no: s(e.slip_no) || null, req_channel: e.req_channel || null, req_person: s(e.req_person) || null, po_due: e.po_due || null, ...(etc ? { customer_name: custName } : {}) }
   const po = { customer: cust, po_no: poNo, order_date: e.order_date || null, ship_to: s(e.ship_to) || null, currency: e.currency || (cust === 'AX' && e.ccn === 'B' ? 'USD' : 'KRW'), ccn: e.ccn || null, extra }
   const ls = lines.map((l, i) => ({ ...l, line_no: String(l.line_no || i + 1), del_line: String(l.del_line || '1'), deliveredAll: false }))
   const r = await saveOrder({ po, lines: ls, existing: null, fileName: null, migrated: false, meName, source: 'manual' })
@@ -246,14 +272,14 @@ export async function promotePo(o, newNo, meName) {
   const no = s(newNo)
   if (!no) throw new Error('정식 PO 번호를 넣으세요')
   if (no === o.po_no) throw new Error('지금 번호와 같습니다')
-  const dup = await loadOrderByNo(o.customer_code, no)
+  const dup = await loadOrderByNo(o.customer_code, no, o.customer_name)
   if (dup) throw new Error(`${no} 는 이미 수주대장에 있습니다 (발주서 PDF 로 먼저 등록됨) — 이 임시 PO 의 줄은 「새 PO 로 재발행」으로 취소하세요`)
   const before = `${o.po_no} (${KINDS[kindOf(o)]})`
   const patch = { po_no: no, kind: 'po', updated_at: now() }
   const { error } = await supabase.from('pm_order').update(patch).eq('id', o.id)
   if (error) throw colHint(error)
   await supabase.from('pm_order_change').insert({ order_id: o.id, line_key: null, field: 'po_no', before_val: before, after_val: `${no} (정식 PO)`, source: 'manual', changed_name: meName || null })
-  logActivity('update', 'pm_order', no, `${before} → 정식 PO ${no}`, null, ORDER_CUSTOMERS[o.customer_code]?.name)
+  logActivity('update', 'pm_order', no, `${before} → 정식 PO ${no}`, null, orderCustName(o))
   return { id: o.id, patch }
 }
 
