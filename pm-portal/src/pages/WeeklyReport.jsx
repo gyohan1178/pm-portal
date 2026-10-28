@@ -391,16 +391,19 @@ export default function WeeklyReport() {
     .map(m=>({...m, label:m.month.slice(2,4)+'.'+m.month.slice(5,7)+'월'}))
   const csChart = Object.values(csAmtMap).filter(c=>c.actual+c.pending>0)
   const planByCS      = byCustomer(d?.plan||[])
-  const delayByCS     = byCustomer(d?.delay||[])
   const inboundTotal  = (d?.inbound||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
   const inboundCount  = (d?.inbound||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
   const planTotal     = (d?.plan||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
   const planCount     = (d?.plan||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
-  const delayCount    = (d?.delay||[]).length
-  // 주간업무 지연 B안 (v4.98.0) — 변경 납기가 오늘 이후면 ② 변경 약속 받음, 나머지(없음 · 지남 · 직접 입력)는 ① 독촉 필요
+  // 지연 = 받을 날(협력사 변경 납기가 있으면 그 날, 없으면 요청 납기)이 지난 건 (v4.108.0)
+  //   변경 납기가 오늘 이후인 건은 그날까지 지연이 아니다 — 서버(SQL 반영 전)가 보내도 여기서 뺀다
+  //   ① 독촉 필요 = 변경 납기 없음(직접 입력 포함) · ② 변경 납기도 지남
   const todayYmd      = ymdKST(today)
-  const delayG2       = (d?.delay||[]).filter(r => r.vendor_date && String(r.vendor_date).slice(0,10) >= todayYmd)
-  const delayG1       = (d?.delay||[]).filter(r => !delayG2.includes(r))
+  const delayAll      = (d?.delay||[]).filter(r => !(r.vendor_date && String(r.vendor_date).slice(0,10) >= todayYmd))
+  const delayByCS     = byCustomer(delayAll)
+  const delayCount    = delayAll.length
+  const delayG2       = delayAll.filter(r => !!r.vendor_date)
+  const delayG1       = delayAll.filter(r => !r.vendor_date)
 
   return (
     <>
@@ -490,9 +493,9 @@ export default function WeeklyReport() {
             )}
           </div>
           <div className={`rounded-xl border px-3.5 py-2.5 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
-            <p className={`text-[11px] font-bold flex items-center gap-1 ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연<InfoTip align="right" text="포털이 자동으로 모은 요청 납기가 지난 건(AXCELIS · Edwards · VM · CSK) + 이 주 주간보고에 직접 적은 지연 건. 변경 납기가 오늘 이후면 「변경 약속」, 그 밖(변경 납기 없음 · 이미 지남 · 직접 입력)은 「독촉」으로 셉니다. 변경 납기를 적어도 지연 합계에서는 빠지지 않습니다." /></p>
+            <p className={`text-[11px] font-bold flex items-center gap-1 ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연<InfoTip align="right" text="포털이 자동으로 모은 받을 날이 지난 건(AXCELIS · Edwards · VM · CSK) + 이 주 주간보고에 직접 적은 지연 건. 받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 — 변경 납기를 받으면 그날까지 지연에서 빠집니다. 변경 납기가 없으면(직접 입력 포함) 「독촉」, 변경 납기도 지났으면 「변경 납기도 지남」." /></p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{delayCount}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
-              <span className="text-xs text-slate-400 ml-2">{delayCount>0?`독촉 ${delayG1.length} · 변경 약속 ${delayG2.length}`:'지난 납기 없음'}</span></p>
+              <span className="text-xs text-slate-400 ml-2">{delayCount>0?`독촉 ${delayG1.length} · 변경 납기도 지남 ${delayG2.length}`:'지난 납기 없음'}</span></p>
           </div>
         </div>
 
@@ -715,16 +718,16 @@ export default function WeeklyReport() {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-red-500 font-semibold">{delayCount}건</span>
                   {checkedIds.length>0&&(
-                    <button onClick={async()=>{ const sel=(d?.delay||[]).filter(r=>checkedIds.includes(r.id)); if(await ask({ title:`선택 ${checkedIds.length}건 삭제할까요?`, desc:'주간보고 항목에서 지워지며 되돌릴 수 없습니다.', items:sel.slice(0,5).map(r=>[r.pn||'-', r.vendor, r.qty?`${r.qty}개`:''].filter(Boolean).join(' · ')), more:Math.max(0,checkedIds.length-5), okText:'삭제', danger:true })) deleteItemMut.mutate(checkedIds) }}
+                    <button onClick={async()=>{ const sel=delayAll.filter(r=>checkedIds.includes(r.id)); if(await ask({ title:`선택 ${checkedIds.length}건 삭제할까요?`, desc:'주간보고 항목에서 지워지며 되돌릴 수 없습니다.', items:sel.slice(0,5).map(r=>[r.pn||'-', r.vendor, r.qty?`${r.qty}개`:''].filter(Boolean).join(' · ')), more:Math.max(0,checkedIds.length-5), okText:'삭제', danger:true })) deleteItemMut.mutate(checkedIds) }}
                       className="text-xs font-bold px-2 py-0.5 rounded border border-red-300 text-red-600 bg-red-50 hover:bg-red-100 no-print">
                       선택 삭제 ({checkedIds.length})
                     </button>
                   )}
                 </div>
               }>
-              {/* B안 (v4.98.0) — 요청 납기가 지난 건을 ① 독촉 필요(변경 납기 없음 · 변경 납기도 지남) ② 변경 약속 받음(새 날짜 기다림) 으로 나눈다.
-                  합계는 그대로 — 변경 납기를 적어도 지연에서 빠지지 않는다 */}
-              {[[1, '① 독촉 필요', '변경 납기 없음 · 변경 납기도 지남', 'bg-red-50 text-red-700', delayG1], [2, '② 변경 약속 받음', '협력사가 새 날짜를 줌 — 그날 다시 확인', 'bg-amber-50 text-amber-800', delayG2]].map(([grp, gt, gs, gc, grows]) => {
+              {/* v4.108.0 — 받을 날이 지난 건을 ① 독촉 필요(변경 납기 없음) ② 변경 납기도 지남 으로 나눈다.
+                  변경 납기가 아직 안 온 건은 지연이 아니라 여기 안 나온다 */}
+              {[[1, '① 독촉 필요', '변경 납기 없음 — 협력사에 날짜 받기', 'bg-red-50 text-red-700', delayG1], [2, '② 변경 납기도 지남', '협력사가 준 새 날짜도 지남 — 다시 독촉', 'bg-red-50 text-red-700', delayG2]].map(([grp, gt, gs, gc, grows]) => {
                 const byCS = byCustomer(grows)
                 return grows.length > 0 && (
                 <div key={grp} data-wk-delay-group={grp}>
@@ -780,7 +783,7 @@ export default function WeeklyReport() {
                               {r.target_date && (()=>{ const dd=Math.floor((today-new Date(r.target_date))/86400000); return dd>0?<span className="ml-1 px-1 rounded bg-red-100 text-red-600 text-[10px] font-bold">D+{dd}</span>:null })()}
                             </td>
                             <td className="px-3 py-1.5 whitespace-nowrap" data-wk-vendor-date>
-                              {r.vendor_date ? <span className={`font-mono font-bold ${grp===2?'text-amber-700':'text-red-600'}`}>{r.vendor_date}{grp===1 && ' (지남)'}</span> : <span className="text-red-500">없음</span>}
+                              {r.vendor_date ? <span className="font-mono font-bold text-red-600">{r.vendor_date} (지남)</span> : <span className="text-red-500">없음</span>}
                               {r.vendor_reason && <span className="block text-[10px] text-slate-400">{r.vendor_reason}</span>}
                             </td>
                             <td className="px-3 py-1.5">
@@ -803,7 +806,7 @@ export default function WeeklyReport() {
                 </div>
                 )
               })}
-              {(d?.delay||[]).length===0&&<p className="text-xs text-slate-400 text-center py-6">지연 없음 ✓</p>}
+              {delayAll.length===0&&<p className="text-xs text-slate-400 text-center py-6">지연 없음 ✓</p>}
             </SectionCard>
           )
         })()}

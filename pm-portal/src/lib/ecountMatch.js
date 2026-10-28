@@ -42,15 +42,17 @@ export function parseEcountSales(XLSX, wb) {
   let sheet = null, aoa = null, hi = -1
   for (const n of wb.SheetNames) {
     const a = XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: '', raw: true })
-    const i = a.findIndex((r) => r.some((c) => s(c).replace(/\s/g, '') === '품목코드') && r.some((c) => s(c).replace(/\s/g, '') === '수량'))
+    // 이카운트 판매현황 내려받기는 머리글이 「품목코드코드」 · 「품목명[규격]」 으로 나온다 (v4.108.0) — 앞글자로도 찾는다
+    const i = a.findIndex((r) => r.some((c) => /^품목코드/.test(s(c).replace(/\s/g, ''))) && r.some((c) => s(c).replace(/\s/g, '') === '수량'))
     if (i >= 0) { sheet = n; aoa = a; hi = i; break }
   }
   if (!aoa) throw new Error('「품목코드」 · 「수량」 머리글이 있는 시트를 못 찾았습니다 — 이카운트 판매현황(또는 판매입력 양식)을 올리세요')
   const H = aoa[hi].map((c) => s(c).replace(/\s/g, '').replace(/\.$/, '').toUpperCase())
   const col = (...names) => { for (const n of names) { const i = H.indexOf(n.replace(/\s/g, '').replace(/\.$/, '').toUpperCase()); if (i >= 0) return i } return -1 }
+  const colP = (n) => { const i = col(n); return i >= 0 ? i : H.findIndex((h) => h.startsWith(n)) }   // 「품목코드코드」 · 「품목명[규격]」
   const C = {
     date: col('일자'), seq: col('순번', 'NO'), dateNo: col('일자-NO', '일자-NO.', '전표번호'), cust: col('거래처명'), po: col('PO NO', 'PONO', 'PO번호', 'PO'),
-    code: col('품목코드'), name: col('품목명'), spec: col('규격'), qty: col('수량'), price: col('단가'), fsup: col('외화공급가액'), sup: col('공급가액'), cur: col('통화'), memo: col('적요'),
+    code: colP('품목코드'), name: colP('품목명'), spec: col('규격'), qty: col('수량'), price: col('단가'), fsup: col('외화공급가액'), sup: col('공급가액'), cur: col('통화'), memo: col('적요'),
   }
   const rows = []
   aoa.slice(hi + 1).forEach((r, k) => {
@@ -61,6 +63,8 @@ export function parseEcountSales(XLSX, wb) {
     let date = null, seq = null
     if (C.dateNo >= 0 && s(g(C.dateNo))) { const sl = normSlip(g(C.dateNo)); const m = sl.match(/^(\d{4})\/(\d{2})\/(\d{2})-(\d+)$/); if (m) { date = `${m[1]}-${m[2]}-${m[3]}`; seq = +m[4] } }
     if (!date) { date = ymd(g(C.date)); seq = num(g(C.seq)) }
+    // 판매현황 내려받기에는 쪽마다 머리글 줄 · 「2026/07 계」 · 「총합계」 줄이 끼어 있다 — 날짜 없는 줄은 판매 줄이 아니다 (v4.108.0)
+    if (!date) return
     rows.push({
       row: hi + 2 + k, date, seq, slip: date && seq != null ? `${date.replace(/-/g, '/')}-${seq}` : '', cust_name: s(g(C.cust)), po_no: s(g(C.po)),
       code, name: s(g(C.name)), spec: s(g(C.spec)), qty: qty ?? 0, price: num(g(C.price)), supply: num(g(C.sup)), fsupply: num(g(C.fsup)), currency: s(g(C.cur)), memo: s(g(C.memo)),
@@ -72,6 +76,14 @@ export function parseEcountSales(XLSX, wb) {
 const codesOf = (l) => {
   const it = l.items || {}
   return new Set([it.js_code, it.std_code, String(it.std_code || '').replace(/^(AX|ED|VM|CS)-/i, ''), l.raw_pn].filter(Boolean).map(normKey))
+}
+const rowCodesOf = (r) => {
+  const out = new Set([normKey(r.code)])
+  const txt = `${r.name || ''} ${r.spec || ''}`
+  for (const m of txt.matchAll(/\[([^\]]*)\]/g)) m[1].split('/').forEach((p) => out.add(normKey(p)))
+  for (const m of txt.toUpperCase().matchAll(/[A-Z]{2,}\d{5,}(?:-\d{2})?|\d{3}-\d{4}-\d{3}|\d{6,}/g)) out.add(normKey(m[0]))
+  out.delete('')
+  return out
 }
 const shipQty = (l) => (+l.delivered_qty > 0 ? +l.delivered_qty : +l.qty || 0)
 const inMonth = (d, month) => !month || String(d || '').slice(0, 7) === month
@@ -95,8 +107,9 @@ export function matchEcount({ rows, orders, month, cust = 'all' }) {
     let o = etcHit || cand.find((x) => x.customer_code === nameCust) || cand[0] || (r.slip ? bySlip.get(normSlip(r.slip)) : null) || null
     if (!want(o ? o.customer_code : nameCust)) continue
     if (!o) { items.push({ kind: 'only_ecount', r, cust: nameCust }); continue }
-    const code = normKey(r.code)
-    const ls = o.lines.filter((l) => !l.cancelled && !used.has(l.id) && codesOf(l).has(code))
+    // 품목코드 + 품목명[규격] 안의 품번 — VM 은 이카운트 품목코드가 「20914」처럼 여러 품목에 같은 번호라 [TEST-1-258 / 790-0010-258] 의 품번으로 맞춘다 (v4.108.0)
+    const rc = rowCodesOf(r)
+    const ls = o.lines.filter((l) => !l.cancelled && !used.has(l.id) && [...codesOf(l)].some((c) => rc.has(c)))
     const l = ls.find((x) => shipQty(x) === +r.qty) || ls[0]
     if (!l) { items.push({ kind: 'diff', why: '품목 없음', r, o, cust: o.customer_code }); continue }
     used.add(l.id)

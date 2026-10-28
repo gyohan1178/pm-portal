@@ -107,7 +107,7 @@ const F = {
     steps: [
       { name: '수주 확인', note: '새로 올라온 PO 확인', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red']] },
       { name: '회신', note: '품번마다 가능 · 조건부 · 불가 (조건부 · 불가는 사유 필수)', go: () => ['/orders'], badges: (c) => [['새 PO 회신 대기', c?.ord_waiting, 'amber']] },
-      { name: '구매발주', note: '협력사 발주 · 독촉 = 요청 납기 지남 + 변경 납기 없음(또는 그것도 지남)', go: (pcs) => [cs(pcs, 'purchase')], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red']] },
+      { name: '구매발주', note: '협력사 발주 · 독촉 = 받을 날 지남 (협력사 변경 납기가 있으면 그 날, 없으면 요청 납기)', go: (pcs) => [cs(pcs, 'purchase')], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red']] },
       { name: '입고', note: '발주 체크 후 입고', go: () => ['/inbound'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
       { name: '불출', note: 'BOM 단위 출고 · 여러 품목 한꺼번에 출고', go: () => ['/outbound', '/issue'], badges: () => [] },
     ],

@@ -2,11 +2,13 @@
 //   기록은 이 브라우저(PC · 폰 각각)에만 남는다. 처음 쓰는 브라우저는 지금 숫자를 그대로 기준으로 삼는다(알림 없음).
 //   키: b:<배지 이름>(단계 · 보조 업무 배지, 같은 이름은 하나) · st:<단계 이름>(그 단계 합계) · i:<넘어온 일> · o:<넘긴 일>
 import { supabase } from './supabase'
+import { autoDeliverLegacy } from './legacyDeliver'
 
 // 단계별 건수 — 업무 흐름 화면 · 사이드바가 같은 키로 한 번만 받는다. 함수가 아직 없으면(SQL 전) null
 export const flowCountsQuery = {
   queryKey: ['flowCounts'],
   queryFn: async () => {
+    await autoDeliverLegacy()   // 이관분 납기 지난 줄 — 하루 한 번 납품 처리한 뒤에 센다 (v4.108.0)
     const { data, error } = await supabase.rpc('pm_flow_counts')
     if (error) return null
     return data || null

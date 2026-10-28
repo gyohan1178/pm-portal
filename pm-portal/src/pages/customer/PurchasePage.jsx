@@ -37,6 +37,9 @@ function monthAgoStr() {
   const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
 }
 
+// 받을 날 — 협력사 변경 납기 > 요청 납기 (v4.108.0)
+export const dueOf = (p) => String(p?.vendor_date || p?.promise_date || '').slice(0, 10)
+
 async function fetchPurchases(csId) {
   if (!csId) return []
   const today = todayISO()
@@ -45,8 +48,10 @@ async function fetchPurchases(csId) {
     .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,js_code,lt_weeks,manufacturer,manufacturer_code,unit), vendors(name,ecount_code,payment_terms), projects(code,name)')
     .eq('customer_id', csId).eq('order_type','purchase').not('status','in','(완료,취소)')
     .order('promise_date', { ascending: true }).order('id', { ascending: true }))
-  // 지연 = 요청 납기 기준 (변경 납기를 적어도 지연은 지연) · 독촉 = 지연 중 변경 납기가 없거나 그것도 지남 (v4.98.0)
-  return (data||[]).map(p=>{ const isDelayed = !!(p.promise_date && p.promise_date < today); return { ...p, isDelayed, isChase: isDelayed && !(p.vendor_date && p.vendor_date >= today) } })
+  // 받을 날(dueOf) = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 (v4.108.0)
+  //   지연 = 받을 날이 지남 → 변경 납기를 받으면 그날까지 지연에서 빠진다. 지연은 전부 독촉 대상
+  //   (v4.98.0 에선 요청 납기 기준이라 변경 약속을 받아도 지연으로 셌다)
+  return (data||[]).map(p=>{ const d = dueOf(p); const isDelayed = !!(d && d < today); return { ...p, isDelayed, isChase: isDelayed } })
 }
 async function fetchPurchaseHistory(csId, from, to) {
   if (!csId) return []
@@ -139,7 +144,7 @@ const PO_COLS = [
   {key:'qty_remaining', label:'미입고',   defaultWidth:55},
   {key:'unit_price',    label:'단가',     defaultWidth:75},
   {key:'supply',        label:'공급가',   defaultWidth:80},
-  {key:'promise_date',  label:'요청 납기 · 변경',defaultWidth:140},
+  {key:'promise_date',  label:'받을 날 · 요청 납기',defaultWidth:140},
   {key:'vendor',        label:'구매처',   defaultWidth:80},
   {key:'memo',          label:'메모',     defaultWidth:110},
   {key:'status',        label:'상태',     defaultWidth:65},
@@ -629,7 +634,7 @@ export default function PurchasePage() {
         aoa.push([
           p.order_date||'', p.items?.std_code||'', p.items?.name||'', p.items?.manufacturer||'', p.items?.manufacturer_code||'',
           Number(p.qty_ordered)||0, Number(p.qty_remaining)||0, Number(p.unit_price)||0, (Number(p.qty_ordered)||0)*(Number(p.unit_price)||0),
-          p.promise_date||'', p.isDelayed?'지연':'진행중', ''
+          dueOf(p), p.isDelayed?'지연':'진행중', ''
         ])
       }
       const ws = XLSX.utils.aoa_to_sheet(aoa)
@@ -707,10 +712,11 @@ export default function PurchasePage() {
     for (const p of purchases) {
       if (typeTab !== '전체' && p.type !== typeTab) continue
       if (filterOrderDate && (p.order_date||'').slice(0,10) !== filterOrderDate) continue
-      const due = (p.promise_date||'').slice(0,10); if (!due) continue
+      const due = dueOf(p); if (!due) continue
       if (q) { const it = p.items || {}; if (![p.po_number, it.std_code, it.name, it.manufacturer, it.manufacturer_code, p.vendors?.name, p.projects?.code].some(x => (x || '').toLowerCase().includes(q))) continue }
       const days = Math.round((new Date(due) - t0) / 86400000)
-      if (days < 0) { over++; if (p.isChase) chase++; else vchg++ } else if (days <= 7) d7++
+      if (days < 0) over++; else if (days <= 7) d7++
+      if (p.vendor_date && days >= 0) vchg++          // 변경 약속 — 협력사가 새 날짜를 줬고 아직 안 옴
     }
     return { over, d7, chase, vchg }
   }, [purchases, typeTab, filterOrderDate, q])
@@ -721,14 +727,14 @@ export default function PurchasePage() {
 
     // 납기 필터 — 미입고 건만 대상 (이미 들어온 건 이월할 필요 없음)
     if (dueFilter) {
-      const due = (p.promise_date||'').slice(0,10)
+      const due = dueOf(p)
       if (!due) return false
       const today = new Date(); today.setHours(0,0,0,0)
       const d = new Date(due)
       const days = Math.round((d - today) / 86400000)
       if (dueFilter === 'over'  && !(days < 0)) return false
-      if (dueFilter === 'chase' && !(days < 0 && p.isChase)) return false
-      if (dueFilter === 'vchg'  && !(days < 0 && !p.isChase)) return false
+      if (dueFilter === 'chase' && !(days < 0)) return false              // (예전 단추 — 지금은 지남과 같다)
+      if (dueFilter === 'vchg'  && !(days >= 0 && p.vendor_date)) return false
       if (dueFilter === 'd7'    && !(days >= 0 && days <= 7)) return false
       if (dueFilter === 'd14'   && !(days >= 0 && days <= 14)) return false
       if (dueFilter === 'month') {
@@ -756,7 +762,7 @@ export default function PurchasePage() {
     mfg:p.items?.manufacturer||'', type:catOf(p.items), parent:p.projects?.code||'',
     lt:p.items?.lt_weeks||0, qty_ordered:p.qty_ordered||0, qty_received:p.qty_received||0,
     qty_remaining:p.qty_remaining||0, unit_price:p.unit_price||0,
-    supply:(p.qty_ordered||0)*(p.unit_price||0), promise_date:p.promise_date||'',
+    supply:(p.qty_ordered||0)*(p.unit_price||0), promise_date:dueOf(p),
     vendor:p.vendors?.name||'', memo:p.memo||'', status:p.isDelayed?1:0,
   }[k] ?? '')
   const NUM_SORT = ['lt','qty_ordered','qty_received','qty_remaining','unit_price','supply','status']
@@ -766,7 +772,8 @@ export default function PurchasePage() {
         const c = NUM_SORT.includes(sort.key) ? (Number(va)||0)-(Number(vb)||0) : String(va).localeCompare(String(vb),'ko')
         return sort.dir==='asc'?c:-c
       })
-    : filtered, [filtered, sort.key, sort.dir])
+    // 기본 차례도 받을 날 순 (서버는 요청 납기 순으로 준다 · v4.108.0). 날짜 없는 건 맨 뒤
+    : [...filtered].sort((a,b)=>(dueOf(a)||'9999').localeCompare(dueOf(b)||'9999')), [filtered, sort.key, sort.dir])
   const onSort = k => setSort(prev => prev.key===k ? {key:k,dir:prev.dir==='asc'?'desc':'asc'} : {key:k,dir:'asc'})
   const checkedPOs = filtered.filter(p=>checked[p.id])
   // 발주 → 입고: 입고 화면을 고른 발주가 체크된 채로 연다 (잔량 있는 것만)
@@ -1345,8 +1352,8 @@ export default function PurchasePage() {
           {showScore && <VendorScorecard onClose={()=>setShowScore(false)} />}
           <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-3" data-po-kpi>
             <div className="rounded-xl border border-slate-200 bg-white px-4 py-3"><p className="text-[13px] text-slate-500 flex items-center gap-1">발주 건수<InfoTip text="이 고객사의 진행 중 구매발주 줄 수 (완료 · 취소 빼고). 위 조건 · 검색을 바꾸면 같이 바뀝니다." /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-slate-900">{filtered.length.toLocaleString()}</p><p className="text-[11.5px] text-slate-400">지금 목록 기준 (조건 · 검색 적용)</p></div>
-            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><p className="text-[13px] text-red-500 flex items-center gap-1">납기 지연<InfoTip text="요청 납기(약속일)가 오늘보다 앞인데 아직 진행 중인 발주. 협력사 변경 납기를 적어도 지연으로 셉니다 — 그중 변경 납기가 없거나 그것도 지난 건이 「독촉」, 변경 납기가 아직 안 온 건이 「변경 약속」." /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-red-600">{filtered.filter(p=>p.isDelayed).length.toLocaleString()}</p><p className="text-[11.5px] text-red-400">요청 납기 지남 · 독촉 {filtered.filter(p=>p.isChase).length.toLocaleString()} · 변경 약속 {filtered.filter(p=>p.isDelayed&&!p.isChase).length.toLocaleString()}</p></div>
-            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><p className="text-[13px] text-amber-600 flex items-center gap-1">D-7 임박<InfoTip text="오늘부터 7일 안에 요청 납기(약속일)가 오는 진행 중 발주." align="right" /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-amber-700">{filtered.filter(p=>{if(!p.promise_date)return false;const d=Math.round((new Date(p.promise_date)-new Date(today))/86400000);return d>=0&&d<=7}).length.toLocaleString()}</p><p className="text-[11.5px] text-amber-600/80">7일 안에 약속일이 오는 건</p></div>
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"><p className="text-[13px] text-red-500 flex items-center gap-1">납기 지연<InfoTip text="받을 날이 오늘보다 앞인데 아직 다 안 들어온 진행 중 발주. 받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기. 변경 납기를 받으면 그날까지 지연에서 빠지고, 그날도 지나면 다시 지연입니다." /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-red-600">{filtered.filter(p=>p.isDelayed).length.toLocaleString()}</p><p className="text-[11.5px] text-red-400">받을 날 지남 · 그중 변경 납기도 지남 {filtered.filter(p=>p.isDelayed&&p.vendor_date).length.toLocaleString()}</p></div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3"><p className="text-[13px] text-amber-600 flex items-center gap-1">D-7 임박<InfoTip text="오늘부터 7일 안에 받을 날(변경 납기가 있으면 그 날, 없으면 요청 납기)이 오는 진행 중 발주." align="right" /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-amber-700">{filtered.filter(p=>{const due=dueOf(p);if(!due)return false;const d=Math.round((new Date(due)-new Date(today))/86400000);return d>=0&&d<=7}).length.toLocaleString()}</p><p className="text-[11.5px] text-amber-600/80">7일 안에 받을 날이 오는 건</p></div>
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3"><p className="text-[13px] text-emerald-600 flex items-center gap-1">입고 예정<InfoTip text="지금 목록 발주들의 남은 수량(발주 수량 − 입고 수량)을 모두 더한 개수. 품목 단위가 섞여 있어 대략적인 물량 감으로 보세요." align="right" /></p><p className="text-[26px] leading-tight font-extrabold font-mono text-emerald-700">{filtered.reduce((a,p)=>a+(p.qty_remaining||0),0).toLocaleString()}</p><p className="text-[11.5px] text-emerald-600/80">미입고 수량 합계</p></div>
           </div>
 
@@ -1363,11 +1370,11 @@ export default function PurchasePage() {
           <div className="inline-flex items-center gap-1">
             <span className="text-[11px] font-semibold text-slate-500">납기</span>
             <div className="flex gap-0.5 bg-slate-100 rounded-lg p-0.5">
-              {[['','전체'],['over','지남'],['chase','독촉'],['vchg','변경 약속'],['d7','7일'],['d14','14일'],['month','이달'],['next','다음달'],['range','기간']].map(([k,l])=>(
+              {[['','전체'],['over','지남'],['vchg','변경 약속'],['d7','7일'],['d14','14일'],['month','이달'],['next','다음달'],['range','기간']].map(([k,l])=>(
                 <button key={k} onClick={()=>setDueFilter(k)}
                   className={`px-2 py-1 text-[11px] font-semibold rounded-md ${dueFilter===k
                     ? (k==='over' ? 'bg-rose-500 text-white' : 'bg-white text-slate-900 shadow-sm')
-                    : 'text-slate-500 hover:text-slate-700'}`} data-due-filter={k}>{l}{['over','d7','chase','vchg'].includes(k) && dueCount[k]>0 && <b className={`ml-1 font-mono ${dueFilter===k&&k==='over'?'text-white':(k==='over'||k==='chase')?'text-rose-600':'text-amber-700'}`}>{dueCount[k].toLocaleString()}</b>}</button>
+                    : 'text-slate-500 hover:text-slate-700'}`} data-due-filter={k}>{l}{['over','d7','vchg'].includes(k) && dueCount[k]>0 && <b className={`ml-1 font-mono ${dueFilter===k&&k==='over'?'text-white':k==='over'?'text-rose-600':'text-amber-700'}`}>{dueCount[k].toLocaleString()}</b>}</button>
               ))}
             </div>
             {dueFilter==='range' && (
@@ -1526,7 +1533,8 @@ export default function PurchasePage() {
                   {filtered.length===0
                     ? <tr><td colSpan={PO_COLS.length} className="text-center py-10 text-slate-400">구매 발주가 없습니다</td></tr>
                     : sorted.slice(0, visibleCount).map(p=>{
-                      const diff=p.promise_date?Math.round((new Date(p.promise_date)-new Date(today))/86400000):null
+                      const due=dueOf(p)
+                      const diff=due?Math.round((new Date(due)-new Date(today))/86400000):null
                       const supply=Math.round((p.qty_ordered||0)*(p.unit_price||0))
                       return (
                         <tr key={p.id} {...rowProps(p.id, !!checked[p.id])}
@@ -1549,14 +1557,14 @@ export default function PurchasePage() {
                           <td className="px-3 py-2 text-right font-bold text-slate-900">{p.qty_remaining}</td>
                           <td className="px-3 py-2 text-right text-slate-500">{p.unit_price?Number(p.unit_price).toLocaleString():'-'}</td>
                           <td className="px-3 py-2 text-right text-slate-500">{supply?supply.toLocaleString():'-'}</td>
-                          <td className="px-3 py-2 whitespace-nowrap"><span className={`font-mono ${diff!==null&&diff<0?'text-red-600 font-bold':diff!==null&&diff<=7?'text-amber-700 font-semibold':'text-slate-600'}`}>{p.promise_date||'-'}</span>{diff!==null && (diff<0 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-red-50 text-red-600 text-[10.5px] font-bold">{-diff}일 지남</span> : diff<=7 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-amber-50 text-amber-700 text-[10.5px] font-bold">D-{diff}</span> : null)}
-                            {/* 협력사 변경 납기 (v4.98.0) — 누르면 바꾸기 · 이력 */}
+                          <td className="px-3 py-2 whitespace-nowrap"><span data-due-main className={`font-mono ${diff!==null&&diff<0?'text-red-600 font-bold':diff!==null&&diff<=7?'text-amber-700 font-semibold':'text-slate-600'}`}>{due||'-'}</span>{diff!==null && (diff<0 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-red-50 text-red-600 text-[10.5px] font-bold">{-diff}일 지남</span> : diff<=7 ? <span data-due-badge className="ml-1 px-1.5 py-[1px] rounded-full bg-amber-50 text-amber-700 text-[10.5px] font-bold">D-{diff}</span> : null)}
+                            {/* 위 날짜 = 받을 날. 협력사 변경 납기가 있으면 아래에 원래 요청 납기 (v4.108.0) — 누르면 바꾸기 · 이력 */}
                             <button type="button" onClick={e=>{e.stopPropagation();setDueDlg([p])}} data-vendor-date={p.vendor_date||''}
-                              className={`block text-[10.5px] font-bold text-left ${p.vendor_date?(p.vendor_date<today?'text-red-600':'text-amber-700'):'text-slate-300 opacity-0 group-hover:opacity-100'}`}>
-                              {p.vendor_date?`→ 변경 ${p.vendor_date.slice(5)}${p.vendor_date<today?' (지남)':''}`:'＋ 변경 납기'}</button></td>
+                              className={`block text-[10.5px] text-left ${p.vendor_date?'font-semibold text-slate-400 hover:text-indigo-600':'font-bold text-slate-300 opacity-0 group-hover:opacity-100'}`}>
+                              {p.vendor_date?<>요청 {String(p.promise_date||'-').slice(5)} → <span className="text-amber-700">협력사 변경</span></>:'＋ 변경 납기'}</button></td>
                           <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">{p.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500 overflow-hidden truncate" title={p.memo||''}>{p.memo||'-'}</td>
-                          <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isChase?'bg-red-50 text-red-600':p.isDelayed?'bg-amber-50 text-amber-700':'bg-emerald-50 text-emerald-700'}`}>{p.isChase?'지연 · 독촉':p.isDelayed?'지연 · 변경 약속':'진행중'}</span></td>
+                          <td className="px-3 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold ${p.isDelayed?'bg-red-50 text-red-600':p.vendor_date?'bg-amber-50 text-amber-700':'bg-emerald-50 text-emerald-700'}`}>{p.isDelayed?(p.vendor_date?'지연 · 변경 납기도 지남':'지연 · 독촉'):p.vendor_date?'진행중 · 변경 납기':'진행중'}</span></td>
                           <td className="px-3 py-2">
                             <div className="flex gap-1">
                               {Number(p.qty_remaining)>0 && (

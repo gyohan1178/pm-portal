@@ -1,5 +1,5 @@
 // 📊 협력사 성적표 (v4.98.0) — 최근 3개월 입고된 발주 줄 기준
-//   요청 납기 준수율 = 첫 입고일 ≤ 요청 납기 · 변경 약속 지킴 = 첫 입고일 ≤ 변경 납기 · 변경 횟수 = 「협력사 변경」 이력
+//   납기 준수율 = 첫 입고일 ≤ 받을 날(변경 납기가 있으면 그 날, 없으면 요청 납기 · v4.108.0) · 변경 약속 지킴 = 첫 입고일 ≤ 변경 납기 · 변경 횟수 = 「협력사 변경」 이력
 //   비딩 · 협상 때 근거로 — 숫자는 구매자재 화면에서만 보인다
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -25,7 +25,7 @@ export default function VendorScorecard({ onClose }) {
     <div className="rounded-xl border border-violet-200 bg-white" data-vendor-score>
       <div className="flex flex-wrap items-center gap-2 px-4 py-2.5 border-b border-slate-100">
         <b className="text-[14px] text-slate-800">📊 협력사 성적표</b>
-        <span className="text-[11.5px] text-slate-400">입고된 발주 줄 기준 · 요청 납기 준수율이 낮은 순으로 보려면 「준수율」을 누르세요</span>
+        <span className="text-[11.5px] text-slate-400">입고된 발주 줄 기준 · 받을 날(변경 납기가 있으면 그 날) 기준 · 준수율이 낮은 순으로 보려면 「준수율」을 누르세요</span>
         <div className="ml-auto inline-flex gap-1 p-0.5 rounded-lg bg-slate-100">
           {[3, 6, 12].map((m) => <button key={m} type="button" onClick={() => setMonths(m)} className={`px-2 py-0.5 rounded-md text-[11.5px] font-bold ${months === m ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-500'}`}>{m}개월</button>)}
         </div>
@@ -37,7 +37,7 @@ export default function VendorScorecard({ onClose }) {
         <div className="overflow-x-auto max-h-[320px]">
           <table className="w-full text-[12.5px]">
             <thead className="sticky top-0 bg-slate-50 text-[11.5px] text-slate-500 text-left"><tr>
-              {th(null, '협력사')}{th('lines', '입고 줄', 'text-right')}{th('rate', '요청 납기 준수율', 'text-right')}{th(null, '늦은 줄 · 평균', 'text-right')}{th(null, '변경 약속 지킴', 'text-right')}{th(null, '납기 변경', 'text-right')}{th('open', '지금 지연 중', 'text-right')}
+              {th(null, '협력사')}{th('lines', '입고 줄', 'text-right')}{th('rate', '납기 준수율', 'text-right')}{th(null, '늦은 줄 · 평균', 'text-right')}{th(null, '변경 약속 지킴', 'text-right')}{th(null, '납기 변경', 'text-right')}{th('open', '지금 지연 중', 'text-right')}
             </tr></thead>
             <tbody>
               {!rows.length && <tr><td colSpan={7} className="px-3 py-6 text-center text-slate-400">기간 안에 입고된 발주가 없습니다</td></tr>}

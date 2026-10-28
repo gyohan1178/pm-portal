@@ -118,18 +118,19 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
 
   // 6) 입고 지연: 구매발주 납기가 지났는데 아직 안 들어온 것.
   //    구매 담당자가 가장 먼저 챙겨야 하는 값이라 앞자리에 둔다.
+  //    받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 (v4.108.0) — 구매발주 「납기 지연」과 같은 기준
   const inboundLate = buyPos.filter(p => {
-    const d = dDays(p.promise_date, today)
+    const d = dDays(p.vendor_date || p.promise_date, today)
     // 잔량은 여기서 거른다. 조회에서 걸면 값이 비어 있는 건이 빠진다.
     const left = Number(p.qty_remaining ?? ((p.qty_ordered || 0) - (p.qty_received || 0)))
     return d != null && d < 0 && left > 0
   }).map(p => {
-    const d = -dDays(p.promise_date, today)
+    const d = -dDays(p.vendor_date || p.promise_date, today)
     return {
       kind: 'inboundLate',
       std_code: p.items?.std_code || '',
       name: p.items?.name || p.po_number || '',
-      detail: `${p.promise_date} 납기 · ${d}일 지남 · ${p.vendors?.name || '구매처 미정'} · 잔량 ${p.qty_remaining}${p.vendor_date ? ` · 변경 납기 ${p.vendor_date}` : ''}`,
+      detail: `${p.vendor_date || p.promise_date} ${p.vendor_date ? '변경 납기' : '납기'} · ${d}일 지남 · ${p.vendors?.name || '구매처 미정'} · 잔량 ${p.qty_remaining}${p.vendor_date ? ` · 요청 납기 ${p.promise_date}` : ''}`,
       vendor_date: p.vendor_date || null,
       urgency: Math.min(98, 60 + d),   // 오래될수록 급하다
       link: 'inbound',
@@ -173,8 +174,8 @@ export function computeControlTower({ shortage = [], pos = [], prod = [], buyPos
   return {
     kpi: {
       inboundLate: inboundLate.length,
-      // 독촉 필요 (v4.98.0) — 입고 지연 중 변경 납기가 없거나 그것도 지난 것 (변경 약속을 받은 건은 그날까지 기다림)
-      chaseNeeded: inboundLate.filter(x => !x.vendor_date || dDays(x.vendor_date, today) < 0).length,
+      // 독촉 필요 — 입고 지연 전부 (v4.108.0 부터 변경 약속을 받은 건은 그날까지 지연이 아니다)
+      chaseNeeded: inboundLate.length,
       inboundSoon: inboundSoon.length,
       orderNeeded: orderNeeded.length,
       negSoon: negSoon.length,

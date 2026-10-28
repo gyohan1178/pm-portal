@@ -76,9 +76,10 @@ export function computeVendorScorecard(pos, vendors, priceRows) {
     if (p.status === '완료') {
       // promise_date 대비 — 실제 입고일 필드 없으면 약속일 기준만
       v.onTime++   // 완료된 건 일단 준수로 (실입고일 있으면 정밀화)
-    } else if (p.promise_date && new Date(p.promise_date).getTime() < today) {
+    } else if ((p.vendor_date || p.promise_date) && new Date(p.vendor_date || p.promise_date).getTime() < today) {
+      // 받을 날(협력사 변경 납기 > 요청 납기) 기준 (v4.108.0)
       v.late++
-      v.delayDays += dDays(today, p.promise_date)
+      v.delayDays += dDays(today, p.vendor_date || p.promise_date)
     }
   }
 
@@ -161,7 +162,7 @@ export function computeActivity({ pos = [], prod = [], inbound = [], priceRows =
 export function computeNorthStar({ shortage = [], pos = [] }) {
   // 적시납품률: 완료 PO 중 약속일 지킨 비율 (실입고일 없으면 완료=준수 근사)
   const completed = pos.filter(p => p.status === '완료')
-  const delayed = pos.filter(p => p.status === '지연' || (p.status !== '완료' && p.promise_date && new Date(p.promise_date) < new Date()))
+  const delayed = pos.filter(p => p.status === '지연' || (p.status !== '완료' && (p.vendor_date || p.promise_date) && new Date(p.vendor_date || p.promise_date) < new Date()))   // 받을 날 기준 (v4.108.0)
   const onTimeRate = (completed.length + delayed.length) > 0
     ? Math.round((completed.length / (completed.length + delayed.length)) * 100) : null
 

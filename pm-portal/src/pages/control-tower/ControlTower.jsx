@@ -225,7 +225,7 @@ export default function ControlTower({ scope = 'ax' }) {
             생산·영업 항목은 그쪽에서 보는 편이 낫다. */}
         {[
           { v: reqPending,    l: '자재 요청',  s: '처리 대기',   t: 'red',    link: 'request', tip: '최근 180일 자재 요청 중 상태가 요청 · 코드대기 · 확인인 건 (불출 준비 · 완료 · 반려는 빠짐).' },
-          { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound', tip: '구매발주 약속 납기가 오늘보다 앞인데 아직 남은 수량이 있는 발주 줄.' },
+          { v: k.inboundLate, l: '입고 지연',  s: '납기 지남',   t: 'red',    link: 'inbound', tip: '구매발주 받을 날(협력사 변경 납기가 있으면 그 날, 없으면 요청 납기)이 오늘보다 앞인데 아직 남은 수량이 있는 발주 줄.' },
           { v: k.inboundSoon, l: '입고 예정',  s: '2주 안',      t: 'green',  link: 'inbound', tip: '오늘부터 14일 안에 들어올 발주 줄 (협력사 변경 납기가 있으면 그 날짜 기준). 자리를 미리 비워 두세요.' },
           { v: k.orderNeeded, l: '발주 필요',  s: 'LT 고려',     t: 'red',    link: 'short', tip: '부족자재 계산에서 재고가 마이너스가 되는 달까지 남은 기간이 (리드타임 + 1개월) 안인 품목 — 지금 발주해야 맞출 수 있음.' },
           { v: k.negSoon,     l: '재고 음수',  s: '3개월 내',    t: 'yellow', link: 'short', tip: '부족자재 계산에서 3개월 안에 예상 재고가 마이너스가 되는 품목. 「↻ 다시 계산」으로 최신으로 맞출 수 있습니다.' },

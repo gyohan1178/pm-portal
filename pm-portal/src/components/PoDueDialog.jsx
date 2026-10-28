@@ -1,5 +1,5 @@
 // 📅 납기 바꾸기 (v4.98.0) — 「협력사가 납기를 바꿈」과 「우리 필요일이 바뀜」을 나눠 남긴다
-//   협력사 변경 → 변경 납기(vendor_date) · 요청 납기는 그대로 → 주간업무 지연에 남고 「② 변경 약속 받음」으로
+//   협력사 변경 → 변경 납기(vendor_date) · 요청 납기는 그대로 → 받을 날이 변경 납기가 되어 그날까지 지연에서 빠짐 (v4.108.0)
 //   우리 필요일 변경 → 요청 납기(promise_date)를 고침 → 지연에서 빠짐. 두 경우 모두 사유 · 이력 필수
 import { useState, useEffect } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -59,7 +59,7 @@ export default function PoDueDialog({ pos = [], onClose, onDone }) {
         </div>
         {one && <p className="text-[12px] text-slate-500 -mt-1">{one.items?.std_code} · {one.vendors?.name || '구매처 미정'} · 요청 납기 <b className="font-mono">{one.promise_date || '-'}</b>{one.vendor_date && <> · 변경 납기 <b className="font-mono text-amber-700">{one.vendor_date}</b></>}</p>}
         <div className="flex gap-2">
-          {btn('vendor', '협력사가 납기를 바꿈', '요청 납기는 그대로 · 「변경 납기」로 남김 → 주간업무 지연에 남고 「변경 약속 받음」으로')}
+          {btn('vendor', '협력사가 납기를 바꿈', '요청 납기는 그대로 두고 「변경 납기」로 남김 → 그날까지 지연에서 빠지고, 그날도 지나면 다시 지연')}
           {btn('need', '우리 필요일이 바뀜', '요청 납기 자체를 고침 → 지연에서 빠짐 (고객사 일정 변경 등)')}
         </div>
         <div className="flex items-end gap-3">

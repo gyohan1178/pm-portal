@@ -6,6 +6,7 @@ import { supabase } from './supabase'
 import { fetchAll } from './paginate'
 import { logActivity } from './activityLog'
 import { divisionOf } from './axPoFile'
+import { autoDeliverLegacy } from './legacyDeliver'
 
 // 여러 건을 20개씩 동시에 저장 — 하나라도 실패하면 멈춘다
 async function pool(arr, fn, n = 20) {
@@ -602,6 +603,7 @@ function assemble(heads, lines, extra = {}) {
 
 // 전부 (납품 완료 · 취소 · 전체 보기 · 이번 달 접수 · 단가 없는 품목 · 이카운트 대조 · 코드 정리)
 export async function fetchOrders() {
+  await autoDeliverLegacy()      // 이관분 납기 지난 줄 — 하루 한 번 (v4.108.0)
   const headsP = fetchHeads()
   let lines
   try { lines = await fetchParallel('pm_order_line', `${LINE_LIST_COLS}, items(${ITEM_COLS})`) } catch (e) {
@@ -614,6 +616,7 @@ export async function fetchOrders() {
 // 빠르게 (v4.103.0) — 진행 중 줄은 전체 칸 · 지난 줄은 계산에 필요한 줄 · 칸만 · 품목은 진행 중 줄 것만 따로
 //   보기가 없으면(SQL 전) 오류 → 화면이 예전처럼 fetchOrders 로 받는다
 export async function fetchOrdersFast() {
+  await autoDeliverLegacy()      // 이관분 납기 지난 줄 — 하루 한 번 (v4.108.0)
   // PO 머리 · 진행 중 줄 · 지난 줄을 「동시에」 받는다 (차례로 받으면 왕복이 쌓여 느림). 품목 코드 · 품명은 진행 중 줄 보기에 같이 들어 있다
   const ITEM_IN_VIEW = ',item_std_code,item_name,item_js_code'
   const liveP = fetchParallel('pm_order_line_live_v', LINE_LIST_COLS + ITEM_IN_VIEW).catch((e) => {

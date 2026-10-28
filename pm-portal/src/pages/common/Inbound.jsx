@@ -361,7 +361,7 @@ export default function Inbound() {
   })
   const PROC_COLS = [
     { key:'order_date', label:'발주일자', get:po=>po.order_date||'', num:false },
-    { key:'promise_date', label:'입고요청일', get:po=>po.promise_date||'', num:false },
+    { key:'promise_date', label:'입고요청일', get:po=>po.vendor_date||po.promise_date||'', num:false },   // 정렬은 받을 날(변경 납기 > 요청일) 순 (v4.108.0)
     { key:'std_code', label:'기준코드·품명', get:po=>po.items?.std_code||'', num:false },
     { key:'mfg', label:'제조사·품번', get:po=>po.items?.manufacturer||'', num:false },
     { key:'vendor', label:'구매처', get:po=>po.vendors?.name||'', num:false },
@@ -606,7 +606,7 @@ export default function Inbound() {
                       <tbody>
                         {vis.shown.map(po=>{
                           const on = !!checked[po.id]
-                          const delayed = po.promise_date && po.promise_date < today
+                          const delayed = (po.vendor_date || po.promise_date) && (po.vendor_date || po.promise_date) < today   // 받을 날 기준 (v4.108.0)
                           const justDone = doneIds.has(po.id)
                           return (
                             <tr key={po.id} {...rowProps(po.id, on)} data-inb-done={justDone ? '1' : undefined}
@@ -618,7 +618,7 @@ export default function Inbound() {
                               </td>
                               <td className="px-3 py-2 text-slate-500">{po.order_date||'-'}</td>
                               <td className="px-3 py-2 text-slate-500">{po.promise_date||'-'}{delayed && <span className="ml-1 text-red-500 font-bold">지연</span>}
-                                {/* 협력사 변경 납기 (v4.98.0) — 지연은 요청 납기 기준 그대로, 언제 오는지는 변경 납기 */}
+                                {/* 협력사 변경 납기 (v4.98.0) — 지연은 받을 날(변경 납기) 기준 (v4.108.0) */}
                                 {po.vendor_date && <span data-inb-vendor-date className={`block text-[10.5px] font-bold ${po.vendor_date < today ? 'text-red-600' : 'text-amber-700'}`}>→ 변경 {po.vendor_date.slice(5)}{po.vendor_date < today ? ' (지남)' : ''}</span>}</td>
                               <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-1.5 max-w-[260px]">

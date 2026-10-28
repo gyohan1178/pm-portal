@@ -153,10 +153,13 @@ function useAlertCounts(buy = false) {
         out['/orders'] = await countUnconfirmedOrders()
       } catch { /* 진행 중 줄 보기(SQL) 전이어도 메뉴는 그려야 한다 */ }
       if (buy) try {
-        // 구매발주 납기 지연 (v4.104.0) — 요청 납기(약속일)가 지났는데 남은 수량이 있는 진행 중 구매발주 줄 (고객사 전체)
+        // 구매발주 납기 지연 (v4.104.0) — 받을 날이 지났는데 남은 수량이 있는 진행 중 구매발주 줄 (고객사 전체)
+        //   받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 (v4.108.0)
         //   관제탑 「입고 지연」 · 구매발주 「납기 지연」과 같은 기준. 숫자만 받아 가볍다
+        const t = todayISO()
         const { count, error } = await supabase.from('purchase_orders').select('id', { count: 'exact', head: true })
-          .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').lt('promise_date', todayISO()).gt('qty_remaining', 0)
+          .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').gt('qty_remaining', 0)
+          .or(`vendor_date.lt.${t},and(vendor_date.is.null,promise_date.lt.${t})`)
         if (!error) out['/purchase'] = count || 0
       } catch { /* 실패해도 메뉴는 그려야 한다 */ }
       try {
