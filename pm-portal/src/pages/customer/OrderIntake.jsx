@@ -21,7 +21,7 @@ import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT,
+  replyLines, markDelivered, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
@@ -196,6 +196,13 @@ function ProdLink({ ps }) {
       🏭 {hs.slice(0, 3).join(' ')}{hs.length > 3 ? ` 외 ${hs.length - 3}` : ''}{ps.guess ? ' (추정)' : ''}
     </div>
   )
+}
+
+// PO 특이사항 메모 한 줄 (v4.109.0) — 목록에서 바로 보이게. 길면 말줄임, 마우스를 올리면 전체
+function PoNote({ o }) {
+  const t = String(o?.note || '').trim()
+  if (!t) return null
+  return <div className="mt-0.5 max-w-[260px] truncate text-[11px] font-semibold text-amber-800" title={t} data-po-note-line>📝 {t}</div>
 }
 
 function CustCell({ o }) {
@@ -381,7 +388,7 @@ export default function OrderIntake() {
   }, [poOpen, openFull]) // eslint-disable-line react-hooks/exhaustive-deps
   // 코드 없는 고객사 품번 수 (진행 중 줄) — 「코드 · BOM 정리」 탭 숫자
   const unregCount = useMemo(() => new Set(allLines.filter((l) => l.st.live && !l.item_id && String(l.raw_pn || '').trim()).map((l) => `${l.o.customer_code}|${String(l.raw_pn).trim().toUpperCase()}`)).size, [allLines])
-  const hit = (l) => !k || [l.o.po_no, l.o.customer_name, l.o.file_name, l.o.ship_to, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
+  const hit = (l) => !k || [l.o.po_no, l.o.customer_name, l.o.file_name, l.o.ship_to, l.o.note, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const today = todayISO()
@@ -533,7 +540,7 @@ export default function OrderIntake() {
       return { id, patch }
     },
     onSuccess: (r) => { patchHead([r.id], () => ({ ...r.patch, updated_at: new Date().toISOString() })); if ('confirmed_at' in r.patch) qc.invalidateQueries({ queryKey: ['menuAlerts'] }); toastSuccess('저장했습니다') },
-    onError: (e) => toastError(/ship_to/.test(e.message || '') ? '납품처 칸이 아직 없습니다 — 수주대장_납품처_261023.sql 을 먼저 실행하세요' : '저장 실패: ' + e.message),
+    onError: (e) => toastError(/ship_to/.test(e.message || '') ? '납품처 칸이 아직 없습니다 — 수주대장_납품처_261023.sql 을 먼저 실행하세요' : /'note'/.test(e.message || '') ? NOTE_SQL_HINT : '저장 실패: ' + e.message),
   })
   const delMut = useMutation({
     mutationFn: async (id) => { const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error },
@@ -891,6 +898,7 @@ export default function OrderIntake() {
                       {l.o.planned
                         ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'} · ${regTitle(l.o)}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}{regBy(l.o) && <> · <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}</div>
                         : <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={regTitle(l.o)}>Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{regBy(l.o) && <> <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
+                      <PoNote o={l.o} />
                     </td>
                     <td className="px-3 py-3 overflow-hidden">
                       <div className="flex flex-wrap items-center gap-1.5">
@@ -974,12 +982,13 @@ export default function OrderIntake() {
         </Suspense>
       )}
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} histLoading={!openFull} onClose={() => setPoOpen(null)}
+        <PoDrawer key={poOpen} o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} histLoading={!openFull} onClose={() => setPoOpen(null)}
           onOddOk={(ls, on) => oddMut.mutate({ ls, on })}
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}
           onPromote={(o, no) => promoteMut.mutate({ o, no })} promoteBusy={promoteMut.isPending}
           onSlip={(o, slip) => slipMut.mutate({ o, slip })}
+          onNote={(o, v) => headMut.mutate({ id: o.id, patch: { note: v.trim() || null }, log: { field: 'note', before_val: o.note || null, after_val: v.trim() || null } })}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
@@ -1029,6 +1038,7 @@ function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
           </div>
           <div className="text-[11.5px] text-slate-500 truncate">{l.items?.name || l.raw_desc || '—'}</div>
           {(l.o.ship_to || mgmtNoOf(l)) && <div className="text-[10.5px] text-slate-400 truncate">{[l.o.ship_to, mgmtNoOf(l)].filter(Boolean).join(' · ')}</div>}
+          <PoNote o={l.o} />
         </div>
         <div className="shrink-0 text-right">
           <span className={`inline-block px-2 py-0.5 rounded-full text-[10.5px] font-bold whitespace-nowrap ${stCls}`} data-status>{stLabel}</span>
@@ -1061,6 +1071,7 @@ function PoCard({ o, ls, amount, onOpen }) {
         {o.ship_to && <span className="text-[10.5px] text-slate-400">{o.ship_to}</span>}
         <span className="ml-auto text-[11px] text-slate-500">{replied ? `회신 ${replied}/${rp.length}` : '회신 전'}</span>
       </div>
+      <PoNote o={o} />
       <div className="mt-1 text-[11px] text-slate-500 truncate"><b className="text-slate-700">{rp.length}품목</b> · {rp.slice(0, 3).map((l) => `${l.items?.std_code || l.raw_pn || l.raw_desc} ×${fmt(l.qty)}`).join(' · ')}</div>
       <div className="mt-2 pt-2 border-t border-slate-100 grid grid-cols-2 gap-2 text-xs">
         <div><div className="text-[10px] text-slate-400">가장 빠른 납기</div>{liveL.length ? <DueCell l={first} /> : <span className="text-slate-400">납품 완료</span>}</div>
@@ -1072,7 +1083,7 @@ function PoCard({ o, ls, amount, onOpen }) {
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
 function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
-  onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip }) {
+  onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip, onNote }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
     queryFn: async () => {
@@ -1083,6 +1094,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
   })
   const [ship, setShip] = useState(o.ship_to || '')
   const [slip, setSlip] = useState(o.slip_no || '')
+  const [note, setNote] = useState(o.note || '')          // 특이사항 메모 (v4.109.0)
   const [newNo, setNewNo] = useState('')
   const [pick, setPick] = useState(() => new Set())      // 취소할 줄
   const [why, setWhy] = useState('')
@@ -1132,6 +1144,19 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
               {o.po_due && <span className={o.po_due < todayISO() && isTempPo(o) ? 'text-red-600 font-bold' : 'text-slate-600'}><span className="text-[10.5px] text-slate-400 mr-1">정식 PO 받을 날</span>{o.po_due}</span>}
             </div>
           )}
+          {/* 특이사항 메모 — 발주서 적요 · 참고 사항 · 사용처처럼 PO 에 따라붙는 말 (v4.109.0). 영업 · 구매자재 누구나 고칠 수 있다 */}
+          <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50/60 px-3 py-2" data-po-note>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-bold text-amber-800">📝 특이사항 메모</span>
+              {o.memo && <span className="text-[10.5px] text-slate-400 truncate" title="프로젝트 · 모델 (발주서 · 매출관리에서 들어온 값)">프로젝트 {o.memo}</span>}
+              {editable && note.trim() !== (o.note || '').trim() && <button type="button" onClick={() => onNote(o, note)} data-po-note-save className="ml-auto text-[11px] font-bold text-violet-600">저장</button>}
+            </div>
+            {editable
+              ? <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} data-po-note-input
+                  placeholder="예: 사급 자재 2~3일 후 전달 예정 · 포장 별도 요청 · 납품 전 연락 — 영업 · 구매자재 모두에게 보입니다"
+                  className="mt-1 w-full px-2 py-1 text-xs bg-white border border-amber-200 rounded resize-y" />
+              : <div className="mt-0.5 text-xs text-slate-700 whitespace-pre-wrap">{o.note || <span className="text-slate-400">없음</span>}</div>}
+          </div>
           {o.file_name && <div className="mt-2 text-[11px] text-slate-400">📄 {o.file_name}</div>}
         </div>
         <div className="p-3 md:p-6 space-y-4">

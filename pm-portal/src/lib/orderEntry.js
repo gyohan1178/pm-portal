@@ -99,13 +99,13 @@ export function parseEntryPaste(text) {
 }
 
 // ── 엑셀 양식 ─────────────────────────────────────────────
-export const TEMPLATE_HEAD = ['구분', '고객사', 'PO번호', '명세서번호', '발주일', '납품처', '받은 경로', '요청한 사람', '정식 PO 받을 날', '품번', 'Rev', '품명', '수량', '단가', '납기', 'Plnd 번호', '비고']
+export const TEMPLATE_HEAD = ['구분', '고객사', 'PO번호', '명세서번호', '발주일', '납품처', '받은 경로', '요청한 사람', '정식 PO 받을 날', '품번', 'Rev', '품명', '수량', '단가', '납기', 'Plnd 번호', '비고', '특이사항']
 const TEMPLATE_SAMPLE = [
-  ['구두', 'VM', '', '2026/10/23-4', '2026-10-23', '', '메일', 'VM 구매 박책임', '2026-10-30', '790-3003-320', '1', 'EDA PC ETHERNET', 11, 48000, '2026-11-20', '', ''],
-  ['선진행', 'ED', '', '', '2026-10-23', '아산', '회의', '', '2026-11-06', 'NKB364074', '', 'FAC MOD ACC ELEC ASSY', 2, 1250000, '2026-12-04', '', ''],
-  ['정식', 'AX', '47900KF', '', '2026-10-22', '평택', '', '', '', '110153030', 'P', '', 3, 1000000, '2026-12-30', '', ''],
-  ['정식', '동원파츠', 'DW-2610-01', '', '2026-10-28', '', '', '', '', '110153030', '', '', 2, 1000000, '2026-12-15', '', '기타 업체 — 고객사 칸에 업체 이름'],
-  ['예정', 'CSK', '', '', '', '안성', '', '', '', 'SCS0195S-0L1-ON084', '', 'SCSB116084AF', 1, 3502200, '2026-11-30', '505104554', '관리번호 JS2611-40'],
+  ['구두', 'VM', '', '2026/10/23-4', '2026-10-23', '', '메일', 'VM 구매 박책임', '2026-10-30', '790-3003-320', '1', 'EDA PC ETHERNET', 11, 48000, '2026-11-20', '', '', ''],
+  ['선진행', 'ED', '', '', '2026-10-23', '아산', '회의', '', '2026-11-06', 'NKB364074', '', 'FAC MOD ACC ELEC ASSY', 2, 1250000, '2026-12-04', '', '', '납품 전 담당자 연락'],
+  ['정식', 'AX', '47900KF', '', '2026-10-22', '평택', '', '', '', '110153030', 'P', '', 3, 1000000, '2026-12-30', '', '', ''],
+  ['정식', '동원파츠', 'DW-2610-01', '', '2026-10-28', '', '', '', '', '110153030', '', '', 2, 1000000, '2026-12-15', '', '기타 업체 — 고객사 칸에 업체 이름', '사급 자재 별도 전달'],
+  ['예정', 'CSK', '', '', '', '안성', '', '', '', 'SCS0195S-0L1-ON084', '', 'SCSB116084AF', 1, 3502200, '2026-11-30', '505104554', '관리번호 JS2611-40', ''],
 ]
 const TEMPLATE_GUIDE = [
   ['칸', '설명'],
@@ -117,6 +117,7 @@ const TEMPLATE_GUIDE = [
   ['품번', '고객사 품번 — 포털 코드로 자동으로 찾음 (못 찾으면 미등록으로 들어가고 「코드 · BOM 정리」에서 코드 부여)'],
   ['Plnd 번호', '발주 예정(CSK)만 — 실제 발주서가 오면 이 번호로 찾아 옮김'],
   ['비고', '관리번호 등 메모 (CSK 는 「관리번호 JS2611-40」처럼)'],
+  ['특이사항', 'PO 에 따라붙는 메모 — 발주서 적요 · 참고 사항 · 사용처 등. 같은 PO 의 아무 줄에 한 번만 써도 됨 (수주대장 · PO 상세에 보임)'],
 ]
 export function templateWorkbook(XLSX) {
   const wb = XLSX.utils.book_new()
@@ -160,10 +161,11 @@ export function parseEntryWorkbook(XLSX, wb) {
     if (!groups.has(key)) {
       groups.set(key, {
         kind, cust, customer_name: custName, po_no: kind === 'planned' ? '' : po, slip_no: slip || null, order_date: ymd(at(r, '발주일')), ship_to: s(at(r, '납품처')) || null,
-        req_channel: s(at(r, '받은 경로')) || null, req_person: s(at(r, '요청한 사람')) || null, po_due: ymd(at(r, '정식 PO 받을 날')), lines: [], rows: [],
+        req_channel: s(at(r, '받은 경로')) || null, req_person: s(at(r, '요청한 사람')) || null, po_due: ymd(at(r, '정식 PO 받을 날')), lines: [], rows: [], note: '',
       })
     }
     const g = groups.get(key)
+    if (!g.note && s(at(r, '특이사항'))) g.note = s(at(r, '특이사항'))       // 특이사항 메모 (v4.109.0)
     if (g.kind !== kind) { errors.push(`${rowNo}행: 같은 PO번호 ${po} 인데 구분이 다릅니다`); return }
     if (!g.slip_no && slip) g.slip_no = slip
     g.rows.push(rowNo)
@@ -200,7 +202,7 @@ export async function registerEntry(e, meName) {
   }
   if (await loadOrderByNo(cust, poNo, custName)) throw new Error(`${custName ? custName + ' ' : ''}${poNo} 는 이미 수주대장에 있습니다 — 그 PO 를 열어 고치세요`)
   const extra = { kind: e.kind, slip_no: s(e.slip_no) || null, req_channel: e.req_channel || null, req_person: s(e.req_person) || null, po_due: e.po_due || null, ...(etc ? { customer_name: custName } : {}) }
-  const po = { customer: cust, po_no: poNo, order_date: e.order_date || null, ship_to: s(e.ship_to) || null, currency: e.currency || (cust === 'AX' && e.ccn === 'B' ? 'USD' : 'KRW'), ccn: e.ccn || null, extra }
+  const po = { customer: cust, po_no: poNo, order_date: e.order_date || null, ship_to: s(e.ship_to) || null, currency: e.currency || (cust === 'AX' && e.ccn === 'B' ? 'USD' : 'KRW'), ccn: e.ccn || null, extra, headNote: s(e.note) || null }
   const ls = lines.map((l, i) => ({ ...l, line_no: String(l.line_no || i + 1), del_line: String(l.del_line || '1'), deliveredAll: false }))
   const r = await saveOrder({ po, lines: ls, existing: null, fileName: null, migrated: false, meName, source: 'manual' })
   return { ...r, po_no: poNo, kind: e.kind }

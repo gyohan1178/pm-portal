@@ -31,7 +31,7 @@ export default function OrderEntry({ mode = 'one', onClose, onSaved, meName }) {
 function OneEntry({ onClose, onSaved, meName }) {
   const [kind, setKind] = useState('verbal')
   const [cust, setCust] = useState('VM')
-  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: '', req_channel: '메일', req_person: '', po_due: '', customer_name: '' })
+  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: '', req_channel: '메일', req_person: '', po_due: '', customer_name: '', note: '' })
   // 기타 고객사 (동원파츠 · 동신 · 두웰 …) — 업체 이름 직접 입력 · 전에 쓴 이름은 고르기 목록 (v4.107.0)
   const etc = isManualCust(cust)
   const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
@@ -140,6 +140,13 @@ function OneEntry({ onClose, onSaved, meName }) {
               <Label>납품처</Label>
               <input value={f.ship_to} onChange={(e) => set('ship_to', e.target.value)} className={inCls} placeholder="예: 아산 · 평택 · 안성" />
             </div>
+            {kind !== 'planned' && (
+              <div className="md:col-span-2">
+                <Label>특이사항 메모</Label>
+                <input value={f.note} onChange={(e) => set('note', e.target.value)} className={inCls} data-entry-note placeholder="예: 사급 자재 2~3일 후 전달 예정 · 사용처 Gen2 Plus_SS H2D #20" />
+                <Help>발주서의 적요 · 참고 사항처럼 PO 에 따라붙는 말 — 수주대장 목록 · PO 상세에 보입니다.</Help>
+              </div>
+            )}
             {temp && (
               <>
                 <div>

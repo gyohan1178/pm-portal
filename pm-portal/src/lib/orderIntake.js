@@ -164,7 +164,8 @@ export function fillPlan(existing, po, newLines, pair) {
   if (po.order_date && !existing.order_date) { head.order_date = po.order_date; labels.push('발주일') }
   if (po.ccn && !existing.ccn) { head.ccn = po.ccn; labels.push(`CCN ${po.ccn}`) }
   if (po.total != null && existing.total == null) { head.total = po.total; labels.push('발주 합계') }
-  const lines = [], cnt = { rev: 0, item: 0, price: 0, desc: 0, spec: 0, renum: 0, etc: 0 }
+  if (po.headNote && !String(existing.note || '').trim()) { head.note = po.headNote; labels.push('특이사항 메모') }      // v4.109.0
+  const lines = [], cnt = { rev: 0, item: 0, price: 0, desc: 0, spec: 0, note: 0, renum: 0, etc: 0 }
   newLines.forEach((n, i) => {
     const o = pair?.get(i)
     if (!o) return
@@ -175,13 +176,14 @@ export function fillPlan(existing, po, newLines, pair) {
     if (o.unit_price == null && n.price != null) { p.unit_price = n.price; cnt.price++ }
     if (!o.raw_desc && n.desc) { p.raw_desc = n.desc; cnt.desc++ }
     if (!o.spec && n.spec) { p.spec = n.spec; cnt.spec++ }
+    if (!o.note && n.note) { p.note = n.note; cnt.note++ }       // 적요 (v4.109.0)
     const before = Object.keys(p).length
     if (!o.raw_pn && n.pn) p.raw_pn = n.pn
     if (!o.unit && n.unit) p.unit = n.unit
     if (Object.keys(p).length > before && !before) cnt.etc++
     if (Object.keys(p).length) lines.push({ id: o.id, key: lineKey(o), patch: p })
   })
-  ;[['item', '품목 연결'], ['rev', 'Rev'], ['price', '단가'], ['desc', '품명'], ['spec', '사양'], ['renum', '줄 번호 맞춤']]
+  ;[['item', '품목 연결'], ['rev', 'Rev'], ['price', '단가'], ['desc', '품명'], ['spec', '사양'], ['note', '적요'], ['renum', '줄 번호 맞춤']]
     .forEach(([k, l]) => { if (cnt[k]) labels.push(`${l} ${cnt[k]}`) })
   if (!labels.length && cnt.etc) labels.push(`품번 · 단위 ${cnt.etc}`)
   return { head, lines, labels, any: Object.keys(head).length > 0 || lines.length > 0 }
@@ -301,6 +303,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       total: po.total ?? null, source, file_name: fileName || null, migrated: !!migrated, registered_name: meName || null,
       ...(po.ship_to ? { ship_to: po.ship_to } : {}),
       ...(po.project ? { memo: [po.project, po.remark].filter(Boolean).join(' / ') } : {}),   // Edwards 발주서 프로젝트 줄 (v4.102.0)
+      ...(String(po.headNote || '').trim() ? { note: String(po.headNote).trim() } : {}),         // 특이사항 메모 — 참고 사항 · 사용처 · 직접 적은 것 (v4.109.0)
       ...(po.extra || {}),          // 직접 등록 — 구분(kind) · 명세서번호 · 받은 경로 등 (v4.94.0)
     }
     let { data: o, error } = await supabase.from('pm_order').insert(head).select('id').single()
@@ -310,6 +313,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
       ({ data: o, error } = await supabase.from('pm_order').insert(head).select('id').single())
     }
     if (error && po.extra?.customer_name && /customer_name|customer_code_check/.test(error.message || '')) throw new Error('「기타」 고객사 칸이 아직 없습니다 — 수주대장_기타고객사_반영_261028.sql 을 먼저 실행하세요')
+    if (error && head.note && /'note'|"note"| note /.test(error.message || '')) throw new Error(NOTE_SQL_HINT)
     if (error && po.extra && /kind|slip_no|req_channel|req_person|po_due/.test(error.message || '')) throw new Error('구분 · 명세서번호 칸이 아직 없습니다 — 수주대장_직접등록_반영_261023.sql 을 먼저 실행하세요')
     if (error) {
       if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${po.po_no} 는 이미 수주대장에 있습니다 — 파일을 다시 올려 비교하세요`)
@@ -391,6 +395,7 @@ export async function saveOrder({ po, lines, existing, fileName, migrated, meNam
   // 납품처가 이미 있으면 그대로 둔다 — 구매자재가 고친 값일 수 있음 (빈 칸만 채움)
   let { error } = await supabase.from('pm_order').update(head).eq('id', existing.id)
   if (error && /ship_to/.test(error.message || '') && head.ship_to) { delete head.ship_to; ({ error } = await supabase.from('pm_order').update(head).eq('id', existing.id)) }
+  if (error && head.note && /'note'|"note"| note /.test(error.message || '')) throw new Error(NOTE_SQL_HINT)
   if (error) throw error
   const nChanged = d.changes.length + d.added.length + d.removed.length + linked
   logActivity('update', 'pm_order', po.po_no, [nChanged ? `발주서 변경 ${nChanged}건 반영` : '', resetLogs.length ? `재회신 ${resetLogs.length}` : '', fp.any ? `빈 칸 채움: ${fp.labels.join(' · ')}` : ''].filter(Boolean).join(' · ') || '같은 발주서 다시 올림', null, ORDER_CUSTOMERS[cust]?.name)
@@ -673,7 +678,9 @@ export function bizDaysSince(ts, now = new Date()) {
 }
 
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
-export const FIELD_LABEL = { po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
+// 특이사항 메모 칸 (pm_order.note) — SQL 전이면 이 안내 (v4.109.0)
+export const NOTE_SQL_HINT = '특이사항 메모 칸이 아직 없습니다 — Supabase SQL Editor 에서 수주대장_특이사항메모_반영_261028.sql 을 먼저 실행해 주세요'
+export const FIELD_LABEL = { note: '특이사항 메모', po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
 
 // 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
 //   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })

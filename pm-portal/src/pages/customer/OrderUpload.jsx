@@ -1,19 +1,23 @@
 // 수주대장 — 발주서 PDF 올리기 (v4.87.0)
 //   PDF 여러 개를 끌어 놓으면 → 양식 · 고객사 판별 → 품목 줄 읽기 → 포털 품목 맞추기 → (같은 PO 가 있으면) 변경 비교 → 등록
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 import ItemPicker from '../../components/ItemPicker'
 import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
-import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan } from '../../lib/orderIntake'
+import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan, orderCustName } from '../../lib/orderIntake'
+import { fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 
 // 품목 맞추기 · 이미 있는 PO 찾기 · 발주 예정 연결 (새 PO = 모든 줄, 이미 있는 PO = 새로 생긴 줄만, v4.90.6)
+//   기타 업체(v4.109.0)는 업체마다 PO번호가 겹칠 수 있어 업체 이름까지 맞는 PO 를 찾는다
+const etcOf = (po) => po?.customer === 'ETC'
+const nameOk = (po) => !etcOf(po) || !!String(po.customer_name || '').trim()
 async function prepare(po, raw) {
   let lines = await matchLines(po.customer, raw)
-  const existing = await loadOrderByNo(po.customer, po.po_no)
+  const existing = nameOk(po) ? await loadOrderByNo(po.customer, po.po_no, po.customer_name) : null
   const planned = await fetchPlanned(po.customer)
   let diff = null
   if (existing) {
@@ -67,14 +71,30 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   async function changeCustomer(code) {
     setBusy(true)
     try {
-      const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w)) }
+      const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w) && (code === 'ETC' || !/업체 이름을 못 읽음/.test(w))) }
       const r = po.po_no ? await prepare(po, cur.po.lines.map((l) => ({ ...l }))) : { lines: await matchLines(code, cur.po.lines.map((l) => ({ ...l }))), existing: null, diff: null, planned: [] }
       setCur({ po, ...r })
     } catch (e) { toastError('고객사 바꾸기 실패: ' + e.message) }
     finally { setBusy(false) }   // 실패해도 「읽는 중」에 멈추지 않게 (v4.90.6)
   }
 
-  const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || (f.po.warns.length > 0 && !f.force)
+  // 기타 업체 이름 고치기 — 칸에서 나가면 그 이름으로 이미 있는 PO 를 다시 찾는다 (v4.109.0)
+  async function changeCustName(name) {
+    const v = String(name || '').trim()
+    if (v === String(cur.po.customer_name || '').trim()) return
+    setBusy(true)
+    try {
+      const po = { ...cur.po, customer_name: v, warns: cur.po.warns.filter((w) => !/업체 이름을 못 읽음/.test(w) || !v) }
+      const r = po.po_no ? await prepare(po, cur.po.lines.map((l) => ({ ...l }))) : { lines: cur.lines, existing: null, diff: null, planned: [] }
+      setCur({ po, ...r })
+    } catch (e) { toastError('업체 이름 반영 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+  const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
+  const anyEtc = files.some((f) => etcOf(f.po))
+  useEffect(() => { if (anyEtc) fetchEtcNames().then(setEtcNames).catch(() => {}) }, [anyEtc])
+
+  const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || !nameOk(f.po) || (f.po.warns.length > 0 && !f.force)
   // 이미 있는 PO — 바뀐 것이 없어도 빈 칸(납품처 · Rev · 품목 연결 …)을 채울 것이 있으면 저장 가능 (v4.90.1)
   const fillOf = (f) => (f?.existing && f.diff ? fillPlan(f.existing, f.po, f.lines, f.diff.pair) : null)
   const canSave = (f) => f && !f.saved && !blocked(f) && !(f.existing && f.diff?.same && !fillOf(f)?.any)
@@ -86,8 +106,10 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     const lines = f.lines.map((l) => ({ ...l, deliveredAll: l.deliveredAll || f.allDelivered }))
     // 등록 직전에 다시 찾는다 — 같은 PO 파일이 둘(「… (1).pdf」 등)이면 앞 파일이 먼저 등록해
     //   읽을 때는 없던 PO 가 지금은 있다. 그때 새로 넣으면 409(이미 있음)로 실패하므로 변경 반영으로 돌린다 (v4.90.5)
-    const fresh = await loadOrderByNo(f.po.customer, f.po.po_no)
-    const r = await saveOrder({ po: f.po, lines, existing: fresh, fileName: f.name, migrated: !fresh && (!!f.allDelivered || lines.some((l) => l.deliveredAll)), meName })
+    const fresh = await loadOrderByNo(f.po.customer, f.po.po_no, f.po.customer_name)
+    // 기타 업체는 업체 이름을 PO 머리에 (직접 등록과 같은 칸)
+    const po = etcOf(f.po) ? { ...f.po, extra: { ...(f.po.extra || {}), customer_name: String(f.po.customer_name).trim() } } : f.po
+    const r = await saveOrder({ po, lines, existing: fresh, fileName: f.name, migrated: !fresh && (!!f.allDelivered || lines.some((l) => l.deliveredAll)), meName })
     const label = r.created ? '등록됨' : [r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? '빈 칸 채움' : ''].filter(Boolean).join(' · ')
       || (!f.existing && fresh ? '같은 PO 앞 파일로 등록됨' : '바뀐 것 없음')
     setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label, err: null } : x)))
@@ -148,7 +170,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
         <div className="flex items-start gap-3 px-4 md:px-6 py-4 border-b border-slate-100">
           <div className="min-w-0">
             <h2 className="text-lg font-extrabold text-slate-800">📄 발주서 PDF 올리기</h2>
-            <p className="text-xs text-slate-400">고객사 발주서 PDF 를 그대로 올리면 양식 · 고객사를 구분하고 품목 줄을 읽습니다. 같은 PO 를 다시 올리면 바뀐 것만 반영하고 변경 이력을 남깁니다.</p>
+            <p className="text-xs text-slate-400">고객사 발주서 PDF 를 그대로 올리면 양식 · 고객사를 구분하고 품목 줄을 읽습니다. 4개 고객사 밖의 업체(두웰 · 남일 …) 발주서는 「기타 업체」로 읽습니다. 같은 PO 를 다시 올리면 바뀐 것만 반영하고 변경 이력을 남깁니다.</p>
           </div>
           <button type="button" onClick={onClose} className="ml-auto shrink-0 whitespace-nowrap px-3 py-1.5 text-sm font-bold text-slate-500 hover:text-slate-800">✕ 닫기</button>
         </div>
@@ -184,7 +206,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
             {files.map((f, i) => {
               const c = f.po.customer ? ORDER_CUSTOMERS[f.po.customer] : null
               const tag = f.err ? ['bg-red-50 text-red-600', '⚠ 등록 실패'] : f.saved ? ['bg-emerald-50 text-emerald-700', `✓ ${f.saved}`]
-                : !f.po.kind ? ['bg-red-50 text-red-600', '⚠ 모르는 양식']
+                : !f.po.kind ? ['bg-red-50 text-red-600', f.po.scan ? '⚠ 스캔본' : '⚠ 모르는 양식']
                 : f.po.warns.length ? ['bg-amber-50 text-amber-700', `⚠ 확인 ${f.po.warns.length}`]
                 : f.existing ? (f.diff?.same ? (fillOf(f)?.any ? ['bg-violet-50 text-violet-700', '빈 칸 채우기'] : ['bg-slate-100 text-slate-500', '변경 없음']) : ['bg-blue-50 text-blue-700', `변경 ${f.diff.changes.length + f.diff.added.length + f.diff.removed.length}`])
                 : ['bg-emerald-50 text-emerald-700', '✓ 점검 통과']
@@ -192,7 +214,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                 <button key={i} type="button" onClick={() => setSel(i)} data-file-row={i}
                   className={`w-full flex items-center gap-2 px-3 py-2.5 rounded-xl border text-left text-xs ${i === sel ? 'border-violet-500 ring-2 ring-violet-100' : 'border-slate-200'} ${!f.po.kind ? 'bg-red-50/40' : 'bg-white'}`}>
                   <span className="font-mono font-bold text-slate-700 truncate flex-1" title={f.name}>{f.name}</span>
-                  {c && <span className={`px-2 py-0.5 rounded-full font-bold ${c.badge}`}>{c.name}</span>}
+                  {c && <span className={`px-2 py-0.5 rounded-full font-bold ${c.badge}`}>{etcOf(f.po) ? (String(f.po.customer_name || '').trim() || '기타 · 이름?') : c.name}</span>}
                   <span className="text-slate-400 whitespace-nowrap">{f.lines.length}품목</span>
                   <span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${tag[0]}`}>{tag[1]}</span>
                 </button>
@@ -209,7 +231,8 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
               · 고객사 = 발행 회사 사업자번호 (Edwards · CSK 는 양식이 같음)<br />
               · 발주서 합계 = 읽은 줄 합계 (빠진 줄 잡기)<br />
               · PO번호 · 수량 · 단가 · 납기 빠짐 없음 · 분할 수량 합<br />
-              · 스캔본(글자 없는 PDF)은 못 읽음 → 「모르는 양식」
+              · 기타 업체(두웰 · 남일 …) 발주서도 읽음 — 업체 이름 확인<br />
+              · 스캔본(글자 없는 PDF)은 못 읽음 → 「직접 등록」으로
             </div>
           </div>
 
@@ -224,8 +247,18 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   <select value={cur.po.customer || ''} disabled={!cur.po.kind || busy || !!cur.saved} onChange={(e) => changeCustomer(e.target.value)} data-cust-select
                     className="text-xs font-bold border border-slate-200 rounded-lg px-2 py-1">
                     <option value="" disabled>고객사?</option>
-                    {Object.entries(ORDER_CUSTOMERS).filter(([, v]) => !v.manual).map(([k, v]) => <option key={k} value={k}>{v.name}</option>)}
+                    {Object.entries(ORDER_CUSTOMERS).map(([k, v]) => <option key={k} value={k}>{v.manual ? '기타 업체' : v.name}</option>)}
                   </select>
+                  {etcOf(cur.po) && (
+                    <span className="flex items-center gap-1" data-etc-name-box>
+                      <input key={`${sel}-${cur.po.customer_name || ''}`} defaultValue={cur.po.customer_name || ''} list="upload-etc-names" disabled={busy || !!cur.saved}
+                        onBlur={(e) => changeCustName(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                        placeholder="업체 이름 (예: 두웰)" data-etc-name
+                        className={`w-36 text-xs font-bold border rounded-lg px-2 py-1 ${nameOk(cur.po) ? 'border-slate-200' : 'border-rose-400 ring-2 ring-rose-100'}`} />
+                      <datalist id="upload-etc-names">{etcNames.map((n) => <option key={n} value={n} />)}</datalist>
+                    </span>
+                  )}
+                  {cur.po.project && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 text-slate-600" title="프로젝트 · 호기 — 수주대장 메모 칸에 들어갑니다" data-po-project>{cur.po.project}</span>}
                   <span className="text-xs text-slate-400">{cur.po.kind ? FORMAT_LABEL[cur.po.kind] : '양식 모름'}{cur.po.order_date ? ` · 발주일 ${cur.po.order_date}` : ''}{cur.po.currency ? ` · ${cur.po.currency}` : ''}{cur.po.ccn ? ` (CCN ${cur.po.ccn})` : ''}</span>
                   {cur.po.total != null && !cur.po.warns.some((w) => /합계/.test(w)) && <span className="ml-auto px-2 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700">합계 {fmt(cur.po.total)} = 읽은 줄 합계</span>}
                 </div>
@@ -262,6 +295,25 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   </div>
                 )}
 
+                {cur.po.kind && (
+                  <div className="px-4 py-3 border-b border-slate-100" data-head-note>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-600">📝 특이사항 메모</span>
+                      <span className="text-[10.5px] text-slate-400">발주서의 참고 사항 · 사용처 · 전달 사항을 읽어 넣습니다. 고쳐도 됩니다 — 수주대장 · PO 상세에 보입니다</span>
+                    </div>
+                    {cur.existing && String(cur.existing.note || '').trim() ? (
+                      <div className="mt-1.5 text-xs text-slate-700" data-head-note-saved>
+                        <span className="text-[10.5px] text-slate-400 mr-1">등록된 메모</span>{cur.existing.note}
+                        {cur.po.headNote && cur.po.headNote !== cur.existing.note && <div className="text-[10.5px] text-slate-400 mt-0.5">이 발주서: {cur.po.headNote} — 등록된 메모는 PO 상세에서 고칩니다</div>}
+                      </div>
+                    ) : (
+                      <textarea value={cur.po.headNote || ''} rows={2} disabled={!!cur.saved} data-head-note-input
+                        onChange={(e) => setCur({ po: { ...cur.po, headNote: e.target.value } })}
+                        placeholder="예: 사급 자재 2~3일 후 전달 예정 · 사용처 Gen2 Plus_SS H2D #20"
+                        className="mt-1.5 w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg resize-y" />
+                    )}
+                  </div>
+                )}
                 {cur.lines.length > 0 && (
                   <div className="max-h-[52vh] overflow-auto">
                     <table className="w-full text-xs">
@@ -269,6 +321,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                         <th className="px-2 py-2 text-left">줄</th><th className="px-2 text-left">발주서 품번 · 품명</th><th className="px-2 text-left">포털 품목</th>
                         <th className="px-2 text-left">Rev</th><th className="px-2 text-right">수량</th><th className="px-2 text-right">단가</th><th className="px-2 text-left">납기</th>
                         {cur.po.customer === 'AX' && <th className="px-2 text-left">구분</th>}
+                        {cur.lines.some((l) => l.note) && <th className="px-2 text-left">적요 · 메모</th>}
                         {showPlan && <th className="px-2 text-left" title="실제 발주가 오면 Plnd order number 로 「발주 예정」 줄을 찾아 이 PO 로 옮깁니다">발주 예정 연결</th>}
                         {!cur.existing && <th className="px-2 text-center">이미 납품</th>}
                       </tr></thead>
@@ -297,6 +350,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                             <td className="px-2 py-1.5 text-right font-mono">{fmt(l.price)}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{l.due || '—'}</td>
                             {cur.po.customer === 'AX' && <td className="px-2 py-1.5">{l.division}</td>}
+                            {cur.lines.some((x) => x.note) && <td className="px-2 py-1.5 max-w-[220px] text-[11px] text-amber-800" data-line-note={i}>{l.note || ''}</td>}
                             {showPlan && (
                               <td className="px-2 py-1.5 min-w-[230px]" data-plan-cell={i}>
                                 {!planOk(l) ? <span className="text-slate-300">—</span> : <>
@@ -323,7 +377,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                   <span className="text-xs text-slate-500">
                     품목 {cur.lines.length} · 찾음 {cur.lines.length - unmatched}{unmatched ? <b className="text-amber-700"> · 미등록 {unmatched}</b> : ''}
                     {linkedN > 0 && <b className="text-violet-700" data-linked> · 발주 예정 {linkedN}건 확정</b>}
-                    {cust ? ` · ${cust.name}` : ''}
+                    {cust ? ` · ${orderCustName({ customer_code: cur.po.customer, customer_name: cur.po.customer_name })}` : ''}
                   </span>
                   {!cur.existing && cur.lines.length > 0 && !cur.saved && (
                     <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600" title="지난 PO 를 옮겨 넣을 때 — 모든 줄을 납품 · 판매입력 완료로 넣어 할 일에 안 뜨게 합니다">

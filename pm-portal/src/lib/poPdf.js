@@ -9,6 +9,9 @@
 //     LN   Atlas Copco Lasernet 발주서 (Edwards · CSK) — Non-inventory Item 이면 품번 없음
 //     JIT  Edwards JIT(Kanban) 발주서
 //     VM   브이엠 구매발주서 — 품번_Rev.N
+//     GEN  기타 업체 발주서 (v4.109.0) — 두웰 · 남일인스트루먼트처럼 4개 고객사 밖 업체. 정해진 양식이 없어
+//          「수량 · 단가」 머리글이 있는 표를 찾아 칸 내용으로 읽는다 (수량 × 단가 = 금액 인 세 숫자).
+//          고객사는 「기타」 + 발행 회사 이름. 적요 · Remarks 칸 → 줄 메모, 참고 사항 · 사용처 · 전달 사항 → 특이사항 메모
 //
 //   고객사는 양식이 아니라 발행 회사 사업자등록번호로 정한다 (Edwards · CSK 는 양식도 담당 메일도 섞여 있다).
 
@@ -55,9 +58,16 @@ export async function linesOfDoc(doc) {
     })
     rows.sort((a, b) => b.y - a.y).forEach((r) => {
       r.its.sort((a, b) => a.x - b.x)
+      // y · 칸마다 시작 x 도 같이 둔다 — 줄 사이에 낀 「적요」 같은 칸을 어느 품목 줄 것인지 위치로 정할 때 (v4.109.0)
       let t = '', end = null
-      r.its.forEach((i) => { if (end != null) t += i.x - end > 6 ? ' | ' : i.x - end > 1 ? ' ' : ''; t += i.s; end = i.x + i.w })
-      out.push({ p, t: t.trim() })
+      const xs = []
+      r.its.forEach((i) => {
+        const gap = end == null ? null : i.x - end
+        if (gap != null) t += gap > 6 ? ' | ' : gap > 1 ? ' ' : ''
+        if (gap == null || gap > 6) xs.push(Math.round(i.x))
+        t += i.s; end = i.x + i.w
+      })
+      out.push({ p, t: t.trim(), y: Math.round(r.y * 10) / 10, xs })
     })
   }
   return out
@@ -78,9 +88,10 @@ export function detect(L) {
   if (/JIT order/.test(all)) return 'JIT'
   if (/Line No\. \| Material Number/.test(all)) return 'SAP'
   if (/일련번호 \| 품목번호 \| 품명/.test(all)) return 'LN'
+  if (/발 ?주 ?서|purchase ?order/i.test(all) && genHead(L) >= 0) return 'GEN'     // 기타 업체 (v4.109.0)
   return null
 }
-export const FORMAT_LABEL = { AX: 'AXCELIS 발주서', SAP: 'SAP 발주서', LN: '일반 발주서', JIT: 'JIT 발주서', VM: 'VM 구매발주서' }
+export const FORMAT_LABEL = { AX: 'AXCELIS 발주서', SAP: 'SAP 발주서', LN: '일반 발주서', JIT: 'JIT 발주서', VM: 'VM 구매발주서', GEN: '기타 업체 발주서' }
 
 // 사업자등록번호 → 고객사 코드 (수주대장 · 판매입력 거래처와 같은 기준)
 export const BIZ_NO = { '312-81-12960': 'ED', '129-81-23036': 'CSK' }
@@ -89,6 +100,7 @@ export function customerOf(L, kind) {
   if (kind === 'VM') return 'VM'
   const all = L.map((l) => l.t).join('\n')
   const hit = Object.keys(BIZ_NO).filter((b) => all.includes(b))
+  if (kind === 'GEN') return hit.length === 1 ? BIZ_NO[hit[0]] : 'ETC'     // 기타 업체 양식이어도 Edwards · CSK 사업자번호가 있으면 그 고객사
   return hit.length === 1 ? BIZ_NO[hit[0]] : null
 }
 
@@ -96,7 +108,7 @@ export function customerOf(L, kind) {
 //   Edwards · CSK 는 사업장이 여러 곳이다 (아산 공장 · 안성 7401 · 평택 등). 우리 주소(천안)와 고객사 본사(용인 · 화성)는 빼고 본다.
 // 납품처는 지역으로 짧게 — Edwards · CSK 는 아산(아산 공장) / 안성(물류창고 · plant 7401 · 7035) / 평택 (v4.90.0)
 const SITES = [
-  [/MFK/, '평택 MFK'], [/아산/, '아산'], [/안성|Plant 7401|plant 7035/i, '안성'], [/평택|Pyeongtaek/i, '평택'],
+  [/MFK/, '평택 MFK'], [/아산/, '아산'], [/(?<!천)안성|Plant 7401|plant 7035/i, '안성'], [/평택|Pyeongtaek/i, '평택'],
   [/호법|이천/, '이천 호법창고'], [/BEVERLY/i, '미국 Beverly'],
 ]
 export function shipToOf(L) {
@@ -265,13 +277,141 @@ function parseVM(L) {
   return { po_no, order_date: null, currency: 'KRW', total: num(tot), lines }
 }
 
-const PARSERS = { AX: parseAX, SAP: parseSAP, LN: parseLN, JIT: parseJIT, VM: parseVM }
+// ── 기타 업체 발주서 (v4.109.0) ─────────────────────────────────
+//   업체마다 양식이 다르다 (이카운트 발주서 · 엑셀로 만든 Purchase order …). 칸 순서 대신 「무엇이 들어 있나」로 읽는다.
+//     머리글: 수량(Q'ty) · 단가(Price) 가 같이 있는 줄 → 그 아래 첫 칸이 번호인 줄 = 품목 줄, 합계 · Total 줄에서 끝
+//     품목 줄: 수량 × 단가 = 금액 인 세 숫자 · 코드 모양(IE0501600 · NKB929035) = 품번 · [ ] 안 = 품명 · 날짜 = 줄 납기
+//     적요 · Remarks 칸(머리글 x 위치 오른쪽)의 글 → 줄 메모. 줄 사이에 낀 두 줄 적요는 높이(y)가 가까운 품목 줄로
+const dAny = (s) => { const m = String(s ?? '').match(/(20\d{2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{1,2})/); return m ? iso(+m[1], +m[2], +m[3]) : null }
+const NUMC = /^[₩￦$]?\s*[\d,]+(\.\d+)?$/
+const UNIT_RE = /^(EA|SET|PCS|PC|M|KG|ROLL|BOX|개|롤|대|식)$/i
+const CODE_RE = /^[A-Z]{1,6}-?\d{4,}[-A-Z0-9.]*$/i
+const QTY_H = /^(수\s*량|Q'?TY|QUANTITY)$/i
+const PRICE_H = /^(단\s*가|PRICE|UNIT\s*PRICE)$/i
+export function genHead(L) {
+  return L.findIndex((l) => { const c = cells(l.t); return c.some((v) => QTY_H.test(v)) && c.some((v) => PRICE_H.test(v)) })
+}
+// 이름표 옆 값 — 같은 칸(「납기일자 : 2026/11/03」) · 바로 오른쪽 칸 · 바로 아래 줄의 같은 x 칸 순서로 찾는다
+function labelValue(L, re, ok = () => true, from = 0, to = L.length) {
+  for (let i = from; i < to; i++) {
+    const c = cells(L[i].t)
+    for (let k = 0; k < c.length; k++) {
+      const inl = c[k].match(/^([^:：]+?)\s*[:：]\s*(.+)$/)
+      if (inl && re.test(inl[1].trim()) && ok(inl[2].trim())) return inl[2].trim()
+      if (!re.test(c[k])) continue
+      if (c[k + 1] && ok(c[k + 1])) return c[k + 1]
+      const nx = L[i + 1]
+      if (nx) {
+        const nc = cells(nx.t), x = L[i].xs?.[k]
+        let j = k
+        if (x != null && nx.xs?.length === nc.length) {
+          j = nc.reduce((b, _, q) => (Math.abs(nx.xs[q] - x) < Math.abs(nx.xs[b] - x) ? q : b), 0)
+          if (Math.abs(nx.xs[j] - x) > 45) j = -1
+        }
+        if (j >= 0 && nc[j] && ok(nc[j]) && !re.test(nc[j])) return nc[j]
+      }
+    }
+  }
+  return null
+}
+const ME = /진선\s*테크|jinsun/i
+const cleanCo = (s) => String(s || '').replace(/주식회사|유한회사|㈜|\(주\)|\(유\)|co\.,?\s*ltd\.?|inc\.?/gi, '').replace(/\s+/g, ' ').trim()
+// 발행 회사 — 「회사명 · 상호」 이름표, 없으면 ㈜ · 주식회사가 붙은 글 (우리 회사 진선테크는 뺀다)
+function companyOf(L) {
+  const v = labelValue(L, /^(회사명\s*\/\s*대표|회사명|상\s*호|업체명|공급받는자|발주처)$/, (x) => !ME.test(x))
+  if (v) return cleanCo(v.split('/')[0]) || null
+  for (const l of L) {
+    for (const c of cells(l.t)) {
+      if (ME.test(c) || !/㈜|\(주\)|주식회사/.test(c)) continue
+      const m = c.match(/(?:㈜|\(주\)|주식회사)\s*([^\s|/,]+)|([^\s|/,]+)\s*(?:㈜|\(주\)|주식회사)/)
+      const name = cleanCo(m ? (m[1] || m[2]) : c)
+      if (name && name.length <= 20) return name
+    }
+  }
+  return null
+}
+function parseGEN(L) {
+  const iH = genHead(L)
+  const hc = cells(L[iH].t), hx = L[iH].xs?.length === hc.length ? L[iH].xs : null
+  const colX = (re) => { const k = hc.findIndex((c) => re.test(c)); return k >= 0 && hx ? hx[k] : null }
+  // 적요 칸 왼쪽 끝 — 머리글은 가운데 정렬이라 실제 글은 더 왼쪽에서 시작한다 (두웰: 머리글 519 · 글 495). 앞 머리글보다는 오른쪽
+  const iRem = hc.findIndex((c) => /^(적\s*요|REMARKS?|비\s*고)$/i.test(c))
+  const remX = iRem >= 0 && hx ? Math.max(iRem > 0 ? hx[iRem - 1] + 20 : 0, hx[iRem] - 30) : null
+  const projX = colX(/^(PROJECT|프로젝트)$/i)
+  const before = L.slice(0, iH)
+  const po_no = labelValue(before, /^(발주\s*번호|PO\s*NO\.?|ORDER\s*NO\.?|P\/O\s*NO\.?)$/i, (v) => /[A-Z0-9]/i.test(v) && /\d{3,}/.test(v) && !dAny(v))
+  const order_date = dAny(labelValue(before, /^(발주\s*일자|발주일|ORDER\s*DATE|PO\s*DATE|작성일자?)$/i, dAny)) || dAny(before.find((l) => /^20\d{2}[./-]\d{1,2}[./-]\d{1,2}$/.test(l.t))?.t)
+  const dueAll = dAny(labelValue(before, /^(납기\s*일자|납기일|납\s*기|요청\s*납기|DUE\s*DATE|DELIVERY\s*DATE)$/i, dAny))
+  const isEnd = (c) => /^(총\s*합\s*계|합\s*계|소\s*계|TOTAL|SUB\s*TOTAL|NOTES?)/i.test(c[0] || '')
+  const rows = [], loose = []
+  let iEnd = L.length
+  for (let i = iH + 1; i < L.length; i++) {
+    const l = L[i], c = cells(l.t), xs = l.xs?.length === c.length ? l.xs : null
+    if (isEnd(c)) { iEnd = i; break }
+    if (!/^\d{1,3}$/.test(c[0]) || c.length < 3) { loose.push({ l, c, xs }); continue }
+    const at = (k) => (xs ? xs[k] : null)
+    const used = new Set([0])
+    // 수량 × 단가 = 금액 인 세 숫자
+    const nums = c.map((v, k) => ({ k, v: NUMC.test(v) ? num(v) : null })).filter((n) => n.k > 0 && n.v != null)
+    let q = null, pr = null, am = null
+    for (let a = 0; a < nums.length && !q; a++) for (let b = a + 1; b < nums.length && !q; b++) for (let d = b + 1; d < nums.length; d++) {
+      if (nums[a].v > 0 && Math.abs(nums[a].v * nums[b].v - nums[d].v) <= 1) { q = nums[a]; pr = nums[b]; am = nums[d]; break }
+    }
+    if (!q && nums.length >= 2) { q = nums[0]; pr = nums[1] }
+    ;[q, pr, am].forEach((n) => n && used.add(n.k))
+    if (am) nums.filter((n) => n.k === am.k + 1).forEach((n) => used.add(n.k))     // 금액 바로 뒤 = 부가세
+    const row = { line_no: c[0], del_line: '1', pn: null, rev: null, desc: '', spec: '', qty: q?.v ?? null, unit: '', price: pr?.v ?? null, due: null, delivered: 0, note: '', y: l.y ?? null, project: null }
+    const notes = [], descs = []
+    c.forEach((v, k) => {
+      if (used.has(k)) return
+      const x = at(k)
+      if (dAny(v) && /^\D{0,3}20\d{2}[./-]/.test(v)) { row.due = row.due || dAny(v); return }
+      if (UNIT_RE.test(v)) { row.unit = v.toUpperCase(); return }
+      if (remX != null && x != null && x >= remX) { notes.push(v); return }
+      if (projX != null && x != null && Math.abs(x - projX) <= 40 && !CODE_RE.test(v)) { row.project = v; return }
+      if (NUMC.test(v)) return
+      const br = v.match(/^([A-Z0-9][A-Z0-9-_.]{3,})\s*\[(.*)\]$/i)                 // IE0501600 [GAS CAL ANALOG CABLE1]
+      if (br && !row.pn) { row.pn = br[1]; descs.push(br[2].trim()); return }
+      if (CODE_RE.test(v) && /\d/.test(v) && !row.pn) { row.pn = v; return }
+      descs.push(v)
+    })
+    row.desc = descs.join(' ')
+    row.note = notes.join(' ')
+    rows.push(row)
+  }
+  // 줄 사이에 낀 적요(두 줄로 넘친 칸) → 높이가 가장 가까운 품목 줄 · 품목 표 아래 프로젝트 칸 → 모든 줄
+  let projAll = null
+  loose.forEach(({ l, c, xs }) => {
+    if (!xs || !rows.length) return
+    if (remX != null && xs[0] >= remX) {
+      const r = l.y != null && rows[0].y != null ? rows.reduce((b, r) => (Math.abs(r.y - l.y) < Math.abs(b.y - l.y) ? r : b)) : rows.filter((r) => true).slice(-1)[0]
+      r.note = [r.note, c.join(' ')].filter(Boolean).join(' ')
+      return
+    }
+    if (projX != null && c.length === 1 && Math.abs(xs[0] - projX) <= 60 && !NUMC.test(c[0])) projAll = projAll || c[0]
+  })
+  const lines = rows.map(({ y, project, ...r }) => ({ ...r, due: r.due || dueAll, note: r.note ? `적요: ${r.note}` : '', project: project || projAll }))
+  // 합계 — 표 아래에서 「공급가액」(부가세 빼고) 먼저, 없으면 Total
+  const after = L.slice(iEnd)
+  const tot = num(labelValue(after, /^(공급\s*가액|공급가|SUB\s*TOTAL)$/i, (v) => NUMC.test(v)) || labelValue(after, /^(TOTAL|합계\s*금액)$/i, (v) => NUMC.test(v)))
+  // 특이사항 — 참고 사항 · 사용처 · 전달 사항 · 특이 사항 (배송 · 마감 안내 같은 정해진 문구는 안 넣는다)
+  const remark = [labelValue(L, /^(참고\s*사항|사\s*용\s*처|전달\s*사항|특이\s*사항|요청\s*사항)$/, (v) => v.length > 1 && !/^(결제|비고)/.test(v), iEnd)]
+    .concat(labelValue(L.slice(0, iH), /^(참고\s*사항|사\s*용\s*처|전달\s*사항|특이\s*사항|요청\s*사항)$/, (v) => v.length > 1))
+    .filter(Boolean)
+  const project = lines.find((l) => l.project)?.project || null
+  lines.forEach((l) => { delete l.project })
+  const customer_name = companyOf(L)
+  const extraWarn = customer_name ? [] : ['발주한 업체 이름을 못 읽음 — 위 「업체 이름」 칸에 적어 주세요']
+  return { po_no, order_date, currency: 'KRW', total: tot, lines, project, headNote: [...new Set(remark)].join(' / ') || null, customer_name, extraWarn }
+}
+
+const PARSERS = { AX: parseAX, SAP: parseSAP, LN: parseLN, JIT: parseJIT, VM: parseVM, GEN: parseGEN }
 
 // 줄 → 발주서 한 장 { kind, customer, po_no, order_date, currency, ccn, total, lines, dueChanged, warns }
 export function parsePO(L) {
   const kind = detect(L)
   const P = PARSERS[kind]
-  if (!P) { const r = { kind: null, customer: null, po_no: null, lines: [] }; return { ...r, warns: checkPO(r) } }
+  if (!P) { const r = { kind: null, customer: null, po_no: null, lines: [], scan: !L.some((l) => String(l.t || '').trim()) }; return { ...r, warns: checkPO(r) } }
   const { extraWarn = [], ...r } = P(L)
   const out = { kind, ...r, customer: customerOf(L, kind), ship_to: shipToOf(L), refs: [...new Set(L.flatMap((l) => refNums(l.t, r.po_no)))] }
   out.warns = [...checkPO(out), ...extraWarn]
@@ -281,7 +421,8 @@ export function parsePO(L) {
 // 점검 — 하나라도 걸리면 「양식 확인 필요」
 export function checkPO(r) {
   const w = []
-  if (!r.kind) w.push('모르는 양식 — 등록된 발주서 양식과 맞지 않음 (스캔본이면 글자를 못 읽음)')
+  if (!r.kind && r.scan) w.push('스캔본(글자 없는 그림 PDF) — 글자를 읽을 수 없습니다. 수주대장 「＋ 직접 등록」으로 넣어 주세요')
+  else if (!r.kind) w.push('모르는 양식 — 등록된 발주서 양식과 맞지 않음 (스캔본이면 글자를 못 읽음)')
   else if (!r.lines.length) w.push(`${FORMAT_LABEL[r.kind]}으로 보이나 품목 줄을 하나도 못 읽음 — 양식이 바뀌었을 수 있음`)
   if (r.kind && !r.po_no) w.push('PO번호를 못 읽음')
   if (r.kind && !r.customer) w.push('고객사를 못 정함 — 사업자등록번호가 없거나 둘 다 찍힘')
