@@ -134,6 +134,13 @@ export async function createDocRequest(f, me) {
   return { row: data, followed: false }
 }
 
+// 목록에서 다른 부서 요청에 「같이 기다리기」로 붙기 (v4.108.1)
+export async function followDoc(id, dept) {
+  const { data, error } = await supabase.rpc('pm_doc_request_follow', { p_id: id, p_dept: dept })
+  if (error) throw error
+  return data
+}
+
 export async function moveDoc(id, to, note) {
   const { data, error } = await supabase.rpc('pm_doc_request_move', { p_id: id, p_to: to, p_note: s(note) || null })
   if (error) throw error

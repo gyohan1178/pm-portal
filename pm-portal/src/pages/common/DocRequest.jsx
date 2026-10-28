@@ -1,7 +1,8 @@
 // 📎 자료 요청 (v4.98.0) — 도면 · BOM · 사양서를 영업에 요청하고 받을 때까지 따라간다
 //   영업: 「받은 자료 요청」 — 고객사별로 모아 한 번에 요청 문구 · 진행 앞으로 / 한 칸 뒤로(잘못 눌렀을 때)
-//   그 밖 부서: 「우리 부서 요청」 — 내가(우리 부서가) 요청했거나 같이 기다리는 것만. 받으면 「확인」
-//   보이는 범위: 요청한 부서 + 영업 + 팀장급 · 관리자 (다른 부서의 요청 · 필요일 지남은 보이지 않음)
+//   그 밖 부서: 「전체 부서」(기본) — 다른 부서 요청도 다 보여 같은 자료를 두 번 요청하지 않게. 남의 요청엔 「＋ 같이 기다리기」
+//              「우리 부서 요청」 — 우리 부서가 요청했거나 같이 기다리는 것만. 받으면 「확인」
+//   v4.108.1 — 서로 다 보이게 (전에는 요청한 부서 + 영업 + 팀장급만 보였음). 확인 · 취소 단추는 그대로 요청 부서만
 import { useState, useMemo, useEffect, Fragment } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import PageHead from '../../components/PageHead'
@@ -12,7 +13,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { useCoach } from '../../components/ux/CoachMarks'
-import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, kindLabel, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
+import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, kindLabel, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, followDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
 
 const Seg = ({ items, value, onChange, data }) => (
   <div className="inline-flex flex-wrap gap-1 p-1 rounded-lg bg-[#e9ebf2]" data-seg={data}>
@@ -28,7 +29,7 @@ export default function DocRequest() {
   const { data: profile } = useMyProfile()
   const editable = canEdit(profile)
   const seeAll = isLead(profile) || profile?.dept === '영업'
-  const [view, setView] = useState(null)       // inbox(영업) | mine(우리 부서)
+  const [view, setView] = useState(null)       // inbox(영업 · 팀장) | all(전체 부서) | mine(우리 부서)
   const [cust, setCust] = useState('all')
   const [st, setSt] = useState('open')         // open | recv | done | all
   const [open, setOpen] = useState(null)       // 이력 펼친 줄
@@ -36,7 +37,7 @@ export default function DocRequest() {
   const [note, setNote] = useState({})         // 받음 메모 (줄마다)
   const [busy, setBusy] = useState(false)
   const [ask, confirmEl] = useConfirm()
-  useEffect(() => { if (profile && !view) setView(seeAll ? 'inbox' : 'mine') }, [profile]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { if (profile && !view) setView(seeAll ? 'inbox' : 'all') }, [profile]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: rows = [], error, isLoading, refetch } = useQuery({ queryKey: ['docRequests', 'list'], queryFn: fetchDocRequests, retry: false })
   // 열 때 한 번 — BOM 이 올라왔거나 NAS 에 도면이 들어온 요청을 자동 「받음」
@@ -46,10 +47,16 @@ export default function DocRequest() {
   }, [editable, !!error]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const myDept = profile?.dept
+  const isMine = (r) => !!myDept && (r.from_dept === myDept || (r.also_depts || []).includes(myDept))
   const visible = useMemo(() => rows.filter((r) => {
     if (view === 'inbox') return seeAll
-    return r.from_dept === myDept || (r.also_depts || []).includes(myDept)
-  }), [rows, view, seeAll, myDept])
+    if (view === 'all') return true
+    return isMine(r)
+  }), [rows, view, seeAll, myDept]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 우리 부서가 확인할 것 (받음) — 「전체 부서」를 보고 있어도 탭에 숫자로
+  const myWait = rows.filter((r) => !r.cancelled && r.status === 2 && isMine(r)).length
+  // 남의 요청에 붙을 수 있나 — 영업은 받는 쪽이라 없음, 진행 중(받기 전)만
+  const canFollow = (r) => editable && !!myDept && myDept !== '영업' && !r.cancelled && r.status < 2 && !isMine(r)
   const stOk = (r) => st === 'all' ? true : r.cancelled ? false : st === 'open' ? r.status < 2 : st === 'recv' ? r.status === 2 : r.status === 3
   const list = visible.filter((r) => (cust === 'all' || r.customer_code === cust) && stOk(r))
     .sort((a, b) => (a.cancelled - b.cancelled) || (a.status - b.status) || String(a.need_date || '9999').localeCompare(String(b.need_date || '9999')))
@@ -74,13 +81,14 @@ export default function DocRequest() {
   // 처음 여는 사람 안내 (v4.104.0)
   const coach = useCoach('doc-request', [
     { sel: '[data-doc-new]', title: '① 자료가 필요하면 요청', body: '도면 · BOM · 사양서 · CN 내역 등 고객사 자료가 필요하면 여기서 영업에 요청하세요. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.' },
-    { sel: '[data-doc-toolbar]', title: '② 내 요청 따라가기', body: '「우리 부서 요청」에서 처리 중 · 받음 · 끝을 골라 봅니다. 영업이 자료를 받아 올리면 「받음」으로 넘어오고 알림이 갑니다.' },
+    { sel: '[data-doc-toolbar]', title: '② 내 요청 따라가기', body: '「전체 부서」에서 다른 부서 요청까지 다 보입니다 — 같은 자료가 이미 있으면 새로 요청하지 말고 「＋ 같이 기다리기」. 「우리 부서 요청」은 우리 것만, 영업이 자료를 받아 올리면 「받음」으로 넘어오고 알림이 갑니다.' },
     { sel: '[data-doc-steps]', title: '③ 받았으면 확인', body: '막대 4칸이 요청됨 → 고객사에 요청함 → 받음 → 확인 완료 입니다. 받은 자료를 확인하고 「✔ 확인」을 누르면 끝납니다.' },
   ], !isLoading)
   async function copyMail() {
     const text = mailText(mailRows, mailCust)
     try { await navigator.clipboard.writeText(text); toastSuccess('요청 문구를 복사했습니다 — 메일에 붙여넣으세요') } catch { toastError('복사가 안 되는 브라우저입니다 — 아래 글을 직접 복사하세요') }
   }
+  const follow = (r) => act(() => followDoc(r.id, myDept), `${[r.part_no, kindLabel(r)].filter(Boolean).join(' ')} — ${myDept}도 같이 기다립니다 (받으면 알림)`)
   const markAsked = () => act(async () => { for (const r of mailRows) await moveDoc(r.id, 1, '고객사 메일 요청') }, `${mailRows.length}건 「고객사에 요청함」`)
 
   return (
@@ -106,7 +114,7 @@ export default function DocRequest() {
 
       <div className="bg-white rounded-xl p-3 shadow-[0_1px_3px_rgba(20,30,50,.06)] flex flex-wrap items-center gap-2" data-doc-toolbar>
         <Seg data="view" value={view} onChange={setView}
-          items={[...(seeAll ? [['inbox', '📥 받은 자료 요청 (영업)']] : []), ['mine', '우리 부서 요청']]} />
+          items={[...(seeAll ? [['inbox', '📥 받은 자료 요청 (영업)']] : [['all', '🏢 전체 부서']]), ['mine', `우리 부서 요청${myWait ? ` · 확인 대기 ${myWait}` : ''}`]]} />
         <Seg data="cust" value={cust} onChange={setCust}
           items={[['all', '전체'], ...DOC_CUSTOMERS.map((c) => [c.code, `${c.name}${count((r) => r.customer_code === c.code && r.status < 2) ? ' ' + count((r) => r.customer_code === c.code && r.status < 2) : ''}`])]} />
         <Seg data="st" value={st} onChange={setSt} items={[['open', '처리 중'], ['recv', '받음'], ['done', '끝'], ['all', '전체 (취소 포함)']]} />
@@ -133,7 +141,7 @@ export default function DocRequest() {
           </tr></thead>
           <tbody>
             {isLoading && <SkeletonRows cols={8} rows={6} two={[2]} />}
-            {!isLoading && !list.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{view === 'mine' ? '우리 부서가 요청한 자료가 없습니다' : '요청이 없습니다'}</td></tr>}
+            {!isLoading && !list.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-slate-400">{view === 'mine' ? '우리 부서가 요청한 자료가 없습니다' : view === 'all' ? '어느 부서도 요청한 자료가 없습니다' : '요청이 없습니다'}</td></tr>}
             {list.map((r) => {
               const p = docPerms(profile, r, editable)
               const dl = dLeft(r.need_date)
@@ -150,7 +158,7 @@ export default function DocRequest() {
                       {r.reason && <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} title={r.reason} data-doc-reason-show
                         className="mt-0.5 max-w-[260px] text-left text-[11.5px] leading-snug text-amber-800 bg-amber-50 rounded px-1.5 py-0.5 hover:bg-amber-100 line-clamp-2 break-words">💬 {r.reason}</button>}
                     </td>
-                    <td className="px-3 py-2 whitespace-nowrap">{r.from_dept}{r.requester_name && <span className="text-slate-400"> · {r.requester_name}</span>}
+                    <td className="px-3 py-2 whitespace-nowrap">{view !== 'mine' && isMine(r) && <span className="mr-1 px-1.5 rounded-full bg-violet-50 text-violet-700 text-[10.5px] font-bold" data-doc-ours>우리 부서</span>}{r.from_dept}{r.requester_name && <span className="text-slate-400"> · {r.requester_name}</span>}
                       {(r.also_depts || []).length > 0 && <div className="text-[11px] text-violet-600">+ 같이 기다림: {r.also_depts.join(', ')}</div>}</td>
                     <td className="px-3 py-2 whitespace-nowrap font-mono">{String(r.need_date || '').slice(5) || '—'}
                       {r.cancelled ? <span className="ml-1 px-1.5 rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold font-sans">취소</span>
@@ -173,6 +181,8 @@ export default function DocRequest() {
                           className="px-2 py-1 text-[11.5px] font-bold rounded-lg bg-[#6c5ce7] text-white">{r.status === 0 ? '고객사에 요청함 ▶' : '받음 ▶'}</button>}
                         {p.confirm && <button type="button" disabled={busy} onClick={() => move(r, 3, '요청 부서 확인')} data-doc-confirm className="px-2 py-1 text-[11.5px] font-bold rounded-lg bg-emerald-600 text-white">✔ 확인</button>}
                         {p.unconfirm && <button type="button" disabled={busy} onClick={() => move(r, 2, '확인 취소')} data-doc-unconfirm className="px-2 py-1 text-[11.5px] font-bold rounded-lg border border-slate-200 text-slate-500">◀ 확인 취소</button>}
+                        {canFollow(r) && <button type="button" disabled={busy} onClick={() => follow(r)} data-doc-follow title={`같은 자료가 필요하면 — ${myDept}도 받으면 알림 · 확인할 수 있게`}
+                          className="px-2 py-1 text-[11.5px] font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:border-violet-300 hover:text-violet-700">＋ 같이 기다리기</button>}
                         {p.cancel && <button type="button" disabled={busy} onClick={() => cancel(r)} data-doc-cancel className="px-2 py-1 text-[11.5px] font-bold rounded-lg text-slate-400 hover:text-red-500">취소</button>}
                       </div>
                     </td>
