@@ -11,7 +11,7 @@
 import { useState, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
 import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf, qcDueOf } from '../../lib/edForecast'
-import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
+import { bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import Spin from '../../components/ux/Spin'
 import { orderOf, edHogiKey } from '../../lib/edOrderSync'
 
@@ -219,7 +219,7 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
     <td data-no-select className={`px-2 py-2 cursor-pointer text-center whitespace-nowrap group ${which === 'harn' ? 'border-l border-slate-100' : ''}`}
       title={done ? `${name} 불출 완료 · 누르면 취소`
         : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}일 (불출 기준)\n누르면 불출 완료`
-        : (w === null || w === undefined) && k ? `${k} 불출 기준(일수)이 없습니다 — 「⚙ 불출 기준」 ① 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
+        : (w === null || w === undefined) && k ? `${k} 불출 기준(일수)이 없습니다 — 「⚙ 불출·검수 기준」 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
         : k ? `납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
       onClick={() => onField(r.id, field, !done)}>
       {done
@@ -227,17 +227,7 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
         : due
           ? <span className={cls}>{md(due)}</span>
           : <span className="text-slate-300 group-hover:text-teal-500">불출</span>}
-      {/* 이 BOM 의 소요량 매칭 결과 — 누르면 그 건의 부족 품목 */}
-      {!done && need && (
-        <button type="button" onClick={e => { e.stopPropagation(); onNeed?.(need.key) }}
-          title={need.bad
-            ? `${bom || ''} 부족 ${need.bad}품목\n` + need.parts.filter(p => p.status !== 'ok').slice(0, 8).map(p => `· ${p.pn || ''} 부족 ${p.short}`).join('\n') + '\n누르면 소요량 매칭에서 봅니다'
-            : `${bom || ''} 재고 충분 (${need.parts.length}품목)`}
-          className={`block mx-auto mt-0.5 px-1 rounded text-[9px] font-bold ${need.bad ? (need.critical ? 'bg-red-50 text-red-600 hover:bg-red-100' : 'bg-amber-50 text-amber-700 hover:bg-amber-100') : 'text-emerald-500 hover:bg-emerald-50'}`}>
-          {need.bad ? `⚠ 부족 ${need.bad}` : '✓ 재고'}
-        </button>
-      )}
-      {!done && !need && bom === null && kindOf(r) && <span className="block text-[8px] text-orange-400" title="「⚙ 불출 기준」 ③ 에서 BOM 을 연결하세요">BOM 없음</span>}
+      {/* v4.118.4 — 재고 · 부족(소요량 매칭) 표시는 뺌: 생산관리는 자재 받았나 · 제작 · 검사만 본다 (부족은 「📦 소요량 매칭」 화면에서) */}
     </td>
   )
 }
@@ -524,34 +514,41 @@ export function MissingModal({ row, onClose, onSave, saving }) {
   )
 }
 
-// ── 불출 기준 창 ─────────────────────────────────────────────────────
-//   ① 정한 납기보다 몇 주 먼저 불출하나  ② 포캐스트 품번 → 들어가는 갈래
-export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults, projects = [], bomGroups = [], extraKinds = [] }) {
-  // EUV · H2D 세 갈래 + 생산관리에 있는 다른 구분(MFM · BDM · ASML …) + 예전에 정해 둔 것
+// ── 불출 · 검수 기준 창 (v4.118.5) ─────────────────────────────────────
+//   ① 납기보다 며칠 먼저 하네스 · 전장 불출하나 (구분별)  ② 품질 검수 = 납기 − N일
+//   예전 「포캐스트 품번 → 구분」 · 「BOM 연결」 칸은 뺌 (포캐스트 · 소요량 표시를 안 쓰므로). 저장된 값은 그대로 둔다
+export function RulesModal({ rules, onClose, onSave, saving, defaults, extraKinds = [] }) {
+  // EUV · H2D 세 갈래 + 생산관리에 있는 다른 구분(MFM · BDM · SIC …) + 예전에 정해 둔 것
   const kindsAll = [...KINDS, ...[...new Set([...extraKinds, ...Object.keys(rules.days || {})])].filter(k => !KINDS.includes(k)).sort()]
   const [qcDays, setQcDays] = useState(() => rules.qcDays ?? 4)
-  const [weeks, setWeeks] = useState(() => {     // 이름은 그대로 — 값은 일(days)
+  const [days, setDays] = useState(() => {
     const w = JSON.parse(JSON.stringify(rules.days || {}))
     for (const k of kindsAll) w[k] = { harn: w[k]?.harn ?? '', elec: w[k]?.elec ?? '' }
     return w
   })
-  const [map, setMap] = useState(() => ({ ...rules.map }))
-  const [bom, setBom] = useState(() => ({ ...(rules.bom || {}) }))
-  const all = [...new Set([...Object.keys(map), ...items, ...unknown].filter(Boolean))]
-    .sort((a, b) => (map[a] === undefined ? 0 : 1) - (map[b] === undefined ? 0 : 1) || a.localeCompare(b))
-  const toggle = (it, k) => setMap(m => {
-    const cur = Array.isArray(m[it]) ? m[it] : []
-    return { ...m, [it]: cur.includes(k) ? cur.filter(x => x !== k) : KINDS.filter(x => x === k || cur.includes(x)) }
-  })
-  const setW = (k, w, v) => setWeeks(s => ({ ...s, [k]: { ...s[k], [w]: v === '' ? '' : Math.max(0, Math.min(180, Number(v))) } }))
+  const setD = (k, w, v) => setDays(s => ({ ...s, [k]: { ...s[k], [w]: v === '' ? '' : Math.max(0, Math.min(180, Number(v))) } }))
+  const save = () => {
+    const out = {}
+    const v = (x) => (x === '' || x === null || x === undefined ? null : Number(x) || 0)
+    for (const k of KINDS) out[k] = { harn: Number(days[k]?.harn) || 0, elec: Number(days[k]?.elec) || 0 }
+    for (const k of kindsAll.slice(KINDS.length)) {
+      const h = v(days[k]?.harn), e = v(days[k]?.elec)
+      if (h !== null || e !== null) out[k] = { harn: h, elec: e }
+    }
+    // 포캐스트 품번 구분(map) · BOM 연결(bom) 은 화면에서 뺐지만 저장된 값은 그대로 넘긴다
+    onSave({ days: out, qcDays: qcDays === '' ? 4 : Number(qcDays), map: rules.map, bom: rules.bom })
+  }
   return (
     <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()} data-rules-modal>
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">⚙ 불출 기준 · 품번별 구분 · BOM 연결</h3>
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">⚙ 불출 · 검수 기준</h3>
+            <p className="text-[11px] text-slate-400">납기에서 며칠 앞을 불출 · 검수 예정일로 볼지 정합니다. 표의 불출 · 품질 칸에 그 날짜가 나옵니다.</p>
+          </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
         </div>
-        <div className="p-5 overflow-y-auto space-y-5 text-xs">
+        <div className="p-5 overflow-y-auto space-y-4 text-xs">
           <section>
             <p className="font-bold text-slate-700 mb-1">① 불출 예정일 = 납기 − N일</p>
             <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
@@ -564,96 +561,29 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
                     <td className="px-3 py-1.5 font-bold text-slate-700">{KIND_LABEL[k] || k}</td>
                     {['harn', 'elec'].map(w => (
                       <td key={w} className="px-3 py-1.5 text-center">
-                        <input type="number" min="0" max="180" value={weeks[k]?.[w] ?? ''} placeholder={KINDS.includes(k) ? '' : '미설정'}
-                          onChange={e => setW(k, w, e.target.value)}
-                          className={`w-16 px-2 py-1 text-center border rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 ${weeks[k]?.[w] === '' ? 'border-orange-300' : 'border-slate-200'}`} />
+                        <input type="number" min="0" max="180" value={days[k]?.[w] ?? ''} placeholder={KINDS.includes(k) ? '' : '미설정'}
+                          onChange={e => setD(k, w, e.target.value)}
+                          className={`w-16 px-2 py-1 text-center border rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 ${days[k]?.[w] === '' ? 'border-orange-300' : 'border-slate-200'}`} />
                       </td>
                     ))}
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-400">납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주) · MFM · BDM 등 = 납품요청일. 확정 납기를 넣으면 그 날짜 기준.
-              <b className="text-orange-600"> 비워 둔 칸</b>은 불출 예정일을 계산하지 않습니다.</p>
-            <p className="mt-2 flex items-center gap-2 font-bold text-slate-700">품질 검수 예정일 = 납기 −
+            <p className="mt-1 text-[11px] text-slate-400">납기 = 확정 납기(✎), 없으면 수주대장 발주 납기. H2D-LH · H2D-HPD 는 H2D 의 하위 구분입니다.
+              MFM · BDM · SIC 등은 <b className="text-orange-600">비워 두면</b> 불출 예정일을 계산하지 않습니다.</p>
+          </section>
+          <section>
+            <p className="flex items-center gap-2 font-bold text-slate-700">② 품질 검수 예정일 = 납기 −
               <input type="number" min="0" max="60" value={qcDays} onChange={e => setQcDays(e.target.value === '' ? '' : Math.max(0, Math.min(60, Number(e.target.value))))} data-qc-days
                 className="w-14 px-2 py-1 text-center border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400" /> 일 <span className="font-normal text-slate-400">(모든 구분)</span></p>
           </section>
-          <section>
-            <p className="font-bold text-slate-700 mb-1">② 포캐스트 품번 → 들어가는 구분</p>
-            <p className="text-[11px] text-slate-400 mb-1.5">포캐스트에만 있는 호기를 생산관리에 새로 만들 때 씁니다. 아무것도 안 고르면 「자재 준비 대상 아님」 (예: Halo).
-              <b className="text-orange-600"> 미지정</b>은 같은 프로젝트의 다른 호기를 따라가고, 그것도 없으면 만들지 않습니다.</p>
-            <div className="border border-slate-200 rounded-lg divide-y divide-slate-100">
-              {all.map(it => {
-                const cur = map[it]
-                return (
-                  <div key={it} className="flex items-center gap-3 px-3 py-1.5">
-                    <span className="font-mono text-[11px] text-slate-700 w-40 truncate" title={it}>{it}</span>
-                    {cur === undefined && <span className="px-1 rounded bg-orange-50 text-orange-600 text-[9px] font-bold">미지정</span>}
-                    {Array.isArray(cur) && !cur.length && <span className="px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold">대상 아님</span>}
-                    <span className="ml-auto flex gap-3">
-                      {KINDS.map(k => (
-                        <label key={k} className="inline-flex items-center gap-1 cursor-pointer">
-                          <input type="checkbox" checked={Array.isArray(cur) && cur.includes(k)} onChange={() => toggle(it, k)} />{KIND_LABEL[k]}
-                        </label>
-                      ))}
-                    </span>
-                  </div>
-                )
-              })}
-            </div>
-          </section>
-          <section>
-            <p className="font-bold text-slate-700 mb-1">③ BOM 연결 (📦 소요량 매칭)</p>
-            <p className="text-[11px] text-slate-400 mb-1.5">불출 건마다 어느 BOM 으로 소요량을 셀지 정합니다. 「자동」은 BOM 이름(예: NKB943_EUV · H2D-LH_하네스)으로 찾은 것입니다.</p>
-            {!projects.length
-              ? <p className="text-[11px] text-orange-600">Edwards BOM 을 불러오지 못했거나 등록된 BOM 이 없습니다.</p>
-              : (
-                <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
-                  <thead className="bg-slate-50 text-slate-500"><tr>
-                    <th className="px-3 py-1.5 text-left">구분</th>
-                    {['harn', 'elec'].map(w => <th key={w} className="px-3 py-1.5 text-left">{WHICH_LABEL[w]} BOM</th>)}
-                  </tr></thead>
-                  <tbody>
-                    {bomGroups.map(({ kind, group }) => (
-                      <tr key={kind + group} className="border-t border-slate-100">
-                        <td className="px-3 py-1.5 font-bold text-slate-700 whitespace-nowrap">{kind}{group !== '*' ? <span className="ml-1 font-mono text-[10px] text-slate-400">{group === '?' ? '기종 모름' : group}</span> : null}</td>
-                        {['harn', 'elec'].map(w => {
-                          const k = bomKey(kind, group, w)
-                          const g = guessBom(projects, kind, group, w)
-                          return (
-                            <td key={w} className="px-2 py-1">
-                              <select value={bom[k] === undefined ? '__auto' : bom[k]}
-                                onChange={e => setBom(b => { const n = { ...b }; if (e.target.value === '__auto') delete n[k]; else n[k] = e.target.value; return n })}
-                                className={`w-full max-w-[230px] px-1.5 py-1 text-[11px] border rounded ${bom[k] === undefined && !g && KINDS.includes(kind) ? 'border-orange-300 text-orange-600' : 'border-slate-200'}`}>
-                                <option value="__auto">{g ? `자동 — ${g.code}` : KINDS.includes(kind) ? '자동 — 못 찾음' : '없음 (필요하면 고르세요)'}</option>
-                                <option value="">연결 안 함</option>
-                                {projects.map(p => <option key={p.id} value={p.code}>{p.code}{p.name && p.name !== p.code ? ` · ${p.name}` : ''}</option>)}
-                              </select>
-                            </td>
-                          )
-                        })}
-                      </tr>
-                    ))}
-                    {!bomGroups.length && <tr><td colSpan={3} className="px-3 py-2 text-slate-400">진행 중인 EUV · H2D 줄이 없습니다</td></tr>}
-                  </tbody>
-                </table>
-              )}
-          </section>
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2">
-          <button onClick={() => { setWeeks(JSON.parse(JSON.stringify(defaults.days))); setQcDays(defaults.qcDays ?? 4) }} className="px-3 py-2 text-xs rounded-lg text-slate-400 hover:text-slate-600">일수 기본값</button>
+          <button onClick={() => { setDays(d => ({ ...d, ...JSON.parse(JSON.stringify(defaults.days)) })); setQcDays(defaults.qcDays ?? 4) }} className="px-3 py-2 text-xs rounded-lg text-slate-400 hover:text-slate-600">기본값 (EUV 35 · H2D 20 · 품질 4)</button>
           <button onClick={onClose} className="ml-auto px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
-          <button disabled={saving} onClick={() => {
-            const w = {}
-            const v = (x) => (x === '' || x === null || x === undefined ? null : Number(x) || 0)
-            for (const k of KINDS) w[k] = { harn: Number(weeks[k]?.harn) || 0, elec: Number(weeks[k]?.elec) || 0 }
-            for (const k of kindsAll.slice(KINDS.length)) {
-              const h = v(weeks[k]?.harn), e = v(weeks[k]?.elec)
-              if (h !== null || e !== null) w[k] = { harn: h, elec: e }
-            }
-            onSave({ days: w, qcDays: qcDays === '' ? 4 : Number(qcDays), map, bom })
-          }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}</button>
+          <button disabled={saving} onClick={save}
+            className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}</button>
         </div>
       </div>
     </div>

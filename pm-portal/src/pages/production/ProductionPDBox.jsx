@@ -31,6 +31,8 @@ import { useMe } from '../../hooks/useProfile'
 import { AUTO_CUST, vmBoxesNeeded, qcIndex, qcKey, stagesOf, applyAutoStatus, fetchProdQc } from '../../lib/prodAuto'
 
 // 여러 줄 요약 글자 → 확인 창 목록 줄 (v4.104.0)
+// Edwards 「📦 소요량 매칭」(재고 · 부족) — 생산관리에서는 안 씀 (v4.118.5 · 코드는 남겨 둠, true 로 바꾸면 다시 보임)
+const ED_NEED_VIEW = false
 const toLines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean)
 // 「날짜 비우기」 확인 창에 보일 칸 이름 — 일괄 수정 고르기 칸과 같은 이름
 const bulkLabel = (f, isED) => ({ arrival_date: isED ? 'Frame 입고 (확정)' : '가공물 입고예정', due_fix: '확정 납기', machine_date: '가공물 발주일', elec_done: '전장 완료요청', req_date: '납품요청일' }[f] || f)
@@ -241,7 +243,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const [showDone, setShowDone] = useState(false)
   // 자재 상황판의 「불출순 부족」 바로가기(?view=need)로 들어오면 소요량 매칭부터
   const [view, setView] = useState(() => {
-    try { return isED && new URLSearchParams(window.location.search).get('view') === 'need' ? 'need' : 'list' } catch { return 'list' }
+    try { return isED && ED_NEED_VIEW && new URLSearchParams(window.location.search).get('view') === 'need' ? 'need' : 'list' } catch { return 'list' }
   }) // list | model | kanban | load | need
   const [mainTab, setMainTab] = useState('main') // main=주요 관리 | sub
   const [edit, setEdit] = useState(null)   // 편집 중인 레코드 or null
@@ -393,7 +395,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   })
   const edRules = useMemo(() => edRulesData || mergeRules(null), [edRulesData])
   // Edwards BOM 프로젝트 — 소요량 매칭 · 불출 기준(BOM 연결)에서 쓴다
-  const { data: edProj } = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, enabled: isED, staleTime: 300000 })
+  const { data: edProj } = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, enabled: isED && ED_NEED_VIEW, staleTime: 300000 })
   // 수주대장 발주 묶음 (v4.118.0) — 프로젝트 · 호기 · 파트별 발주서 · 줄 · 금액. SQL 전이면 setup:false
   const { data: edOrd } = useQuery({ queryKey: ['edOrderGroups'], queryFn: () => fetchEdOrderGroups(supabase), enabled: isED, staleTime: 120000 })
   const edOrderIdx = useMemo(() => orderIndex(edOrd?.groups), [edOrd])
@@ -423,7 +425,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     edImportMut.mutate(plan)
   }
   // 소요량 매칭 — 리스트 하네스 · 전장 칸에도 BOM 별 부족을 띄운다
-  const edNeed = useEdNeed(rows, edRules, isED)
+  const edNeed = useEdNeed(rows, edRules, isED && ED_NEED_VIEW)
   const [needFocus, setNeedFocus] = useState(null)
   const edBomGroups = useMemo(() => {
     const seen = new Map()
@@ -824,7 +826,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           <button onClick={() => setView('model')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='model'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📊 모델별</button>
           <button onClick={() => setView('kanban')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='kanban'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>🗂 칸반</button>
           <button onClick={() => setView('load')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='load'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📈 주간부하</button>
-          {isED && <button onClick={() => setView('need')} title="불출 예정 순으로 BOM 을 재고 · 발주에서 차례로 빼 보고 모자라는 품목을 보여 줍니다"
+          {isED && ED_NEED_VIEW && <button onClick={() => setView('need')} title="불출 예정 순으로 BOM 을 재고 · 발주에서 차례로 빼 보고 모자라는 품목을 보여 줍니다"
             className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='need'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📦 소요량 매칭</button>}
         </div>
         )}
@@ -850,8 +852,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               {edImportMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : '📥 수주대장에서 불러오기'}
             </button>
             <button onClick={() => setShowRules(true)}
-              title="불출 예정일 = 납기 − N일 (EUV 35일 · H2D 20일) · 품질 검수 = 납기 − 4일 · 포캐스트 품번별 구분"
-              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출 기준</button>
+              title="불출 예정일 = 납기 − N일 (EUV 35일 · H2D 20일) · 품질 검수 = 납기 − 4일"
+              className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출·검수 기준</button>
           </>
         )}
         {isCSK && (
@@ -953,7 +955,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           {/* 리스트는 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 — 머리글 고정 (노트북, v4.64.0) */}
           <div ref={listRef} data-pd-list className={`${view === 'list' && listH ? 'overflow-auto' : 'overflow-x-auto'} rounded-xl border border-slate-200 bg-white`}
             style={view === 'list' && listH ? { height: listH + 'px' } : undefined}>
-          {isED && view === 'need' ? (
+          {isED && ED_NEED_VIEW && view === 'need' ? (
             <EdNeedMatch rows={rows} rules={edRules} onOpenRules={() => setShowRules(true)} focus={needFocus} onClearFocus={() => setNeedFocus(null)} />
           ) : view === 'kanban' ? (
             <KanbanBoard statusOpts={statusOpts} rows={filtered.filter(x => !x._month)} mdMap={mdMap}
