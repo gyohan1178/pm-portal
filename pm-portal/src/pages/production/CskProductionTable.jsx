@@ -3,6 +3,8 @@
 //   일정표 없이 손으로 넣은 예전 CSK 줄도 같은 표에 보인다 (관리번호 = 호기 · 규격 = 품번).
 import { useState } from 'react'
 import { cskOrdered, optionLines } from '../../lib/cskSchedule'
+import QcCell from '../../components/QcCell'
+import { qcKey } from '../../lib/prodAuto'
 
 const dayMs = 86400000
 const dOf = (d) => { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
@@ -10,7 +12,7 @@ const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '')
 
 // 일정표 칸 중 ITEM NO. · 품번 · 품명 · 입고 요청일 · 납품 완료일 · 회계는 화면에서 뺐다 (2026-10-07 사용자 정리)
 //   값은 그대로 저장되어 있어 검색 · 다시 올리기에는 쓰인다. 다시 보이게 하려면 여기 칸만 되살리면 된다.
-export const CSK_COLSPAN = 17
+export const CSK_COLSPAN = 20   // 자재불출 · 제작완료 · 검수 3칸 더함 (v4.116.0)
 
 // 검색에 쓰는 글자 — 화면에 보이는 열은 모두 찾을 수 있게
 export const cskHay = (r) => {
@@ -46,7 +48,8 @@ function OptionModal({ row, onClose }) {
   )
 }
 
-export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpts, statusColor }) {
+export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpts, statusColor, qcLatest = new Map(), qcHist = new Map(), qcSetup = false, onQc }) {
+  const truthy = (v) => v === true || (typeof v === 'string' && v.trim() !== '' && v !== 'false')
   const [opt, setOpt] = useState(null)
   const ids = list.filter(r => !r._month).map(r => r.id)
   const th = 'px-2 py-2 font-bold'
@@ -63,6 +66,9 @@ export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpt
             <th className={`${th} text-left`}>구분</th>
             <th className={`${th} text-left`}>관리번호</th>
             <th className={th} title="포털에서 관리하는 진행 상태 — 일정표에는 없는 칸">상태</th>
+            <th className={th} title="누르면 자재불출 ✔ — 상태가 제작 전이면 「제작대기」로 (v4.116.0)">자재불출</th>
+            <th className={th} title="누르면 제작완료 ✔ — 상태 「품질검수」로">제작완료</th>
+            <th className={`${th} bg-violet-50/60 text-violet-500`} title="품질 검수 — 합격이면 상태 「납품대기」로">품질검수</th>
             <th className={`${th} text-left`}>발주 번호</th>
             <th className={`${th} text-left`}>규격</th>
             <th className={th}>Plnd<br />order number</th>
@@ -110,6 +116,17 @@ export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpt
                     className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold border-0 cursor-pointer ${statusColor[r.status] || statusColor['PO접수'] || ''}`}>
                     {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
+                </td>
+                <td data-no-select data-csk-mat className="px-2 py-2 cursor-pointer" onClick={() => onField(r.id, 'part_issue', truthy(r.part_issue) ? null : 'true')}>
+                  {truthy(r.part_issue) ? <span className="text-blue-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-blue-500">불출</span>}
+                </td>
+                <td data-no-select data-csk-made className="px-2 py-2 cursor-pointer" onClick={() => onField(r.id, 'elec_recv', !r.elec_recv)}>
+                  {r.elec_recv ? <span className="text-violet-600 font-semibold">✔ 완료</span> : <span className="text-slate-300 hover:text-violet-500">완료</span>}
+                </td>
+                <td data-no-select data-csk-qc className="px-2 py-2 bg-violet-50/30">
+                  <QcCell testId={`${r.id}|all`} title={`${r.hogi || ''} 검수`} cur={qcLatest.get(qcKey(r.id, 'all'))} hist={qcHist.get(qcKey(r.id, 'all'))}
+                    disabled={!qcSetup || !onQc} disabledWhy="검수 기록 표가 아직 없습니다 — 생산관리_검수_반영_261029.sql 실행 필요"
+                    onSave={(res, memo) => onQc(r, 'all', res, memo)} />
                 </td>
                 <td className="px-2 py-2 text-left font-mono">
                   {!r.csk ? '—' : ordered ? <span className="text-slate-700">{c.po_no}</span>

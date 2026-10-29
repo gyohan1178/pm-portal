@@ -2,7 +2,7 @@ import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import PlanBadge from '../../components/PlanBadge'
 import { DocRequestButton } from '../../components/DocRequestModal'
 import { useFillHeight } from '../../hooks/useFillHeight'
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, Fragment } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, useMainPns, saveMainPn, isOverridden, DEFAULT_MAIN_PNS } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
@@ -25,6 +25,9 @@ import { parseVmHtml, parseVmCsv, planVm, planVmText, applyVm } from '../../lib/
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import QcCell from '../../components/QcCell'
+import { useMe } from '../../hooks/useProfile'
+import { AUTO_CUST, vmBoxesNeeded, qcIndex, qcKey, stagesOf, applyAutoStatus, fetchProdQc } from '../../lib/prodAuto'
 
 // 여러 줄 요약 글자 → 확인 창 목록 줄 (v4.104.0)
 const toLines = (t) => String(t || '').split('\n').map((x) => x.trim()).filter(Boolean)
@@ -82,6 +85,7 @@ function ymd(d) { const t = d ? String(d).slice(0, 10) : ''; return /^\d{4}-\d{2
 function truthy(v) { return v === true || (typeof v === 'string' && v.trim() && v !== 'false') }
 
 // ── 역산 상수 (영업일) — 필요시 여기만 조정 ──
+const AUTO_FIELDS = ['part_issue', 'elec_recv', 'quality_recv']   // 상태 자동을 부르는 체크 (v4.116.0)
 const QC_LEAD_BD = 2  // 납품 전 품질 '완료요청' 여유
 const QC_DUR_BD  = 2  // 품질 검사 기간 → 전장 완료예정 = 품질요청 - 이 값
 
@@ -299,11 +303,54 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     onError: (e) => toastError('MD 저장 오류: ' + e.message),
   })
 
+  // ── 검수 · 상태 자동 (v4.116.0) ─────────────────────────────
+  //   VM 은 박스마다, CSK 는 호기마다 검수(합격 / 불합격) — pm_prod_qc 에 쌓음 (lib/prodAuto.js)
+  //   자재불출 끝 → 제작대기 · 제작완료 → 품질검수 · 품질 완료 → 납품대기 (AXCELIS · VM · CSK, 앞으로만 · 자동으로 바꾼 것만 되돌림)
+  const csU = String(csCode || '').toUpperCase()
+  const me = useMe()
+  const qcIds = useMemo(() => (isVM || isCSK ? (rows || []).map((r) => r.id) : []), [rows, isVM, isCSK])
+  const { data: qcData } = useQuery({
+    queryKey: ['prodQc', csU, qcIds.length],
+    enabled: isVM || isCSK,
+    staleTime: 60 * 1000,
+    queryFn: () => fetchProdQc(qcIds),
+  })
+  const qcSetup = !!qcData?.setup
+  const { latest: qcLatest, hist: qcHist } = useMemo(() => qcIndex(qcData?.rows), [qcData])
+  async function runAuto(row, latest = qcLatest) {
+    if (!AUTO_CUST.includes(csU)) return
+    try {
+      const msg = await applyAutoStatus(row, csU, latest, me?.name)
+      if (msg) { toast('🔄 ' + msg); qc.invalidateQueries({ queryKey: ['production', csCode] }) }
+    } catch (e) { toastError('상태 자동 변경 실패: ' + e.message) }
+  }
+  async function saveQc(r, part, result, memo) {
+    try {
+      const { data, error } = await supabase.from('pm_prod_qc')
+        .insert({ production_id: r.id, part, result, memo: memo || null, by_name: me?.name || null }).select().single()
+      if (error) throw error
+      const latest = new Map(qcLatest); latest.set(qcKey(r.id, part), data)
+      qc.setQueryData(['prodQc', csU, qcIds.length], (old) => old ? { ...old, rows: [...(old.rows || []), data] } : old)
+      toastSuccess(`${r.hogi || ''}${part !== 'all' ? ' · ' + part.toUpperCase() : ''} 검수 ${result === '취소' ? '지움' : result}`)
+      const r0 = (qc.getQueryData(['production', csCode]) || rows || []).find((x) => x.id === r.id) || r
+      await runAuto(r0, latest)
+      return true
+    } catch (e) {
+      toastError(/pm_prod_qc/.test(e.message || '') ? '검수 기록 표가 아직 없습니다 — 생산관리_검수_반영_261029.sql 을 먼저 실행하세요' : '검수 저장 실패: ' + e.message)
+      return false
+    }
+  }
+
   // 완료상태 토글 (모달과 분리 — 완료 보존 버그 방지)
   const toggleMut = useMutation({
     mutationFn: async ({ id, field, value }) => {
       const { error } = await supabase.from('production').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', id)
       if (error) throw error
+      // 자재불출 · 제작완료 · 품질 체크 → 상태 자동 (v4.116.0 · AXCELIS · VM · CSK)
+      if (AUTO_FIELDS.includes(field)) {
+        const r0 = (qc.getQueryData(['production', csCode]) || rows || []).find((x) => x.id === id)
+        if (r0) await runAuto({ ...r0, [field]: value })
+      }
     },
     onSuccess: () => qc.invalidateQueries(['production', csCode]),
     onError: (e) => toastError('변경 오류: ' + e.message),
@@ -330,6 +377,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     const vm = { ...cur, [k]: v || null }
     qc.setQueryData(key, (old) => Array.isArray(old) ? old.map((x) => (x.id === r.id ? { ...x, vm } : x)) : old)
     vmMut.mutate({ id: r.id, vm })
+    runAuto({ ...r, vm })   // 대상 박스 자재가 모두 「완료」면 → 제작대기 (v4.116.0)
   }
 
   // ── Edwards: 포캐스트 반영 · 불출 기준 · 미불출 ─────────────────────
@@ -986,6 +1034,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           ) : isCSK ? (
             <CskTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel}
               onField={setField} onEdit={(r) => openEdit(r)}
+              qcLatest={qcLatest} qcHist={qcHist} qcSetup={qcSetup} onQc={saveQc}
               statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} />
           ) : (
           <table className="w-full text-xs whitespace-nowrap">
@@ -1016,26 +1065,35 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold">납품일</th>
                 <th colSpan={1} className="px-2 py-1 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 <span className="text-[9px] text-slate-300 font-normal">(고정)</span></th>
-                <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>
+                {isVM
+                  ? <th colSpan={1} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">🔧 제작</th>   /* VM 은 전장 칸 대신 제작완료 하나 (v4.116.0) */
+                  : <th colSpan={3} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 전장</th>}
                 <th colSpan={1} className="px-2 py-1 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
-                {vmCols && <th colSpan={6} className="px-2 py-1 font-bold text-emerald-600 border-l border-slate-200">📦 자재</th>}
+                {vmCols && VM_MAT.map(([k, l]) => <th key={k} data-vm-box={k} colSpan={2} className="px-2 py-1 font-bold text-slate-600 border-l border-slate-200">{l}</th>)}
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold border-l border-slate-200">비고</th>
                 <th rowSpan={2} className="px-2 py-1.5 font-bold border-l border-slate-200">미불출</th>
                 <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
               </tr>
               <tr className="border-b border-slate-200 bg-slate-50 text-[10px] text-slate-400 text-center">
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">입고예정<br /><span className="text-slate-300">클릭시완료</span></th>
+                {isVM ? (
+                  <th className="px-2 py-1 font-semibold border-l border-slate-200">제작완료<br /><span className="text-slate-300">클릭=완료</span></th>
+                ) : (<>
                 <th className="px-2 py-1 font-semibold border-l border-slate-200">하네스<br />불출</th>
                 <th className="px-2 py-1 font-semibold">전장<br />불출</th>
                 <th className="px-2 py-1 font-semibold">완료예정<br /><span className="text-slate-300">MD역산·✎수정</span></th>
-                <th className="px-2 py-1 font-semibold border-l border-slate-200">완료요청<br /><span className="text-slate-300">역산·클릭완료</span></th>
-                {vmCols && VM_MAT.map(([k, l], i) => <th key={k} className={`px-1.5 py-1 font-semibold ${i === 0 ? 'border-l border-slate-200' : ''}`}>{l}</th>)}
+                </>)}
+                <th className="px-2 py-1 font-semibold border-l border-slate-200">완료요청<br /><span className="text-slate-300">{isVM ? '박스 검수 다 합격=완료' : '역산·클릭완료'}</span></th>
+                {vmCols && VM_MAT.map(([k]) => (<Fragment key={k}>
+                  <th className="px-1.5 py-1 font-semibold border-l border-slate-200">자재불출</th>
+                  <th className="px-1.5 py-1 font-semibold bg-violet-50/60 text-violet-500">검수</th>
+                </Fragment>))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((r, i) => r._month ? (
                 <tr key={'m' + i} className="bg-indigo-50/60">
-                  <td colSpan={isED ? 17 : vmCols ? 22 : 16} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+                  <td colSpan={isED ? 17 : vmCols ? 26 : isVM ? 14 : 16} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
                     {r._month === '미정' ? '납품일 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
                   </td>
                 </tr>
@@ -1121,6 +1179,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <DateCell row={r} dateField="arrival_date" doneField="machine_recv" done={r.machine_recv} doneColor="amber"
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'arrival_date', value: v || null })}
                     onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'machine_recv', value: v })} />
+                  {isVM ? (
+                    /* VM 제작완료 — 누르면 완료 · 상태 자동 「품질검수」 (v4.116.0) */
+                    <td data-no-select data-vm-made className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'elec_recv', value: !r.elec_recv })}>
+                      {r.elec_recv ? <span className="text-violet-600 font-semibold">✔ 완료</span> : <span className="text-slate-300 hover:text-violet-500">완료</span>}
+                    </td>
+                  ) : (<>
                   {/* 전장>하네스 불출 (토글) */}
                   <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'harness_recv', value: !truthy(r.harness_recv) })}>
                     {truthy(r.harness_recv) ? <span className="text-teal-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-teal-500">불출</span>}
@@ -1133,29 +1197,39 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <AutoDateCell auto={calcElec(r)} manual={r.elec_done} done={r.elec_recv}
                     onDate={(v) => toggleMut.mutate({ id: r.id, field: 'elec_done', value: v || null })}
                     onToggle={(v) => toggleMut.mutate({ id: r.id, field: 'elec_recv', value: v })} />
-                  {/* 품질 완료요청 — 역산, 클릭=완료 */}
+                  </>)}
+                  {/* 품질 완료요청 — 역산, 클릭=완료 (VM 은 박스 검수가 다 합격이어도 완료) */}
                   <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv) })}>
-                    {truthy(r.quality_recv)
+                    {truthy(r.quality_recv) || (isVM && qcSetup && stagesOf(r, 'VM', qcLatest).allPass)
                       ? <span className="text-rose-600 font-bold">✔ 완료</span>
                       : <span className="text-slate-500 hover:text-rose-500">{md(calcQuality(r)) || '—'}</span>}
                   </td>
                   </>) : (<>
                   {/* sub assy: 진행상태만 관리 — 일정셀은 참고표시 */}
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{md(r.arrival_date) || '—'}</td>
+                  {isVM ? <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{r.elec_recv ? '✔' : '—'}</td> : (<>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{truthy(r.harness_recv) ? '✔' : '—'}</td>
                   <td className="px-2 py-2 text-center text-slate-300">{truthy(r.part_issue) ? '✔' : '—'}</td>
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
+                  </>)}
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
                   </>)}
                   {/* VM 자재 상태 — 눌러서 바로 바꾼다 */}
-                  {vmCols && VM_MAT.map(([k], i) => { const v = r.vm?.[k] || ''; return (
-                    <td key={k} data-no-select data-vm-mat={k} className={`px-1 py-2 text-center ${i === 0 ? 'border-l border-slate-100' : ''}`}>
+                  {vmCols && (() => { const need = new Set(vmBoxesNeeded(r)); return VM_MAT.map(([k, l]) => { const v = r.vm?.[k] || ''; return (<Fragment key={k}>
+                    <td data-no-select data-vm-mat={k} className="px-1 py-2 text-center border-l border-slate-100">
                       <select value={v} onClick={e => e.stopPropagation()}
                         onChange={e => setVmMat(r, k, e.target.value)}
                         className={`px-1 py-0.5 rounded text-[10px] font-bold border-0 cursor-pointer appearance-none text-center focus:outline-none focus:ring-1 focus:ring-indigo-400 ${VM_MAT_CLS[v] || 'bg-transparent text-slate-300'}`}>
                         {VM_MAT_OPTS.map(o => <option key={o} value={o}>{o || '—'}</option>)}
                       </select>
-                    </td>) })}
+                    </td>
+                    {/* 박스 검수 (v4.116.0) — 자재 칸이 비면 검수 대상 아님(—) · 그래도 누를 수 있음 */}
+                    <td data-no-select data-vm-qc={k} className="px-1 py-2 text-center bg-violet-50/30">
+                      <QcCell testId={`${r.id}|${k}`} title={`${r.hogi || ''} · ${l} 검수`} cur={qcLatest.get(qcKey(r.id, k))} hist={qcHist.get(qcKey(r.id, k))}
+                        need={need.has(k)} disabled={!qcSetup} disabledWhy="검수 기록 표가 아직 없습니다 — 생산관리_검수_반영_261029.sql 실행 필요"
+                        onSave={(res, memo) => saveQc(r, k, res, memo)} />
+                    </td>
+                  </Fragment>) }) })()}
                   {/* 비고 — 로컬 작업·외주 입고 시기 등. 눌러서 바로 적는다. */}
                   <td data-no-select className="px-2 py-2 border-l border-slate-100 text-left max-w-[150px]">
                     <input value={memoDraft[r.id] ?? r.memo ?? ''}

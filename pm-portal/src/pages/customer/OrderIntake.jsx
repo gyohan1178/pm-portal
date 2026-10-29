@@ -187,13 +187,23 @@ function RevChip({ l, ax }) {
 }
 
 // 생산관리 연결 (v4.102.0) — 이 진행 중 수주 줄과 이어진 생산관리 호기 (AX: 고객사 PO · CSK: Plnd · VM: PROJECT 코드 · ED: 프로젝트 + 호기)
+//   v4.117.0 — 자재불출이 끝났으면 「📦 불출 ✔」 (AXCELIS 하네스 = 고객사 PO 불출 처리 · PD · VM · CSK = 생산관리 자재불출)
 function ProdLink({ ps }) {
-  if (!ps || !ps.hogiList?.length) return null
-  const hs = ps.hogiList
+  if (!ps) return null
+  const hs = ps.hogiList || []
+  if (!hs.length && !ps.issued) return null
   return (
-    <div className={`mt-0.5 text-[10.5px] font-bold whitespace-nowrap ${ps.guess ? 'text-amber-600' : 'text-violet-600'}`} data-prod-link={hs.join(',')} data-prod-guess={ps.guess ? '1' : undefined}
-      title={`생산관리 ${ps.n_prod}줄과 연결${ps.prod_pns ? ` — ${ps.prod_pns}` : ''}${ps.guess ? ' · 「추정」 프로젝트 이름 앞부분만 같음' : ''}${ps.any_open ? '' : ' · 모두 완료'}`}>
-      🏭 {hs.slice(0, 3).join(' ')}{hs.length > 3 ? ` 외 ${hs.length - 3}` : ''}{ps.guess ? ' (추정)' : ''}
+    <div className="mt-0.5 flex flex-wrap items-center gap-1">
+      {hs.length > 0 && (
+        <span className={`text-[10.5px] font-bold whitespace-nowrap ${ps.guess ? 'text-amber-600' : 'text-violet-600'}`} data-prod-link={hs.join(',')} data-prod-guess={ps.guess ? '1' : undefined}
+          title={`생산관리 ${ps.n_prod}줄과 연결${ps.prod_pns ? ` — ${ps.prod_pns}` : ''}${ps.guess ? ' · 「추정」 프로젝트 이름 앞부분만 같음' : ''}${ps.any_open ? '' : ' · 모두 완료'}`}>
+          🏭 {hs.slice(0, 3).join(' ')}{hs.length > 3 ? ` 외 ${hs.length - 3}` : ''}{ps.guess ? ' (추정)' : ''}
+        </span>
+      )}
+      {ps.issued && (
+        <span className="px-1.5 py-[1px] rounded bg-emerald-50 text-emerald-700 text-[10px] font-bold whitespace-nowrap" data-issued={ps.issued_src || '1'}
+          title={`자재불출 끝 — ${ps.issued_src || ''}`}>📦 불출 ✔</span>
+      )}
     </div>
   )
 }
@@ -319,6 +329,7 @@ export default function OrderIntake() {
   const [view, setView] = useState('live')       // live 진행 중 · done 납품 완료 · all
   const [kpi, setKpi] = useState(null)
   const [sort, setSort] = useState('due')
+  const [iss, setIss] = useState('all')          // 자재불출 거르기 — all · yes 불출 끝 · no 불출 전 (v4.117.0)
   const [checked, setChecked] = useState(() => new Set())
   const [mrOpen, setMrOpen] = useState(false)      // 수주 줄 → 자재 요청 창 (v4.103.0)
   const [poOpen, setPoOpen] = useState(null)
@@ -346,6 +357,23 @@ export default function OrderIntake() {
   const isLoading = wantFull ? !fullQ.data && !fullQ.error : fastQ.isLoading
   const error = wantFull ? fullQ.error : null
   const refresh = () => { qc.invalidateQueries({ queryKey: ['orderIntake'] }); qc.invalidateQueries({ queryKey: ['orderMoney'] }) }
+  // 생산관리 연결 — 수주 줄 id → 호기 · 자재불출 여부 (SQL 전이면 빈 목록)
+  const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000 })
+  // 자재불출 끝난 줄 → 회신이 비어 있으면 「가능」 자동 (v4.117.0) — 화면 열 때 한 번, 편집 권한 있는 사람만
+  //   함수가 없으면(SQL 전) 조용히 넘어감
+  const issReplyRan = useRef(false)
+  useEffect(() => {
+    if (!editable || issReplyRan.current) return
+    issReplyRan.current = true
+    supabase.rpc('pm_order_issue_reply').then(({ data, error }) => {
+      const n = Number(data) || 0
+      if (error || n <= 0) return
+      toastSuccess(`자재불출 끝난 ${n.toLocaleString('ko-KR')}줄 — 회신 「가능」 자동`)
+      refresh()
+      qc.invalidateQueries({ queryKey: ['lineProdMap'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+    })
+  }, [editable]) // eslint-disable-line react-hooks/exhaustive-deps
   // 작은 작업(회신 · 납품 · 불출일 · 납품처 · 확인 · 삭제) 뒤에는 1만 줄을 다시 받지 않고 화면 데이터만 고친다 (v4.90.6 속도)
   //   PDF 등록 · AX 엑셀 반영처럼 줄이 생기는 작업만 전체를 다시 받는다
   //   빠르게 · 전부 두 캐시를 같이 고친다. 예상 매출 합계는 DB 에서 다시 받는다 (가볍다)
@@ -439,6 +467,7 @@ export default function OrderIntake() {
     let r = kpi && kpi !== 'month' ? kpis[kpi] : scoped
     if (!kpi) r = r.filter((l) => inView(view, l))
     if (kpi === 'month') { const ids = new Set(kpis.monthPos.map((o) => o.id)); r = scoped.filter((l) => ids.has(l.order_id)) }
+    if (iss !== 'all') r = r.filter((l) => !!prodMap?.get(l.id)?.issued === (iss === 'yes'))
     const due = (l) => l.due_date || '9999'
     const cmp = {
       due: (a, b) => due(a).localeCompare(due(b)) || a.o.po_no.localeCompare(b.o.po_no),
@@ -446,7 +475,7 @@ export default function OrderIntake() {
       cust: (a, b) => a.o.customer_code.localeCompare(b.o.customer_code) || due(a).localeCompare(due(b)),
     }[sort]
     return [...r].sort(cmp)
-  }, [scoped, kpis, kpi, view, sort, isLoading])
+  }, [scoped, kpis, kpi, view, sort, isLoading, iss, prodMap])
 
   // PO별 묶기 — PO 마다 전체 줄을 다시 거르면 PO 수 × 줄 수로 느려진다 → 한 번에 묶는다 (v4.90.6)
   const poRows = useMemo(() => {
@@ -592,8 +621,6 @@ export default function OrderIntake() {
   // 한 번 올리면 둘 다 (v4.101.0) — AXCELIS 고객사 id 를 찾아 「고객사 PO」 업로드 창을 이 파일로 연다
   //   (고객사 id 를 못 찾으면 예전처럼 수주대장만 반영)
   const [cpoFile, setCpoFile] = useState(null)
-  // 생산관리 연결 — 수주 줄 id → 호기 (생산관리대상_매칭 SQL 전이면 빈 목록)
-  const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000 })
   const { data: axCsId } = useQuery({
     queryKey: ['axCustomerId'],
     queryFn: async () => { const { data } = await supabase.from('customers').select('id,code').ilike('code', 'ax').limit(1); return data?.[0]?.id || null },
@@ -623,7 +650,7 @@ export default function OrderIntake() {
   // 목록이 길면 화면이 무거움 — 100건씩 펼치고 「더 보기」 (v4.90.3)
   const PAGE = 100
   const [limit, setLimit] = useState(PAGE)
-  useEffect(() => { setLimit(PAGE) }, [mode, cust, q, view, kpi, sort])
+  useEffect(() => { setLimit(PAGE) }, [mode, cust, q, view, kpi, sort, iss])
   const shownLines = useMemo(() => lines.slice(0, limit), [lines, limit])
   const shownPos = useMemo(() => poRows.slice(0, limit), [poRows, limit])
   const totalN = mode === 'line' ? lines.length : poRows.length
@@ -789,6 +816,10 @@ export default function OrderIntake() {
           </select>
           <select value={sort} onChange={(e) => setSort(e.target.value)} className={sel} data-sort>
             <option value="due">납기 빠른 순</option><option value="reg">최근 접수 순</option><option value="cust">고객사 순</option>
+          </select>
+          <select value={iss} onChange={(e) => setIss(e.target.value)} className={`${sel} ${iss !== 'all' ? 'border-emerald-300 bg-emerald-50 text-emerald-800 font-bold' : ''}`} data-iss-sel
+            title="자재불출 — AXCELIS 하네스는 「하네스 출도 · 불출」의 불출 처리, AXCELIS PD · VM · CSK 는 연결된 생산관리 호기의 자재불출">
+            <option value="all">자재불출 (전체)</option><option value="yes">📦 불출 끝</option><option value="no">불출 전</option>
           </select>
           <button type="button" onClick={() => { setKpi(kpi === 'odd' ? null : 'odd'); setMode('line') }} data-odd-btn
             title={`진행 중 줄 가운데 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 줄. 「✓ 확인」한 줄은 빠집니다 (확인 ${(oddMap.done?.size || 0).toLocaleString('ko-KR')}줄)`}
