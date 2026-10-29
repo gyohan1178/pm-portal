@@ -13,6 +13,8 @@ export const hogiNums = (h) => [...String(h || '').matchAll(/\d+/g)].map((m) => 
 const partKey = (p) => String(p || '').trim().toUpperCase()
 // 호기 번호 없이도 만드는 파트
 export const NO_HOGI_PARTS = ['SIC']
+// 생산관리에 만들지 않는 파트 — 단품은 생산 관리 대상이 아님 (2026-10-29)
+export const SKIP_PARTS = ['단품']
 const noHogiOk = (g) => !!g.proj && !g.hogiNums.length && NO_HOGI_PARTS.includes(partKey(g.part))
 // 묶음의 호기 열쇠들 — 번호가 없으면 「-」
 const nsOf = (nums) => (nums.length ? nums : ['-'])
@@ -47,13 +49,14 @@ export function orderOf(idx, r) {
 export function planEdImport(groups, rows) {
   const have = new Set()
   for (const r of rows || []) for (const n of nsOf(hogiNums(r.hogi))) have.add(edKey(r.pn, n, r.part))
-  const ins = [], exist = [], noHogi = { lines: 0, projs: new Set() }
+  const ins = [], exist = [], noHogi = { lines: 0, projs: new Set() }, skip = { lines: 0, projs: new Set() }
   for (const g of groups || []) {
+    if (SKIP_PARTS.includes(partKey(g.part))) { skip.lines += g.n_lines || 0; if (g.proj) skip.projs.add(g.proj); continue }
     if (!g.proj || (!g.hogiNums.length && !noHogiOk(g))) { noHogi.lines += g.n_lines || 0; if (g.proj) noHogi.projs.add(g.proj); continue }
     if (nsOf(g.hogiNums).some((n) => have.has(edKey(g.proj, n, g.part)))) exist.push(g)
     else ins.push(g)
   }
-  return { ins, exist, noHogi: { lines: noHogi.lines, projs: [...noHogi.projs] } }
+  return { ins, exist, noHogi: { lines: noHogi.lines, projs: [...noHogi.projs] }, skip: { lines: skip.lines, projs: [...skip.projs] } }
 }
 
 const newId = () => 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -84,10 +87,10 @@ export async function applyEdImport(supabase, plan, by) {
 
 // 미리 보기 글 (확인 창)
 export function planEdText(plan) {
-  const won = (n) => Math.round(+n || 0).toLocaleString('ko-KR')
   const lines = plan.ins.map((g) =>
-    `＋ ${g.proj} ${g.hogiNums.length ? '#' + g.hogiNums.join(',') : '(호기 없음)'} · ${g.part}${g.sub ? ` (${g.sub})` : ''} — 발주 ${g.pos.length}건 · ${g.n_lines}줄 · ₩${won(g.amt)} · 납기 ${String(g.due || '').slice(5)}${g.guessed ? ` · 파트 추정 ${g.guessed}줄` : ''}`)
+    `＋ ${g.proj} ${g.hogiNums.length ? '#' + g.hogiNums.join(',') : '(호기 없음)'} · ${g.part}${g.sub ? ` (${g.sub})` : ''} — 발주서 ${g.pos.join(', ')} · 납기 ${String(g.due || '').slice(5)}${g.guessed ? ` · 파트 추정` : ''}`)
   if (plan.exist.length) lines.push(`이미 있음 ${plan.exist.length}줄 — 그대로 둠`)
+  if (plan.skip?.lines) lines.push(`단품 발주 ${plan.skip.lines}줄 — 만들지 않음`)
   if (plan.noHogi.lines) lines.push(`호기 번호 없는 발주 ${plan.noHogi.lines}줄 — 만들지 않음 (${plan.noHogi.projs.slice(0, 5).join(' · ')}${plan.noHogi.projs.length > 5 ? ' …' : ''})`)
   return lines
 }

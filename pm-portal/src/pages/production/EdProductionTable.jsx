@@ -274,7 +274,7 @@ function MemoCell({ r, onField }) {
 }
 
 // ── 표 ──────────────────────────────────────────────────────────────
-export const ED_COLS = 14
+export const ED_COLS = 12
 //   v4.118.0 — 「🗂 호기로 묶기」: 프로젝트 #호기 한 줄 아래에 파트 줄 (접고 펼치기) · 「🧾 발주서」 칸 (수주대장 발주 · 줄 · 금액)
 const GROUP_KEY = 'pm.edGrouped.v1'
 export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor, projects = [], need = {}, onNeed, orderIdx = null, orderSetup = false }) {
@@ -318,7 +318,7 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
     </tr>
   )
   // 파트 한 줄 (호기로 묶어 볼 때는 호기 줄 아래에 들어감)
-  //   v4.118.2 — 목업 모양: 파트 | 구분 | 발주서 | 품목 줄 | 금액 | 납기 | 상태 | 가공물 입고 | 하네스 · 전장 불출 | 품질 | 미불출 | 비고
+  //   v4.118.3 — 파트 | 구분 | 발주서 | 납기 | 상태 | 가공물 입고 | 하네스 · 전장 불출 | 품질 | 미불출 | 비고
   const partRow = (r, inGroup = false) => {
     const o = orderOf(orderIdx, r)
     const pos = o?.pos || []
@@ -339,15 +339,13 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
         </td>
         <td className="px-2 py-2 text-left text-[11px] text-slate-500 max-w-[110px] overflow-hidden text-ellipsis" title={r.part2 || ''}>{r.part2 && r.part2 !== r.part ? r.part2 : <span className="text-slate-300">—</span>}</td>
         {!orderSetup || !o ? (
-          <td colSpan={3} className="px-2 py-2 text-left text-[10px] text-slate-300" title={orderSetup ? '수주대장에 진행 중인 발주가 없습니다' : 'Edwards생산_수주불러오기_반영_261029.sql 실행 전'}>{orderSetup ? '발주 없음' : '—'}</td>
+          <td className="px-2 py-2 text-left text-[10px] text-slate-300" title={orderSetup ? '수주대장에 진행 중인 발주가 없습니다' : 'Edwards생산_수주불러오기_반영_261029.sql 실행 전'}>{orderSetup ? '발주 없음' : '—'}</td>
         ) : (<>
           <td className="px-2 py-2 text-left whitespace-nowrap" data-ed-order={pos.join(',')}
-            title={`발주서 ${pos.join(', ')}\n납기 ${o.due || '-'}${o.due_last && o.due_last !== o.due ? ` ~ ${o.due_last}` : ''}${o.guessed ? `\n파트 추정 ${o.guessed}줄 (메모에 파트가 없어 품번 이력으로 정함)` : ''}`}>
+            title={`발주서 ${pos.join(', ')}\n납기 ${o.due || '-'}${o.due_last && o.due_last !== o.due ? ` ~ ${o.due_last}` : ''}${o.guessed ? '\n파트 추정 (메모에 파트가 없어 품번 이력으로 정함)' : ''}`}>
             <span className="font-mono text-[11px] text-indigo-600">{pos[0]}</span>{pos.length > 1 && <span className="text-[10px] text-slate-400"> 외 {pos.length - 1}</span>}
-            {o.guessed ? <span className="block text-[9px] text-amber-600 font-bold">ⓘ 파트 추정 {o.guessed}줄</span> : null}
+            {o.guessed ? <span className="block text-[9px] text-amber-600 font-bold">ⓘ 파트 추정</span> : null}
           </td>
-          <td className="px-2 py-2 text-right tabular-nums font-mono">{o.n_lines}</td>
-          <td className="px-2 py-2 text-right tabular-nums font-mono">₩{won(o.amt)}</td>
         </>)}
         <DueCell r={r} onField={onField} />
         <td data-no-select className="px-2 py-2">
@@ -396,8 +394,6 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
           <th className="px-2 py-2 text-left font-bold">프로젝트 #호기 / 파트</th>
           <th className="px-2 py-2 text-left font-bold" title="H2D HP · H2D LH 등 (발주서 메모 두 번째 칸)">구분</th>
           <th className="px-2 py-2 text-left font-bold" title="수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)">🧾 발주서</th>
-          <th className="px-2 py-2 text-right font-bold">품목 줄</th>
-          <th className="px-2 py-2 text-right font-bold">금액</th>
           <th className="px-2 py-2 font-bold text-indigo-600 border-l border-slate-200" title="확정 납기 → 포캐스트 → 납품요청일(가장 빠른 발주 납기) · ✎ 로 확정">📅 납기</th>
           <th className="px-2 py-2 font-bold">상태</th>
           <th className="px-2 py-2 font-bold text-amber-600 border-l border-slate-200" title="Frame · 누르면 입고 · ✎ 로 확정일">⚙ 가공물 입고</th>
@@ -420,14 +416,11 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
   )
 }
 
-const won = (n) => Math.round(+n || 0).toLocaleString('ko-KR')
-
 // 🗂 호기 줄 — 파트 칩 · 발주 합계 · 가장 빠른 납기 · 가장 늦은 파트 상태 · 진행 칸 수 (목업 모양)
 function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, partColor, orderIdx, orderSetup }) {
   const rows = g.rows
   const ords = [...new Set(rows.map(r => orderOf(orderIdx, r)).filter(Boolean))]
   const oPos = [...new Set(ords.flatMap(o => o.pos || []))]
-  const oLines = ords.reduce((t, o) => t + (o.n_lines || 0), 0), oAmt = ords.reduce((t, o) => t + (+o.amt || 0), 0)
   const all = rows.every(r => sel.has(r.id))
   const live = rows.filter(r => r.status !== '완료')
   const order = (s) => { const i = statusOpts.indexOf(s || 'PO접수'); return i < 0 ? 0 : i }
@@ -452,8 +445,6 @@ function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, par
       <td className="px-2 py-2.5 text-left" title={oPos.length ? `발주서 ${oPos.join(', ')}` : '수주대장에 진행 중인 발주가 없습니다'}>
         {orderSetup && oPos.length ? <span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span> : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
       </td>
-      <td className="px-2 py-2.5 text-right tabular-nums font-mono font-bold text-slate-700">{orderSetup && oPos.length ? oLines : ''}</td>
-      <td className="px-2 py-2.5 text-right tabular-nums font-mono font-bold text-slate-700">{orderSetup && oPos.length ? `₩${won(oAmt)}` : ''}</td>
       <td className="px-2 py-2.5 border-l border-violet-100 whitespace-nowrap" title="가장 빠른 파트 납기">
         {g.first ? <span className={n != null && n < 0 ? 'text-red-600 font-bold' : n != null && n <= 7 ? 'text-orange-600 font-bold' : 'text-slate-700'}>{md(g.first)}{n != null && n >= 0 && <span className="ml-1 text-[10px] font-bold">{n === 0 ? 'D-Day' : `D-${n}`}</span>}</span> : <span className="text-slate-300">—</span>}
       </td>
