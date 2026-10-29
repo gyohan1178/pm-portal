@@ -3,8 +3,8 @@
 //   작업자가 따로 쓰던 「Forecast 자재 준비 현황」 HTML 을 옮긴 것.
 //   AXCELIS 와 같은 칸 동작(누르면 완료 · ✎ 날짜)을 쓰고 머리글만 Edwards 에 맞춘다.
 //
-//   구분1 · 구분2 · 구분3 · 프로젝트 · 호기 | 발주 | 상태 | 정한 납기 | Frame 입고 |
-//   불출(하네스 · 전장) | 품질 | 미불출 자재(건수 · 품목) | 비고 | 담당자
+//   v4.118.2 — 프로젝트 #호기 / 파트 | 구분 | 발주서 | 품목 줄 | 금액 | 납기 | 상태 | 가공물 입고 |
+//   하네스 · 전장 불출 | 품질 | 미불출 | 비고   (구분1·2·3 · 발주 Remark · 담당자 칸은 뺌)
 //
 //   ⚠ 정한 납기 · 불출 예정은 lib/edForecast.js 에서 계산한다 (저장값 아님).
 //     사람이 넣는 값: 확정 납기(due_fix) · Frame 확정(arrival_date) · 발주서(po_received) · 불출 · 품질 · 미불출 · 비고
@@ -123,22 +123,6 @@ export function EdFilters({ f, setF }) {
 }
 
 // ── 칸들 ────────────────────────────────────────────────────────────
-function RemarkCell({ r, onField }) {
-  const rm = String(r.fc_remark || '').toUpperCase()
-  const cls = rm === 'PO' ? 'text-indigo-600' : rm === 'CO' ? 'text-amber-600' : 'text-slate-400'
-  const on = !!r.po_received
-  return (
-    <td data-no-select className="px-2 py-2 cursor-pointer text-center whitespace-nowrap"
-      title={`포캐스트 Remark ${r.fc_remark || '없음'} · 네모 = 발주서 접수 (누르면 바뀜)`}
-      onClick={() => onField(r.id, 'po_received', !on)}>
-      <span className={`text-[10px] font-bold mr-1 ${cls}`}>{r.fc_remark || '—'}</span>
-      <span className={`inline-flex items-center justify-center w-3.5 h-3.5 rounded-[3px] border align-[-2px] ${on ? 'bg-indigo-600 border-indigo-600 text-white' : 'border-slate-300 bg-white'}`}>
-        {on && <span className="text-[9px] leading-none">✓</span>}
-      </span>
-    </td>
-  )
-}
-
 function DueCell({ r, onField }) {
   const [editing, setEditing] = useState(false)
   const k = kindOf(r)
@@ -170,10 +154,10 @@ function DueCell({ r, onField }) {
   return (
     <td data-no-select className="px-2 py-2 border-l border-slate-100 text-center whitespace-nowrap group"
       title={d ? (d.fixed ? `확정 납기 · 포캐스트 ${d.fc || '없음'}` : `포캐스트 ${src} 기준 · ✎ 로 확정 납기 입력`)
-        : k ? '포캐스트 날짜 없음 (회색 = 납품요청일) · ✎ 로 확정 납기 입력' : '회색 = 납품요청일 · ✎ 로 확정 납기 입력'}>
+        : '납품요청일 (수주대장 발주 납기) · ✎ 로 확정 납기 입력'}>
       {d
         ? <span className={d.fixed ? 'font-semibold text-slate-800 border-b-2 border-emerald-400' : 'text-slate-500'}>{md(d.date)}</span>
-        : <span className="text-slate-300">{md(r.req_date) || '—'}</span>}
+        : r.req_date ? <span className="text-slate-700">{md(r.req_date)}</span> : <span className="text-slate-300">—</span>}
       {tag}
       <button type="button" onClick={() => setEditing(true)} title="확정 납기 입력 (비우면 포캐스트 날짜)"
         className="ml-0.5 text-[10px] text-slate-300 hover:text-indigo-600 px-0.5">✎</button>
@@ -236,7 +220,7 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
       title={done ? `${name} 불출 완료 · 누르면 취소`
         : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}일 (불출 기준)\n누르면 불출 완료`
         : (w === null || w === undefined) && k ? `${k} 불출 기준(일수)이 없습니다 — 「⚙ 불출 기준」 ① 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
-        : k ? `정한 납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
+        : k ? `납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
       onClick={() => onField(r.id, field, !done)}>
       {done
         ? <span className={`${doneCls} font-semibold`}>✔ 불출</span>
@@ -267,7 +251,7 @@ function QualityCell({ r, rules, onField }) {
   const cls = !live ? 'text-slate-400' : n == null ? 'text-slate-300' : n < 0 ? 'text-red-600 font-bold' : n <= 3 ? 'text-orange-600 font-bold' : 'text-slate-500'
   return (
     <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center whitespace-nowrap group" data-ed-qc={due || ''}
-      title={done ? '품질검수 완료 · 누르면 취소' : due ? `품질검수 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${rules?.qcDays ?? 4}일\n누르면 품질검수 완료` : '정한 납기가 없어 검수 예정을 계산할 수 없습니다 · 누르면 품질검수 완료'}
+      title={done ? '품질검수 완료 · 누르면 취소' : due ? `품질검수 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${rules?.qcDays ?? 4}일\n누르면 품질검수 완료` : '납기가 없어 검수 예정을 계산할 수 없습니다 · 누르면 품질검수 완료'}
       onClick={() => onField(r.id, 'quality_recv', !done)}>
       {done ? <span className="text-rose-600 font-bold">✔ 완료</span>
         : due ? <span className={cls}>{md(due)}</span>
@@ -290,7 +274,7 @@ function MemoCell({ r, onField }) {
 }
 
 // ── 표 ──────────────────────────────────────────────────────────────
-export const ED_COLS = 18
+export const ED_COLS = 14
 //   v4.118.0 — 「🗂 호기로 묶기」: 프로젝트 #호기 한 줄 아래에 파트 줄 (접고 펼치기) · 「🧾 발주서」 칸 (수주대장 발주 · 줄 · 금액)
 const GROUP_KEY = 'pm.edGrouped.v1'
 export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor, projects = [], need = {}, onNeed, orderIdx = null, orderSetup = false }) {
@@ -327,82 +311,66 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
     return p ? p.code : null
   }
   const monthRow = (r, i) => (
-        <tr key={'m' + i} className="bg-indigo-50/60">
-          <td colSpan={ED_COLS} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
-            {r._month === '미정' ? '정한 납기 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
-          </td>
-        </tr>
+    <tr key={'m' + i} className="bg-indigo-50/60">
+      <td colSpan={ED_COLS} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+        {r._month === '미정' ? '납기 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
+      </td>
+    </tr>
   )
   // 파트 한 줄 (호기로 묶어 볼 때는 호기 줄 아래에 들어감)
-  const partRow = (r, inGroup = false) => (
-        <tr key={r.id}
-          onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
-          onMouseEnter={e => rowSel.over(r.id, e)}
-          className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id) ? 'bg-indigo-50/50' : ''} ${r.status === '완료' ? 'text-slate-400' : ''} ${inGroup ? 'bg-white' : ''}`} data-ed-part={inGroup ? '1' : undefined}>
-          <td className="px-1 py-2"><input type="checkbox" checked={sel.has(r.id)} readOnly className="pointer-events-none" /></td>
-          <td className="px-2 py-2">
-            {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="text-slate-300">-</span>}
+  //   v4.118.2 — 목업 모양: 파트 | 구분 | 발주서 | 품목 줄 | 금액 | 납기 | 상태 | 가공물 입고 | 하네스 · 전장 불출 | 품질 | 미불출 | 비고
+  const partRow = (r, inGroup = false) => {
+    const o = orderOf(orderIdx, r)
+    const pos = o?.pos || []
+    const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []
+    const first = mp[0]
+    return (
+      <tr key={r.id}
+        onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
+        onMouseEnter={e => rowSel.over(r.id, e)}
+        data-ed-part={inGroup ? '1' : undefined}
+        className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id) ? 'bg-indigo-50/50' : 'bg-white'} ${r.status === '완료' ? 'text-slate-400' : ''}`}>
+        <td className="px-1 py-2"><input type="checkbox" checked={sel.has(r.id)} readOnly className="pointer-events-none" /></td>
+        <td data-no-select className={`py-2 text-left cursor-pointer whitespace-nowrap ${inGroup ? 'pl-8 pr-2' : 'px-2'}`} onClick={() => onEdit(r)}
+          title={`${r.pn} ${r.hogi || ''} · ${r.part || '파트 없음'} — 누르면 편집`}>
+          {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400">미분류</span>}
+          {!inGroup && <span className="ml-2 text-slate-700 hover:text-indigo-600">{r.pn} <span className="font-mono font-bold text-indigo-600">{r.hogi || ''}</span></span>}
+          {r.fc_new && <span className="ml-1 px-1 rounded bg-sky-50 text-sky-600 text-[9px] font-bold align-middle" title="포캐스트로 만든 줄">FC</span>}
+        </td>
+        <td className="px-2 py-2 text-left text-[11px] text-slate-500 max-w-[110px] overflow-hidden text-ellipsis" title={r.part2 || ''}>{r.part2 && r.part2 !== r.part ? r.part2 : <span className="text-slate-300">—</span>}</td>
+        {!orderSetup || !o ? (
+          <td colSpan={3} className="px-2 py-2 text-left text-[10px] text-slate-300" title={orderSetup ? '수주대장에 진행 중인 발주가 없습니다' : 'Edwards생산_수주불러오기_반영_261029.sql 실행 전'}>{orderSetup ? '발주 없음' : '—'}</td>
+        ) : (<>
+          <td className="px-2 py-2 text-left whitespace-nowrap" data-ed-order={pos.join(',')}
+            title={`발주서 ${pos.join(', ')}\n납기 ${o.due || '-'}${o.due_last && o.due_last !== o.due ? ` ~ ${o.due_last}` : ''}${o.guessed ? `\n파트 추정 ${o.guessed}줄 (메모에 파트가 없어 품번 이력으로 정함)` : ''}`}>
+            <span className="font-mono text-[11px] text-indigo-600">{pos[0]}</span>{pos.length > 1 && <span className="text-[10px] text-slate-400"> 외 {pos.length - 1}</span>}
+            {o.guessed ? <span className="block text-[9px] text-amber-600 font-bold">ⓘ 파트 추정 {o.guessed}줄</span> : null}
           </td>
-          {(() => {
-            const k = kindOf(r)
-            const hb = bomCode(r, 'harn'), eb = bomCode(r, 'elec')
-            const orig = `PO 업로드(월간 실적) 구분2 ${r.part2 || '-'} · 구분3 ${r.part3 || '-'}`
-            if (!k) return (<>
-              <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part2}>{r.part2 || '-'}</td>
-              <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part3}>{r.part3 || '-'}</td>
-            </>)
-            return (<>
-              <td className="px-2 py-2 text-left font-mono text-[11px] text-slate-700 max-w-[120px] overflow-hidden text-ellipsis" title={`포캐스트 품번 ${r.fc_item || '없음'}\n${orig}`}>
-                {r.fc_item || <span className="text-slate-400 font-sans">{r.part2 || '-'}</span>}
-              </td>
-              <td className="px-2 py-2 text-left text-[10px] leading-tight max-w-[190px]" title={`하네스 BOM ${hb || '연결 안 됨'}\n전장 BOM ${eb || '연결 안 됨'}\n${orig}`}>
-                <span className={`block truncate ${hb ? 'text-teal-700' : 'text-orange-400'}`}>{hb || '하네스 BOM 없음'}</span>
-                <span className={`block truncate ${eb ? 'text-blue-700' : 'text-orange-400'}`}>{eb || '전장 BOM 없음'}</span>
-              </td>
-            </>)
-          })()}
-          <td data-no-select className="px-2 py-2 text-slate-700 text-left max-w-[200px] overflow-hidden text-ellipsis cursor-pointer hover:text-indigo-600"
-            title={`${r.pn}${r.fc_tag ? ` · 포캐스트 ${r.fc_tag}` : ''} — 누르면 편집`} onClick={() => onEdit(r)}>
-            {r.pn}
-            {r.fc_new && <span className="ml-1 px-1 rounded bg-sky-50 text-sky-600 text-[9px] font-bold align-middle" title="포캐스트로 새로 만든 줄 — PO 업로드(월간 실적)가 들어오면 이 줄과 이어집니다">FC</span>}
-            {r.fc_gone && r.status !== '완료' && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle" title="최근 포캐스트에 이 호기가 없습니다 (지우지 않음)">FC 없음</span>}
-          </td>
-          <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
-          <OrderCell g={orderOf(orderIdx, r)} setup={orderSetup} />
-          <RemarkCell r={r} onField={onField} />
-          <td data-no-select className="px-2 py-2">
-            <select value={r.status || 'PO접수'} onChange={e => onField(r.id, 'status', e.target.value)} onClick={e => e.stopPropagation()}
-              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${statusColor[r.status] || 'bg-slate-100 text-slate-500'}`}>
-              {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
-            </select>
-          </td>
-          <DueCell r={r} onField={onField} />
-          <FrameCell r={r} onField={onField} />
-          <IssueCell r={r} rules={rules} which="harn" onField={onField} need={need[`${r.id}|harn`]} bom={bomCode(r, 'harn')} onNeed={onNeed} />
-          <IssueCell r={r} rules={rules} which="elec" onField={onField} need={need[`${r.id}|elec`]} bom={bomCode(r, 'elec')} onNeed={onNeed} />
-          <QualityCell r={r} rules={rules} onField={onField} />
-          {(() => {
-            const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []
-            const first = mp[0]
-            return (<>
-              <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer" onClick={() => onMissing(r)} title="누르면 미불출 자재 입력">
-                {mp.length
-                  ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{mp.length}건</span>
-                  : <span className="text-slate-200 hover:text-red-400">＋</span>}
-              </td>
-              <td data-no-select className="px-2 py-2 text-left max-w-[170px] overflow-hidden text-ellipsis cursor-pointer text-[11px] text-slate-600"
-                onClick={() => onMissing(r)}
-                title={mp.map(m => `${m.pn || ''} ${m.name || ''} ${m.qty ? '× ' + m.qty : ''}`.trim()).join('\n')}>
-                {first ? <>{first.pn || first.name}{first.qty ? <span className="text-slate-400"> ×{first.qty}</span> : null}{mp.length > 1 && <span className="text-slate-400"> 외 {mp.length - 1}</span>}</> : <span className="text-slate-200">—</span>}
-              </td>
-            </>)
-          })()}
-          <MemoCell r={r} onField={onField} />
-          <td className="px-2 py-2 text-left max-w-[110px] overflow-hidden text-ellipsis">
-            {r.manager ? <span className="font-semibold text-slate-600">{r.manager}</span> : <span className="text-slate-200">—</span>}
-          </td>
-        </tr>
-  )
+          <td className="px-2 py-2 text-right tabular-nums font-mono">{o.n_lines}</td>
+          <td className="px-2 py-2 text-right tabular-nums font-mono">₩{won(o.amt)}</td>
+        </>)}
+        <DueCell r={r} onField={onField} />
+        <td data-no-select className="px-2 py-2">
+          <select value={r.status || 'PO접수'} onChange={e => onField(r.id, 'status', e.target.value)} onClick={e => e.stopPropagation()}
+            className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${statusColor[r.status] || 'bg-slate-100 text-slate-500'}`}>
+            {statusOpts.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </td>
+        <FrameCell r={r} onField={onField} />
+        <IssueCell r={r} rules={rules} which="harn" onField={onField} need={need[`${r.id}|harn`]} bom={bomCode(r, 'harn')} onNeed={onNeed} />
+        <IssueCell r={r} rules={rules} which="elec" onField={onField} need={need[`${r.id}|elec`]} bom={bomCode(r, 'elec')} onNeed={onNeed} />
+        <QualityCell r={r} rules={rules} onField={onField} />
+        <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-left max-w-[170px] overflow-hidden text-ellipsis" onClick={() => onMissing(r)}
+          title={mp.length ? mp.map(m => `${m.pn || ''} ${m.name || ''} ${m.qty ? '× ' + m.qty : ''}`.trim()).join('\n') : '누르면 미불출 자재 입력'}>
+          {mp.length
+            ? <><span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{mp.length}건</span>
+                <span className="ml-1 text-[11px] text-slate-600">{first.pn || first.name}{first.qty ? <span className="text-slate-400"> ×{first.qty}</span> : null}{mp.length > 1 && <span className="text-slate-400"> 외 {mp.length - 1}</span>}</span></>
+            : <span className="text-slate-200 hover:text-red-400">＋</span>}
+        </td>
+        <MemoCell r={r} onField={onField} />
+      </tr>
+    )
+  }
   return (
     <>
     <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 border-b border-slate-100 bg-white" data-ed-groupbar>
@@ -415,37 +383,29 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
       {grouped && <>
         <button type="button" onClick={() => setAll(true)} data-ed-openall className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50">모두 펼치기</button>
         <button type="button" onClick={() => setAll(false)} data-ed-closeall className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50">모두 접기</button>
-        <span className="text-[11px] text-slate-400">호기 {groups.length} · 파트 {ids.length} — 보라 줄을 누르면 파트가 접히고 펼쳐집니다 (납기 14일 안 호기는 펼쳐 둠)</span>
+        <span className="text-[11px] text-slate-400">호기 {groups.length} · 파트 {ids.length} — 보라 줄을 누르면 파트가 접히고 펼쳐집니다 (납기 14일 안 호기는 펼쳐 둠) · 파트를 누르면 편집</span>
       </>}
     </div>
     <table className="w-full text-xs whitespace-nowrap">
       <thead>
-        <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 text-center">
-          <th rowSpan={2} className="px-1 py-1.5 w-7">
+        <tr className="border-b-2 border-slate-200 bg-slate-50 text-slate-500 text-center">
+          <th className="px-1 py-2 w-7">
             <input type="checkbox" checked={ids.length > 0 && ids.every(id => sel.has(id))}
               onChange={e => setSel(e.target.checked ? new Set(ids) : new Set())} />
           </th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold">구분1</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="EUV · H2D 줄은 포캐스트 품번 (Item number)">구분2<br /><span className="text-[9px] font-normal text-slate-300">품번</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="EUV · H2D 줄은 쓰는 BOM — 위 하네스 · 아래 전장">구분3<br /><span className="text-[9px] font-normal text-slate-300">BOM 하네스 / 전장</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">프로젝트</th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)">🧾 발주서<br /><span className="text-[9px] font-normal text-slate-300">줄 · 금액</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold" title="포캐스트 Remark (FCT · CO · PO) · 네모 = 발주서 접수">발주</th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold text-indigo-600 border-l border-slate-200">📅 정한 납기<br /><span className="text-[9px] font-normal text-slate-300">D-남은날 · ✎확정</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 입고<br /><span className="text-[9px] font-normal text-slate-300">Frame · 클릭=입고 · ✎확정</span></th>
-          <th colSpan={2} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 불출 <span className="text-[9px] font-normal text-slate-300">(정한 납기 − EUV 35일 · H2D 20일)</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold text-rose-600 border-l border-slate-200">✅ 품질<br /><span className="text-[9px] font-normal text-slate-300">납기 − {rules?.qcDays ?? 4}일</span></th>
-          <th colSpan={2} className="px-2 py-1 font-bold text-red-600 border-l border-slate-200">⚠ 미불출 자재</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold border-l border-slate-200">비고</th>
-          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
-        </tr>
-        <tr className="border-b border-slate-200 bg-slate-50/50 text-[10px] text-slate-400 text-center">
-          <th className="px-2 py-1 font-semibold border-l border-slate-200">하네스</th>
-          <th className="px-2 py-1 font-semibold">전장</th>
-          <th className="px-2 py-1 font-semibold border-l border-slate-200">건수</th>
-          <th className="px-2 py-1 font-semibold text-left">품목</th>
+          <th className="px-2 py-2 text-left font-bold">프로젝트 #호기 / 파트</th>
+          <th className="px-2 py-2 text-left font-bold" title="H2D HP · H2D LH 등 (발주서 메모 두 번째 칸)">구분</th>
+          <th className="px-2 py-2 text-left font-bold" title="수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)">🧾 발주서</th>
+          <th className="px-2 py-2 text-right font-bold">품목 줄</th>
+          <th className="px-2 py-2 text-right font-bold">금액</th>
+          <th className="px-2 py-2 font-bold text-indigo-600 border-l border-slate-200" title="확정 납기 → 포캐스트 → 납품요청일(가장 빠른 발주 납기) · ✎ 로 확정">📅 납기</th>
+          <th className="px-2 py-2 font-bold">상태</th>
+          <th className="px-2 py-2 font-bold text-amber-600 border-l border-slate-200" title="Frame · 누르면 입고 · ✎ 로 확정일">⚙ 가공물 입고</th>
+          <th className="px-2 py-2 font-bold text-teal-600 border-l border-slate-200" title="납기 − EUV 35일 · H2D 20일 · 누르면 불출 완료">⚡ 하네스 불출</th>
+          <th className="px-2 py-2 font-bold text-blue-600" title="납기 − EUV 35일 · H2D 20일 · 누르면 불출 완료">⚡ 전장 불출</th>
+          <th className="px-2 py-2 font-bold text-rose-600 border-l border-slate-200" title={`납기 − ${rules?.qcDays ?? 4}일 · 누르면 검수 완료`}>✅ 품질</th>
+          <th className="px-2 py-2 text-left font-bold text-red-600 border-l border-slate-200">⚠ 미불출</th>
+          <th className="px-2 py-2 text-left font-bold border-l border-slate-200">비고</th>
         </tr>
       </thead>
       <tbody>
@@ -460,22 +420,9 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
   )
 }
 
-// 🧾 발주서 칸 — 수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)
 const won = (n) => Math.round(+n || 0).toLocaleString('ko-KR')
-function OrderCell({ g, setup }) {
-  if (!setup) return <td className="px-2 py-2 text-slate-200" title="Edwards생산_수주불러오기_반영_261029.sql 실행 전">—</td>
-  if (!g) return <td className="px-2 py-2 text-left text-[10px] text-slate-300" title="수주대장에 진행 중인 발주가 없습니다">발주 없음</td>
-  const pos = g.pos || []
-  return (
-    <td className="px-2 py-2 text-left leading-tight" data-ed-order={pos.join(',')}
-      title={`발주서 ${pos.join(', ')}\n${g.n_lines}줄 · ₩${won(g.amt)} · 납기 ${g.due || '-'}${g.due_last && g.due_last !== g.due ? ` ~ ${g.due_last}` : ''}${g.guessed ? `\n파트 추정 ${g.guessed}줄 (메모에 파트가 없어 품번 이력으로 정함)` : ''}`}>
-      <span className="font-mono text-[11px] text-indigo-600">{pos[0]}</span>{pos.length > 1 && <span className="text-[10px] text-slate-400"> 외 {pos.length - 1}</span>}
-      <span className="block text-[10px] text-slate-400 tabular-nums">{g.n_lines}줄 · ₩{won(g.amt)}{g.guessed ? <span className="ml-1 text-amber-600 font-bold">ⓘ추정</span> : null}</span>
-    </td>
-  )
-}
 
-// 🗂 호기 줄 — 파트 칩 · 발주 합계 · 가장 늦은 파트 상태 · 가장 빠른 납기 · 진행 칸 수
+// 🗂 호기 줄 — 파트 칩 · 발주 합계 · 가장 빠른 납기 · 가장 늦은 파트 상태 · 진행 칸 수 (목업 모양)
 function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, partColor, orderIdx, orderSetup }) {
   const rows = g.rows
   const ords = [...new Set(rows.map(r => orderOf(orderIdx, r)).filter(Boolean))]
@@ -488,41 +435,40 @@ function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, par
   const n = g.first ? dday(g.first) : null
   const cnt = (f) => rows.filter(f).length
   const frame = cnt(r => truthy(r.machine_recv)), harn = cnt(r => truthy(r.harness_recv)), elec = cnt(r => truthy(r.part_issue)), qual = cnt(r => truthy(r.quality_recv))
-  const po = cnt(r => r.po_received)
   const miss = rows.reduce((t, r) => t + (Array.isArray(r.missing_parts) ? r.missing_parts.length : 0), 0)
   const frac = (a, cls) => <span className={a === rows.length ? `${cls} font-bold` : a ? 'text-slate-600 font-semibold' : 'text-slate-300'}>{a}/{rows.length}</span>
-  const parts = rows.map(r => r.part || '—')
+  const dot = (s) => { const i = order(s); return s === '완료' ? 'bg-emerald-600' : i >= 5 ? 'bg-emerald-500' : i >= 4 ? 'bg-amber-500' : i >= 3 ? 'bg-indigo-400' : i >= 1 ? 'bg-indigo-200' : 'bg-slate-200' }
   return (
     <tr data-ed-group={g.key} onClick={onToggle} className="border-b border-violet-100 bg-violet-50/50 hover:bg-violet-50 cursor-pointer text-center">
-      <td className="px-1 py-2" onClick={e => e.stopPropagation()}>
+      <td className="px-1 py-2.5" onClick={e => e.stopPropagation()}>
         <input type="checkbox" checked={all} onChange={e => setSel(s => { const x = new Set(s); rows.forEach(r => (e.target.checked ? x.add(r.id) : x.delete(r.id))); return x })} />
       </td>
-      <td colSpan={5} className="px-2 py-2 text-left">
+      <td colSpan={2} className="px-2 py-2.5 text-left">
         <span className="inline-block w-3 text-[10px] text-violet-500">{open ? '▼' : '▶'}</span>
         <span className="font-bold text-slate-800">{g.pn}</span>
         <span className="ml-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-extrabold font-mono text-[11px]">{g.hogi || '-'}</span>
-        <span className="ml-2">{parts.map((p, i) => <span key={i} className={`mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${p === '—' ? 'bg-slate-100 text-slate-400' : partColor(p)}`}>{p}</span>)}</span>
+        <span className="ml-2">{rows.map((r, i) => <span key={i} className={`mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${r.part ? partColor(r.part) : 'bg-slate-100 text-slate-400'}`}>{r.part || '미분류'}</span>)}</span>
       </td>
-      <td className="px-2 py-2 text-left leading-tight" title={oPos.length ? `발주서 ${oPos.join(', ')}` : '수주대장에 진행 중인 발주가 없습니다'}>
-        {orderSetup && oPos.length
-          ? <><span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span><span className="block text-[10px] text-slate-400 tabular-nums">{oLines}줄 · ₩{won(oAmt)}</span></>
-          : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
+      <td className="px-2 py-2.5 text-left" title={oPos.length ? `발주서 ${oPos.join(', ')}` : '수주대장에 진행 중인 발주가 없습니다'}>
+        {orderSetup && oPos.length ? <span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span> : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
       </td>
-      <td className="px-2 py-2 text-[10px]" title="발주서 접수">{frac(po, 'text-indigo-600')}</td>
-      <td className="px-2 py-2">
-        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${statusColor[low] || 'bg-slate-100 text-slate-500'}`} title="가장 늦은 파트 기준">{low}</span>
+      <td className="px-2 py-2.5 text-right tabular-nums font-mono font-bold text-slate-700">{orderSetup && oPos.length ? oLines : ''}</td>
+      <td className="px-2 py-2.5 text-right tabular-nums font-mono font-bold text-slate-700">{orderSetup && oPos.length ? `₩${won(oAmt)}` : ''}</td>
+      <td className="px-2 py-2.5 border-l border-violet-100 whitespace-nowrap" title="가장 빠른 파트 납기">
+        {g.first ? <span className={n != null && n < 0 ? 'text-red-600 font-bold' : n != null && n <= 7 ? 'text-orange-600 font-bold' : 'text-slate-700'}>{md(g.first)}{n != null && n >= 0 && <span className="ml-1 text-[10px] font-bold">{n === 0 ? 'D-Day' : `D-${n}`}</span>}</span> : <span className="text-slate-300">—</span>}
       </td>
-      <td className="px-2 py-2 border-l border-violet-100 whitespace-nowrap" title="가장 빠른 파트 납기">
-        {g.first ? <>{md(g.first)}{n != null && n >= 0 && <span className={`ml-1 text-[10px] font-bold ${n <= 7 ? 'text-orange-600' : n <= 14 ? 'text-yellow-600' : 'text-slate-500'}`}>{n === 0 ? 'D-Day' : `D-${n}`}</span>}</> : <span className="text-slate-300">—</span>}
+      <td className="px-2 py-2.5 whitespace-nowrap" title="가장 늦은 파트 기준 · 칸 하나 = 파트 하나">
+        <span className="inline-flex gap-0.5 align-middle mr-1">{rows.map((r, i) => <span key={i} className={`w-2 h-2 rounded-sm ${dot(r.status)}`} title={`${r.part || '-'} ${r.status || 'PO접수'}`} />)}</span>
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${statusColor[low] || 'bg-slate-100 text-slate-500'}`}>{low}</span>
       </td>
-      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="가공물(Frame) 입고">{frac(frame, 'text-amber-600')}</td>
-      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="하네스 불출">{frac(harn, 'text-teal-600')}</td>
-      <td className="px-2 py-2 text-[10px]" title="전장 불출">{frac(elec, 'text-blue-600')}</td>
-      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="품질">{frac(qual, 'text-rose-600')}</td>
-      <td colSpan={2} className="px-2 py-2 border-l border-violet-100 text-left">
+      <td className="px-2 py-2.5 border-l border-violet-100 text-[10px]" title="가공물(Frame) 입고">{frac(frame, 'text-amber-600')}</td>
+      <td className="px-2 py-2.5 border-l border-violet-100 text-[10px]" title="하네스 불출">{frac(harn, 'text-teal-600')}</td>
+      <td className="px-2 py-2.5 text-[10px]" title="전장 불출">{frac(elec, 'text-blue-600')}</td>
+      <td className="px-2 py-2.5 border-l border-violet-100 text-[10px]" title="품질">{frac(qual, 'text-rose-600')}</td>
+      <td className="px-2 py-2.5 border-l border-violet-100 text-left">
         {miss ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">미불출 {miss}건</span> : <span className="text-slate-200">—</span>}
       </td>
-      <td colSpan={2} className="px-2 py-2 border-l border-violet-100" />
+      <td className="px-2 py-2.5 border-l border-violet-100" />
     </tr>
   )
 }
@@ -616,7 +562,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
         </div>
         <div className="p-5 overflow-y-auto space-y-5 text-xs">
           <section>
-            <p className="font-bold text-slate-700 mb-1">① 불출 예정일 = 정한 납기 − N일</p>
+            <p className="font-bold text-slate-700 mb-1">① 불출 예정일 = 납기 − N일</p>
             <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
               <thead className="bg-slate-50 text-slate-500"><tr>
                 <th className="px-3 py-1.5 text-left">구분</th><th className="px-3 py-1.5">하네스 (일 전)</th><th className="px-3 py-1.5">전장 (일 전)</th>
@@ -636,9 +582,9 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
                 ))}
               </tbody>
             </table>
-            <p className="mt-1 text-[11px] text-slate-400">정한 납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주) · MFM · BDM 등 = 납품요청일. 확정 납기를 넣으면 그 날짜 기준.
+            <p className="mt-1 text-[11px] text-slate-400">납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주) · MFM · BDM 등 = 납품요청일. 확정 납기를 넣으면 그 날짜 기준.
               <b className="text-orange-600"> 비워 둔 칸</b>은 불출 예정일을 계산하지 않습니다.</p>
-            <p className="mt-2 flex items-center gap-2 font-bold text-slate-700">품질 검수 예정일 = 정한 납기 −
+            <p className="mt-2 flex items-center gap-2 font-bold text-slate-700">품질 검수 예정일 = 납기 −
               <input type="number" min="0" max="60" value={qcDays} onChange={e => setQcDays(e.target.value === '' ? '' : Math.max(0, Math.min(60, Number(e.target.value))))} data-qc-days
                 className="w-14 px-2 py-1 text-center border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400" /> 일 <span className="font-normal text-slate-400">(모든 구분)</span></p>
           </section>

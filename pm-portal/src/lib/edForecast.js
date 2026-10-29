@@ -196,7 +196,7 @@ export function dueOf(r) {
 //   (2026-10-01) 불출 기준만 정해져 있으면 정한 납기 칸에 보이는 날짜로 늘 역산되게 한다.
 export function issueBaseOf(r) {
   const d = dueOf(r)
-  if (d) return { date: d.date, src: d.fixed ? '확정 납기' : '포캐스트 정한 납기' }
+  if (d) return { date: d.date, src: d.fixed ? '확정 납기' : '포캐스트 납기' }
   return r.req_date ? { date: String(r.req_date).slice(0, 10), src: '납품요청일 (포캐스트 날짜 없음)' } : null
 }
 export function issueDueOf(r, rules, which) {

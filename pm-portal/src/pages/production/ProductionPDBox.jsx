@@ -850,7 +850,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               {edImportMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : '📥 수주대장에서 불러오기'}
             </button>
             <button onClick={() => setShowRules(true)}
-              title="불출 예정일 = 정한 납기 − N일 (EUV 35일 · H2D 20일) · 품질 검수 = 납기 − 4일 · 포캐스트 품번별 구분"
+              title="불출 예정일 = 납기 − N일 (EUV 35일 · H2D 20일) · 품질 검수 = 납기 − 4일 · 포캐스트 품번별 구분"
               className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출 기준</button>
           </>
         )}
@@ -1316,7 +1316,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               </div>
               <Field label="납품요청일"><input type="date" value={edit.req_date || ''} onChange={e => setEdit(s => ({ ...s, req_date: e.target.value }))} className="inp" /></Field>
               {isED && (
-                <Field label="📅 확정 납기 (비우면 포캐스트 정한 납기)">
+                <Field label="📅 확정 납기 (비우면 포캐스트 납기)">
                   <input type="date" value={edit.due_fix ? String(edit.due_fix).slice(0, 10) : ''} onChange={e => setEdit(s => ({ ...s, due_fix: e.target.value || null }))} className="inp" />
                 </Field>
               )}
