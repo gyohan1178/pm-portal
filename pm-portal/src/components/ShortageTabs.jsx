@@ -7,8 +7,7 @@ export default function ShortageTabs({ cs = 'ax' }) {
     // 고객사를 이어 간다 — 예전엔 소요예측으로 넘어가면 늘 AXCELIS 로 돌아갔다
     { to: `/forecast-shortage?cs=${cs}`, label: '소요예측 (포캐스트)', exact: false },
     { to: `/customer/${cs}/reqbom`, label: '소요량 조회', exact: false },
-    // Edwards — 생산관리 불출 예정 순으로 차례로 빼 본 부족 (생산관리 › 📦 소요량 매칭)
-    ...(String(cs).toUpperCase() === 'ED' ? [{ to: '/production/ED?view=need', label: '📦 불출순 부족 (생산관리)', exact: false }] : []),
+    // (Edwards 「📦 불출순 부족 (생산관리)」 탭은 v4.118.5 에서 뺌 — 생산관리에서 소요량 매칭 화면을 안 쓰므로)
   ]
   return (
     <div className="inline-flex gap-1 p-1 bg-slate-100 rounded-lg">
