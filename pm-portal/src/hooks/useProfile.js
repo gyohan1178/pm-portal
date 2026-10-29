@@ -55,33 +55,38 @@ export function isFieldOnly(profile) {
   return profile?.role === 'field_edit' || profile?.role === 'field_view'
 }
 
+// 지금 로그인한 사람 — 이 브라우저에 있는 로그인 정보에서 바로 꺼낸다 (v4.115.1 속도 점검)
+//   auth.getUser() 는 부를 때마다 인증 서버에 한 번 다녀온다 (서버가 뭄바이라 왕복 약 0.2초 · 하루 760번).
+//   누구인지(id)만 알면 되는 곳은 이걸 쓴다 — 권한 검사는 어차피 DB(RLS)가 서버에서 한다.
+//   로그인 정보가 만료됐으면 supabase 가 알아서 새로 받아 온다.
+export async function myAuthUser() {
+  const { data: { session } } = await supabase.auth.getSession()
+  return session?.user || null
+}
+
+// 내 프로필 — useMe · useCanEdit · useCanEditStrict · useCanRequest · useMyProfile 이 같은 것을 한 번만 받는다 (v4.115.1)
+//   예전엔 키가 셋(me · myRoleLite · myProfile)이라 화면마다 내 프로필을 세 번 따로 받았다
+export const myProfileQuery = {
+  queryKey: ['myProfile'],
+  staleTime: 5 * 60 * 1000,
+  queryFn: async () => {
+    const user = await myAuthUser()
+    if (!user) return null
+    const { data } = await supabase.from('pm_profiles').select('*').eq('id', user.id).maybeSingle()
+    return data
+  },
+}
+
 // 페이지 어디서든 내 편집권한 확인 (뷰어 가드용) — 로딩 중엔 true(RLS가 최종 방어)
 // 지금 로그인한 사람. 할 일 담당자·댓글 작성자에 쓴다.
 export function useMe() {
-  const { data } = useQuery({
-    queryKey: ['me'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-      const { data: p } = await supabase.from('pm_profiles')
-        .select('id,email,name,role,status').eq('id', user.id).single()
-      return p
-    },
-  })
+  const { data } = useQuery(myProfileQuery)   // 내 프로필 한 번만 받아 같이 쓴다 (v4.115.1)
   return data || null
 }
 
 export function useCanEdit() {
   const { data } = useQuery({
-    queryKey: ['myRoleLite'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
-      return p
-    },
+    ...myProfileQuery,   // 내 프로필 한 번만 받아 같이 쓴다 (v4.115.1)
   })
   return data ? canEdit(data) : true
 }
@@ -92,14 +97,7 @@ export function useCanEdit() {
 //   모를 때는 숨기는 쪽을 택한다.
 export function useCanEditStrict() {
   const { data, isLoading } = useQuery({
-    queryKey: ['myRoleLite'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
-      return p
-    },
+    ...myProfileQuery,   // 내 프로필 한 번만 받아 같이 쓴다 (v4.115.1)
   })
   if (isLoading || !data) return false
   return canEdit(data)
@@ -110,14 +108,7 @@ export function useCanEditStrict() {
 //   (처리 — 불출·발주·반려 — 는 편집 권한자만 할 수 있다)
 export function useCanRequest() {
   const { data } = useQuery({
-    queryKey: ['myRoleLite'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-      const { data: p } = await supabase.from('pm_profiles').select('role,status').eq('id', user.id).single()
-      return p
-    },
+    ...myProfileQuery,   // 내 프로필 한 번만 받아 같이 쓴다 (v4.115.1)
   })
   if (!data) return true
   // 거절·대기 계정만 막는다. 그 외에는 역할과 무관하게 요청할 수 있다.
@@ -259,13 +250,6 @@ export function canAccessPath(profile, pathname) {
 // 세션 없이 현재 사용자 프로필 조회 (profile prop 못 받는 컴포넌트용)
 export function useMyProfile() {
   return useQuery({
-    queryKey: ['myProfile'],
-    staleTime: 5 * 60 * 1000,
-    queryFn: async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return null
-      const { data } = await supabase.from('pm_profiles').select('*').eq('id', user.id).maybeSingle()
-      return data
-    },
+    ...myProfileQuery,
   })
 }

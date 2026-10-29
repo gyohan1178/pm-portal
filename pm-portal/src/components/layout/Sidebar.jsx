@@ -1,5 +1,5 @@
 import { useState, useEffect, createContext, useContext, Fragment } from 'react'
-import { isFieldOnly, canAccessSection, canSeeFlow, isPurchasing } from '../../hooks/useProfile'
+import { isFieldOnly, canAccessSection, canSeeFlow, isPurchasing, myAuthUser } from '../../hooks/useProfile'
 import { NavLink } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { loadChangelogOld } from '../../lib/loadChangelogOld'
@@ -165,23 +165,26 @@ function useAlertCounts(buy = false) {
     refetchInterval: 10 * 60 * 1000,
     refetchIntervalInBackground: false,
     queryFn: async () => {
+      // 아래 숫자들은 서로 기다릴 필요가 없어 한꺼번에 묻는다 (v4.115.1 속도 점검)
+      //   예전엔 하나씩 차례로 물어 메뉴 숫자가 뜨기까지 서버 왕복 8~10번(약 2초)을 기다렸다
       const out = {}
-      try {
-        const { data: req } = await supabase.rpc('pm_request_list',
-          { p_status: null, p_days: 180, p_mine: false, p_customer: null, p_dept: null })
-        out['/material-request'] = (req || [])
-          .filter(r => ['요청', '코드대기', '확인'].includes(r.status)).length
-      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
-      try {
-        // 내가 낸 요청이 반려되거나 다른 팀으로 넘어간 것.
-        //   위 조회는 반려를 빼고 오므로 여기서 따로 센다. 숫자만 받아 가볍다.
-        const { data: mine } = await supabase.rpc('pm_request_notice_count')
-        out['/material-request'] = (out['/material-request'] || 0) + (Number(mine) || 0)
-      } catch { /* 함수가 아직 없어도 메뉴는 그려야 한다 */ }
-      if (buy) try {
-        out['/orders'] = await countUnconfirmedOrders()
-      } catch { /* 진행 중 줄 보기(SQL) 전이어도 메뉴는 그려야 한다 */ }
-      if (buy) try {
+      const add = (k, n) => { out[k] = (out[k] || 0) + (Number(n) || 0) }
+      const tasks = []
+      // 자재 요청 — 처리할 요청 (최근 180일 · 요청 · 코드대기 · 확인). 숫자만 받는다
+      //   예전엔 요청 목록 전체(품목 · 재고 · 발주 잔량까지 붙인 것)를 받아 세었다 — 같은 기준
+      tasks.push((async () => {
+        const since = new Date(Date.now() - 180 * 86400000).toISOString()
+        const { count, error } = await supabase.from('pm_material_request').select('id', { count: 'exact', head: true })
+          .in('status', ['요청', '코드대기', '확인']).gte('created_at', since)
+        if (!error) add('/material-request', count)
+      })())
+      // 내가 낸 요청이 반려되거나 다른 팀으로 넘어간 것 — 숫자만
+      tasks.push((async () => {
+        const { data: mine, error } = await supabase.rpc('pm_request_notice_count')
+        if (!error) add('/material-request', mine)
+      })())
+      if (buy) tasks.push((async () => { out['/orders'] = await countUnconfirmedOrders() })())   // 진행 중 줄 보기(SQL) 전이면 실패 → 숫자 없음
+      if (buy) tasks.push((async () => {
         // 구매발주 납기 지연 (v4.104.0) — 받을 날이 지났는데 남은 수량이 있는 진행 중 구매발주 줄 (고객사 전체)
         //   받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 (v4.108.0)
         //   관제탑 「입고 지연」 · 구매발주 「납기 지연」과 같은 기준. 숫자만 받아 가볍다
@@ -190,31 +193,31 @@ function useAlertCounts(buy = false) {
           .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').gt('qty_remaining', 0)
           .or(`vendor_date.lt.${t},and(vendor_date.is.null,promise_date.lt.${t})`)
         if (!error) out['/purchase'] = count || 0
-      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
-      try {
+      })())
+      tasks.push((async () => {
         // 할 일 — 내 일 중 기한 지남 · 오늘까지 · 새로 받은 일
-        const { data: { user } } = await supabase.auth.getUser()
-        if (user) {
-          const [{ data: p }, { data: todos }] = await Promise.all([
-            supabase.from('pm_profiles').select('id,name').eq('id', user.id).maybeSingle(),
-            supabase.rpc('pm_todo_items'),
-          ])
-          if (p) out['/todo'] = alertCountFor(todos || [], p)
-          // 오늘 순환 실사가 안 끝났으면 1 더한다 (v4.78.0) — 담당 렉이 있는 사람만 · 실사하는 날만
-          try {
-            const t = todayISO()
-            if (p?.name && isWorkday(t, isHoliday)) {
-              const { data: ow, error: oe } = await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
-              if (!oe && ow?.length) {
-                const racks = new Set(ow.map(o => String(o.rack_code).toUpperCase()))
-                const { data: ck } = await supabase.from('pm_cell_check').select('location').eq('check_date', t)
-                const n = new Set((ck || []).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
-                if (n < DAILY) out['/todo'] = (out['/todo'] || 0) + 1
-              }
+        const user = await myAuthUser()   // 이 브라우저의 로그인 정보 — 인증 서버에 안 다녀옴 (v4.115.1)
+        if (!user) return
+        const t = todayISO()
+        const [{ data: p }, { data: todos }, { data: ck }] = await Promise.all([
+          supabase.from('pm_profiles').select('id,name').eq('id', user.id).maybeSingle(),
+          supabase.rpc('pm_todo_items'),
+          supabase.from('pm_cell_check').select('location').eq('check_date', t),
+        ])
+        if (p) out['/todo'] = alertCountFor(todos || [], p)
+        // 오늘 순환 실사가 안 끝났으면 1 더한다 (v4.78.0) — 담당 렉이 있는 사람만 · 실사하는 날만
+        try {
+          if (p?.name && isWorkday(t, isHoliday)) {
+            const { data: ow, error: oe } = await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
+            if (!oe && ow?.length) {
+              const racks = new Set(ow.map(o => String(o.rack_code).toUpperCase()))
+              const n = new Set((ck || []).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
+              if (n < DAILY) out['/todo'] = (out['/todo'] || 0) + 1
             }
-          } catch { /* 순환 실사 설정 전이어도 메뉴는 그려야 한다 */ }
-        }
-      } catch { /* 실패해도 메뉴는 그려야 한다 */ }
+          }
+        } catch { /* 순환 실사 설정 전이어도 메뉴는 그려야 한다 */ }
+      })())
+      await Promise.allSettled(tasks)   // 하나가 실패해도 나머지 숫자는 그린다
       return out
     },
   })
