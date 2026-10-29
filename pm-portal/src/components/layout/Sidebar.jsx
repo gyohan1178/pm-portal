@@ -10,7 +10,7 @@ import { alertCountFor } from '../../lib/todoView'
 import { todayISO } from '../../lib/utils'
 import { isHoliday } from '../../lib/bizdays'
 import { DAILY, isWorkday, normLoc, rackOf } from '../../lib/cycleCount'
-import { toastError } from '../../lib/toast'
+import { toast, toastError } from '../../lib/toast'
 import { visibleDepts, flowOf } from '../../lib/workflow'
 import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLOW_SEEN_EVENT } from '../../lib/flowSeen'
 import { docCountsQuery } from '../../lib/docRequest'
@@ -126,6 +126,35 @@ async function countUnconfirmedOrders() {
     ls.forEach((l) => hit.add(l.order_id))
   }
   return hit.size
+}
+
+// 회원 관리 — 승인 대기 숫자 · 새 가입 알림 (v4.115.0, 관리자만)
+//   2분마다 승인 대기 신청을 보고, 이 브라우저에서 처음 보는 신청이면 화면 위에 알림을 띄운다
+//   (본 신청은 이 브라우저에 기억 — 같은 신청으로 알림이 또 뜨지 않게)
+const SIGNUP_SEEN = 'pm.signupSeen.v1'
+function usePendingSignups(on) {
+  const { data = [] } = useQuery({
+    queryKey: ['pendingSignups'],
+    enabled: !!on,
+    staleTime: 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,
+    refetchIntervalInBackground: false,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('pm_profiles').select('id,name,dept,created_at').eq('status', 'pending').order('created_at')
+      return error ? [] : (data || [])
+    },
+  })
+  useEffect(() => {
+    if (!on || !data.length) return
+    let seen
+    try { seen = new Set(JSON.parse(localStorage.getItem(SIGNUP_SEEN) || '[]')) } catch { seen = new Set() }
+    const fresh = data.filter((p) => !seen.has(p.id))
+    if (!fresh.length) return
+    const who = fresh.slice(0, 3).map((p) => `${p.name || '이름 없음'}${p.dept ? `(${p.dept})` : ''}`).join(', ')
+    toast(`👥 새 가입 신청 ${fresh.length}명 — ${who}${fresh.length > 3 ? ' …' : ''} · 회원 관리에서 승인해 주세요`, 'info')
+    try { localStorage.setItem(SIGNUP_SEEN, JSON.stringify([...seen, ...fresh.map((p) => p.id)].slice(-300))) } catch { /* 저장 안 되는 브라우저 */ }
+  }, [on, data])
+  return data.length
 }
 
 function useAlertCounts(buy = false) {
@@ -339,6 +368,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
   const { data: docN } = useQuery({ ...docCountsQuery, enabled: !!profile })
   const docBadge = !docN ? 0 : profile?.dept === '영업' ? docN.open : (docN.byDept?.[profile?.dept]?.recv || 0)
   const isAdmin = profile?.role === 'admin'
+  const signupN = usePendingSignups(isAdmin)   // 승인 대기 가입 신청 (v4.115.0)
   const fieldOnly = isFieldOnly(profile)
   const pcs = primaryCsCode(profile)
   const [showChangelog, setShowChangelog] = useState(false)
@@ -612,6 +642,10 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
               <NavLink to="/users" onClick={onNavigate}
                 className={({isActive})=>`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${isActive?'text-indigo-600 bg-indigo-50':'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
                 <span>👥</span> 회원 관리
+                {signupN > 0 && (
+                  <span data-menu-badge="/users" title={`승인 대기 가입 신청 ${signupN}명`}
+                    className="pm-pop ml-auto min-w-[18px] px-1 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-bold text-center leading-tight">{signupN > 99 ? '99+' : signupN}</span>
+                )}
               </NavLink>
             )}
             <NavLink to="/restore" onClick={onNavigate}

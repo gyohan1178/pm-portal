@@ -41,11 +41,11 @@ export default function UserManagement() {
       const { error } = await supabase.from('pm_profiles').update(patch).eq('id', id)
       if (error) throw error
     },
-    onSuccess: () => qc.invalidateQueries(['profiles']),
+    onSuccess: () => { qc.invalidateQueries(['profiles']); qc.invalidateQueries({ queryKey: ['pendingSignups'] }) },   // 메뉴 숫자도 바로 (v4.115.0)
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
-  const approve = (id) => mut.mutate({ id, patch: { status: 'approved', approved_at: new Date().toISOString() } })
+  const approve = (id) => mut.mutate({ id, patch: { status: 'approved', approved_at: new Date().toISOString(), ...(myId ? { approved_by: myId } : {}) } })   // 누가 승인했는지도 (v4.115.0)
   const reject = (id) => mut.mutate({ id, patch: { status: 'rejected' } })
   const setRole = (id, role) => mut.mutate({ id, patch: { role } })
   // 부서 — 칸이 아직 없으면(SQL 전) 알려 준다
@@ -72,6 +72,8 @@ export default function UserManagement() {
   )
   const saveScope = (id, scope) => mut.mutate({ id, patch: { menu_scope: scope && scope.length ? scope : null } }, { onSuccess: () => { qc.invalidateQueries(['profiles']); toastSuccess('메뉴 권한 저장됨'); setScopeEdit(null) } })
 
+  // 최근 7일 안에 가입한 사람 — 「새 가입」 표시 (v4.115.0)
+  const isNew = (p) => p.created_at && Date.now() - new Date(p.created_at).getTime() < 7 * 86400000
   const pending = profiles.filter(p => p.status === 'pending')
   const active = profiles.filter(p => p.status === 'approved')
   const rejected = profiles.filter(p => p.status === 'rejected')
@@ -106,7 +108,8 @@ export default function UserManagement() {
               <div key={p.id} className="rounded-xl border border-slate-200 p-3">
                 <div className="flex items-center justify-between mb-2">
                   <div className="min-w-0">
-                    <p className="text-sm font-bold text-slate-800 truncate">{p.name || '(이름 없음)'}</p>
+                    <p className="text-sm font-bold text-slate-800 truncate">{p.name || '(이름 없음)'}
+                      {isNew(p) && <span className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">새 가입</span>}</p>
                     <p className="text-xs text-slate-400 truncate">{p.email}</p>
                   </div>
                   {tab === 'pending' ? (
@@ -143,7 +146,8 @@ export default function UserManagement() {
               <tbody className="divide-y divide-slate-100">
                 {sorted.map(p => (
                   <tr key={p.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap overflow-hidden truncate">{p.name || '-'}</td>
+                    <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap overflow-hidden truncate">{p.name || '-'}
+                      {isNew(p) && <span data-user-new className="ml-1.5 px-1.5 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">새 가입</span>}</td>
                     <td className="px-3 py-2 text-slate-500 whitespace-nowrap overflow-hidden truncate">{p.email}</td>
                     <td className="px-3 py-2 text-center">
                       {tab === 'active' ? <DeptSel p={p} cls="px-2 py-1 text-xs border border-slate-200 rounded-lg" /> : <span className="text-slate-400">{p.dept || '-'}</span>}
