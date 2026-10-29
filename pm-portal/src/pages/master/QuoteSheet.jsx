@@ -2,6 +2,7 @@ import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
+import { quoteFileBase } from '../../lib/quoteFileName'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -758,10 +759,20 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     onError: (e) => setErr(e.message),
   })
 
+  // 파일 이름 — YYMMDD_업체_건명 (lib/quoteFileName.js, v4.113.0)
+  const fileBase = () => quoteFileBase({
+    date: quoteDate, party: isSales ? issuedTo : (vendors.find((v) => v.id === vendorId)?.name || ''),
+    title: projectName, firstCode: lines.find((l) => l.std_code)?.std_code, purchase: !isSales, en: isSales && !ko,
+  })
+
   function doPrint() {
     document.body.classList.add('printing-quote')
+    // PDF 로 저장할 때 크롬이 문서 제목을 파일 이름으로 쓴다 → 인쇄하는 동안만 바꿨다가 되돌림
+    const prevTitle = document.title
+    document.title = fileBase()
     const done = () => {
       document.body.classList.remove('printing-quote')
+      document.title = prevTitle
       window.removeEventListener('afterprint', done)
     }
     window.addEventListener('afterprint', done)
@@ -840,7 +851,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         },
         lines, totals,
         extra: { detailRows, bomRows, infoRows },
-        fileName: `${kindLabel}${ko ? '' : '_EN'}_${savedNo || projectName || todayISO()}.xlsx`,
+        fileName: `${fileBase()}.xlsx`,
       })
     } catch (e) {
       setErr('엑셀 생성 실패: ' + e.message)
