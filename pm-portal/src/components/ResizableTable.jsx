@@ -19,7 +19,16 @@ function ResizeHandle({ onMouseDown }) {
 // fill: 표가 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 (머리글 고정) — 노트북 화면용 (v4.64.0)
 //   after: 표 아래(같은 스크롤 안)에 붙일 것 — 「더 보기」 줄 등
 //   footer: 표 칸 아래(화면 안)에 붙일 것 — 비고 · 처리 단추 등
-export function ResizableTable({ cols, storageKey, children, stickyHeader = true, sortKey, sortDir, onSort, fill = false, fillMin = 320, after = null, footer = null }) {
+// sorts: 여러 칸 차례 정렬 [{key, dir}] — 주면 머리글에 ①▲ ②▼ 로 차례를 보인다 (v4.114.1). 안 주면 예전처럼 sortKey · sortDir
+const NO = '①②③④⑤'
+export function ResizableTable({ cols, storageKey, children, stickyHeader = true, sortKey, sortDir, sorts = null, onSort, fill = false, fillMin = 320, after = null, footer = null }) {
+  const sortMark = (k) => {
+    if (sorts?.length) {
+      const i = sorts.findIndex((s) => s.key === k)
+      return i < 0 ? '' : ` ${sorts.length > 1 ? NO[i] || '' : ''}${sorts[i].dir === 'asc' ? '▲' : '▼'}`
+    }
+    return sortKey === k ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''
+  }
   const defaults = Object.fromEntries(cols.map(c => [c.key, c.defaultWidth || 100]))
   const { widths, startResize, resetWidths } = useResizableColumns(storageKey, defaults)
 
@@ -43,7 +52,7 @@ export function ResizableTable({ cols, storageKey, children, stickyHeader = true
                     <span
                       onClick={onSort && c.sortable !== false ? () => onSort(c.key) : undefined}
                       className={onSort && c.sortable !== false ? 'cursor-pointer select-none hover:text-slate-600' : ''}>
-                      {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      {c.label}{sortMark(c.key)}
                     </span>
                     <ResizeHandle onMouseDown={e => startResize(e, c.key)} />
                   </th>
@@ -86,7 +95,7 @@ export function ResizableTable({ cols, storageKey, children, stickyHeader = true
                     <span
                       onClick={onSort && c.sortable !== false ? () => onSort(c.key) : undefined}
                       className={onSort && c.sortable !== false ? 'cursor-pointer select-none hover:text-slate-600' : ''}>
-                      {c.label}{sortKey === c.key ? (sortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                      {c.label}{sortMark(c.key)}
                     </span>
                     <ResizeHandle onMouseDown={e => startResize(e, c.key)} />
                   </th>

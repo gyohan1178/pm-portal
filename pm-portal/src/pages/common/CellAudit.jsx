@@ -9,8 +9,8 @@ import { todayISO } from '../../lib/utils'
 import { useCanEdit } from '../../hooks/useProfile'
 import { ilikeAny } from '../../lib/pgFilter'
 import { refreshProcurement } from '../../lib/refresh'
-import { useCycleBase } from '../../hooks/useCycleCount'
-import { ownerCells, checkMap, todayPlan, ownerOfLoc, DAILY, normLoc } from '../../lib/cycleCount'
+import { useCycleBase, useCellHold, holdReasonDefault } from '../../hooks/useCycleCount'
+import { ownerCells, checkMap, todayPlan, ownerOfLoc, DAILY, normLoc, heldSet } from '../../lib/cycleCount'
 import { fetchAuxAt, fetchAuxByItems, registerAux, releaseAux } from '../../lib/cellAux'
 import { fetchUnitWeights, saveUnitWeight, fmtW } from '../../lib/unitWeight'
 import WeightCount from '../../components/WeightCount'
@@ -73,10 +73,15 @@ export default function CellAudit() {
     const owner = ownerOfLoc(location, cyc.owners)
     if (!owner) return { owner: null }
     const o = ownerCells(cyc.racks, cyc.owners).get(owner)
-    const plan = todayPlan(o?.cells || [], checkMap(cyc.checks), todayISO(), 1e9, o?.late)
+    const cm = checkMap(cyc.checks)
+    const plan = todayPlan(o?.cells || [], cm, todayISO(), 1e9, o?.late, heldSet(cyc))   // 보류 칸은 「다음 칸」에서 뺌 (v4.114.0)
     const next = plan.list.find(c => !c.done && c.loc !== location)?.loc || null
-    return { owner, done: plan.done, next }
+    const hold = (cyc.holds || []).find(h => normLoc(h.location) === location) || null
+    return { owner, done: plan.done, next, hold, doneToday: cm.get(location)?.last === todayISO(), holdSetup: !!cyc.holdSetup }
   })()
+  const holdApi = useCellHold()
+  const [holdForm, setHoldForm] = useState(null)   // 사유 입력 중이면 문자열 (v4.114.0)
+  useEffect(() => { setHoldForm(null) }, [location])
 
   const { data: items = [], isLoading, error } = useQuery({
     queryKey: ['cellItems', location],
@@ -544,6 +549,34 @@ export default function CellAudit() {
           {cycle?.owner && ` · ${cycle.owner} 담당`}
         </p>
       </div>
+
+      {/* 칸 보류 (v4.114.0) — 못 세는 사정이 있을 때 오늘 목록에서 빼고 다음 칸으로 */}
+      {cycle?.owner && cycle.holdSetup && (cycle.hold ? (
+        <div data-cell-held className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          <b>⏸ 보류 중</b>
+          <span>{cycle.hold.reason || '사유 없음'}</span>
+          <span className="text-amber-700/70">({String(cycle.hold.held_date).slice(5, 10)}{cycle.hold.held_name ? `, ${cycle.hold.held_name}` : ''})</span>
+          <span className="text-amber-700/70">· 그대로 세서 저장하면 저절로 풀림</span>
+          <button data-cell-unhold onClick={() => holdApi.release(location)} disabled={holdApi.busy}
+            className="ml-auto px-2.5 py-1 rounded-lg border border-amber-200 bg-white font-bold text-amber-700 hover:bg-amber-100 disabled:opacity-40">풀기</button>
+        </div>
+      ) : !cycle.doneToday && (holdForm == null ? (
+        <div className="flex items-center gap-2 text-xs">
+          <button data-cell-hold onClick={() => setHoldForm(holdReasonDefault(entries.filter(e => e.part === 'main' && e.book < 0).length))}
+            className="px-3 py-1.5 rounded-lg border border-amber-200 bg-amber-50 font-bold text-amber-700 hover:bg-amber-100">⏸ 이 칸 보류</button>
+          <span className="text-slate-400">못 세는 사정이 있을 때 (음수 정리 대기 등) — 오늘 목록에서 빼고 다음 칸으로 채웁니다</span>
+        </div>
+      ) : (
+        <div data-cell-hold-form className="flex flex-wrap items-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2">
+          <b className="text-xs text-amber-800">⏸ 보류 사유</b>
+          <input data-cell-hold-reason value={holdForm} onChange={e => setHoldForm(e.target.value)} autoFocus
+            onKeyDown={async e => { if (e.key === 'Enter' && await holdApi.hold(location, holdForm)) setHoldForm(null) }}
+            placeholder="예: 음수 재고 · 입고 대기 / 칸 막힘" className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white" />
+          <button data-cell-hold-ok onClick={async () => { if (await holdApi.hold(location, holdForm)) setHoldForm(null) }} disabled={holdApi.busy}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-40">보류</button>
+          <button onClick={() => setHoldForm(null)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500">취소</button>
+        </div>
+      )))}
 
       {/* 방금 저장 → 다음 칸 */}
       {justDone && (

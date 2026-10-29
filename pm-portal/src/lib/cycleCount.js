@@ -80,14 +80,15 @@ export function checkMap(checks) {
 //   target: 오늘 목표 칸 수 (5, ＋5칸 더 누르면 10 …)
 //   반환: { list:[{loc, done, last, days, order}], done, target, left }
 //   late: 「맨 뒤」 칸 Set (불용재고 렉 등) — 같은 바퀴 안에서 맨 끝으로
-export function todayPlan(cells, cm, today, target = DAILY, late = null) {
+//   held: 보류 칸 Set (v4.114.0) — 오늘 목록에서 빼고 다음 칸으로 채운다 (오늘 이미 센 칸은 그대로 센 칸)
+export function todayPlan(cells, cm, today, target = DAILY, late = null, held = null) {
   const info = (loc, i) => {
     const x = cm.get(loc)
     return { loc, i, last: x?.last || null, days: x?.days || 0, done: x?.last === today, late: !!late?.has(loc) }
   }
   const all = (cells || []).map(info)
   const done = all.filter((c) => c.done)
-  const pending = all.filter((c) => !c.done).sort((a, b) => {
+  const pending = all.filter((c) => !c.done && !held?.has(c.loc)).sort((a, b) => {
     if (a.days !== b.days) return a.days - b.days            // 이번 바퀴에서 안 센 칸(센 횟수 적은 칸) 먼저
     if (a.late !== b.late) return a.late ? 1 : -1            // 「맨 뒤」 렉은 그 바퀴 끝에
     if (!a.last !== !b.last) return a.last ? 1 : -1          // 안 센 칸 먼저
@@ -102,7 +103,9 @@ export function todayPlan(cells, cm, today, target = DAILY, late = null) {
 }
 
 // 한 바퀴 진행 — round: 지금 몇 바퀴째(1부터) · counted: 이번 바퀴에서 센 칸 · pct
-export function roundStats(cells, cm) {
+//   held: 보류 칸은 바퀴 계산에서 뺀다 — 보류 칸 때문에 바퀴가 안 넘어가지 않게 (v4.114.0)
+export function roundStats(cells0, cm, held = null) {
+  const cells = held?.size ? (cells0 || []).filter((loc) => !held.has(loc)) : cells0
   const total = (cells || []).length
   if (!total) return { round: 1, counted: 0, total: 0, pct: 0 }
   let min = Infinity
@@ -110,6 +113,9 @@ export function roundStats(cells, cm) {
   const counted = cells.filter((loc) => (cm.get(loc)?.days || 0) > min).length
   return { round: min + 1, counted, total, pct: Math.floor((counted / total) * 100) }
 }
+
+// 보류 칸 Set — fetchCycleBase 의 holds 에서
+export const heldSet = (base) => new Set((base?.holds || []).map((h) => normLoc(h.location)))
 
 // 칸별 품목 수 — 재고(위치 있는 것, 수량 0 포함)에서
 export function itemsByLoc(inv) {

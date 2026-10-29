@@ -216,7 +216,8 @@ export default function PurchasePage() {
   // 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다
   const [delAsk, setDelAsk] = useState(false)
   const [delWord, setDelWord] = useState('')
-  const [sort, setSort] = useState({ key:null, dir:'asc' })
+  // 여러 칸 차례 정렬 (v4.114.1) — 먼저 누른 칸이 먼저. 예) 구매처 → 요청납기 = 구매처끼리 묶고 그 안에서 납기 순
+  const [sorts, setSorts] = useState([])   // [{key, dir}]
   const [bulkOrderDate, setBulkOrderDate] = useState('')
   const [bulkPromiseDate, setBulkPromiseDate] = useState('')
   const [dueDlg, setDueDlg] = useState(null)        // 납기 바꾸기 창 — 대상 발주들 (v4.98.0)
@@ -761,15 +762,25 @@ export default function PurchasePage() {
     vendor:p.vendors?.name||'', memo:p.memo||'', status:p.isDelayed?1:0,
   }[k] ?? '')
   const NUM_SORT = ['lt','qty_ordered','qty_received','qty_remaining','unit_price','supply','status']
-  const sorted = useMemo(() => sort.key
+  const sorted = useMemo(() => sorts.length
     ? [...filtered].sort((a,b)=>{
-        const va=sortVal(a,sort.key), vb=sortVal(b,sort.key)
-        const c = NUM_SORT.includes(sort.key) ? (Number(va)||0)-(Number(vb)||0) : String(va).localeCompare(String(vb),'ko')
-        return sort.dir==='asc'?c:-c
+        for (const s of sorts) {
+          const va=sortVal(a,s.key), vb=sortVal(b,s.key)
+          const c = NUM_SORT.includes(s.key) ? (Number(va)||0)-(Number(vb)||0) : String(va).localeCompare(String(vb),'ko')
+          if (c) return s.dir==='asc'?c:-c
+        }
+        return (dueOf(a)||'9999').localeCompare(dueOf(b)||'9999')   // 다 같으면 받을 날 순
       })
     // 기본 차례도 받을 날 순 (서버는 요청 납기 순으로 준다 · v4.108.0). 날짜 없는 건 맨 뒤
-    : [...filtered].sort((a,b)=>(dueOf(a)||'9999').localeCompare(dueOf(b)||'9999')), [filtered, sort.key, sort.dir])
-  const onSort = k => setSort(prev => prev.key===k ? {key:k,dir:prev.dir==='asc'?'desc':'asc'} : {key:k,dir:'asc'})
+    : [...filtered].sort((a,b)=>(dueOf(a)||'9999').localeCompare(dueOf(b)||'9999')), [filtered, sorts])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 머리글 누르기: 처음 → 그 칸을 다음 차례로 더함(▲) · 한 번 더 → ▼ · 또 한 번 → 그 칸만 뺌. 최대 3칸
+  const onSort = k => setSorts(prev => {
+    const i = prev.findIndex(s => s.key === k)
+    if (i < 0) return [...prev.slice(0, 2), { key:k, dir:'asc' }]
+    if (prev[i].dir === 'asc') return prev.map((s, j) => j === i ? { ...s, dir:'desc' } : s)
+    return prev.filter((_, j) => j !== i)
+  })
+  const sortLabel = k => PO_COLS.find(c => c.key === k)?.label || k
   const checkedPOs = filtered.filter(p=>checked[p.id])
   // 발주 → 입고: 입고 화면을 고른 발주가 체크된 채로 연다 (잔량 있는 것만)
   function goInbound(list) {
@@ -1507,7 +1518,19 @@ export default function PurchasePage() {
           </div>
 
           {isLoading ? <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-po-loading><table className="w-full"><tbody><SkeletonRows cols={9} rows={8} two={[1, 2]} /></tbody></table></div> : (
-            <ResizableTable cols={PO_COLS} storageKey="purchase_cols" sortKey={sort.key} sortDir={sort.dir} onSort={onSort} fill fillMin={360}
+            <>
+            {sorts.length > 0 && (
+              <div data-po-sorts className="flex flex-wrap items-center gap-1.5 mb-1.5 text-xs">
+                <span className="text-slate-400">정렬</span>
+                {sorts.map((s, i) => (
+                  <span key={s.key} className="px-2 py-0.5 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 font-bold">
+                    {'①②③'[i]} {sortLabel(s.key)} {s.dir === 'asc' ? '▲' : '▼'}</span>
+                ))}
+                <span className="text-slate-400">— 머리글을 또 누르면 ▼ · 한 번 더 누르면 그 칸만 빠짐</span>
+                <button data-po-sort-clear onClick={() => setSorts([])} className="ml-1 px-2 py-0.5 rounded-lg border border-slate-200 bg-white text-slate-500 font-bold hover:text-rose-600">정렬 초기화</button>
+              </div>
+            )}
+            <ResizableTable cols={PO_COLS} storageKey="purchase_cols" sorts={sorts} onSort={onSort} fill fillMin={360}
               after={sorted.length > visibleCount && (
             <div className="flex items-center justify-center gap-3 py-3">
               <span className="text-xs text-slate-400">
@@ -1582,6 +1605,7 @@ export default function PurchasePage() {
                 </tbody>
               )}
             </ResizableTable>
+            </>
           )}
         </>
       )}
