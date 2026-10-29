@@ -4,7 +4,7 @@ import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
 import { moveRows, pickNew, undoMoves } from '../../lib/undoMove'
 import ItemLink from '../../components/ItemLink'
-import { useState, useMemo, useEffect, useCallback } from 'react'
+import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
 import { refreshProcurement } from '../../lib/refresh'
@@ -58,11 +58,12 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   let data = [], capped = false
   for (let off = 0; off < CAP; off += PAGE) {
     let q = supabase.from('stock_movements')
-      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, item_rev, customer_id, vendor_id, fx_currency, vendors(name, ecount_code), projects(code))')
+      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, item_rev, customer_id, vendor_id, fx_currency, vendors(name, ecount_code), projects(code), customers(name,code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
-    if (customerId) q = q.eq('customer_id', customerId)
+    // 고객사는 여기서 거르지 않는다 — 발주 입고는 입고 줄에 고객사가 비어 있고 발주에 붙어 있다 (2026-10-29)
+    //   화면에서 「발주 고객사 → 없으면 입고 줄 고객사」로 거른다 (탭을 누르면 바로 바뀜)
     const { data: batch, error } = await q
       .order('movement_date', { ascending: false }).order('id', { ascending: true })
       .range(off, off + PAGE - 1)
@@ -71,8 +72,12 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
     if (!batch || batch.length < PAGE) break
     if (off + PAGE >= CAP) capped = true
   }
-  return { rows: data || [], capped }
+  // 고객사 칸 · 정렬 · 검색이 같은 값을 보게 — 입고 줄에 없으면 발주의 고객사
+  const rows = (data || []).map((r) => (r.customers || !r.purchase_orders?.customers ? r : { ...r, customers: r.purchase_orders.customers }))
+  return { rows, capped }
 }
+// 입고 줄의 고객사 — 발주 입고는 발주에, 발주외 입고는 입고 줄에 있다
+export const histCustId = (r) => r?.purchase_orders?.customer_id || r?.customer_id || ''
 
 // 입고현황 정렬 — 머리글 이름 → 정렬 값
 const histMfr = r => r.purchase_orders?.mfr || r.items?.manufacturer || ''
@@ -470,7 +475,8 @@ export default function Inbound() {
     const vq = dHVendor.trim().toLowerCase()
     const iq = dHItem.trim().toLowerCase()
     const words = dHAll.trim().toLowerCase().split(/\s+/).filter(Boolean)
-    let list = (!vq && !iq && !words.length) ? (history || []) : (history || []).filter(r => {
+    const base = hCustomer ? (history || []).filter(r => histCustId(r) === hCustomer) : (history || [])
+    let list = (!vq && !iq && !words.length) ? base : base.filter(r => {
       const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
       if (vq && !vname.includes(vq)) return false
       if (iq) {
@@ -498,18 +504,59 @@ export default function Inbound() {
       })
     }
     return list
-  }, [history, dHVendor, dHItem, dHAll, hSort])
+  }, [history, hCustomer, dHVendor, dHItem, dHAll, hSort])
   // 거르는 조건이 바뀌면 선택을 푼다 — 안 보이는 줄이 삭제 · 입고일 변경에 섞이지 않게 (2026-10-08)
-  useEffect(() => { setSelHist(new Set()) }, [hQuery, dHVendor, dHItem, dHAll])
+  useEffect(() => { setSelHist(new Set()) }, [hQuery, hCustomer, dHVendor, dHItem, dHAll])
   // 실행은 지금 보이는 줄 중 고른 것만
   const selShown = useMemo(() => histShown.filter(r => selHist.has(r.id)).map(r => r.id), [histShown, selHist])
+  // 줄 끌어서 여러 줄 고르기 · Shift+클릭 범위 (v4.113.1)
+  //   누른 줄이 안 골라져 있었으면 끈 범위를 고르고, 골라져 있었으면 범위를 푼다
+  const histIdx = useMemo(() => new Map(histShown.map((r, i) => [r.id, i])), [histShown])
+  const dragRef = useRef(null), skipClickRef = useRef(false), lastIdxRef = useRef(null)
+  const applyRange = (base, a, b, adding) => {
+    const n = new Set(base)
+    for (let k = Math.min(a, b); k <= Math.max(a, b); k++) { const id = histShown[k]?.id; if (id) { if (adding) n.add(id); else n.delete(id) } }
+    setSelHist(n)
+  }
+  useEffect(() => {
+    const up = () => {
+      if (dragRef.current?.moved) { skipClickRef.current = true; setTimeout(() => { skipClickRef.current = false }, 0) }
+      dragRef.current = null
+    }
+    window.addEventListener('mouseup', up)
+    return () => window.removeEventListener('mouseup', up)
+  }, [])
+  const rowDown = (e, r) => {
+    if (e.button !== 0 || e.target.closest('a, button')) return
+    const i = histIdx.get(r.id)
+    const onBox = e.target.matches?.('input[type=checkbox]')
+    if (e.shiftKey && lastIdxRef.current != null) {          // Shift+클릭 — 마지막에 누른 줄부터 여기까지 고름
+      e.preventDefault(); applyRange(selHist, lastIdxRef.current, i, true)
+      lastIdxRef.current = i; dragRef.current = { moved: true }; return
+    }
+    if (!onBox) e.preventDefault()                            // 끄는 동안 글자가 파랗게 잡히지 않게
+    dragRef.current = { anchor: i, adding: !selHist.has(r.id), base: new Set(selHist), moved: false }
+  }
+  const rowEnter = (r) => {
+    const d = dragRef.current
+    if (!d || d.anchor == null) return
+    const i = histIdx.get(r.id)
+    if (i === d.anchor && !d.moved) return
+    d.moved = true
+    applyRange(d.base, d.anchor, i, d.adding)
+  }
+  const rowClick = (r) => {
+    if (skipClickRef.current) return
+    const n = new Set(selHist); n.has(r.id) ? n.delete(r.id) : n.add(r.id); setSelHist(n)
+    lastIdxRef.current = histIdx.get(r.id)
+  }
   const sortBy = (key) => setHSort(s => s.key === key ? (s.dir === 'asc' ? { key, dir: 'desc' } : { key: null, dir: 'asc' }) : { key, dir: 'asc' })
   // 제조사·제조사품번 — 발주 줄에 적힌 값이 먼저다(실제 산 것). 비어 있으면 기준코드 DB 값
   const mfrOf = r => r.purchase_orders?.mfr || r.items?.manufacturer || ''
   const mpnOf = r => r.purchase_orders?.mfr_code || r.items?.manufacturer_code || ''
   const histTotal = histShown.reduce((a,r)=>a+r.qty,0)
   // 화면에는 200건씩 그린다. 수천 건을 한 번에 그리면 검색이 밀린다.
-  const hVis = useVisibleRows(histShown, 200, [dHVendor, dHItem, dHAll, hQuery, hSort])
+  const hVis = useVisibleRows(histShown, 200, [hCustomer, dHVendor, dHItem, dHAll, hQuery, hSort])
 
   function exportHistory() {
     const data = histShown.map(r=>({
@@ -876,7 +923,7 @@ export default function Inbound() {
                 title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 구매처 · 고객사 · 비고"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
-            <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer,vendorId:null})}
+            <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:'',vendorId:null})}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
             {histShown.length>0&&(
               <button onClick={exportHistory}
@@ -950,12 +997,11 @@ export default function Inbound() {
                       ? <tr><td colSpan={14} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
                       : hVis.shown.map(r=>(
                         <tr key={r.id} data-hist-row={r.id}
-                          onClick={()=>{ if (String(window.getSelection?.() || '')) return   // 글자 끌어 고를 때는 선택 안 바꿈
-                            const n=new Set(selHist); n.has(r.id)?n.delete(r.id):n.add(r.id); setSelHist(n) }}
-                          className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selHist.has(r.id)?'bg-red-50/40':''}`}>
+                          onMouseDown={e=>rowDown(e, r)} onMouseEnter={()=>rowEnter(r)} onClick={()=>rowClick(r)}
+                          className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer select-none ${selHist.has(r.id)?'bg-red-50/40':''}`}>
                           <td className="px-3 py-2 text-center" onClick={e=>e.stopPropagation()}>
                             <input type="checkbox" checked={selHist.has(r.id)}
-                              onChange={e=>{ const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n) }}/>
+                              onChange={e=>{ if (skipClickRef.current) return; const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n); lastIdxRef.current = histIdx.get(r.id) }}/>
                           </td>
                           <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.movement_date}
                             {r.ecount_purchase_at && <span data-ecp-mark title={`이카운트 구매입력 엑셀 내려받음 ${String(r.ecount_purchase_at).slice(0,10)}${r.ecount_purchase_by ? ' · ' + r.ecount_purchase_by : ''}`}
