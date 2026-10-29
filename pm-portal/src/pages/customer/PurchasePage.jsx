@@ -10,6 +10,7 @@ import { attachStock } from '../../lib/stockLookup'
 import { downloadProposalExcel } from '../../lib/proposalExcel'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { useMe } from '../../hooks/useProfile'
+import { ECOUNT_STAFF, ECOUNT_STAFF_DEFAULT } from '../../lib/ecountStaff'
 import { logActivity } from '../../lib/activityLog'
 import { toastSuccess, toastError } from '../../lib/toast'
 import { fetchAll } from '../../lib/paginate'
@@ -74,13 +75,7 @@ async function fetchPurchaseHistory(csId, from, to) {
 }
 
 
-// 이카운트 담당자 코드 — 발주서를 내려받은 사람으로 찍힌다.
-//   여기 없는 계정은 기본값(김교한)을 쓴다.
-const ECOUNT_STAFF = {
-  '4ansans@jinsuntech.co.kr': '12463',
-  'hjh0524@jinsuntech.co.kr': '12544',
-}
-const ECOUNT_STAFF_DEFAULT = '00022'
+// 이카운트 담당자 코드 — 발주서를 내려받은 사람으로 찍힌다 (입고 「구매입력」과 같이 쓰려고 lib/ecountStaff.js 로 옮김)
 
 function exportEcount(items, vendors, staffCode, revOf = {}) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))

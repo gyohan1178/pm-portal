@@ -11,7 +11,8 @@ import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCanEdit } from '../../hooks/useProfile'
+import { useCanEdit, useMe } from '../../hooks/useProfile'
+import EcountPurchaseModal from '../../components/EcountPurchaseModal'
 import { supabase } from '../../lib/supabase'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { logActivity } from '../../lib/activityLog'
@@ -57,7 +58,7 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   let data = [], capped = false
   for (let off = 0; off < CAP; off += PAGE) {
     let q = supabase.from('stock_movements')
-      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, vendors(name), projects(code))')
+      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, item_rev, customer_id, vendor_id, fx_currency, vendors(name, ecount_code), projects(code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)
@@ -323,6 +324,8 @@ export default function Inbound() {
   // 입고일만 바꾼다. 8월에 잡은 것을 9월로 이월하는 경우가 있다.
   //   지웠다 다시 넣으면 재고가 두 번 움직여 위험하므로 날짜만 고친다.
   const [dateForm, setDateForm] = useState(null)   // { date, memo }
+  const [ecpOpen, setEcpOpen] = useState(false)   // 이카운트 구매입력 변환 창
+  const me = useMe()
 
   const dateMut = useMutation({
     mutationFn: async ({ ids, date, memo }) => {
@@ -880,6 +883,10 @@ export default function Inbound() {
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
             )}
             {selShown.length>0&&(<>
+              <button data-hist-ecount onClick={()=>setEcpOpen(true)}
+                title="체크한 입고 줄을 이카운트 「구매입력」 엑셀 업로드 양식으로 — 같은 입고일 · 구매처 = 전표 1장"
+                className="px-3 py-2 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100">
+                📤 이카운트 구매입력 {selShown.length}건</button>
               <button data-hist-date onClick={()=>setDateForm({ date:'', memo:'' })}
                 title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
@@ -947,7 +954,9 @@ export default function Inbound() {
                             <input type="checkbox" checked={selHist.has(r.id)}
                               onChange={e=>{ const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n) }}/>
                           </td>
-                          <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>
+                          <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.movement_date}
+                            {r.ecount_purchase_at && <span data-ecp-mark title={`이카운트 구매입력 엑셀 내려받음 ${String(r.ecount_purchase_at).slice(0,10)}${r.ecount_purchase_by ? ' · ' + r.ecount_purchase_by : ''}`}
+                              className="ml-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 text-[10px] font-bold">이카운트 ✓</span>}</td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>
                           <td className="px-3 py-2 text-slate-600 max-w-[140px] truncate" title={mfrOf(r)}>{mfrOf(r)||'-'}</td>
@@ -975,6 +984,13 @@ export default function Inbound() {
             </div>
           )}
         </div>
+      )}
+
+      {/* 이카운트 구매입력 변환 — 체크한 입고 줄 → 엑셀 (v4.112.0) */}
+      {ecpOpen && (
+        <EcountPurchaseModal rows={histShown.filter(r => selHist.has(r.id))} customers={customers} email={me?.email}
+          onClose={()=>setEcpOpen(false)}
+          onMarked={()=>qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })} />
       )}
 
       {/* 입고일 변경 — 날짜만 바꾼다 */}
