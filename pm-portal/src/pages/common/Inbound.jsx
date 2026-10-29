@@ -873,7 +873,7 @@ export default function Inbound() {
             <div className="min-w-[220px] flex-1">
               <label className={LBL}>전체 검색</label>
               <input data-hist-all value={hAll} onChange={e=>setHAll(e.target.value)} placeholder="표의 모든 칸 — 낱말 여러 개 가능 (예: 동신 2026-10)"
-                title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 상위품목 · 구매처 · 고객사 · 비고"
+                title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 구매처 · 고객사 · 비고"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer,vendorId:null})}
@@ -928,7 +928,7 @@ export default function Inbound() {
           {histLoading ? (
             <div data-hist-loading className="rounded-xl border border-slate-200 overflow-hidden">
               <div className="bg-slate-50 border-b border-slate-200 px-3 py-3 flex gap-6" data-skeleton>{[50, 70, 90, 60, 80, 40].map((w, i) => <SkelBar key={i} w={w} h={9} />)}</div>
-              <table className="w-full text-xs"><tbody><SkeletonRows cols={15} rows={8} first={1} /></tbody></table>
+              <table className="w-full text-xs"><tbody><SkeletonRows cols={14} rows={8} first={1} /></tbody></table>
             </div>) : (
             <div ref={histRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={histH ? { height: histH + 'px' } : undefined}>
               <div className={histH ? 'flex-1 min-h-0 overflow-auto' : 'overflow-x-auto'}>
@@ -939,7 +939,7 @@ export default function Inbound() {
                         checked={histShown.length>0 && selShown.length===histShown.length}
                         onChange={e=>setSelHist(e.target.checked ? new Set(histShown.map(r=>r.id)) : new Set())}/>
                     </th>
-                    {['입고일','기준코드','품명','제조사','제조사품번','수량','단위','단가','금액','발주번호','상위품목','구매처','고객사','비고'].map(h=>(
+                    {['입고일','기준코드','품명','제조사','제조사품번','수량','단위','단가','금액','발주번호','구매처','고객사','비고'].map(h=>(
                       <th key={h} data-hist-sort={h} onClick={()=>sortBy(h)} title="눌러서 정렬 — 오름차순 → 내림차순 → 원래 순서"
                         className={`px-3 py-2.5 text-left font-bold text-xs uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:text-indigo-600 ${hSort.key===h?'text-indigo-600':'text-slate-400'}`}>
                         {h}{hSort.key===h ? (hSort.dir==='asc' ? ' ▲' : ' ▼') : ''}</th>
@@ -947,10 +947,13 @@ export default function Inbound() {
                   </tr></thead>
                   <tbody>
                     {histShown.length===0
-                      ? <tr><td colSpan={15} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
+                      ? <tr><td colSpan={14} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
                       : hVis.shown.map(r=>(
-                        <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${selHist.has(r.id)?'bg-red-50/40':''}`}>
-                          <td className="px-3 py-2 text-center">
+                        <tr key={r.id} data-hist-row={r.id}
+                          onClick={()=>{ if (String(window.getSelection?.() || '')) return   // 글자 끌어 고를 때는 선택 안 바꿈
+                            const n=new Set(selHist); n.has(r.id)?n.delete(r.id):n.add(r.id); setSelHist(n) }}
+                          className={`border-b border-slate-100 hover:bg-slate-50 cursor-pointer ${selHist.has(r.id)?'bg-red-50/40':''}`}>
+                          <td className="px-3 py-2 text-center" onClick={e=>e.stopPropagation()}>
                             <input type="checkbox" checked={selHist.has(r.id)}
                               onChange={e=>{ const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n) }}/>
                           </td>
@@ -970,7 +973,6 @@ export default function Inbound() {
                             {r.unit_price ? (Number(r.qty) * Number(r.unit_price)).toLocaleString('ko-KR') : '-'}
                           </td>
                           <td className="px-3 py-2">{r.po_id ? <span className="font-mono text-slate-500">{r.purchase_orders?.po_number||'-'}</span> : <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-bold">발주외</span>}</td>
-                          <td className="px-3 py-2 font-mono text-xs text-slate-400">{r.purchase_orders?.projects?.code||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.purchase_orders?.vendors?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-500">{r.customers?.name||'-'}</td>
                           <td className="px-3 py-2 text-slate-400 max-w-[220px] truncate" title={histMemo(r)}>{histMemo(r)||'-'}</td>
