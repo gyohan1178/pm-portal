@@ -1,4 +1,5 @@
-import { useEffect, useState, lazy, Suspense } from 'react'
+import { useEffect, useState, useRef, lazy, Suspense } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom'
 import { supabase } from './lib/supabase'
 import { useProfile, hasRole, isFieldOnly, canAccessPath, landingPath, allowedSections } from './hooks/useProfile'
@@ -97,14 +98,21 @@ function AdminRoute({ profile, children }) {
 
 export default function App() {
   const [session, setSession] = useState(undefined) // undefined = 로딩중
+  const qc = useQueryClient()
+  const uidRef = useRef(undefined)   // 지금 로그인한 사람 id — 사람이 바뀌면 앞 사람 데이터를 비운다
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session))
+    supabase.auth.getSession().then(({ data: { session } }) => { uidRef.current = session?.user?.id || null; setSession(session) })
     // 토큰은 한 시간마다 자동 갱신되는데, 그때마다 세션 객체가 새로 온다.
     //   그대로 넣으면 App 전체가 다시 그려져 입력하던 화면이 잠깐 빈다.
     //   사용자가 바뀐 경우에만 반영한다.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, next) => {
       if (event === 'TOKEN_REFRESHED') return
+      // 로그아웃 · 다른 사람으로 로그인 → 앞 사람 데이터(내 프로필 · 권한 · 메뉴 숫자 · 할 일 …)를 비운다 (v4.115.1)
+      //   같은 탭에서 다른 계정으로 들어가면 5분 동안 앞 사람 권한 · 이름이 남아 있던 것
+      const uid = next?.user?.id || null
+      if (uidRef.current !== undefined && uidRef.current !== uid) qc.clear()
+      uidRef.current = uid
       setSession(prev => (prev?.user?.id === next?.user?.id ? prev : next))
     })
     return () => subscription.unsubscribe()
