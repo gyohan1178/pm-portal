@@ -197,6 +197,7 @@ export default function Inbound() {
   const dHItem = useDebounced(hItem, 250)
   const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayStr(), customerId:'', vendorId:'' })
   const [selHist, setSelHist] = useState(new Set())
+  const [onlySel, setOnlySel] = useState(false)   // 고른 줄만 보기 (v4.113.2)
   // 입고현황 전체 검색 · 헤더 정렬 (2026-10-08)
   const [hAll, setHAll] = useState('')
   const dHAll = useDebounced(hAll, 250)
@@ -297,6 +298,9 @@ export default function Inbound() {
   })
   const history = histData?.rows || []
   const histCapped = !!histData?.capped
+  // 고른 줄의 내용 — 다른 기간을 조회해 표에서 사라져도 이카운트 변환 · 삭제 확인에 쓰려고 들고 있는다 (v4.113.2)
+  const histCacheRef = useRef(new Map())
+  for (const r of history) histCacheRef.current.set(r.id, r)
 
   const [doneIds, setDoneIds] = useState(() => new Set())   // 방금 입고 처리한 줄 — 번쩍 표시 (v4.97.0)
   const inboundMut = useMutation({
@@ -475,7 +479,8 @@ export default function Inbound() {
     const vq = dHVendor.trim().toLowerCase()
     const iq = dHItem.trim().toLowerCase()
     const words = dHAll.trim().toLowerCase().split(/\s+/).filter(Boolean)
-    const base = hCustomer ? (history || []).filter(r => histCustId(r) === hCustomer) : (history || [])
+    const base = onlySel ? [...selHist].map(id => histCacheRef.current.get(id)).filter(Boolean)
+      : hCustomer ? (history || []).filter(r => histCustId(r) === hCustomer) : (history || [])
     let list = (!vq && !iq && !words.length) ? base : base.filter(r => {
       const vname = (r.purchase_orders?.vendors?.name || r.items?.vendors?.name || '').toLowerCase()
       if (vq && !vname.includes(vq)) return false
@@ -504,11 +509,17 @@ export default function Inbound() {
       })
     }
     return list
-  }, [history, hCustomer, dHVendor, dHItem, dHAll, hSort])
-  // 거르는 조건이 바뀌면 선택을 푼다 — 안 보이는 줄이 삭제 · 입고일 변경에 섞이지 않게 (2026-10-08)
-  useEffect(() => { setSelHist(new Set()) }, [hQuery, hCustomer, dHVendor, dHItem, dHAll])
-  // 실행은 지금 보이는 줄 중 고른 것만
+  }, [history, hCustomer, dHVendor, dHItem, dHAll, hSort, onlySel, onlySel ? selHist : null])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 고른 줄은 검색 · 고객사 · 기간을 바꿔도 쌓인다 (v4.113.2 — 여러 업체 · 여러 명세서를 모아 한 번에 처리)
+  //   예전(2026-10-08)엔 안 보이는 줄이 삭제에 섞이지 않게 바꿀 때마다 비웠다 → 대신 「표 밖 n건」을 늘 보여 주고, 삭제 확인 창에도 적는다
+  //   다른 기간을 조회하면 앞 기간 줄은 표에서 사라지므로, 고른 줄의 내용은 따로 들고 있는다
+  const selRows = useMemo(() => [...selHist].map(id => histCacheRef.current.get(id)).filter(Boolean)
+    .sort((a, b) => String(b.movement_date || '').localeCompare(String(a.movement_date || ''))), [selHist, history])   // eslint-disable-line react-hooks/exhaustive-deps
+  const selAll = useMemo(() => selRows.map(r => r.id), [selRows])
   const selShown = useMemo(() => histShown.filter(r => selHist.has(r.id)).map(r => r.id), [histShown, selHist])
+  const selHidden = selAll.length - selShown.length
+  const selAmt = selRows.reduce((t, r) => t + (Number(r.qty) || 0) * (Number(r.unit_price) || 0), 0)
+  useEffect(() => { if (!selHist.size) setOnlySel(false) }, [selHist])
   // 줄 끌어서 여러 줄 고르기 · Shift+클릭 범위 (v4.113.1)
   //   누른 줄이 안 골라져 있었으면 끈 범위를 고르고, 골라져 있었으면 범위를 푼다
   const histIdx = useMemo(() => new Map(histShown.map((r, i) => [r.id, i])), [histShown])
@@ -929,32 +940,49 @@ export default function Inbound() {
               <button onClick={exportHistory}
                 className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
             )}
-            {selShown.length>0&&(<>
+            {selAll.length>0&&(<>
               <button data-hist-ecount onClick={()=>setEcpOpen(true)}
                 title="체크한 입고 줄을 이카운트 「구매입력」 엑셀 업로드 양식으로 — 같은 입고일 · 구매처 = 전표 1장"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100">
-                📤 이카운트 구매입력 {selShown.length}건</button>
+                📤 이카운트 구매입력 {selAll.length}건</button>
               <button data-hist-date onClick={()=>setDateForm({ date:'', memo:'' })}
                 title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
-                📅 입고일 변경 {selShown.length}건</button>
+                📅 입고일 변경 {selAll.length}건</button>
               <button data-hist-del onClick={async ()=>{
-                  const ids = [...selShown]
-                  const pick = histShown.filter(r => selHist.has(r.id))
+                  const ids = [...selAll]
+                  const pick = selRows
                   if(await ask({ title: `선택한 입고 이력 ${ids.length}건을 삭제할까요?`,
-                    desc: '재고와 발주 입고수량(qty_received)도 그만큼 되돌립니다. 지우기 전 내용은 복구 기록으로 남습니다 (완료 알림에 번호 표시).',
+                    desc: (selHidden > 0 ? `⚠ 이 중 ${selHidden}건은 지금 표에 안 보이는 줄입니다 (다른 검색 · 기간에서 고른 것). ` : '') + '재고와 발주 입고수량(qty_received)도 그만큼 되돌립니다. 지우기 전 내용은 복구 기록으로 남습니다 (완료 알림에 번호 표시).',
                     items: pick.slice(0, 5).map(r => `${r.movement_date} · ${r.items?.std_code || '-'} · ${r.items?.name || ''} · ${r.qty}${r.items?.unit || ''}`),
                     more: Math.max(0, ids.length - 5), okText: '삭제', danger: true }))
                     delHistMut.mutate(ids)
                 }} disabled={delHistMut.isPending}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
-                {delHistMut.isPending && <Spin />}🗑 선택 {selShown.length}건 삭제</button>
+                {delHistMut.isPending && <Spin />}🗑 선택 {selAll.length}건 삭제</button>
             </>)}
             <div className="ml-auto text-xs text-slate-400 self-center">
               총 {histShown.length}건 / {histTotal.toLocaleString()} {history[0]?.items?.unit||''}
             </div>
           </div>
 
+          {/* 고른 줄 막대 — 늘 자리를 잡아 둔다 (처음 고를 때 표가 아래로 밀려 끌어 고르기가 어긋나지 않게) */}
+          {selAll.length === 0 ? (
+            <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-400 min-h-[38px]">
+              고른 줄 없음 — 줄을 누르거나 끌어서 고르세요 (Shift+클릭 = 범위). 검색 · 고객사 · 기간을 바꿔도 고른 줄은 쌓입니다
+            </div>
+          ) : (
+            <div data-hist-selbar className="flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200 bg-indigo-50/70 px-3 py-2 text-xs min-h-[38px]">
+              <span className="font-bold text-indigo-700">고른 줄 {selAll.length}건</span>
+              <span className="font-bold text-slate-700 tabular-nums">{Math.round(selAmt).toLocaleString('ko-KR')}원</span>
+              {selHidden > 0 && <span data-hist-selhidden className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 font-bold">지금 표 밖 {selHidden}건 — 다른 검색 · 고객사 · 기간에서 고른 것</span>}
+              <span className="text-slate-400">검색 · 고객사 · 기간을 바꿔도 고른 줄은 남습니다</span>
+              <button data-hist-onlysel onClick={()=>setOnlySel(v=>!v)}
+                className={`ml-auto px-2.5 py-1 rounded-lg border font-bold ${onlySel ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-indigo-200 text-indigo-600 hover:bg-indigo-100'}`}>
+                {onlySel ? '✔ 고른 줄만 보는 중 — 전체 보기' : '고른 줄만 보기'}</button>
+              <button data-hist-selclear onClick={()=>setSelHist(new Set())} className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-500 font-bold hover:text-rose-600">선택 비우기</button>
+            </div>
+          )}
           {histErr && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">입고 현황을 불러오지 못했습니다 — {histErr.message}</p>}
           {histCapped && <p data-hist-capped className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">⚠ 조회 기간의 입고가 5,000건을 넘어 앞의 5,000건만 불러왔습니다 (최근 입고일 순). 합계 · 엑셀이 모자랄 수 있으니 기간을 좁혀 조회해 주세요.</p>}
           <div className="kpi-grid grid grid-cols-3 gap-3">
@@ -984,7 +1012,8 @@ export default function Inbound() {
                     <th className="px-3 py-2.5 w-8">
                       <input type="checkbox"
                         checked={histShown.length>0 && selShown.length===histShown.length}
-                        onChange={e=>setSelHist(e.target.checked ? new Set(histShown.map(r=>r.id)) : new Set())}/>
+                        title="지금 표에 보이는 줄만 고르기 · 풀기 (다른 검색에서 고른 줄은 그대로)"
+                        onChange={e=>{ const n=new Set(selHist); histShown.forEach(r=>{ e.target.checked?n.add(r.id):n.delete(r.id) }); setSelHist(n) }}/>
                     </th>
                     {['입고일','기준코드','품명','제조사','제조사품번','수량','단위','단가','금액','발주번호','구매처','고객사','비고'].map(h=>(
                       <th key={h} data-hist-sort={h} onClick={()=>sortBy(h)} title="눌러서 정렬 — 오름차순 → 내림차순 → 원래 순서"
@@ -1036,9 +1065,9 @@ export default function Inbound() {
 
       {/* 이카운트 구매입력 변환 — 체크한 입고 줄 → 엑셀 (v4.112.0) */}
       {ecpOpen && (
-        <EcountPurchaseModal rows={histShown.filter(r => selHist.has(r.id))} customers={customers} email={me?.email}
+        <EcountPurchaseModal rows={selRows} customers={customers} email={me?.email}
           onClose={()=>setEcpOpen(false)}
-          onMarked={()=>qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false })} />
+          onMarked={()=>{ setSelHist(new Set()); qc.invalidateQueries({ queryKey:['inboundHistory'], exact:false }) }} />
       )}
 
       {/* 입고일 변경 — 날짜만 바꾼다 */}
@@ -1050,7 +1079,7 @@ export default function Inbound() {
             <div>
               <h3 className="text-base font-bold text-slate-900">📅 입고일 변경</h3>
               <p className="text-xs text-slate-400 mt-0.5">
-                {selShown.length}건. 수량·단가·재고는 그대로 두고 날짜만 바꿉니다.
+                {selAll.length}건{selHidden > 0 ? ` (표 밖 ${selHidden}건 포함)` : ''}. 수량·단가·재고는 그대로 두고 날짜만 바꿉니다.
               </p>
             </div>
 
@@ -1098,11 +1127,11 @@ export default function Inbound() {
               <button
                 onClick={()=>{
                   if(!dateForm.date){ toastError('바꿀 날짜를 넣으세요'); return }
-                  dateMut.mutate({ ids:[...selShown], date:dateForm.date, memo:dateForm.memo.trim() })
+                  dateMut.mutate({ ids:[...selAll], date:dateForm.date, memo:dateForm.memo.trim() })
                 }}
                 disabled={dateMut.isPending}
                 className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-                {dateMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />처리 중…</span> : `${selShown.length}건 변경`}
+                {dateMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />처리 중…</span> : `${selAll.length}건 변경`}
               </button>
             </div>
           </div>
