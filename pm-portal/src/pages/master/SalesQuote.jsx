@@ -67,7 +67,7 @@ export default function SalesQuote() {
         <div>
           <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
           <p className="page-desc text-xs text-slate-400">
-고객사 견적 요청을 접수해 BOM · 단가를 확인하고, 견적서를 작성해 제출 · 수주 · 실주까지 따라갑니다. 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
+고객사 견적 요청을 접수해 BOM · 단가를 확인하고, 견적서를 작성해 고객사에 보내면 「📤 발송 완료」로 끝냅니다 (진행 중 · 발송 완료만 봅니다). 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
           </p>
         </div>
         <div className="flex items-center gap-2">

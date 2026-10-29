@@ -20,7 +20,7 @@ import { fetchQuoteBOM } from './QuoteSheet'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
-  ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['nq', '견적 불가 — 닫기 대기'], ['제출', '⑤ 제출'], ['수주', '⑥ 수주'], ['실주', '실주'], ['불가', '견적 불가'], ['취소', '취소'],
+  ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['nq', '견적 불가 — 닫기 대기'], ['sent', '✅ 발송 완료'], ['제출', '✅ 발송 완료'], ['수주', '⑥ 수주'], ['실주', '실주'], ['불가', '견적 불가'], ['취소', '취소'],
 ]
 // 견적 불가 사유 (v4.100.0) — 품목마다. 나머지 품목은 계속 진행, 전부 불가면 접수를 「불가」로 닫는다
 export const NOQUOTES = ['단종', '제작 불가', '사양 미확정', '수급 불가', '기타']
@@ -30,6 +30,7 @@ export const STAGE_TONE = {
   ready: 'bg-violet-50 text-violet-700 border-violet-200', hold: 'bg-slate-100 text-slate-500 border-slate-300', 제출: 'bg-slate-100 text-slate-700 border-slate-200',
   수주: 'bg-emerald-50 text-emerald-700 border-emerald-200', 실주: 'bg-white text-slate-400 border-slate-200', 취소: 'bg-white text-slate-400 border-slate-200',
   nq: 'bg-rose-50 text-rose-600 border-rose-200', 불가: 'bg-white text-rose-500 border-rose-200',
+  sent: 'bg-emerald-50 text-emerald-700 border-emerald-200',
 }
 export const stageLabel = (k) => (RFQ_STAGES.find(([x]) => x === k) || [k, k])[1]
 
