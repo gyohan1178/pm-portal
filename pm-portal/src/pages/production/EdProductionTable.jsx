@@ -8,11 +8,12 @@
 //
 //   ⚠ 정한 납기 · 불출 예정은 lib/edForecast.js 에서 계산한다 (저장값 아님).
 //     사람이 넣는 값: 확정 납기(due_fix) · Frame 확정(arrival_date) · 발주서(po_received) · 불출 · 품질 · 미불출 · 비고
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { supabase } from '../../lib/supabase'
-import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf } from '../../lib/edForecast'
+import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf, qcDueOf } from '../../lib/edForecast'
 import { guessBom, bomKey, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import Spin from '../../components/ux/Spin'
+import { orderOf, edHogiKey } from '../../lib/edOrderSync'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -224,7 +225,7 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   const k = ruleKindOf(r)
   const due = issueDueOf(r, rules, which)
   const n = dday(due)
-  const w = k ? rules?.weeks?.[k]?.[which] : null
+  const w = k ? rules?.days?.[k]?.[which] : null
   const name = which === 'harn' ? '하네스' : '전장'
   const doneCls = which === 'harn' ? 'text-teal-600' : 'text-blue-600'
   const live = r.status !== '완료'
@@ -232,8 +233,8 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   return (
     <td data-no-select className={`px-2 py-2 cursor-pointer text-center whitespace-nowrap group ${which === 'harn' ? 'border-l border-slate-100' : ''}`}
       title={done ? `${name} 불출 완료 · 누르면 취소`
-        : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}주 (불출 기준)\n누르면 불출 완료`
-        : (w === null || w === undefined) && k ? `${k} 불출 기준(주수)이 없습니다 — 「⚙ 불출 기준」 ① 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
+        : due ? `${name} 불출 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${w}일 (불출 기준)\n누르면 불출 완료`
+        : (w === null || w === undefined) && k ? `${k} 불출 기준(일수)이 없습니다 — 「⚙ 불출 기준」 ① 에서 정하면 예정일이 나옵니다 · 누르면 ${name} 불출 완료`
         : k ? `정한 납기가 없어 불출 예정을 계산할 수 없습니다 · 누르면 ${name} 불출 완료` : `누르면 ${name} 불출 완료`}
       onClick={() => onField(r.id, field, !done)}>
       {done
@@ -256,12 +257,20 @@ function IssueCell({ r, rules, which, onField, need, bom, onNeed }) {
   )
 }
 
-function QualityCell({ r, onField }) {
+// 품질 — 검수 예정일(정한 납기 − N일, 기본 4일)을 보여 주고 누르면 검수 완료 (v4.118.0)
+function QualityCell({ r, rules, onField }) {
   const done = truthy(r.quality_recv)
+  const due = qcDueOf(r, rules)
+  const n = dday(due)
+  const live = r.status !== '완료'
+  const cls = !live ? 'text-slate-400' : n == null ? 'text-slate-300' : n < 0 ? 'text-red-600 font-bold' : n <= 3 ? 'text-orange-600 font-bold' : 'text-slate-500'
   return (
-    <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" title={done ? '품질검수 완료 · 누르면 취소' : '누르면 품질검수 완료'}
+    <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center whitespace-nowrap group" data-ed-qc={due || ''}
+      title={done ? '품질검수 완료 · 누르면 취소' : due ? `품질검수 예정 ${due} = ${issueBaseOf(r)?.src} ${issueBaseOf(r)?.date} − ${rules?.qcDays ?? 4}일\n누르면 품질검수 완료` : '정한 납기가 없어 검수 예정을 계산할 수 없습니다 · 누르면 품질검수 완료'}
       onClick={() => onField(r.id, 'quality_recv', !done)}>
-      {done ? <span className="text-rose-600 font-bold">✔ 완료</span> : <span className="text-slate-300 hover:text-rose-500">검수</span>}
+      {done ? <span className="text-rose-600 font-bold">✔ 완료</span>
+        : due ? <span className={cls}>{md(due)}</span>
+        : <span className="text-slate-300 group-hover:text-rose-500">검수</span>}
     </td>
   )
 }
@@ -280,9 +289,34 @@ function MemoCell({ r, onField }) {
 }
 
 // ── 표 ──────────────────────────────────────────────────────────────
-export const ED_COLS = 17
-export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor, projects = [], need = {}, onNeed }) {
+export const ED_COLS = 18
+//   v4.118.0 — 「🗂 호기로 묶기」: 프로젝트 #호기 한 줄 아래에 파트 줄 (접고 펼치기) · 「🧾 발주서」 칸 (수주대장 발주 · 줄 · 금액)
+const GROUP_KEY = 'pm.edGrouped.v1'
+export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing, rules, statusOpts, statusColor, partColor, projects = [], need = {}, onNeed, orderIdx = null, orderSetup = false }) {
   const ids = list.filter(r => !r._month).map(r => r.id)
+  const [grouped, setGroupedRaw] = useState(() => { try { return localStorage.getItem(GROUP_KEY) !== '0' } catch { return true } })
+  const setGrouped = (v) => { setGroupedRaw(v); try { localStorage.setItem(GROUP_KEY, v ? '1' : '0') } catch { /* */ } }
+  // 호기 묶음 — 목록 순서(정한 납기 순) 그대로, 처음 나온 자리에
+  const groups = useMemo(() => {
+    const m = new Map()
+    for (const r of list) {
+      if (r._month) continue
+      const k = edHogiKey(r.pn, r.hogi)
+      if (!m.has(k)) m.set(k, { key: k, pn: r.pn, hogi: r.hogi, rows: [] })
+      m.get(k).rows.push(r)
+    }
+    return [...m.values()].map((g) => {
+      const dates = g.rows.filter(r => r.status !== '완료').map(r => edDateOf(r)).filter(Boolean).sort()
+      return { ...g, first: dates[0] || null }
+    })
+  }, [list])
+  // 접고 펼치기 — 기본: 가장 빠른 납기가 14일 안이면 펼침. 「모두 펼치기 · 접기」를 누르면 그 기준
+  const [base, setBase] = useState(null)          // null 기본 · 'open' · 'close'
+  const [flipped, setFlipped] = useState(() => new Set())
+  const defOpen = (g) => (base === 'open' ? true : base === 'close' ? false : (() => { const n = dday(g.first); return n != null && n <= 14 })())
+  const isOpen = (g) => defOpen(g) !== flipped.has(g.key)
+  const flip = (g) => setFlipped((s) => { const n = new Set(s); if (n.has(g.key)) n.delete(g.key); else n.add(g.key); return n })
+  const setAll = (o) => { setBase(o ? 'open' : 'close'); setFlipped(new Set()) }
   // 구분2 = 포캐스트 품번 · 구분3 = 이 줄이 쓰는 BOM (하네스 · 전장)
   //   월간 실적(PO 업로드)의 구분2 · 3 은 마우스를 올리면 보인다.
   const bomCode = (r, which) => {
@@ -291,7 +325,98 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
     const p = bomProjectFor(rules, projects, k, bomGroupOf(r), which)
     return p ? p.code : null
   }
+  const monthRow = (r, i) => (
+        <tr key={'m' + i} className="bg-indigo-50/60">
+          <td colSpan={ED_COLS} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
+            {r._month === '미정' ? '정한 납기 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
+          </td>
+        </tr>
+  )
+  // 파트 한 줄 (호기로 묶어 볼 때는 호기 줄 아래에 들어감)
+  const partRow = (r, inGroup = false) => (
+        <tr key={r.id}
+          onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
+          onMouseEnter={e => rowSel.over(r.id, e)}
+          className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id) ? 'bg-indigo-50/50' : ''} ${r.status === '완료' ? 'text-slate-400' : ''} ${inGroup ? 'bg-white' : ''}`} data-ed-part={inGroup ? '1' : undefined}>
+          <td className="px-1 py-2"><input type="checkbox" checked={sel.has(r.id)} readOnly className="pointer-events-none" /></td>
+          <td className="px-2 py-2">
+            {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="text-slate-300">-</span>}
+          </td>
+          {(() => {
+            const k = kindOf(r)
+            const hb = bomCode(r, 'harn'), eb = bomCode(r, 'elec')
+            const orig = `PO 업로드(월간 실적) 구분2 ${r.part2 || '-'} · 구분3 ${r.part3 || '-'}`
+            if (!k) return (<>
+              <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part2}>{r.part2 || '-'}</td>
+              <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part3}>{r.part3 || '-'}</td>
+            </>)
+            return (<>
+              <td className="px-2 py-2 text-left font-mono text-[11px] text-slate-700 max-w-[120px] overflow-hidden text-ellipsis" title={`포캐스트 품번 ${r.fc_item || '없음'}\n${orig}`}>
+                {r.fc_item || <span className="text-slate-400 font-sans">{r.part2 || '-'}</span>}
+              </td>
+              <td className="px-2 py-2 text-left text-[10px] leading-tight max-w-[190px]" title={`하네스 BOM ${hb || '연결 안 됨'}\n전장 BOM ${eb || '연결 안 됨'}\n${orig}`}>
+                <span className={`block truncate ${hb ? 'text-teal-700' : 'text-orange-400'}`}>{hb || '하네스 BOM 없음'}</span>
+                <span className={`block truncate ${eb ? 'text-blue-700' : 'text-orange-400'}`}>{eb || '전장 BOM 없음'}</span>
+              </td>
+            </>)
+          })()}
+          <td data-no-select className="px-2 py-2 text-slate-700 text-left max-w-[200px] overflow-hidden text-ellipsis cursor-pointer hover:text-indigo-600"
+            title={`${r.pn}${r.fc_tag ? ` · 포캐스트 ${r.fc_tag}` : ''} — 누르면 편집`} onClick={() => onEdit(r)}>
+            {r.pn}
+            {r.fc_new && <span className="ml-1 px-1 rounded bg-sky-50 text-sky-600 text-[9px] font-bold align-middle" title="포캐스트로 새로 만든 줄 — PO 업로드(월간 실적)가 들어오면 이 줄과 이어집니다">FC</span>}
+            {r.fc_gone && r.status !== '완료' && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle" title="최근 포캐스트에 이 호기가 없습니다 (지우지 않음)">FC 없음</span>}
+          </td>
+          <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
+          <OrderCell g={orderOf(orderIdx, r)} setup={orderSetup} />
+          <RemarkCell r={r} onField={onField} />
+          <td data-no-select className="px-2 py-2">
+            <select value={r.status || 'PO접수'} onChange={e => onField(r.id, 'status', e.target.value)} onClick={e => e.stopPropagation()}
+              className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${statusColor[r.status] || 'bg-slate-100 text-slate-500'}`}>
+              {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          </td>
+          <DueCell r={r} onField={onField} />
+          <FrameCell r={r} onField={onField} />
+          <IssueCell r={r} rules={rules} which="harn" onField={onField} need={need[`${r.id}|harn`]} bom={bomCode(r, 'harn')} onNeed={onNeed} />
+          <IssueCell r={r} rules={rules} which="elec" onField={onField} need={need[`${r.id}|elec`]} bom={bomCode(r, 'elec')} onNeed={onNeed} />
+          <QualityCell r={r} rules={rules} onField={onField} />
+          {(() => {
+            const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []
+            const first = mp[0]
+            return (<>
+              <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer" onClick={() => onMissing(r)} title="누르면 미불출 자재 입력">
+                {mp.length
+                  ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{mp.length}건</span>
+                  : <span className="text-slate-200 hover:text-red-400">＋</span>}
+              </td>
+              <td data-no-select className="px-2 py-2 text-left max-w-[170px] overflow-hidden text-ellipsis cursor-pointer text-[11px] text-slate-600"
+                onClick={() => onMissing(r)}
+                title={mp.map(m => `${m.pn || ''} ${m.name || ''} ${m.qty ? '× ' + m.qty : ''}`.trim()).join('\n')}>
+                {first ? <>{first.pn || first.name}{first.qty ? <span className="text-slate-400"> ×{first.qty}</span> : null}{mp.length > 1 && <span className="text-slate-400"> 외 {mp.length - 1}</span>}</> : <span className="text-slate-200">—</span>}
+              </td>
+            </>)
+          })()}
+          <MemoCell r={r} onField={onField} />
+          <td className="px-2 py-2 text-left max-w-[110px] overflow-hidden text-ellipsis">
+            {r.manager ? <span className="font-semibold text-slate-600">{r.manager}</span> : <span className="text-slate-200">—</span>}
+          </td>
+        </tr>
+  )
   return (
+    <>
+    <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 border-b border-slate-100 bg-white" data-ed-groupbar>
+      <span className="inline-flex bg-slate-100 rounded-lg p-0.5">
+        {[[true, '🗂 호기로 묶기'], [false, '파트별 펼침']].map(([v, l]) => (
+          <button key={l} type="button" onClick={() => setGrouped(v)} data-ed-grouped={v ? '1' : '0'}
+            className={`px-2.5 py-1 text-[11px] font-semibold rounded-md ${grouped === v ? 'bg-slate-800 text-white' : 'text-slate-500'}`}>{l}</button>
+        ))}
+      </span>
+      {grouped && <>
+        <button type="button" onClick={() => setAll(true)} data-ed-openall className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50">모두 펼치기</button>
+        <button type="button" onClick={() => setAll(false)} data-ed-closeall className="px-2 py-1 text-[11px] font-semibold rounded-md border border-slate-200 text-slate-600 hover:bg-slate-50">모두 접기</button>
+        <span className="text-[11px] text-slate-400">호기 {groups.length} · 파트 {ids.length} — 보라 줄을 누르면 파트가 접히고 펼쳐집니다 (납기 14일 안 호기는 펼쳐 둠)</span>
+      </>}
+    </div>
     <table className="w-full text-xs whitespace-nowrap">
       <thead>
         <tr className="border-b border-slate-200 bg-slate-50 text-slate-400 text-center">
@@ -304,12 +429,13 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
           <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="EUV · H2D 줄은 쓰는 BOM — 위 하네스 · 아래 전장">구분3<br /><span className="text-[9px] font-normal text-slate-300">BOM 하네스 / 전장</span></th>
           <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">프로젝트</th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold">호기</th>
+          <th rowSpan={2} className="px-2 py-1.5 text-left font-bold" title="수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)">🧾 발주서<br /><span className="text-[9px] font-normal text-slate-300">줄 · 금액</span></th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold" title="포캐스트 Remark (FCT · CO · PO) · 네모 = 발주서 접수">발주</th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold">상태</th>
           <th rowSpan={2} className="px-2 py-1.5 font-bold text-indigo-600 border-l border-slate-200">📅 정한 납기<br /><span className="text-[9px] font-normal text-slate-300">D-남은날 · ✎확정</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold text-amber-600 border-l border-slate-200">⚙ Frame 입고<br /><span className="text-[9px] font-normal text-slate-300">클릭=입고 · ✎확정</span></th>
-          <th colSpan={2} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 불출 <span className="text-[9px] font-normal text-slate-300">(정한 납기 − N주)</span></th>
-          <th rowSpan={2} className="px-2 py-1.5 font-bold text-rose-600 border-l border-slate-200">✅ 품질</th>
+          <th rowSpan={2} className="px-2 py-1.5 font-bold text-amber-600 border-l border-slate-200">⚙ 가공물 입고<br /><span className="text-[9px] font-normal text-slate-300">Frame · 클릭=입고 · ✎확정</span></th>
+          <th colSpan={2} className="px-2 py-1 font-bold text-violet-600 border-l border-slate-200">⚡ 불출 <span className="text-[9px] font-normal text-slate-300">(정한 납기 − EUV 35일 · H2D 20일)</span></th>
+          <th rowSpan={2} className="px-2 py-1.5 font-bold text-rose-600 border-l border-slate-200">✅ 품질<br /><span className="text-[9px] font-normal text-slate-300">납기 − {rules?.qcDays ?? 4}일</span></th>
           <th colSpan={2} className="px-2 py-1 font-bold text-red-600 border-l border-slate-200">⚠ 미불출 자재</th>
           <th rowSpan={2} className="px-2 py-1.5 text-left font-bold border-l border-slate-200">비고</th>
           <th rowSpan={2} className="px-2 py-1.5 text-left font-bold">담당자</th>
@@ -322,83 +448,81 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
         </tr>
       </thead>
       <tbody>
-        {list.map((r, i) => r._month ? (
-          <tr key={'m' + i} className="bg-indigo-50/60">
-            <td colSpan={ED_COLS} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">
-              {r._month === '미정' ? '정한 납기 미정' : `${r._month.slice(0, 4)}년 ${+r._month.slice(5, 7)}월`}
-            </td>
-          </tr>
-        ) : (
-          <tr key={r.id}
-            onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
-            onMouseEnter={e => rowSel.over(r.id, e)}
-            className={`border-b border-slate-100 hover:bg-slate-50 text-center select-none ${sel.has(r.id) ? 'bg-indigo-50/50' : ''} ${r.status === '완료' ? 'text-slate-400' : ''}`}>
-            <td className="px-1 py-2"><input type="checkbox" checked={sel.has(r.id)} readOnly className="pointer-events-none" /></td>
-            <td className="px-2 py-2">
-              {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="text-slate-300">-</span>}
-            </td>
-            {(() => {
-              const k = kindOf(r)
-              const hb = bomCode(r, 'harn'), eb = bomCode(r, 'elec')
-              const orig = `PO 업로드(월간 실적) 구분2 ${r.part2 || '-'} · 구분3 ${r.part3 || '-'}`
-              if (!k) return (<>
-                <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part2}>{r.part2 || '-'}</td>
-                <td className="px-2 py-2 text-slate-600 text-left max-w-[100px] overflow-hidden text-ellipsis" title={r.part3}>{r.part3 || '-'}</td>
-              </>)
-              return (<>
-                <td className="px-2 py-2 text-left font-mono text-[11px] text-slate-700 max-w-[120px] overflow-hidden text-ellipsis" title={`포캐스트 품번 ${r.fc_item || '없음'}\n${orig}`}>
-                  {r.fc_item || <span className="text-slate-400 font-sans">{r.part2 || '-'}</span>}
-                </td>
-                <td className="px-2 py-2 text-left text-[10px] leading-tight max-w-[190px]" title={`하네스 BOM ${hb || '연결 안 됨'}\n전장 BOM ${eb || '연결 안 됨'}\n${orig}`}>
-                  <span className={`block truncate ${hb ? 'text-teal-700' : 'text-orange-400'}`}>{hb || '하네스 BOM 없음'}</span>
-                  <span className={`block truncate ${eb ? 'text-blue-700' : 'text-orange-400'}`}>{eb || '전장 BOM 없음'}</span>
-                </td>
-              </>)
-            })()}
-            <td data-no-select className="px-2 py-2 text-slate-700 text-left max-w-[200px] overflow-hidden text-ellipsis cursor-pointer hover:text-indigo-600"
-              title={`${r.pn}${r.fc_tag ? ` · 포캐스트 ${r.fc_tag}` : ''} — 누르면 편집`} onClick={() => onEdit(r)}>
-              {r.pn}
-              {r.fc_new && <span className="ml-1 px-1 rounded bg-sky-50 text-sky-600 text-[9px] font-bold align-middle" title="포캐스트로 새로 만든 줄 — PO 업로드(월간 실적)가 들어오면 이 줄과 이어집니다">FC</span>}
-              {r.fc_gone && r.status !== '완료' && <span className="ml-1 px-1 rounded bg-slate-100 text-slate-400 text-[9px] font-bold align-middle" title="최근 포캐스트에 이 호기가 없습니다 (지우지 않음)">FC 없음</span>}
-            </td>
-            <td className="px-2 py-2 font-mono font-bold text-indigo-600">{r.hogi || '-'}</td>
-            <RemarkCell r={r} onField={onField} />
-            <td data-no-select className="px-2 py-2">
-              <select value={r.status || 'PO접수'} onChange={e => onField(r.id, 'status', e.target.value)} onClick={e => e.stopPropagation()}
-                className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-indigo-400 ${statusColor[r.status] || 'bg-slate-100 text-slate-500'}`}>
-                {statusOpts.map(o => <option key={o} value={o}>{o}</option>)}
-              </select>
-            </td>
-            <DueCell r={r} onField={onField} />
-            <FrameCell r={r} onField={onField} />
-            <IssueCell r={r} rules={rules} which="harn" onField={onField} need={need[`${r.id}|harn`]} bom={bomCode(r, 'harn')} onNeed={onNeed} />
-            <IssueCell r={r} rules={rules} which="elec" onField={onField} need={need[`${r.id}|elec`]} bom={bomCode(r, 'elec')} onNeed={onNeed} />
-            <QualityCell r={r} onField={onField} />
-            {(() => {
-              const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []
-              const first = mp[0]
-              return (<>
-                <td data-no-select className="px-2 py-2 border-l border-slate-100 cursor-pointer" onClick={() => onMissing(r)} title="누르면 미불출 자재 입력">
-                  {mp.length
-                    ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">{mp.length}건</span>
-                    : <span className="text-slate-200 hover:text-red-400">＋</span>}
-                </td>
-                <td data-no-select className="px-2 py-2 text-left max-w-[170px] overflow-hidden text-ellipsis cursor-pointer text-[11px] text-slate-600"
-                  onClick={() => onMissing(r)}
-                  title={mp.map(m => `${m.pn || ''} ${m.name || ''} ${m.qty ? '× ' + m.qty : ''}`.trim()).join('\n')}>
-                  {first ? <>{first.pn || first.name}{first.qty ? <span className="text-slate-400"> ×{first.qty}</span> : null}{mp.length > 1 && <span className="text-slate-400"> 외 {mp.length - 1}</span>}</> : <span className="text-slate-200">—</span>}
-                </td>
-              </>)
-            })()}
-            <MemoCell r={r} onField={onField} />
-            <td className="px-2 py-2 text-left max-w-[110px] overflow-hidden text-ellipsis">
-              {r.manager ? <span className="font-semibold text-slate-600">{r.manager}</span> : <span className="text-slate-200">—</span>}
-            </td>
-          </tr>
-        ))}
+        {grouped
+          ? groups.flatMap((g) => [<GroupRow key={'g' + g.key} g={g} open={isOpen(g)} onToggle={() => flip(g)} sel={sel} setSel={setSel} statusOpts={statusOpts} statusColor={statusColor} partColor={partColor} orderIdx={orderIdx} orderSetup={orderSetup} />,
+              ...(isOpen(g) ? g.rows.map((r) => partRow(r, true)) : [])])
+          : list.map((r, i) => (r._month ? monthRow(r, i) : partRow(r)))}
         {!ids.length && <tr><td colSpan={ED_COLS} className="py-10 text-center text-slate-400">보여줄 줄이 없습니다</td></tr>}
       </tbody>
     </table>
+    </>
+  )
+}
+
+// 🧾 발주서 칸 — 수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)
+const won = (n) => Math.round(+n || 0).toLocaleString('ko-KR')
+function OrderCell({ g, setup }) {
+  if (!setup) return <td className="px-2 py-2 text-slate-200" title="Edwards생산_수주불러오기_반영_261029.sql 실행 전">—</td>
+  if (!g) return <td className="px-2 py-2 text-left text-[10px] text-slate-300" title="수주대장에 진행 중인 발주가 없습니다">발주 없음</td>
+  const pos = g.pos || []
+  return (
+    <td className="px-2 py-2 text-left leading-tight" data-ed-order={pos.join(',')}
+      title={`발주서 ${pos.join(', ')}\n${g.n_lines}줄 · ₩${won(g.amt)} · 납기 ${g.due || '-'}${g.due_last && g.due_last !== g.due ? ` ~ ${g.due_last}` : ''}${g.guessed ? `\n파트 추정 ${g.guessed}줄 (메모에 파트가 없어 품번 이력으로 정함)` : ''}`}>
+      <span className="font-mono text-[11px] text-indigo-600">{pos[0]}</span>{pos.length > 1 && <span className="text-[10px] text-slate-400"> 외 {pos.length - 1}</span>}
+      <span className="block text-[10px] text-slate-400 tabular-nums">{g.n_lines}줄 · ₩{won(g.amt)}{g.guessed ? <span className="ml-1 text-amber-600 font-bold">ⓘ추정</span> : null}</span>
+    </td>
+  )
+}
+
+// 🗂 호기 줄 — 파트 칩 · 발주 합계 · 가장 늦은 파트 상태 · 가장 빠른 납기 · 진행 칸 수
+function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, partColor, orderIdx, orderSetup }) {
+  const rows = g.rows
+  const ords = [...new Set(rows.map(r => orderOf(orderIdx, r)).filter(Boolean))]
+  const oPos = [...new Set(ords.flatMap(o => o.pos || []))]
+  const oLines = ords.reduce((t, o) => t + (o.n_lines || 0), 0), oAmt = ords.reduce((t, o) => t + (+o.amt || 0), 0)
+  const all = rows.every(r => sel.has(r.id))
+  const live = rows.filter(r => r.status !== '완료')
+  const order = (s) => { const i = statusOpts.indexOf(s || 'PO접수'); return i < 0 ? 0 : i }
+  const low = live.length ? live.reduce((a, r) => (order(r.status) < order(a) ? r.status || 'PO접수' : a), live[0].status || 'PO접수') : '완료'
+  const n = g.first ? dday(g.first) : null
+  const cnt = (f) => rows.filter(f).length
+  const frame = cnt(r => truthy(r.machine_recv)), harn = cnt(r => truthy(r.harness_recv)), elec = cnt(r => truthy(r.part_issue)), qual = cnt(r => truthy(r.quality_recv))
+  const po = cnt(r => r.po_received)
+  const miss = rows.reduce((t, r) => t + (Array.isArray(r.missing_parts) ? r.missing_parts.length : 0), 0)
+  const frac = (a, cls) => <span className={a === rows.length ? `${cls} font-bold` : a ? 'text-slate-600 font-semibold' : 'text-slate-300'}>{a}/{rows.length}</span>
+  const parts = rows.map(r => r.part || '—')
+  return (
+    <tr data-ed-group={g.key} onClick={onToggle} className="border-b border-violet-100 bg-violet-50/50 hover:bg-violet-50 cursor-pointer text-center">
+      <td className="px-1 py-2" onClick={e => e.stopPropagation()}>
+        <input type="checkbox" checked={all} onChange={e => setSel(s => { const x = new Set(s); rows.forEach(r => (e.target.checked ? x.add(r.id) : x.delete(r.id))); return x })} />
+      </td>
+      <td colSpan={5} className="px-2 py-2 text-left">
+        <span className="inline-block w-3 text-[10px] text-violet-500">{open ? '▼' : '▶'}</span>
+        <span className="font-bold text-slate-800">{g.pn}</span>
+        <span className="ml-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-extrabold font-mono text-[11px]">{g.hogi || '-'}</span>
+        <span className="ml-2">{parts.map((p, i) => <span key={i} className={`mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${p === '—' ? 'bg-slate-100 text-slate-400' : partColor(p)}`}>{p}</span>)}</span>
+      </td>
+      <td className="px-2 py-2 text-left leading-tight" title={oPos.length ? `발주서 ${oPos.join(', ')}` : '수주대장에 진행 중인 발주가 없습니다'}>
+        {orderSetup && oPos.length
+          ? <><span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span><span className="block text-[10px] text-slate-400 tabular-nums">{oLines}줄 · ₩{won(oAmt)}</span></>
+          : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
+      </td>
+      <td className="px-2 py-2 text-[10px]" title="발주서 접수">{frac(po, 'text-indigo-600')}</td>
+      <td className="px-2 py-2">
+        <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${statusColor[low] || 'bg-slate-100 text-slate-500'}`} title="가장 늦은 파트 기준">{low}</span>
+      </td>
+      <td className="px-2 py-2 border-l border-violet-100 whitespace-nowrap" title="가장 빠른 파트 납기">
+        {g.first ? <>{md(g.first)}{n != null && n >= 0 && <span className={`ml-1 text-[10px] font-bold ${n <= 7 ? 'text-orange-600' : n <= 14 ? 'text-yellow-600' : 'text-slate-500'}`}>{n === 0 ? 'D-Day' : `D-${n}`}</span>}</> : <span className="text-slate-300">—</span>}
+      </td>
+      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="가공물(Frame) 입고">{frac(frame, 'text-amber-600')}</td>
+      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="하네스 불출">{frac(harn, 'text-teal-600')}</td>
+      <td className="px-2 py-2 text-[10px]" title="전장 불출">{frac(elec, 'text-blue-600')}</td>
+      <td className="px-2 py-2 border-l border-violet-100 text-[10px]" title="품질">{frac(qual, 'text-rose-600')}</td>
+      <td colSpan={2} className="px-2 py-2 border-l border-violet-100 text-left">
+        {miss ? <span className="px-1.5 py-0.5 rounded-full bg-red-50 text-red-600 text-[10px] font-bold">미불출 {miss}건</span> : <span className="text-slate-200">—</span>}
+      </td>
+      <td colSpan={2} className="px-2 py-2 border-l border-violet-100" />
+    </tr>
   )
 }
 
@@ -466,9 +590,10 @@ export function MissingModal({ row, onClose, onSave, saving }) {
 //   ① 정한 납기보다 몇 주 먼저 불출하나  ② 포캐스트 품번 → 들어가는 갈래
 export function RulesModal({ rules, items, unknown, onClose, onSave, saving, defaults, projects = [], bomGroups = [], extraKinds = [] }) {
   // EUV · H2D 세 갈래 + 생산관리에 있는 다른 구분(MFM · BDM · ASML …) + 예전에 정해 둔 것
-  const kindsAll = [...KINDS, ...[...new Set([...extraKinds, ...Object.keys(rules.weeks || {})])].filter(k => !KINDS.includes(k)).sort()]
-  const [weeks, setWeeks] = useState(() => {
-    const w = JSON.parse(JSON.stringify(rules.weeks || {}))
+  const kindsAll = [...KINDS, ...[...new Set([...extraKinds, ...Object.keys(rules.days || {})])].filter(k => !KINDS.includes(k)).sort()]
+  const [qcDays, setQcDays] = useState(() => rules.qcDays ?? 4)
+  const [weeks, setWeeks] = useState(() => {     // 이름은 그대로 — 값은 일(days)
+    const w = JSON.parse(JSON.stringify(rules.days || {}))
     for (const k of kindsAll) w[k] = { harn: w[k]?.harn ?? '', elec: w[k]?.elec ?? '' }
     return w
   })
@@ -480,7 +605,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
     const cur = Array.isArray(m[it]) ? m[it] : []
     return { ...m, [it]: cur.includes(k) ? cur.filter(x => x !== k) : KINDS.filter(x => x === k || cur.includes(x)) }
   })
-  const setW = (k, w, v) => setWeeks(s => ({ ...s, [k]: { ...s[k], [w]: v === '' ? '' : Math.max(0, Math.min(26, Number(v))) } }))
+  const setW = (k, w, v) => setWeeks(s => ({ ...s, [k]: { ...s[k], [w]: v === '' ? '' : Math.max(0, Math.min(180, Number(v))) } }))
   return (
     <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
@@ -490,10 +615,10 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
         </div>
         <div className="p-5 overflow-y-auto space-y-5 text-xs">
           <section>
-            <p className="font-bold text-slate-700 mb-1">① 불출 예정일 = 정한 납기 − N주</p>
+            <p className="font-bold text-slate-700 mb-1">① 불출 예정일 = 정한 납기 − N일</p>
             <table className="w-full border border-slate-200 rounded-lg overflow-hidden">
               <thead className="bg-slate-50 text-slate-500"><tr>
-                <th className="px-3 py-1.5 text-left">구분</th><th className="px-3 py-1.5">하네스 (주 전)</th><th className="px-3 py-1.5">전장 (주 전)</th>
+                <th className="px-3 py-1.5 text-left">구분</th><th className="px-3 py-1.5">하네스 (일 전)</th><th className="px-3 py-1.5">전장 (일 전)</th>
               </tr></thead>
               <tbody>
                 {kindsAll.map(k => (
@@ -501,7 +626,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
                     <td className="px-3 py-1.5 font-bold text-slate-700">{KIND_LABEL[k] || k}</td>
                     {['harn', 'elec'].map(w => (
                       <td key={w} className="px-3 py-1.5 text-center">
-                        <input type="number" min="0" max="26" value={weeks[k]?.[w] ?? ''} placeholder={KINDS.includes(k) ? '' : '미설정'}
+                        <input type="number" min="0" max="180" value={weeks[k]?.[w] ?? ''} placeholder={KINDS.includes(k) ? '' : '미설정'}
                           onChange={e => setW(k, w, e.target.value)}
                           className={`w-16 px-2 py-1 text-center border rounded focus:outline-none focus:ring-1 focus:ring-indigo-400 ${weeks[k]?.[w] === '' ? 'border-orange-300' : 'border-slate-200'}`} />
                       </td>
@@ -512,6 +637,9 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
             </table>
             <p className="mt-1 text-[11px] text-slate-400">정한 납기 — EUV = 포캐스트 to 정한 · H2D = H2D 자재 (없으면 Frame − 1주) · MFM · BDM 등 = 납품요청일. 확정 납기를 넣으면 그 날짜 기준.
               <b className="text-orange-600"> 비워 둔 칸</b>은 불출 예정일을 계산하지 않습니다.</p>
+            <p className="mt-2 flex items-center gap-2 font-bold text-slate-700">품질 검수 예정일 = 정한 납기 −
+              <input type="number" min="0" max="60" value={qcDays} onChange={e => setQcDays(e.target.value === '' ? '' : Math.max(0, Math.min(60, Number(e.target.value))))} data-qc-days
+                className="w-14 px-2 py-1 text-center border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-400" /> 일 <span className="font-normal text-slate-400">(모든 구분)</span></p>
           </section>
           <section>
             <p className="font-bold text-slate-700 mb-1">② 포캐스트 품번 → 들어가는 구분</p>
@@ -576,7 +704,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
           </section>
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2">
-          <button onClick={() => setWeeks(JSON.parse(JSON.stringify(defaults.weeks)))} className="px-3 py-2 text-xs rounded-lg text-slate-400 hover:text-slate-600">주수 기본값</button>
+          <button onClick={() => { setWeeks(JSON.parse(JSON.stringify(defaults.days))); setQcDays(defaults.qcDays ?? 4) }} className="px-3 py-2 text-xs rounded-lg text-slate-400 hover:text-slate-600">일수 기본값</button>
           <button onClick={onClose} className="ml-auto px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
           <button disabled={saving} onClick={() => {
             const w = {}
@@ -586,7 +714,7 @@ export function RulesModal({ rules, items, unknown, onClose, onSave, saving, def
               const h = v(weeks[k]?.harn), e = v(weeks[k]?.elec)
               if (h !== null || e !== null) w[k] = { harn: h, elec: e }
             }
-            onSave({ weeks: w, map, bom })
+            onSave({ days: w, qcDays: qcDays === '' ? 4 : Number(qcDays), map, bom })
           }} className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saving ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}</button>
         </div>
       </div>

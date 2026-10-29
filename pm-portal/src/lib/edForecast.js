@@ -34,14 +34,17 @@ export function ruleKindOf(r) {
 }
 
 // ── 설정 (pm_settings 'ed_fc_rules') ────────────────────────────────
-//   weeks: 정한 납기보다 몇 주 먼저 불출하나 (작업자 도구 기본값)
+//   days : 정한 납기보다 며칠 먼저 불출하나 (v4.118.0 — 주 → 일. EUV 35일 · H2D 20일)
+//          예전에 주(weeks)로 저장한 값은 ×7 로 읽는다
+//   qcDays: 품질 검수 = 정한 납기 − N일 (기본 4일)
 //   map  : 포캐스트 품번(Item number) → 이 장비에 들어가는 갈래
 export const DEFAULT_RULES = {
-  weeks: {
-    'EUV':     { elec: 0, harn: 4 },
-    'H2D-LH':  { elec: 3, harn: 4 },
-    'H2D-HPD': { elec: 3, harn: 4 },
+  days: {
+    'EUV':     { elec: 35, harn: 35 },
+    'H2D-LH':  { elec: 20, harn: 20 },
+    'H2D-HPD': { elec: 20, harn: 20 },
   },
+  qcDays: 4,
   map: {
     'NKB973000': ['EUV', 'H2D-LH'],
     'NKB943000': ['EUV', 'H2D-LH'],
@@ -66,21 +69,25 @@ export const DEFAULT_RULES = {
 }
 export function mergeRules(saved) {
   const s = saved && typeof saved === 'object' ? saved : {}
-  const weeks = {}
+  const days = {}
   const num = (x, dflt) => (x !== '' && x !== null && x !== undefined && Number.isFinite(Number(x)) ? Number(x) : dflt)
+  // 저장된 값 — 일(days)이 있으면 그것, 없으면 예전 주(weeks) × 7
+  const savedDays = s.days ? s.days : Object.fromEntries(Object.entries(s.weeks || {}).map(([k, v]) =>
+    [k, v ? { elec: v.elec == null || v.elec === '' ? null : Number(v.elec) * 7, harn: v.harn == null || v.harn === '' ? null : Number(v.harn) * 7 } : v]))
   for (const k of KINDS) {
-    const d = DEFAULT_RULES.weeks[k], v = (s.weeks || {})[k] || {}
-    weeks[k] = { elec: num(v.elec, d.elec), harn: num(v.harn, d.harn) }
+    const d = DEFAULT_RULES.days[k], v = savedDays[k] || {}
+    days[k] = { elec: num(v.elec, d.elec), harn: num(v.harn, d.harn) }
   }
   // MFM · BDM 같은 다른 구분 — 정한 것만 (안 정한 칸은 null = 불출 예정 없음)
-  for (const [k, v] of Object.entries(s.weeks || {})) {
+  for (const [k, v] of Object.entries(savedDays)) {
     if (KINDS.includes(k) || !v) continue
-    weeks[k] = { elec: num(v.elec, null), harn: num(v.harn, null) }
+    days[k] = { elec: num(v.elec, null), harn: num(v.harn, null) }
   }
+  const qcDays = num(s.qcDays, DEFAULT_RULES.qcDays)
   const map = { ...DEFAULT_RULES.map, ...(s.map || {}) }
   // bom: '구분|NKB기종|harn·elec' → BOM 프로젝트 코드 (소요량 매칭 · lib/edNeed.js). 없으면 이름으로 짐작
   const bom = { ...(s.bom || {}) }
-  return { weeks, map, bom }
+  return { days, qcDays, map, bom }
 }
 
 // ── 날짜 ─────────────────────────────────────────────────────────────
@@ -195,9 +202,16 @@ export function issueBaseOf(r) {
 export function issueDueOf(r, rules, which) {
   const k = ruleKindOf(r)
   const b = issueBaseOf(r)
-  const w = k ? rules?.weeks?.[k]?.[which] : null
-  if (!b || w === null || w === undefined || w === '') return null     // 불출 기준을 안 정한 구분
-  return addDays(b.date, -7 * (Number(w) || 0))
+  const d = k ? rules?.days?.[k]?.[which] : null
+  if (!b || d === null || d === undefined || d === '') return null     // 불출 기준을 안 정한 구분
+  return addDays(b.date, -(Number(d) || 0))
+}
+// 품질 검수 예정 = 정한 납기 − N일 (v4.118.0 · 기본 4일)
+export function qcDueOf(r, rules) {
+  const b = issueBaseOf(r)
+  if (!b) return null
+  const d = rules?.qcDays ?? DEFAULT_RULES.qcDays
+  return addDays(b.date, -(Number(d) || 0))
 }
 
 // ── 생산관리 반영 계획 ───────────────────────────────────────────────

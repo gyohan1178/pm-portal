@@ -16,6 +16,7 @@ import { parseEdMonthly } from '../../lib/edMonthly'
 import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
+import { fetchEdOrderGroups, orderIndex, planEdImport, planEdText, applyEdImport } from '../../lib/edOrderSync'
 import { ruleKindOf, KINDS } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
 import * as XLSX from 'xlsx'
@@ -393,6 +394,34 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const edRules = useMemo(() => edRulesData || mergeRules(null), [edRulesData])
   // Edwards BOM 프로젝트 — 소요량 매칭 · 불출 기준(BOM 연결)에서 쓴다
   const { data: edProj } = useQuery({ queryKey: ['edNeedProjects'], queryFn: fetchEdProjects, enabled: isED, staleTime: 300000 })
+  // 수주대장 발주 묶음 (v4.118.0) — 프로젝트 · 호기 · 파트별 발주서 · 줄 · 금액. SQL 전이면 setup:false
+  const { data: edOrd } = useQuery({ queryKey: ['edOrderGroups'], queryFn: () => fetchEdOrderGroups(supabase), enabled: isED, staleTime: 120000 })
+  const edOrderIdx = useMemo(() => orderIndex(edOrd?.groups), [edOrd])
+  const edImportMut = useMutation({
+    mutationFn: (plan) => applyEdImport(supabase, plan, me?.name),
+    onSuccess: (n) => {
+      toastSuccess(`수주대장에서 생산관리 ${n}줄을 만들었습니다`)
+      qc.invalidateQueries({ queryKey: ['production'] })
+      qc.invalidateQueries({ queryKey: ['edOrderGroups'] })
+    },
+    onError: (e) => toastError('수주대장 불러오기 오류: ' + e.message),
+  })
+  async function onEdImport() {
+    const res = await fetchEdOrderGroups(supabase)        // 지금 수주대장 기준으로 다시 받는다
+    if (!res.setup) { toastError('Edwards생산_수주불러오기_반영_261029.sql 을 먼저 실행해 주세요'); return }
+    const plan = planEdImport(res.groups, rows)
+    if (!plan.ins.length) {
+      toastSuccess(`새로 만들 줄이 없습니다 — 이미 있음 ${plan.exist.length}줄${plan.noHogi.lines ? ` · 호기 번호 없는 발주 ${plan.noHogi.lines}줄` : ''}`)
+      return
+    }
+    const ok = await ask({
+      title: `수주대장의 Edwards 발주로 생산관리 ${plan.ins.length}줄을 만들까요?`,
+      desc: '발주서 메모의 「PROJECT 이름 #호기」 · 파트별로 만듭니다 (상태 PO접수 · 발주서 접수 ✔ · 납품요청일 = 가장 빠른 발주 납기). 이미 있는 줄은 상태 · 날짜 · 불출 · 비고 모두 그대로 둡니다. 메모에 파트가 없는 발주는 같은 PO · 같은 품번의 예전 파트로 정했습니다 (만든 뒤 편집에서 바꿀 수 있음).',
+      items: planEdText(plan),
+      okText: '불러오기 실행' })
+    if (!ok) return
+    edImportMut.mutate(plan)
+  }
   // 소요량 매칭 — 리스트 하네스 · 전장 칸에도 BOM 별 부족을 띄운다
   const edNeed = useEdNeed(rows, edRules, isED)
   const [needFocus, setNeedFocus] = useState(null)
@@ -826,8 +855,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40">
               {fcMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📅 포캐스트 반영'}
             </button>
+            <button onClick={onEdImport} disabled={edImportMut.isPending} data-ed-import
+              title="수주대장의 진행 중 Edwards 발주(PROJECT 이름 #호기)로 생산관리 줄을 만듭니다 — 미리 보고 실행, 이미 있는 줄은 그대로"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40">
+              {edImportMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : '📥 수주대장에서 불러오기'}
+            </button>
             <button onClick={() => setShowRules(true)}
-              title="불출 예정일 = 정한 납기 − N주 · 포캐스트 품번별 구분"
+              title="불출 예정일 = 정한 납기 − N일 (EUV 35일 · H2D 20일) · 품질 검수 = 납기 − 4일 · 포캐스트 품번별 구분"
               className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">⚙ 불출 기준</button>
           </>
         )}
@@ -1030,7 +1064,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             <EdTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel} rules={edRules}
               onField={setField} onEdit={(r) => openEdit(r)} onMissing={(r) => setMissRow(r)}
               projects={edProj?.projects || []} need={edNeed.byKey} onNeed={(k) => { setNeedFocus(k); setView('need') }}
-              statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor} />
+              statusOpts={STATUS_OPTS} statusColor={STATUS_COLOR} partColor={partColor}
+              orderIdx={edOrderIdx} orderSetup={!!edOrd?.setup} />
           ) : isCSK ? (
             <CskTable list={filtered} sel={sel} setSel={setSel} rowSel={rowSel}
               onField={setField} onEdit={(r) => openEdit(r)}
