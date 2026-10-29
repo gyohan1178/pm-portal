@@ -83,12 +83,20 @@ function whyUnlinked(p, cust) {
 }
 
 // 진행 중 수주 줄 id → { hogis, n_prod, any_open, guess, prod_pns } (수주대장 「🏭 호기」). 표가 없으면(SQL 전) 빈 Map
+//   v4.117.0 — 자재불출 여부(pm_line_issue_v)도 함께: issued(true/false) · issued_src(어디서 불출로 봤는지)
+//     보기가 없으면(SQL 전) 불출 정보만 빠지고 나머지는 그대로
 export async function fetchLineProdMap() {
-  try {
-    const rows = await fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id'))
-    const sortH = (t) => String(t || '').split(' ').filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))
-    return new Map(rows.map((r) => [r.id, { ...r, hogiList: sortH(r.hogis) }]))
-  } catch { return new Map() }
+  const sortH = (t) => String(t || '').split(' ').filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))
+  const [prod, iss] = await Promise.all([
+    fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id')).catch(() => []),
+    fetchAll(() => supabase.from('pm_line_issue_v').select('id,issued,src').order('id')).catch(() => []),
+  ])
+  const m = new Map(prod.map((r) => [r.id, { ...r, hogiList: sortH(r.hogis) }]))
+  for (const r of iss) {
+    const cur = m.get(r.id) || { id: r.id, hogiList: [] }
+    m.set(r.id, { ...cur, issued: !!r.issued, issued_src: r.src || null })
+  }
+  return m
 }
 
 // ── 그룹 ──
