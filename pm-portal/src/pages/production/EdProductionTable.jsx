@@ -55,7 +55,7 @@ export function EdSummary({ rows, rules, quick, setQuick }) {
   const live = rows.filter(r => r.status !== '완료')
   const cnt = { EUV: 0, 'H2D-LH': 0, 'H2D-HPD': 0, etc: 0 }
   const late = { harn: [0, 0], elec: [0, 0] }
-  let nopo = 0, fix = 0, fcNew = 0, fcAt = null
+  let nopo = 0, fix = 0, fcNew = 0
   for (const r of live) {
     const k = kindOf(r)
     cnt[k || 'etc']++
@@ -70,7 +70,6 @@ export function EdSummary({ rows, rules, quick, setQuick }) {
     if (r.due_fix) fix++
     if (r.fc_new) fcNew++
   }
-  for (const r of rows) if (r.fc_at && (!fcAt || r.fc_at > fcAt)) fcAt = r.fc_at
   const Box = ({ id, label, children, title }) => (
     <button type="button" title={title} onClick={() => id && setQuick(quick === id ? null : id)}
       className={`flex-1 min-w-[130px] text-left px-4 py-2.5 border-r border-slate-100 last:border-0 ${id ? 'hover:bg-slate-50' : 'cursor-default'} ${quick && quick === id ? 'bg-indigo-50/70' : ''}`}>
@@ -91,10 +90,12 @@ export function EdSummary({ rows, rules, quick, setQuick }) {
       </Box>
       <Box id="nopo" label="발주서 미접수" title="누르면 이 줄만 봅니다">{nopo}</Box>
       <Box id="fix" label="확정 납기" title="누르면 이 줄만 봅니다">{fix}</Box>
-      <Box id="fc" label="포캐스트 반영" title="포캐스트로 새로 만든 줄 — 누르면 이 줄만 봅니다">
-        <span className="text-sm">{fcAt ? `${md(fcAt)} ${String(fcAt).slice(11, 16)}` : '아직 없음'}</span>
-        {fcNew > 0 && <span className="ml-1 text-xs font-semibold text-sky-600">새 줄 {fcNew}</span>}
-      </Box>
+      {/* v4.118.1 — 포캐스트 반영 단추를 빼면서 「포캐스트 반영」 칸도 뺌 (포캐스트로 만든 줄이 남아 있을 때만 보임) */}
+      {fcNew > 0 && (
+        <Box id="fc" label="포캐스트로 만든 줄" title="예전에 포캐스트로 새로 만든 줄 — 누르면 이 줄만 봅니다">
+          <span className="text-sm">{fcNew}</span>
+        </Box>
+      )}
     </div>
   )
 }

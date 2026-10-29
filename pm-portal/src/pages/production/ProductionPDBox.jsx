@@ -843,18 +843,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         }} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 CSV 추출</button>
         {isED && (
           <>
-            <input ref={edFileRef} type="file" accept=".xlsx,.xlsm" className="hidden" onChange={onEdFile} />
-            <button onClick={() => edFileRef.current?.click()} disabled={importMut.isPending}
-              title="영업관리 파일의 '에드워드 월간 실적' 시트를 읽습니다"
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">
-              {importMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />올리는 중…</span> : '📤 PO 업로드'}
-            </button>
-            <input ref={edFcRef} type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={onEdFcFile} />
-            <button onClick={() => edFcRef.current?.click()} disabled={fcMut.isPending}
-              title="Edwards 포캐스트 파일(System Tag · to 정한 · Frame 입고 · H2D 자재)을 읽어 정한 납기를 채웁니다. 사람이 넣은 값은 그대로 둡니다."
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 disabled:opacity-40">
-              {fcMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📅 포캐스트 반영'}
-            </button>
+            {/* v4.118.1 — Edwards 는 수주대장에서 불러온다. 「📤 PO 업로드(월간 실적)」 · 「📅 포캐스트 반영」 단추는 뺌 (기능 코드는 남겨 둠) */}
             <button onClick={onEdImport} disabled={edImportMut.isPending} data-ed-import
               title="수주대장의 진행 중 Edwards 발주(PROJECT 이름 #호기)로 생산관리 줄을 만듭니다 — 미리 보고 실행, 이미 있는 줄은 그대로"
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40">
