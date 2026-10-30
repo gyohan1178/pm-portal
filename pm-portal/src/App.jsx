@@ -146,8 +146,8 @@ export default function App() {
       <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
       <Route path="/scan" element={<ProtectedRoute session={session}><ScanPage /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
-        {/* 관제탑은 menu_scope 에 'home' 이 있는 계정만 볼 수 있다 */}
-        <Route index element={canAccessPath(profile, '/') ? <ControlTower scope="all" /> : <Navigate to={landingPath(profile)} replace />} />
+        {/* 첫 화면 — 업무 흐름 (v4.122.0). 관제탑은 /control-tower (menu_scope 에 'home' 이 있는 계정만) */}
+        <Route index element={<Navigate to={landingPath(profile)} replace />} />
         <Route path="search"    element={<CommonSearch />} />
         <Route path="field-search" element={<FieldSearch />} />
         <Route path="forecast-shortage" element={<ShortageForecast />} />

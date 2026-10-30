@@ -196,18 +196,18 @@ export function sectionOfPath(pathname) {
 const SECTION_LANDING = { todo: '/todo', floor: '/field-search', mat: '/search', buy: '/inbound', sales: '/sales', report: '/weekly', master: '/master/items', quality: '/quality/fai' }
 export function landingPath(profile) {
   if (profile?.role === 'field_edit' || profile?.role === 'field_view') return '/production'
+  // 첫 화면 = 업무 흐름 (v4.122.0 — 관제탑 계정도. 예전엔 관제탑 계정만 관제탑이 첫 화면)
+  //   ⚠ 여기서 '/' 를 돌려주면 안 된다 — '/' 는 이 함수로 다시 보내므로 돌고 돈다
+  if (canSeeFlow(profile)) return '/flow'
   const a = allowedSections(profile)
   if (a !== null) {
-    // 관제탑(home) 이 허용되면 홈으로, 아니면 허용된 첫 섹션으로.
-    // 현장 검색은 모두가 볼 수 있는 화면이라 기본 도착지로 둔다.
-    if (a.includes('home') && profile?.role !== 'viewer') return '/'   // 조회 계정은 관제탑을 못 보므로 '/' 로 보내면 돌고 돈다
-    if (canSeeFlow(profile)) return '/flow'     // 첫 화면 = 내 부서 업무 흐름 (v4.91.0 — 예전: 허용된 첫 섹션)
+    // 업무 흐름을 막은 계정 — 관제탑(home) 이 허용되면 관제탑, 아니면 허용된 첫 섹션
+    if (a.includes('home') && profile?.role !== 'viewer') return '/control-tower'   // 조회 계정은 관제탑을 못 본다
     // 업무 흐름을 막은 계정 (v4.100.0) — 허용된 첫 섹션으로. 아무것도 없으면 자재 요청(누구나 접근)
     const k = a.find((x) => SECTION_LANDING[x])
     return k ? SECTION_LANDING[k] : '/material-request'
   }
-  if (profile?.role === 'viewer') return '/flow'   // 제한 없는 조회 계정도 업무 흐름부터 (예전: 통합검색)
-  return '/'          // 전체 접근 (menu_scope 없음)
+  return '/control-tower'   // 여기까지 오는 경우는 없다 (전체 접근 계정은 위에서 업무 흐름으로)
 }
 
 // 특정 경로 접근 가능? (섹션 제한 계정 대응)

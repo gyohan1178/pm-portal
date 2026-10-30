@@ -1,9 +1,9 @@
 import { NavLink } from 'react-router-dom'
 
-// 분석 통합 서브탭 — 관제탑(홈) / 매출 / 매입 / What-if / 인사이트 상호 이동
+// 분석 통합 서브탭 — 관제탑 / 매출 / 매입 / What-if / 인사이트 상호 이동
 export default function AnalysisTabs() {
   const tabs = [
-    { to: '/', label: '🎯 관제탑', end: true },
+    { to: '/control-tower', label: '🎯 관제탑' },
     { to: '/sales', label: '💼 매출' },
     { to: '/purchase-dashboard', label: '💰 매입' },
     { to: '/what-if', label: '🔬 What-if' },

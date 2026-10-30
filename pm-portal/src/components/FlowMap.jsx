@@ -73,7 +73,8 @@ export default function FlowMap() {
 
   const selCell = sel ? cellOf(sel.spec, sel.dept, viewer, data) : null
   // 관제탑은 볼 수 있는 사람(관리자 · 지정한 팀장)에게만 버튼을 보인다 — 「권한 없음」으로도 띄우지 않음
-  const selLinks = sel ? sel.spec.go(pcs).filter((p) => p !== '/' || can(p)).map((p) => ({ path: p, label: menuName(p) })) : []
+  // 관제탑 바로가기는 관제탑을 볼 수 있는 계정만 (v4.122.0 — 관제탑 주소 / → /control-tower)
+  const selLinks = sel ? sel.spec.go(pcs).filter((p) => p !== '/control-tower' || can(p)).map((p) => ({ path: p, label: menuName(p) })) : []
 
   return (
     <div className="space-y-2" data-flowmap>

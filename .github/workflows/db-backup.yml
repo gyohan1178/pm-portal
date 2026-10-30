@@ -1,0 +1,98 @@
+name: DB 자동 백업
+
+# 매일 새벽 DB 전체(표 · 함수 · 권한 규칙 · 로그인 계정)를 받아 GitHub 에 14일치 보관한다.
+#   · 표가 새로 생겨도 자동으로 들어간다 — 목록을 고칠 필요 없음
+#   · PM포털 · 하네스 공정관리 · AXCELIS 통합관리가 같은 DB 라 셋 다 함께 보관된다
+#   · DB 는 읽기만 한다
+#   · 받은 파일이 비었거나 빠진 게 있으면 실패로 끝나고, GitHub 가 메일로 알려준다
+#   · 파일 위치: GitHub → Actions → DB 자동 백업 → 실행 하나 → 맨 아래 Artifacts
+#   · 되살리는 법: 「사내 시스템 비상 대응 매뉴얼」 3단계
+#
+# 필요한 비밀값 (Settings → Secrets and variables → Actions)
+#   SUPABASE_DB_URL = Supabase 「Connect」 의 Session pooler 연결 문자열 (비밀번호를 넣은 것)
+#   GitHub 서버는 IPv4 만 쓰므로 db.xxx.supabase.co(직접 연결) 주소는 안 된다
+
+on:
+  schedule:
+    - cron: '30 17 * * *'   # UTC 17:30 = KST 02:30 (쇼티지 계산 03:00 보다 먼저)
+  workflow_dispatch:         # 수동 실행
+
+concurrency:
+  group: db-backup
+  cancel-in-progress: false
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+    steps:
+      - name: 비밀값 확인
+        run: |
+          if [ -z "$DB_URL" ]; then echo "::error::SUPABASE_DB_URL 비밀값이 없습니다"; exit 1; fi
+          case "$DB_URL" in
+            *YOUR-PASSWORD*) echo "::error::연결 문자열의 [YOUR-PASSWORD] 를 실제 비밀번호로 바꾸지 않았습니다"; exit 1 ;;
+            *db.*.supabase.co*) echo "::error::직접 연결 주소입니다. Session pooler 주소를 넣어 주세요"; exit 1 ;;
+          esac
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: DB 받기 (역할 · 구조 · 데이터)
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          supabase db dump --db-url "$DB_URL" -f out/roles.sql --role-only
+          supabase db dump --db-url "$DB_URL" -f out/schema.sql
+          supabase db dump --db-url "$DB_URL" -f out/data.sql --use-copy --data-only -x "storage.buckets_vectors" -x "storage.vector_indexes"
+
+      - name: 로그인 트리거 · 표별 건수 기록
+        # 회원가입 때 프로필을 만드는 auth.users 트리거는 위 구조 백업에 안 들어간다 → 따로 받아 둔다
+        # 표별 건수는 되살린 뒤 맞는지 대조하는 데 쓴다
+        run: |
+          set -euo pipefail
+          command -v psql >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client; }
+          psql "$DB_URL" -X -q -A -t -v ON_ERROR_STOP=1 \
+            -c "set search_path to pg_catalog" \
+            -c "select pg_get_triggerdef(t.oid) || ';' from pg_trigger t join pg_class c on c.oid = t.tgrelid join pg_namespace n on n.oid = c.relnamespace where n.nspname = 'auth' and not t.tgisinternal order by t.tgname" \
+            > out/auth_triggers.sql
+          psql "$DB_URL" -X -q -A -t -F $'\t' -v ON_ERROR_STOP=1 \
+            -c "select n.nspname || '.' || c.relname, (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I', n.nspname, c.relname), false, true, '')))[1]::text from pg_class c join pg_namespace n on n.oid = c.relnamespace where c.relkind in ('r','p') and n.nspname in ('public','auth','storage') order by 1" \
+            > out/counts.tsv
+
+      - name: 점검 (비거나 빠지면 실패)
+        run: |
+          set -euo pipefail
+          cd out
+          ls -l
+          fail() { echo "::error::$1"; exit 1; }
+          cnt() { awk -F'\t' -v k="$1" '$1==k {print $2}' counts.tsv; }
+          [ "$(stat -c%s data.sql)" -gt 5000000 ] || fail "data.sql 이 너무 작습니다 ($(stat -c%s data.sql) 바이트)"
+          grep -q 'CREATE TABLE' schema.sql || fail "schema.sql 에 표 구조가 없습니다"
+          grep -Eq '^COPY "?public"?\."?items"?' data.sql || fail "품목(items) 데이터가 없습니다"
+          grep -Eq '^COPY "?auth"?\."?users"?' data.sql || fail "로그인 계정(auth.users) 데이터가 없습니다"
+          grep -q 'on_auth_user_created' auth_triggers.sql || fail "회원가입 트리거를 받지 못했습니다"
+          items=$(cnt public.items); users=$(cnt auth.users); tables=$(grep -c '^public\.' counts.tsv || true)
+          [ "${items:-0}" -gt 1000 ] || fail "품목 건수가 이상합니다 (${items:-없음})"
+          {
+            echo "### DB 백업 완료"
+            echo "- 표 ${tables}개 · 품목 ${items}건 · 로그인 계정 ${users}개"
+            echo "- data.sql $(( $(stat -c%s data.sql) / 1024 / 1024 ))MB · schema.sql $(( $(stat -c%s schema.sql) / 1024 ))KB"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 묶기
+        run: |
+          set -euo pipefail
+          tar -C out -czf db-backup.tar.gz roles.sql schema.sql data.sql auth_triggers.sql counts.tsv
+          ls -l db-backup.tar.gz
+          echo "STAMP=$(TZ=Asia/Seoul date +%Y%m%d-%H%M)" >> "$GITHUB_ENV"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ env.STAMP }}
+          path: db-backup.tar.gz
+          retention-days: 14
+          compression-level: 0
+          if-no-files-found: error

@@ -68,7 +68,7 @@ function buildCommands() {
   push('품질', '도면 배포이력', '/quality/drawing-dist', 'drawing dist baepo')
   push('품질', '로트 관리', '/quality/lot', 'lot')
   // 전체
-  push('전체', '관제탑 (홈)', '/', 'dashboard home control tower gwanjetop')
+  push('전체', '관제탑', '/control-tower', 'dashboard home control tower gwanjetop')
   push('전체', '도움말 · 업무 안내', '/help', 'help doummal 안내 신규')
   return cmds
 }

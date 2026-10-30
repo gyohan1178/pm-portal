@@ -27,7 +27,7 @@ export const MENU = {
   '/drawings': '도면 조회',
   '/inbound': '입고',
   '/quote': '품목 단가 등록',
-  '/': '관제탑 (홈)',
+  '/control-tower': '관제탑',
   '/outbound': 'ASSY 출고',
   '/issue': '다품목 출고',
   '/material-request': '자재 요청',

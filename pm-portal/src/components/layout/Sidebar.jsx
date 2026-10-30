@@ -52,7 +52,7 @@ const MENU_META = {
   '/schedule-changes': ['📅','납품 일정 변경'],
   '/upload': ['📥','파일 올리기'],
   '/rack-layout': ['🗺','창고 배치도'],
-  '/': ['🎯','관제탑'], '/flow': ['🧭','업무 흐름'], '/todo': ['📋','할 일'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
+  '/control-tower': ['🎯','관제탑'], '/flow': ['🧭','업무 흐름'], '/todo': ['📋','할 일'], '/search': ['🔎','통합 검색'], '/inventory': ['📦','재고현황'],
   '/outbound': ['📤','ASSY 출고'], '/issue': ['🧺','다품목 출고'],
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
   '/sales-quote': ['📤','매출견적'], '/orders': ['📨','수주대장'],
@@ -383,7 +383,8 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
 
   // 메뉴 개인화 — 프로필에 저장되어 어느 PC 에서 로그인해도 유지된다
   const [editing, setEditing] = useState(false)
-  const [favorites, setFavorites] = useState(() => profile?.menu_favorites || [])
+  // 예전 즐겨찾기의 관제탑('/')은 새 주소로 — '/' 는 이제 첫 화면(업무 흐름)으로 간다 (v4.122.0)
+  const [favorites, setFavorites] = useState(() => [...new Set((profile?.menu_favorites || []).map(t => (t === '/' ? '/control-tower' : t)))])
   const [hidden, setHidden] = useState(() => profile?.menu_hidden || [])
 
   async function savePrefs(fav, hid) {
@@ -598,7 +599,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {!fieldOnly && profile?.role !== 'viewer' && canAccessSection(profile, 'home') && (
         <div className="py-1">
           {canSeeFlow(profile) && <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>}
-          <MenuItem to="/" end icon="🎯" onNavigate={onNavigate}>관제탑 (홈)</MenuItem>
+          <MenuItem to="/control-tower" icon="🎯" onNavigate={onNavigate}>관제탑</MenuItem>
           <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>
         </div>
