@@ -6,11 +6,11 @@ import QrScanner from '../../components/QrScanner'
 import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
-import { useCanEdit } from '../../hooks/useProfile'
+import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { ilikeAny } from '../../lib/pgFilter'
 import { refreshProcurement } from '../../lib/refresh'
 import { useCycleBase, useCellHold, holdReasonDefault } from '../../hooks/useCycleCount'
-import { ownerCells, checkMap, todayPlan, ownerOfLoc, DAILY, normLoc, heldSet } from '../../lib/cycleCount'
+import { ownerCells, checkMap, todayPlan, ownerOfLoc, normLoc, heldSet, withHelpers, dailyOf, mineByDate } from '../../lib/cycleCount'
 import { fetchAuxAt, fetchAuxByItems, registerAux, releaseAux } from '../../lib/cellAux'
 import { fetchUnitWeights, saveUnitWeight, fmtW } from '../../lib/unitWeight'
 import WeightCount from '../../components/WeightCount'
@@ -67,17 +67,24 @@ export default function CellAudit() {
   useEffect(() => { setJustDone(null) }, [location])
 
   // 순환 실사 — 이 칸 담당자 · 다음 칸
+  //   v4.120.0 — 누구 기준으로 셀지: 내가 이 칸을 맡은 사람(렉 담당 · 도우미)이면 나, 아니면 렉 담당자
+  //              하루 목표는 사람마다 (기본 5칸 · cycle_people.daily) — 다 세면 「오늘 끝」 화면
   const { data: cyc } = useCycleBase()
+  const me = useMe()
   const cycle = (() => {
     if (!cyc?.setup) return null
-    const owner = ownerOfLoc(location, cyc.owners)
+    const all = withHelpers(ownerCells(cyc.racks, cyc.owners), cyc.people)
+    const mineO = me?.name ? all.get(me.name) : null
+    const owner = mineO && mineO.cells.includes(location) ? me.name : ownerOfLoc(location, cyc.owners)
     if (!owner) return { owner: null }
-    const o = ownerCells(cyc.racks, cyc.owners).get(owner)
+    const o = all.get(owner)
     const cm = checkMap(cyc.checks)
-    const plan = todayPlan(o?.cells || [], cm, todayISO(), 1e9, o?.late, heldSet(cyc))   // 보류 칸은 「다음 칸」에서 뺌 (v4.114.0)
+    const today = todayISO()
+    const mine = o?.helper ? (mineByDate(cyc.checks, me?.id).get(today) || new Set()) : null   // 도우미는 내가 센 칸만
+    const plan = todayPlan(o?.cells || [], cm, today, 1e9, o?.late, heldSet(cyc), mine)   // 보류 칸은 「다음 칸」에서 뺌 (v4.114.0)
     const next = plan.list.find(c => !c.done && c.loc !== location)?.loc || null
     const hold = (cyc.holds || []).find(h => normLoc(h.location) === location) || null
-    return { owner, done: plan.done, next, hold, doneToday: cm.get(location)?.last === todayISO(), holdSetup: !!cyc.holdSetup }
+    return { owner, done: plan.done, daily: dailyOf(cyc.people, owner), next, hold, doneToday: cm.get(location)?.last === today, holdSetup: !!cyc.holdSetup }
   })()
   const holdApi = useCellHold()
   const [holdForm, setHoldForm] = useState(null)   // 사유 입력 중이면 문자열 (v4.114.0)
@@ -584,19 +591,32 @@ export default function CellAudit() {
           <p className="text-sm font-bold text-emerald-700">
             ✓ {justDone.empty ? '빈 칸 확인' : `저장 · 재고 반영됨 (${n(justDone.saved)}품목${justDone.diff ? ` · 차이 ${n(justDone.diff)}` : ' · 모두 맞음'})`}
           </p>
-          {cycle?.owner && (
-            <p className="text-xs text-emerald-700/80 mt-0.5">
-              {cycle.owner} 오늘 {n(cycle.done)}칸{cycle.done >= DAILY ? ' — 오늘 목표 끝 ✓ 더 세도 됩니다' : ` / ${DAILY}칸`}
-            </p>
+          {cycle?.owner && cycle.done < cycle.daily && (
+            <p className="text-xs text-emerald-700/80 mt-0.5">{cycle.owner} 오늘 {n(cycle.done)} / {n(cycle.daily)}칸</p>
           )}
-          <div className="flex gap-2 mt-3">
-            {cycle?.next && (
-              <button onClick={() => goCell(cycle.next)}
-                className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white">다음 칸 → <span className="font-mono">{cycle.next}</span></button>
-            )}
-            <button onClick={() => nav('/todo')}
-              className="px-4 py-3 text-sm font-semibold rounded-xl border border-slate-200 bg-white text-slate-600">오늘 목록</button>
-          </div>
+          {cycle?.owner && cycle.done >= cycle.daily ? (
+            /* 오늘 목표를 채움 — 끝맺음 (v4.120.0). 더 세는 것은 선택 */
+            <div data-cycle-finish className="mt-3 rounded-xl bg-white border border-emerald-200 p-4 text-center">
+              <div className="text-3xl">🎉</div>
+              <p className="text-base font-extrabold text-slate-800 mt-1">오늘 순환 실사 끝!</p>
+              <p className="text-xs text-slate-500 mt-0.5">{cycle.owner} · {n(cycle.done)} / {n(cycle.daily)}칸 · 수고했어요</p>
+              <button data-cycle-finish-ok onClick={() => nav('/todo')}
+                className="w-full mt-3 py-3 text-sm font-bold rounded-xl bg-emerald-600 text-white">✓ 오늘 끝내기 (오늘 목록으로)</button>
+              {cycle.next && (
+                <button data-cycle-more onClick={() => goCell(cycle.next)}
+                  className="w-full mt-2 py-2 text-xs font-semibold rounded-xl border border-slate-200 bg-white text-slate-500">더 세기 (선택) → <span className="font-mono">{cycle.next}</span></button>
+              )}
+            </div>
+          ) : (
+            <div className="flex gap-2 mt-3">
+              {cycle?.next && (
+                <button onClick={() => goCell(cycle.next)}
+                  className="flex-1 py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white">다음 칸 → <span className="font-mono">{cycle.next}</span></button>
+              )}
+              <button onClick={() => nav('/todo')}
+                className="px-4 py-3 text-sm font-semibold rounded-xl border border-slate-200 bg-white text-slate-600">오늘 목록</button>
+            </div>
+          )}
         </div>
       )}
 

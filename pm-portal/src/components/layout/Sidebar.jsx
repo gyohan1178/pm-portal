@@ -9,7 +9,7 @@ import { supabase } from '../../lib/supabase'
 import { alertCountFor } from '../../lib/todoView'
 import { todayISO } from '../../lib/utils'
 import { isHoliday } from '../../lib/bizdays'
-import { DAILY, isWorkday, normLoc, rackOf } from '../../lib/cycleCount'
+import { isWorkday, normLoc, rackOf, dailyOf, helperOf } from '../../lib/cycleCount'
 import { toast, toastError } from '../../lib/toast'
 import { visibleDepts, flowOf } from '../../lib/workflow'
 import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLOW_SEEN_EVENT } from '../../lib/flowSeen'
@@ -202,17 +202,22 @@ function useAlertCounts(buy = false) {
         const [{ data: p }, { data: todos }, { data: ck }] = await Promise.all([
           supabase.from('pm_profiles').select('id,name').eq('id', user.id).maybeSingle(),
           supabase.rpc('pm_todo_items'),
-          supabase.from('pm_cell_check').select('location').eq('check_date', t),
+          supabase.from('pm_cell_check').select('location,checked_by').eq('check_date', t),
         ])
         if (p) out['/todo'] = alertCountFor(todos || [], p)
         // 오늘 순환 실사가 안 끝났으면 1 더한다 (v4.78.0) — 담당 렉이 있는 사람만 · 실사하는 날만
         try {
           if (p?.name && isWorkday(t, isHoliday)) {
-            const { data: ow, error: oe } = await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
+            // v4.120.0 — 사람별 하루 목표 · 도우미(남의 렉을 같이 도는 사람은 자기가 센 칸만)
+            const { data: ppl } = await supabase.from('pm_settings').select('value').eq('key', 'cycle_people').maybeSingle()
+            const helpOf = helperOf(ppl?.value, p.name)
+            const { data: ow, error: oe } = helpOf
+              ? await supabase.from('pm_rack_owner').select('*').in('owner_name', helpOf)
+              : await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
             if (!oe && ow?.length) {
               const racks = new Set(ow.map(o => String(o.rack_code).toUpperCase()))
-              const n = new Set((ck || []).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
-              if (n < DAILY) out['/todo'] = (out['/todo'] || 0) + 1
+              const n = new Set((ck || []).filter(c => !helpOf || c.checked_by === user.id).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
+              if (n < dailyOf(ppl?.value, p.name)) out['/todo'] = (out['/todo'] || 0) + 1
             }
           }
         } catch { /* 순환 실사 설정 전이어도 메뉴는 그려야 한다 */ }

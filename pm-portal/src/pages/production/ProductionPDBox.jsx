@@ -17,6 +17,7 @@ import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcAppl
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
 import { fetchEdOrderGroups, orderIndex, planEdImport, planEdText, applyEdImport } from '../../lib/edOrderSync'
+import { fetchCskOrderUnits, planCskImport, planCskText, applyCskImport } from '../../lib/cskOrderSync'
 import { ruleKindOf, KINDS } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
 import * as XLSX from 'xlsx'
@@ -455,6 +456,31 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     },
     onError: (e) => toastError('포캐스트 반영 오류: ' + e.message),
   })
+  // ── CSK ← 수주대장 (v4.121.0) — 관리번호 있는 수주 줄로 새 줄 · 있는 줄은 발주 번호 · Plnd · Prod 만 맞춤 ──
+  const cskImportMut = useMutation({
+    mutationFn: (plan) => applyCskImport(supabase, plan, me?.name),
+    onSuccess: (r) => {
+      toastSuccess(`수주대장 불러오기 — 새 줄 ${r.inserted} · 발주 번호 맞춤 ${r.updated}`)
+      qc.invalidateQueries({ queryKey: ['production'] })
+    },
+    onError: (e) => toastError('수주대장 불러오기 오류: ' + e.message),
+  })
+  async function onCskImport() {
+    const res = await fetchCskOrderUnits(supabase)        // 지금 수주대장 기준으로 받는다
+    if (!res.setup) { toastError('CSK생산_수주불러오기_반영_261030.sql 을 먼저 실행해 주세요'); return }
+    const plan = planCskImport(res.units, rows)
+    if (!plan.ins.length && !plan.upd.length) {
+      toastSuccess(`새로 만들 줄이 없습니다 — 수주대장 진행 중 ${plan.same.length}대 모두 있음`)
+      return
+    }
+    const ok = await ask({
+      title: `수주대장의 CSK 발주로 생산관리 ${plan.ins.length ? `새 줄 ${plan.ins.length}` : ''}${plan.ins.length && plan.upd.length ? ' · ' : ''}${plan.upd.length ? `발주 번호 맞춤 ${plan.upd.length}` : ''} — 진행할까요?`,
+      desc: '수주 줄 비고의 관리번호 하나 = 생산관리 한 줄 (상태 PO접수 · 납품 예정일 = 수주 납기). 이미 있는 줄은 발주 번호 · Plnd · Prod 번호만 수주대장 값으로 맞추고 상태 · 날짜 · 불출 · 메모는 그대로 둡니다. 수주대장에 없는 Option · 자재 반출일 · 비고1 은 새 줄에서 비어 있습니다.',
+      items: planCskText(plan),
+      okText: '불러오기 실행' })
+    if (!ok) return
+    cskImportMut.mutate(plan)
+  }
   // ── CSK 생산 일정표 올리기 ──
   const cskRef = useRef(null)
   const cskMut = useMutation({
@@ -858,26 +884,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         )}
         {isCSK && (
           <>
-            <input ref={cskRef} data-csk-file type="file" accept=".xlsx,.xlsm,.xls" className="hidden" onChange={onCskFile} />
-            <button onClick={() => cskRef.current?.click()} disabled={cskMut.isPending}
-              title="CSK 가 주는 생산 Schedule 엑셀(생산_Schedule 시트)을 읽어 관리번호별로 나열합니다. 다시 올리면 바뀐 값만 갱신하고, 상태 · 메모는 그대로 둡니다."
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
-              {cskMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📅 일정표 올리기'}
+            {/* v4.121.0 — CSK 는 수주대장에서 불러온다. 「📅 일정표 올리기」 단추는 뺌 (기능 코드는 남겨 둠) */}
+            <button onClick={onCskImport} disabled={cskImportMut.isPending} data-csk-import
+              title="수주대장의 진행 중 CSK 발주(비고의 관리번호)로 생산관리 줄을 만듭니다 — 미리 보고 실행. 이미 있는 줄은 발주 번호 · Plnd · Prod 만 맞춤"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40">
+              {cskImportMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />불러오는 중…</span> : '📥 수주대장에서 불러오기'}
             </button>
           </>
         )}
-        {isVM && (
-          <>
-            <input ref={vmRef} data-vm-file type="file" accept=".html,.htm,.csv" className="hidden" onChange={onVmFile} />
-            <button data-vm-notion onClick={() => vmRef.current?.click()} disabled={vmNotionMut.isPending}
-              title="노션 🎯 PROJECT 표를 내보낸 파일(HTML 또는 CSV)을 올리면, 생산관리에 없는 프로젝트만 새 줄로 넣습니다. 이미 있는 줄은 그대로 두고, 납품일이 다르면 맞출지 묻습니다."
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-              {vmNotionMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />반영 중…</span> : '📥 노션 PROJECT 올리기'}
-            </button>
-          </>
-        )}
-        <button onClick={() => fileRef.current?.click()} disabled={importMut.isPending} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{importMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />가져오는 중...</span> : '📤 CSV 가져오기'}</button>
-        <input ref={fileRef} type="file" accept=".csv" onChange={onFile} className="hidden" />
+        {/* v4.121.0 — VM 「📥 노션 PROJECT 올리기」 · 모든 고객사 「📤 CSV 가져오기」 단추는 뺌 (기능 코드는 남겨 둠) */}
         <span className="text-xs text-slate-400 font-semibold ml-auto">{filtered.filter(x => !x._month).length}건</span>
       </div>
 

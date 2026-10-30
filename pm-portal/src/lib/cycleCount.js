@@ -10,6 +10,14 @@
 
 export const DAILY = 5
 
+// 사람별 설정 (v4.120.0) — pm_settings 'cycle_people'
+//   daily  : { 이름: 하루 목표 칸 수 }  — 없으면 DAILY(5)
+//   helpers: { 이름: [담당자 이름 …] } — 렉 담당이 아니라 그 사람들 렉을 같이 도는 사람 (새 직원 등)
+//            도우미는 「자기가 센 칸」만 오늘 센 칸으로 치고, 오늘 누가 이미 센 칸은 목록에서 뺀다
+export const CYCLE_KEY = 'cycle_people'
+export const dailyOf = (cfg, name) => { const n = Number(cfg?.daily?.[name]); return n > 0 ? n : DAILY }
+export const helperOf = (cfg, name) => (Array.isArray(cfg?.helpers?.[name]) ? cfg.helpers[name] : null)
+
 const pad2 = (v) => String(v).padStart(2, '0')
 export const cellLoc = (rack, row, level) => `${String(rack).toUpperCase()}-${pad2(row)}-${level}`
 
@@ -62,6 +70,35 @@ export function ownerCells(racks, owners) {
   return out
 }
 
+// 담당자 표 + 도우미 — 도우미는 맡은 사람들 렉을 합친 칸 목록 (렉 정렬순 그대로)
+export function withHelpers(byOwner, cfg) {
+  const m = new Map(byOwner)
+  for (const [name, of] of Object.entries(cfg?.helpers || {})) {
+    const src = (Array.isArray(of) ? of : []).map((n) => byOwner.get(n)).filter(Boolean)
+    if (!src.length) continue
+    const o = { racks: [], cells: [], late: new Set(), lateRacks: [], helper: true, of: of.filter((n) => byOwner.has(n)) }
+    for (const x of src) { o.racks.push(...x.racks); o.cells.push(...x.cells); o.lateRacks.push(...x.lateRacks); x.late.forEach((l) => o.late.add(l)) }
+    // 맨 뒤 렉은 합친 목록에서도 맨 뒤로
+    const isLate = (loc) => o.late.has(loc)
+    o.cells = [...o.cells.filter((l) => !isLate(l)), ...o.cells.filter(isLate)]
+    m.set(name, o)
+  }
+  return m
+}
+
+// 한 사람이 센 칸 — { 날짜: Set(칸) } (도우미의 오늘 · 이번 주 숫자)
+export function mineByDate(checks, userId) {
+  const m = new Map()
+  if (!userId) return m
+  for (const c of checks || []) {
+    if (c.checked_by !== userId) continue
+    const d = String(c.check_date || '').slice(0, 10)
+    if (!m.has(d)) m.set(d, new Set())
+    m.get(d).add(normLoc(c.location))
+  }
+  return m
+}
+
 // 센 기록 → 칸별 { last: 마지막 날, days: 센 날 수 }
 //   checks: [{location, check_date}] (pm_cell_check + 예전 칸 실사 pm_stock_audit 날짜를 합쳐 넣는다)
 export function checkMap(checks) {
@@ -81,14 +118,15 @@ export function checkMap(checks) {
 //   반환: { list:[{loc, done, last, days, order}], done, target, left }
 //   late: 「맨 뒤」 칸 Set (불용재고 렉 등) — 같은 바퀴 안에서 맨 끝으로
 //   held: 보류 칸 Set (v4.114.0) — 오늘 목록에서 빼고 다음 칸으로 채운다 (오늘 이미 센 칸은 그대로 센 칸)
-export function todayPlan(cells, cm, today, target = DAILY, late = null, held = null) {
+//   mine: 도우미면 「내가 오늘 센 칸」 Set (v4.120.0) — 그 칸만 센 칸으로 치고, 오늘 누가 센 칸은 목록에서 뺀다
+export function todayPlan(cells, cm, today, target = DAILY, late = null, held = null, mine = null) {
   const info = (loc, i) => {
     const x = cm.get(loc)
-    return { loc, i, last: x?.last || null, days: x?.days || 0, done: x?.last === today, late: !!late?.has(loc) }
+    return { loc, i, last: x?.last || null, days: x?.days || 0, done: mine ? mine.has(loc) : x?.last === today, anyToday: x?.last === today, late: !!late?.has(loc) }
   }
   const all = (cells || []).map(info)
   const done = all.filter((c) => c.done)
-  const pending = all.filter((c) => !c.done && !held?.has(c.loc)).sort((a, b) => {
+  const pending = all.filter((c) => !c.done && !(mine && c.anyToday) && !held?.has(c.loc)).sort((a, b) => {
     if (a.days !== b.days) return a.days - b.days            // 이번 바퀴에서 안 센 칸(센 횟수 적은 칸) 먼저
     if (a.late !== b.late) return a.late ? 1 : -1            // 「맨 뒤」 렉은 그 바퀴 끝에
     if (!a.last !== !b.last) return a.last ? 1 : -1          // 안 센 칸 먼저
@@ -161,14 +199,16 @@ export const isWorkday = (ymd, isHoliday = () => false) => { const w = dow(ymd);
 
 // 이번 주 월~금 — [{ d, label, n, today, future, off }]
 //   n = 그날 센 담당 칸 수 (누가 셌든 그 사람 렉 칸)
-export function weekStrip(cells, cm, today, isHoliday = () => false) {
+//   mine: 도우미면 mineByDate 결과 — 내가 센 칸만 센다 (v4.120.0)
+export function weekStrip(cells, cm, today, isHoliday = () => false, mine = null) {
   const w = dow(today)
   const mon = addDays(today, w === 0 ? -6 : 1 - w)
   const out = []
   for (let k = 0; k < 5; k++) {
     const d = addDays(mon, k)
     let n = 0
-    for (const loc of cells || []) if (cm.get(loc)?.dates?.has(d)) n++
+    if (mine) { const set = new Set(cells || []); for (const loc of mine.get(d) || []) if (set.has(loc)) n++ }
+    else for (const loc of cells || []) if (cm.get(loc)?.dates?.has(d)) n++
     out.push({ d, label: WD[dow(d)], n, today: d === today, future: d > today, off: isHoliday(d) })
   }
   return out

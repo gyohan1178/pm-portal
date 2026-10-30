@@ -3,11 +3,13 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
-import { useCycleBase, useCellHold, holdReasonDefault } from '../hooks/useCycleCount'
+import { useCycleBase, useCellHold, holdReasonDefault, useCycleDaily } from '../hooks/useCycleCount'
+import { useCanEdit } from '../hooks/useProfile'
 import { todayISO } from '../lib/utils'
 import { isHoliday } from '../lib/bizdays'
 import {
   DAILY, ownerCells, checkMap, todayPlan, roundStats, rackRanges, normLoc, loadExtra, saveExtra, isWorkday, weekStrip, heldSet,
+  dailyOf, withHelpers, mineByDate,
 } from '../lib/cycleCount'
 
 // 할 일 탭의 「오늘 순환 실사」 줄 (v4.78.0)
@@ -24,7 +26,11 @@ export function useCycleTodo({ who, me, people }) {
   const { data: base } = useCycleBase()
   const today = todayISO()
   const [extra, setExtra] = useState(() => loadExtra(today))
-  const byOwner = useMemo(() => ownerCells(base?.racks, base?.owners), [base])
+  const cfg = base?.people || {}
+  const byOwner = useMemo(() => withHelpers(ownerCells(base?.racks, base?.owners), base?.people), [base])   // 도우미(새 직원 등) 포함 (v4.120.0)
+  const uidOf = (name) => (me?.name === name ? me?.id : (people || []).find((p) => p.name === name)?.id) || null
+  // 도우미가 센 칸 — 사람 id 별 { 날짜: Set(칸) }
+  const mineOf = (name) => mineByDate(base?.checks, uidOf(name))
   const cm = useMemo(() => checkMap(base?.checks), [base])
   const held = useMemo(() => heldSet(base), [base])   // 보류 칸 (v4.114.0)
   const workday = isWorkday(today, isHoliday)
@@ -33,7 +39,8 @@ export function useCycleTodo({ who, me, people }) {
   const names = useMemo(() => {
     if (!base?.setup || !workday) return []
     if (who === 'me') return myName ? [myName] : []
-    if (who === 'all') return [...byOwner.keys()]
+    // 도우미는 가입해서 이름이 잡혀야 보인다 (입사 전에는 줄 안 생김)
+    if (who === 'all') return [...byOwner.keys()].filter((n) => !byOwner.get(n).helper || uidOf(n))
     const nm = String(who).startsWith('name:') ? String(who).slice(5) : (people || []).find((p) => p.id === who)?.name
     return nm && byOwner.has(nm) ? [nm] : []
   }, [base, workday, who, myName, byOwner, people])
@@ -41,29 +48,36 @@ export function useCycleTodo({ who, me, people }) {
   const items = useMemo(() => names.map((name) => {
     const o = byOwner.get(name)
     const isMe = name === myName
-    const target = DAILY + (isMe ? extra * DAILY : 0)
-    const plan = todayPlan(o.cells, cm, today, target, o.late, held)
+    const daily = dailyOf(cfg, name)
+    const target = daily + (isMe ? extra * DAILY : 0)
+    const mine = o.helper ? mineOf(name) : null
+    const plan = todayPlan(o.cells, cm, today, target, o.late, held, o.helper ? (mine.get(today) || new Set()) : null)
     const mineSet = new Set(o.cells)
     return {
-      key: 'cycle:' + name, name, isMe, o, plan, target,
-      complete: plan.done >= target,
+      key: 'cycle:' + name, name, isMe, o, plan, target, daily,
+      complete: plan.done >= target, goalDone: plan.done >= daily,
       holds: (base?.holds || []).filter((h) => mineSet.has(normLoc(h.location))),
       rs: roundStats(o.cells, cm, held),
-      week: weekStrip(o.cells, cm, today, isHoliday),
+      week: weekStrip(o.cells, cm, today, isHoliday, mine),
     }
-  }), [names, byOwner, myName, extra, cm, today, held, base])
+  }), [names, byOwner, myName, extra, cm, today, held, base, people]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 사람 칩 · 사이드바 숫자용 — 오늘 아직 안 끝난 사람 이름
   const pendingNames = useMemo(() => {
     if (!base?.setup || !workday) return new Set()
     const s = new Set()
-    for (const [name, o] of byOwner) if (todayPlan(o.cells, cm, today, DAILY, o.late, held).done < DAILY) s.add(name)
+    for (const [name, o] of byOwner) {
+      if (o.helper && !uidOf(name)) continue   // 아직 가입 전 도우미
+      const d = dailyOf(cfg, name)
+      const mine = o.helper ? (mineOf(name).get(today) || new Set()) : null
+      if (todayPlan(o.cells, cm, today, d, o.late, held, mine).done < d) s.add(name)
+    }
     return s
-  }, [base, workday, byOwner, cm, today, held])
+  }, [base, workday, byOwner, cm, today, held, people]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const more = () => { const x = extra + 1; setExtra(x); saveExtra(today, x) }
   const less = () => { setExtra(0); saveExtra(today, 0) }
-  return { items, pendingNames, racks: base?.racks || [], more, less, extra, today, holdSetup: !!base?.holdSetup }
+  return { items, pendingNames, racks: base?.racks || [], more, less, extra, today, holdSetup: !!base?.holdSetup, meName: me?.name || null }
 }
 
 // 칸별 품목 수 — 펼칠 때만 받는다 (재고 위치 전부라 무겁다)
@@ -86,8 +100,10 @@ export function CycleTodoRow({ it, cyc, showName }) {
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const { data: byLoc } = useLocCounts(open)
-  const { plan, target, complete, rs, week, o, isMe, name, holds = [] } = it
+  const { plan, target, complete, rs, week, o, isMe, name, holds = [], daily = DAILY, goalDone } = it
   const holdApi = useCellHold()
+  const canEdit = useCanEdit()
+  const dailyApi = useCycleDaily()
   const [holdForm, setHoldForm] = useState(null)   // { loc, reason } — 칸 보류 사유 칸 (v4.114.0)
   const doHold = async () => { if (await holdApi.hold(holdForm.loc, holdForm.reason)) setHoldForm(null) }
   const pct = Math.min(100, Math.round((plan.done / Math.max(1, target)) * 100))
@@ -101,6 +117,7 @@ export function CycleTodoRow({ it, cyc, showName }) {
             <span className={`text-sm font-semibold ${complete ? 'text-slate-500' : 'text-slate-800'}`}>
               🧾 오늘 순환 실사{showName ? ` — ${name}` : ''} · <b data-cycle-todo-cnt>{plan.done} / {target}칸</b>{complete ? ' ✓' : ''}
             </span>
+            {goalDone && <span data-cycle-goal-done className="px-1.5 py-0.5 rounded bg-emerald-50 border border-emerald-200 text-emerald-700 text-[10px] font-bold">🎉 오늘 끝</span>}
             <span className="inline-block w-20 h-1.5 rounded-full bg-indigo-100 overflow-hidden align-middle">
               <span className={`block h-full ${complete ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${pct}%` }} />
             </span>
@@ -108,7 +125,9 @@ export function CycleTodoRow({ it, cyc, showName }) {
           </div>
           <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500 flex-wrap">
             {!complete && plan.nextLoc && <span>다음 칸 <b className="font-mono text-indigo-600">{plan.nextLoc}</b></span>}
-            <span>{rackRanges(o.racks.filter((c) => !o.lateRacks.includes(c)), cyc.racks)}{late}</span>
+            {o.helper
+              ? <span data-cycle-helper>도움 — {o.of.join(' · ')} 렉 (내가 센 칸만 셈)</span>
+              : <span>{rackRanges(o.racks.filter((c) => !o.lateRacks.includes(c)), cyc.racks)}{late}</span>}
             <span>{rs.round}바퀴째 {rs.pct}%</span>
             {holds.length > 0 && <span data-cycle-held-cnt className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 font-bold">⏸ 보류 {holds.length}칸</span>}
             <span className="text-slate-400">{open ? '접기 ▴' : '칸 보기 ▾'}</span>
@@ -117,7 +136,7 @@ export function CycleTodoRow({ it, cyc, showName }) {
           <div data-cycle-week className="flex items-center gap-1 mt-1.5">
             <span className="text-[10px] text-slate-400 mr-0.5">이번 주</span>
             {week.map((d) => {
-              const ok = d.n >= DAILY
+              const ok = d.n >= daily
               const cls = d.off ? 'bg-slate-50 text-slate-300 border-slate-100'
                 : d.future ? 'bg-white text-slate-300 border-slate-100'
                 : ok ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
@@ -186,9 +205,22 @@ export function CycleTodoRow({ it, cyc, showName }) {
               })}
             </div>
           )}
+          {canEdit && (
+            <div className="flex items-center gap-2 mt-2" data-cycle-daily={name}>
+              <span className="text-[11px] text-slate-500">하루 목표</span>
+              <span className="inline-flex bg-slate-100 rounded-lg p-0.5">
+                {[5, 10].map((n) => (
+                  <button key={n} type="button" data-cycle-daily-set={n} disabled={dailyApi.busy || daily === n}
+                    onClick={() => dailyApi.setDaily(name, n, cyc.meName)}
+                    className={`px-2.5 py-0.5 text-[11px] font-bold rounded-md ${daily === n ? 'bg-slate-800 text-white' : 'text-slate-500 hover:text-slate-700'}`}>{n}칸</button>
+                ))}
+              </span>
+              <span className="text-[10.5px] text-slate-400">— 사람마다 · 모든 기기에 같이</span>
+            </div>
+          )}
           {isMe && (
             <div className="flex items-center gap-2 mt-2">
-              <span className="text-[11px] text-slate-400">못 한 날은 넘기지 않습니다 — 매일 {DAILY}칸 · 시간 나면 더 세도 됩니다</span>
+              <span className="text-[11px] text-slate-400">못 한 날은 넘기지 않습니다 — 매일 {daily}칸 · 다 세면 끝, 그다음은 선택</span>
               {cyc.extra > 0 && <button type="button" onClick={cyc.less} className="ml-auto text-[11px] text-slate-400">기본 {DAILY}칸으로</button>}
               <button type="button" data-cycle-todo-more onClick={cyc.more} disabled={!plan.pendingAll}
                 className={`${cyc.extra > 0 ? '' : 'ml-auto '}px-2.5 py-1 text-[11px] font-bold rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700 disabled:opacity-40`}>＋ {DAILY}칸 더</button>

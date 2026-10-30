@@ -13,13 +13,15 @@ export async function fetchCycleBase() {
   const { data: racks, error: e2 } = await supabase.from('pm_rack').select('code,rows_cnt,levels_cnt,zone,sort_no').order('sort_no')
   if (e2) throw e2
   const checks = await fetchAll(() => supabase.from('pm_cell_check')
-    .select('id,location,check_date,checked_by,item_cnt,diff_cnt,empty').order('id'))
+    .select('id,location,check_date,checked_by,item_cnt,diff_cnt,empty').order('id'))   // checked_by — 도우미가 센 칸 (v4.120.0)
   // 예전 칸 실사(순환 실사 전) 날짜도 「센 날」로 친다
   const legacy = await fetchAll(() => supabase.from('pm_stock_audit').select('id,location,audit_date').order('id'))
   // 보류 칸 (v4.114.0) — 부를 때 저절로 풀 것(그 칸을 셈 · 음수 풀림)을 먼저 푼다. SQL 전이면 보류 없이
   const { data: holds, error: eh } = await supabase.rpc('pm_cell_hold_active')
+  // 사람별 하루 목표 · 도우미 (v4.120.0) — 없으면 모두 5칸
+  const { data: ppl } = await supabase.from('pm_settings').select('value').eq('key', 'cycle_people').maybeSingle()
   return {
-    setup: true, racks: racks || [], owners: owners || [],
+    setup: true, racks: racks || [], owners: owners || [], people: ppl?.value || {},
     holds: eh ? [] : (holds || []), holdSetup: !eh,
     checks: [...checks, ...legacy.map((a) => ({ location: a.location, check_date: a.audit_date }))],
   }
@@ -56,3 +58,23 @@ export function useCellHold() {
 
 // 기본 사유 — 그 칸 음수 품목 수
 export const holdReasonDefault = (negN) => (negN > 0 ? `음수 재고 ${negN}품목 — 입고 대기` : '')
+
+// 사람별 하루 목표 바꾸기 (v4.120.0) — pm_settings 'cycle_people'.daily[이름]
+export function useCycleDaily() {
+  const qc = useQueryClient()
+  const [busy, setBusy] = useState(false)
+  const setDaily = async (name, n, by) => {
+    setBusy(true)
+    try {
+      const { data: cur } = await supabase.from('pm_settings').select('value').eq('key', 'cycle_people').maybeSingle()
+      const v = cur?.value && typeof cur.value === 'object' ? { ...cur.value } : {}
+      v.daily = { ...(v.daily || {}), [name]: n }
+      const { error } = await supabase.from('pm_settings').upsert({ key: 'cycle_people', value: v, updated_at: new Date().toISOString(), updated_by: by || null }, { onConflict: 'key' })
+      if (error) throw error
+      toastSuccess(`${name} 하루 목표 ${n}칸`)
+      qc.invalidateQueries({ queryKey: ['cycle'] })
+      qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+    } catch (e) { toastError('하루 목표 저장 실패: ' + (e.message || e)) } finally { setBusy(false) }
+  }
+  return { setDaily, busy }
+}
