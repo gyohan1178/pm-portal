@@ -2,13 +2,15 @@
 //   영업이 견적 접수(매출견적 › 견적 접수 현황)에서 「💲 구매자재에 단가 요청」한 건의 「단가 없는 부품」을 모아 보여 준다.
 //   부품마다 「단가 넣기」 → 아래 한 품목 입력칸에 채움. 등록한 뒤 「🔍 다시 점검」을 누르면 견적 접수에 반영되고,
 //   요청 건의 부품이 모두 준비되면 「단가 요청 끝」이 저절로 찍힌다 (rfq.js syncPriceDone).
+//   v4.127.0 — 부품마다 「🚫 견적 불가」(수급 불가 · 단종 …): 그 부품이 들어간 견적 품목을 견적 불가로 표시하고
+//              (사유 · 부품 품번이 견적 접수에 보임) 그 건에 남은 품목이 없으면 접수를 「견적 불가」로 마무리한다
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
-import { isOpenLine, checkRfq, dday } from '../master/rfq'
+import { isOpenLine, checkRfq, dday, NOQUOTES, setLineNoquote, closeNoquote } from '../master/rfq'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 
@@ -68,6 +70,8 @@ export default function QuotePriceReqs({ onPick }) {
   const [open, setOpen] = useState(true)
   const [onlyLeft, setOnlyLeft] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [nq, setNq] = useState(null)   // 견적 불가 입력 중 — { code, reason, memo }
+  const [nqBusy, setNqBusy] = useState(false)
 
   const reqs = data?.reqs || []
   const parts = data?.parts || []
@@ -97,6 +101,34 @@ export default function QuotePriceReqs({ onPick }) {
     else toastSuccess('다시 점검했습니다 — 견적 접수에 반영됐습니다')
   }
 
+  // 견적 불가 (v4.127.0) — 이 부품이 들어간 견적 품목을 모두 견적 불가로 → 남은 품목이 없는 접수는 「견적 불가」로 마무리
+  async function doNoquote(p) {
+    const meName = profile?.name || null
+    const memo = `부품 ${p.code}${p.item?.name ? ` (${p.item.name})` : ''}${nq.memo.trim() ? ` — ${nq.memo.trim()}` : ''}`
+    const pairs = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
+    setNqBusy(true)
+    let closed = 0
+    try {
+      for (const f of pairs) await setLineNoquote(f.rfq, f.line, nq.reason, memo, meName)
+      for (const r of [...new Map(pairs.map((f) => [f.rfq.id, f.rfq])).values()]) {
+        const { data: ls, error: e } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+        if (e) throw e
+        // 남은 품목(견적 안 냄 · 보류 아님 · 견적 불가 아님)도, 이미 낸 품목도 없으면 → 접수 마무리
+        if ((ls || []).length && !(ls || []).some(isOpenLine) && !(ls || []).some((l) => l.quoted_at || l.hold)) {
+          await closeNoquote({ ...r, lines: ls }, [...new Set(ls.map((l) => l.noquote).filter(Boolean))].join(' · ') + ` — ${memo}`)
+          closed++
+        }
+      }
+      setNq(null)
+      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 견적 품목 ${pairs.length}개 빠짐${closed ? ` · ${closed}건은 견적 불가로 마무리` : ' · 나머지 품목은 계속 진행'}`)
+    } catch (e) {
+      toastError('견적 불가 처리 실패 — ' + (e?.message || e))
+    } finally {
+      setNqBusy(false)
+      qc.invalidateQueries({ queryKey: PRICE_REQ_KEY }); qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
+    }
+  }
+
   if (error) return <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800" data-price-reqs>영업 단가 요청을 불러오지 못했습니다 — {error.message}</div>
   if (isLoading) return (
     <div className="rounded-xl border border-slate-200 bg-white px-4 py-3 flex items-center gap-2" data-price-reqs data-skeleton>
@@ -121,6 +153,7 @@ export default function QuotePriceReqs({ onPick }) {
           <p className="text-[12px] text-slate-500">
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
+            수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품이 들어간 견적 품목이 사유와 함께 빠지고, 남은 품목이 없는 건은 견적 불가로 마무리됩니다.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={onlyLeft} onChange={(e) => setOnlyLeft(e.target.checked)} className="w-4 h-4 accent-violet-600" data-price-reqs-only />남은 것만</label>
@@ -141,7 +174,8 @@ export default function QuotePriceReqs({ onPick }) {
                 {!shown.length && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">남은 부품이 없습니다 — 「🔍 다시 점검」을 눌러 견적 접수에 반영하세요</td></tr>}
                 {shown.map((p) => {
                   const rfqs = [...new Map(p.from.map((f) => [f.rfq.id, f.rfq])).values()]
-                  return (
+                  const lines = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
+                  return [
                     <tr key={p.code} className={`border-t border-slate-100 ${p.priced ? 'bg-emerald-50/40' : ''}`} data-price-req={p.code}>
                       <td className="px-3 py-2"><div className="font-mono font-bold text-[#5b6ee8]">{p.code}</div><div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={p.item?.name}>{p.item?.name || <span className="text-rose-500">포털에 없는 품번</span>}</div></td>
                       <td className="px-3"><div className="text-slate-600">{p.item?.manufacturer || '—'}</div><div className="font-mono text-[11px] text-slate-400">{p.item?.manufacturer_code || ''}</div></td>
@@ -161,9 +195,35 @@ export default function QuotePriceReqs({ onPick }) {
                           ? <button type="button" onClick={() => onPick?.(p.item, rfqs)} data-price-req-pick={p.code}
                               className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold whitespace-nowrap ${p.priced ? 'bg-white border border-slate-200 text-slate-500' : 'bg-amber-500 text-white hover:bg-amber-600'}`}>{p.priced ? '다시 넣기' : '💲 단가 넣기'}</button>
                           : <span className="text-[11px] text-slate-400">품목 등록 먼저</span>}
+                        {editable && !p.priced && (
+                          <button type="button" onClick={() => setNq(nq?.code === p.code ? null : { code: p.code, reason: '수급 불가', memo: '' })} data-price-req-nq={p.code}
+                            className={`ml-1.5 px-2 py-1 rounded-lg text-[11.5px] font-bold whitespace-nowrap border ${nq?.code === p.code ? 'bg-rose-600 text-white border-rose-600' : 'bg-white border-rose-200 text-rose-600 hover:bg-rose-50'}`}>🚫 견적 불가</button>
+                        )}
                       </td>
-                    </tr>
-                  )
+                    </tr>,
+                    nq?.code === p.code && (
+                      <tr key={p.code + '-nq'} className="bg-rose-50/60" data-price-req-nq-form={p.code}>
+                        <td colSpan={5} className="px-3 py-2.5">
+                          <div className="flex flex-wrap items-center gap-2 text-[12px]">
+                            <b className="text-rose-700">🚫 {p.code} 견적 불가</b>
+                            <select value={nq.reason} onChange={(e) => setNq({ ...nq, reason: e.target.value })} data-price-req-nq-reason
+                              className="px-2 py-1 border border-rose-200 rounded-lg bg-white text-[12px]">
+                              {NOQUOTES.map((h) => <option key={h} value={h}>{h}</option>)}
+                            </select>
+                            <input value={nq.memo} onChange={(e) => setNq({ ...nq, memo: e.target.value })} data-price-req-nq-memo
+                              placeholder="자세한 내용 (예: 단종 · 대체품 없음 / 납기 6개월 이상)" className="flex-1 min-w-[260px] px-2 py-1 border border-rose-200 rounded-lg bg-white" />
+                            <button type="button" disabled={nqBusy} onClick={() => doNoquote(p)} data-price-req-nq-ok
+                              className="px-3 py-1 rounded-lg bg-rose-600 text-white font-bold hover:bg-rose-700 disabled:opacity-50">{nqBusy ? <span className="inline-flex items-center gap-1.5"><Spin />처리 중…</span> : '견적 불가로 확정'}</button>
+                            <button type="button" onClick={() => setNq(null)} className="px-2 py-1 text-slate-500 hover:text-slate-700">취소</button>
+                          </div>
+                          <p className="mt-1.5 text-[11px] text-rose-700/80">
+                            이 부품이 들어간 견적 품목 {lines.length}개가 견적에서 빠집니다 — {lines.map((f) => `${f.rfq.title} · ${f.line.pn}`).join(' / ')}.
+                            영업 견적 접수에 사유 · 부품 품번이 보이고, 그 건에 남은 품목이 없으면 「견적 불가」로 마무리됩니다. (잘못 눌렀으면 견적 접수에서 품목 줄 해제 · 마무리된 건은 「↩ 다시 진행」)
+                          </p>
+                        </td>
+                      </tr>
+                    ),
+                  ]
                 })}
               </tbody>
             </table>

@@ -176,6 +176,15 @@ export default function RfqBoard({ customers = [], onWrite }) {
       logActivity('update', 'pm_rfq', r.title, `견적 발송 취소 — ${r.title}`)
     }, '진행 중으로 되돌렸습니다')
   }
+  // ↩ 견적 불가 되돌리기 (v4.127.0) — 구매자재가 부품 견적 불가로 마무리한 건도 다시 진행할 수 있게. 품목의 견적 불가 표시는 그대로(품목에서 해제)
+  async function reopenNq(r) {
+    const ok = await ask({ title: `「${r.title}」 견적 불가를 되돌릴까요?`, desc: '「진행 중」으로 되돌립니다. 품목마다 붙은 견적 불가 표시는 그대로 남아 있으니, 견적할 품목은 품목 줄에서 「— 견적 가능」으로 풀어 주세요.', okText: '다시 진행' })
+    if (!ok) return
+    await run(r.id, async () => {
+      await patchRfq(r.id, { status: '진행', result_memo: null, result_at: null })
+      logActivity('update', 'pm_rfq', r.title, `견적 불가 되돌림 — ${r.title}`)
+    }, '진행 중으로 되돌렸습니다')
+  }
   const sentBy = (r) => (/^발송:/.test(r.result_memo || '') ? String(r.result_memo).replace(/^발송:\s*/, '') : '')
 
   if (error && /pm_rfq/.test(error.message || '')) {
@@ -394,6 +403,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       {editable && isBuy && r.stage === 'price' && <Btn onClick={() => priceDone(r)} busy={b} data="done">단가 요청 끝</Btn>}
                       {editable && r.status === '진행' && r.stage !== 'nq' && <Btn tone="green" onClick={() => openSend(r)} busy={b} data="send">📤 발송 완료</Btn>}
                       {editable && r.status === '제출' && <Btn onClick={() => unsend(r)} busy={b} data="unsend">↩ 발송 취소</Btn>}
+                      {editable && r.status === '불가' && <Btn onClick={() => reopenNq(r)} busy={b} data="nq-reopen">↩ 다시 진행</Btn>}
                       {editable && r.status === '진행' && <Btn onClick={() => openEdit(r)} busy={b} data="edit">✏ 수정</Btn>}
                     </div>
                   </td>
