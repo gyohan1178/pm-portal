@@ -92,6 +92,43 @@ export function priceSkipReason(r, qty, buyKrw) {
 // 단가를 받아야 하는 줄인가 — 견적 「단가없음」 · 견적 접수 「단가 없음」 · 단가 요청 목록이 같이 쓴다
 export const needsPrice = (r) => !r.excluded && r.status !== 'ok' && r.status !== 'skip'
 
+// 상위품목 구매 / 자작 (v4.126.0) — BOM 화면 「🛒 구매 · 🔧 자작」 표시를 견적에도 적용
+//   🛒 구매 상위 : 상위 단가 하나로 센다 → 상위는 원가에 넣고, 그 밑 하위는 전부 뺀다 (supplySkip — 단가 불필요)
+//   🔧 자작 · 미정: 예전과 같음 — 하위 합계 (상위는 중간 어셈블리로 빠짐)
+//   rows: explodeBOM 결과(또는 견적의 부품 줄) — level · isParentNode · item_id · excluded
+//   modeOf: item_id → 'buy' | 'make' | 없음
+//   baseExcluded 에 원래 제외 여부를 남겨 둬, 지정을 바꾸면 그대로 되돌린다
+export function applySupply(rows, modeOf = {}) {
+  const stack = []   // { lv, buy }
+  return (rows || []).map((r) => {
+    const lv = Number(r.level) || 0
+    while (stack.length && stack[stack.length - 1].lv >= lv) stack.pop()
+    const under = stack.some((x) => x.buy)
+    const supply = (r.item_id && modeOf[r.item_id]) || null
+    const base = r.baseExcluded ?? r.excluded
+    const buyParent = !under && !!r.isParentNode && supply === 'buy'
+    stack.push({ lv, buy: buyParent })
+    return { ...r, supply, baseExcluded: base, supplyBuy: buyParent, supplySkip: under, excluded: under ? true : buyParent ? false : base }
+  })
+}
+
+// 미정 조립품인데 하위 단가가 비고 상위 단가는 있는 곳 — 견적에서 「구매 / 자작」 정하라고 안내 (v4.126.0)
+//   parts: 견적 부품 줄 (level · isParentNode · supply · supplySkip · buyKrw · status · excluded)
+export function supplyHints(parts) {
+  const out = []
+  ;(parts || []).forEach((p, i) => {
+    if (!p.isParentNode || p.supply || p.supplySkip || !p.item_id || !(Number(p.buyKrw) > 0)) return
+    const lv = Number(p.level) || 0
+    let missing = 0
+    for (let j = i + 1; j < parts.length && (Number(parts[j].level) || 0) > lv; j++) {
+      const c = parts[j]
+      if (!c.excluded && c.status !== 'skip' && (c.buyKrw == null || c.status === 'unreg')) missing++
+    }
+    if (missing) out.push({ uid: p.uid, item_id: p.item_id, std_code: p.std_code, name: p.name, buyKrw: Number(p.buyKrw), missing })
+  })
+  return out
+}
+
 // 원가 집계. items는 explodeBOM 결과 + 품목정보(purchase_price, vendor, registered).
 export function computeCost(rows, cfg = DEFAULT_CFG, vendorMap = {}, laborKrw = 0) {
   const buyRate = Number(cfg.buyRate) || 1

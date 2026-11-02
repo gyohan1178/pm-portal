@@ -15,8 +15,8 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { codeCandidates } from '../../lib/custPrefix'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
-import { explodeBOM, computeCost, needsPrice, DEFAULT_CFG } from '../../lib/costAnalysis'
-import { fetchQuoteBOM } from './QuoteSheet'
+import { explodeBOM, computeCost, needsPrice, applySupply, DEFAULT_CFG } from '../../lib/costAnalysis'
+import { fetchQuoteBOM, supplyForRows } from './QuoteSheet'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
@@ -101,12 +101,14 @@ export async function checkLine(customerId, csCode, pn) {
     const rows = (await spliceSubBoms(customerId, await fetchQuoteBOM(customerId, proj.id), fetchQuoteBOM, proj.id)).rows || []
     if (rows.length) {
       const mapped = rows.map((b, i) => ({
-        uid: i, level: b.level, qty_per_unit: b.qty_per_unit, std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
+        uid: i, level: b.level, qty_per_unit: b.qty_per_unit, item_id: b.item_id || null, std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
         manufacturer: b.items?.manufacturer || '', manufacturer_code: b.items?.manufacturer_code || '', purchase_price: b.items?.purchase_price ?? null,
         category: b.items?.category || '', js_code: b.items?.js_code || '',
         lt_weeks: b.items?.lt_weeks ?? null, moq: b.items?.moq ?? null, vendor: b.items?.vendors?.name || '', registered: !!b.items,
       }))
-      const c = computeCost(explodeBOM(mapped), DEFAULT_CFG, {}, 0)
+      // 🛒 구매로 지정된 조립품은 상위 단가 하나만 — 하위는 단가 요청에서 빠진다 (v4.126.0 · 견적 작성과 같은 규칙)
+      const ex = explodeBOM(mapped)
+      const c = computeCost(applySupply(ex, await supplyForRows(ex.filter((r) => r.isParentNode))), DEFAULT_CFG, {}, 0)
       const miss = c.items.filter(needsPrice)   // 소요량 0 · 스펙 · 문서는 단가 제외 (v4.99.0)
       return { kind: 'assy', std_code: proj.code, project_id: proj.id, item_id: null, part_count: c.items.length, noprice_count: miss.length, noprice_codes: [...new Set(miss.map((r) => r.std_code).filter(Boolean))].slice(0, 200), found_name: proj.name || '' }
     }

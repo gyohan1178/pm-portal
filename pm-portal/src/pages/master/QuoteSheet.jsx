@@ -9,7 +9,9 @@ import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsPrice } from '../../lib/costAnalysis'
+import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsPrice, applySupply, supplyHints } from '../../lib/costAnalysis'
+import { fetchSupply } from '../../lib/bomSupply'
+import { refreshProcurement } from '../../lib/refresh'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
 import MarginSimulator from '../../components/MarginSimulator'
@@ -22,10 +24,15 @@ import Spin from '../../components/ux/Spin'
 export async function fetchQuoteBOM(customerId, projectId) {
   return fetchAll(() => supabase
     .from('bom')
-    .select('id, level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, category, js_code, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
+    .select('id, item_id, level, qty_per_unit, seq, created_at, quote_excluded, items!bom_item_id_fkey(std_code, name, unit, category, js_code, manufacturer, manufacturer_code, purchase_price, lt_weeks, moq, vendors(name))')
     .eq('customer_id', customerId).eq('project_id', projectId)
     .eq('quote_excluded', false)
     .order('seq').order('created_at').order('id'))
+}
+
+// 상위품목 구매/자작 (v4.126.0) — 중간 어셈블리(하위가 붙은 줄)만 본다. 표가 없으면(SQL 전) 지정 없음으로
+export async function supplyForRows(rows) {
+  try { return (await fetchSupply((rows || []).map((r) => r.item_id))).map || {} } catch { return {} }
 }
 
 const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
@@ -325,7 +332,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         catch (bErr) { throw new Error('하위품목 조회 — ' + (bErr?.message || bErr)) }
 
         const mapped = (rows || []).map((b, i) => ({
-          uid: i, level: b.level, qty_per_unit: b.qty_per_unit,
+          uid: i, level: b.level, qty_per_unit: b.qty_per_unit, item_id: b.item_id || null,
           std_code: b.items?.std_code || '', name: b.items?.name || '', unit: b.items?.unit || '',
           manufacturer: b.items?.manufacturer || '',
           manufacturer_code: b.items?.manufacturer_code || '',
@@ -336,7 +343,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           registered: !!b.items,
         }))
         // 작업비는 라인에서 따로 잡으므로 여기선 0 (= 자재비만 계산)
-        const c = computeCost(explodeBOM(mapped), cfg, {}, 0)
+        //   🛒 구매로 지정된 조립품은 상위 단가 하나로 (하위는 빠짐) — BOM 화면 구매/자작 표시 (v4.126.0)
+        const ex = explodeBOM(mapped)
+        const supMap = await supplyForRows(ex.filter((r) => r.isParentNode))
+        const c = computeCost(applySupply(ex, supMap), cfg, {}, 0)
         const noPrice = c.items.filter(needsPrice).length   // 소요량 0 · 스펙 · 문서는 「단가 제외」 (v4.99.0)
 
         // 초도품 여부 — 생산 전광판이 쓰는 items.is_prototype 과 같은 기준
@@ -357,6 +367,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           buyKrw: r.buyKrw, qty: r.qty, origin: r.origin, unit: r.unit || '',
           vendor: r.vendor || '', status: r.status, skip: r.skip || null, excluded: r.excluded,
           lt: r.lt_weeks ?? null, moq: r.moq ?? null,
+          item_id: r.item_id, isParentNode: !!r.isParentNode, baseExcluded: r.baseExcluded,
+          supply: r.supply, supplyBuy: r.supplyBuy, supplySkip: r.supplySkip,
         }))
         // 어셈블리 납기는 가장 늦게 들어오는 부품이 정한다 → 최장 L/T
         const ltMax = parts.reduce(
@@ -418,14 +430,44 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   // 세부 부품 수정 → 자재비 재합산 → 최장 L/T 재산출 → 매출단가 재산출
   const patchPart = (key, uid, p) => setLines((ls) => ls.map((l) => {
     if (l.key !== key || !l.parts) return l
-    const parts = l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x))
+    return withParts(l, l.parts.map((x) => (x.uid === uid ? { ...x, ...p } : x)))
+  }))
+  // 부품 줄이 바뀐 어셈블리 줄 — 자재비 · 단가없음 · 납기 · 매출단가 다시
+  const withParts = (l, parts) => {
     const materialKrw = round100(sumParts(parts))
     const noPrice = parts.filter((x) => !x.excluded && x.status !== 'skip' && (x.buyKrw == null || x.status === 'unreg')).length
     // 부품 L/T 를 고치거나 체크를 풀면 어셈블리 납기도 따라 바뀌어야 한다.
     const ltMax = parts.reduce((a, x) => (x.excluded || x.lt == null ? a : Math.max(a, num(x.lt))), 0)
     const n = { ...l, parts, materialKrw, noPrice, lt: ltMax || null }
     return isSales ? { ...n, unitPrice: linePrice(n, currency, sellRate, mcfg) } : n
-  }))
+  }
+
+  // 조립품 구매/자작 지정 (v4.126.0) — 견적에서 바로 정한다. BOM 화면의 구매/자작 표시와 같은 곳에 저장
+  //   → 담긴 줄 중 이 품목이 있는 어셈블리를 모두 다시 계산 (부족자재 · 소요량도 이 표시를 따른다)
+  const [supBusy, setSupBusy] = useState(null)
+  async function designate(itemId, mode, code) {
+    if (!itemId) return
+    setSupBusy(itemId)
+    try {
+      const { error } = await supabase.from('pm_item_supply')
+        .upsert({ item_id: itemId, mode, updated_at: new Date().toISOString() }, { onConflict: 'item_id' })
+      if (error) throw error
+      setLines((ls) => ls.map((l) => {
+        if (!l.parts?.some((x) => x.item_id === itemId)) return l
+        const modeOf = {}
+        l.parts.forEach((x) => { if (x.item_id && x.supply) modeOf[x.item_id] = x.supply })
+        modeOf[itemId] = mode
+        return withParts(l, applySupply(l.parts, modeOf))
+      }))
+      qc.invalidateQueries({ queryKey: ['itemSupply'], exact: false })
+      refreshProcurement(qc)
+      toastSuccess(mode === 'buy'
+        ? `${code} 🛒 구매로 지정 — 상위 단가로 계산 · BOM · 부족자재에도 반영`
+        : `${code} 🔧 자작으로 지정 — 하위 단가를 받습니다 · BOM · 부족자재에도 반영`)
+    } catch (e) {
+      toastError('구매/자작 저장 실패 — ' + (e?.message || e))
+    } finally { setSupBusy(null) }
+  }
 
   // 줄 빼기 — 묻지 않고 바로, 6초 동안 같은 자리로 되돌리기 (v4.104.0)
   const remove = (key) => {
@@ -1322,12 +1364,31 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   </td>
                   <td className="py-1.5 no-print"><button onClick={() => remove(l.key)} className="text-slate-300 hover:text-rose-500">✕</button></td>
                 </tr>
+                {/* 미정 조립품 — 하위 단가가 비었는데 상위 단가는 있음 → 구매 / 자작 정하기 (v4.126.0) */}
+                {supplyHints(l.parts).map((h) => (
+                  <tr key={l.key + '-h' + h.uid} className="no-print" data-supply-hint={h.std_code}>
+                    <td colSpan={14} className="px-2 pb-2">
+                      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-[11.5px] text-amber-900">
+                        <span>⚠ <b className="font-mono">{h.std_code}</b> {h.name} — 하위 {h.missing}줄 단가없음 · <b>상위 단가 ₩{won(h.buyKrw)} 있음</b> <span className="text-amber-700">(구매/자작 미정)</span></span>
+                        <span className="ml-auto flex gap-1.5">
+                          <button type="button" disabled={supBusy === h.item_id} onClick={() => designate(h.item_id, 'buy', h.std_code)} data-supply-buy
+                            className="px-2.5 py-1 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 font-bold hover:bg-indigo-100 disabled:opacity-50">🛒 구매로 지정 → 상위 단가로 계산</button>
+                          <button type="button" disabled={supBusy === h.item_id} onClick={() => designate(h.item_id, 'make', h.std_code)} data-supply-make
+                            className="px-2.5 py-1 rounded-lg border border-cyan-300 bg-cyan-50 text-cyan-700 font-bold hover:bg-cyan-100 disabled:opacity-50">🔧 자작 — 하위 단가 받기</button>
+                        </span>
+                        <span className="w-full text-[10.5px] text-amber-700">어느 쪽이든 BOM 화면의 구매/자작 표시에 같이 저장됩니다 — 🛒 구매면 부족자재 · 소요량도 상위 1줄만 셉니다 (통째로 사 오는 품목일 때만)</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
                 {openParts[l.key] && l.parts && (
                   <tr key={l.key + '-p'} className="no-print bg-slate-50/80">
                     <td colSpan={14} className="px-3 py-3">
                       <div className="flex items-center justify-between mb-2">
                         <p className="text-[11px] font-bold text-slate-500">
                           세부견적 — {l.std_code} 부품 {l.parts.length}건
+                          {(() => { const b = l.parts.filter((x) => x.supplyBuy).length, k = l.parts.filter((x) => x.supplySkip).length
+                            return b > 0 ? <span className="ml-2 font-normal text-indigo-500" data-supply-sum>· 🛒 구매 조립품 {b} — 하위 {k}줄은 상위 단가에 포함</span> : null })()}
                           <span className="ml-2 font-normal text-slate-400">
                             체크 해제하면 원가에서 빠지고, 매입가를 고치면 견적단가가 다시 계산됩니다.
                           </span>
@@ -1342,6 +1403,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                               <th className="px-2 py-1.5 w-10 text-left">LV</th>
                               <th className="px-2 py-1.5 text-left">품번</th>
                               <th className="px-2 py-1.5 text-left">품명</th>
+                              <th className="px-2 py-1.5 w-24 text-left" title="BOM 화면의 상위품목 구매/자작 표시 — 🛒 구매면 상위 단가 하나로 계산">구매/자작</th>
                               <th className="px-2 py-1.5 w-28 text-left">제조사</th>
                               <th className="px-2 py-1.5 w-32 text-left">제조사품번</th>
                               <th className="px-2 py-1.5 w-24 text-right">매입가(원)</th>
@@ -1367,6 +1429,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                 <td className="px-2 py-1 font-mono text-slate-700"
                                   style={{ paddingLeft: `${8 + (Number(pt.level) || 0) * 10}px` }}>{pt.std_code || '—'}</td>
                                 <td className="px-2 py-1 text-slate-600 max-w-[220px] truncate" title={pt.name}>{pt.name}</td>
+                                <td className="px-2 py-1 whitespace-nowrap" data-part-supply={pt.supplyBuy ? 'buy' : pt.supplySkip ? 'skip' : pt.supply || ''}>
+                                  {pt.supplyBuy ? <span className="px-1.5 py-[1px] rounded-full border border-indigo-200 bg-indigo-50 text-indigo-600 text-[10px] font-bold">🛒 구매 · 상위 단가</span>
+                                    : pt.supplySkip ? <span className="px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold" title="상위가 🛒 구매 — 상위 단가에 포함돼 단가가 필요 없습니다">구매품 하위</span>
+                                    : pt.isParentNode && pt.supply === 'make' ? <span className="px-1.5 py-[1px] rounded-full border border-cyan-200 bg-cyan-50 text-cyan-700 text-[10px] font-bold">🔧 자작</span>
+                                    : pt.isParentNode ? <span className="text-[10px] text-slate-400">미정</span> : <span className="text-slate-300">-</span>}
+                                </td>
                                 <td className="px-2 py-1 text-slate-500 truncate" title={pt.manufacturer}>{pt.manufacturer || '-'}</td>
                                 <td className="px-2 py-1 font-mono text-slate-500 truncate" title={pt.manufacturer_code}>{pt.manufacturer_code || '-'}</td>
                                 <td className="px-2 py-1 text-right">
@@ -1375,7 +1443,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                       buyKrw: e.target.value === '' ? null : Number(e.target.value),
                                       status: e.target.value === '' ? (pt.skip ? 'skip' : 'noprice') : 'ok',
                                     })}
-                                    placeholder={pt.status === 'skip' ? '단가 제외' : '미등록'}
+                                    placeholder={pt.supplySkip ? '단가 불필요' : pt.status === 'skip' ? '단가 제외' : pt.isParentNode && pt.excluded ? '중간 어셈블리' : '미등록'}
                                     title={pt.status === 'skip' ? `단가 제외 — ${pt.skip}. 값을 넣으면 원가에 들어갑니다` : undefined}
                                     data-skip={pt.status === 'skip' ? pt.skip : undefined}
                                     className={`qi w-full text-right ${pt.status === 'skip' ? 'placeholder:text-slate-400' : ''}`} />
@@ -1416,7 +1484,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                         </table>
                       </div>
                       <p className="text-[10px] text-slate-400 mt-1.5">
-                        · 하위 부품을 가진 중간 어셈블리는 자동으로 제외됩니다(상하위 중복 방지).
+                        · 하위 부품을 가진 중간 어셈블리는 자동으로 제외됩니다(상하위 중복 방지) — 단, BOM 에서 <span className="text-indigo-500">🛒 구매</span>로 지정한 조립품은 상위 단가 하나로 세고 하위는 「구매품 하위」로 뺍니다.
                         · <span className="text-amber-600">노랑=매입가 미등록</span>, <span className="text-rose-400">빨강=품목 미등록</span>, <span className="text-slate-500">회색 「단가 제외」=소요량 0 · 스펙 · 문서 (단가 필요 없음)</span>.
                         여기서 고친 매입가는 이 견적에만 적용되고 품목 마스터는 바뀌지 않습니다.
                         · <b className="text-slate-500">L/T·MOQ 는 반대로 품목 마스터에 바로 저장됩니다</b> — 한 번 적어두면 다음 견적에서 그대로 떠오릅니다.
