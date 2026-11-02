@@ -2,15 +2,17 @@
 //   영업이 견적 접수(매출견적 › 견적 접수 현황)에서 「💲 구매자재에 단가 요청」한 건의 「단가 없는 부품」을 모아 보여 준다.
 //   부품마다 「단가 넣기」 → 아래 한 품목 입력칸에 채움. 등록한 뒤 「🔍 다시 점검」을 누르면 견적 접수에 반영되고,
 //   요청 건의 부품이 모두 준비되면 「단가 요청 끝」이 저절로 찍힌다 (rfq.js syncPriceDone).
-//   v4.127.0 — 부품마다 「🚫 견적 불가」(수급 불가 · 단종 …): 그 부품이 들어간 견적 품목을 견적 불가로 표시하고
-//              (사유 · 부품 품번이 견적 접수에 보임) 그 건에 남은 품목이 없으면 접수를 「견적 불가」로 마무리한다
+//   v4.127.0 — 부품마다 「🚫 견적 불가」(수급 불가 · 단종 …): 그 부품이 들어간 견적 품목을 견적 불가로 표시한다
+//              (사유 · 부품 품번이 영업 견적 접수에 보임)
+//   v4.127.1 — 접수를 저절로 닫지 않는다. 닫으면 견적 접수 「진행 중」에서 사라져 영업이 못 봤다.
+//              남은 품목이 모두 견적 불가면 「견적 불가 · 닫기 대기」로 남고, 고객사에 알린 뒤 영업이 닫는다
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
-import { isOpenLine, checkRfq, dday, NOQUOTES, setLineNoquote, closeNoquote } from '../master/rfq'
+import { isOpenLine, checkRfq, dday, NOQUOTES, setLineNoquote } from '../master/rfq'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 
@@ -101,26 +103,16 @@ export default function QuotePriceReqs({ onPick }) {
     else toastSuccess('다시 점검했습니다 — 견적 접수에 반영됐습니다')
   }
 
-  // 견적 불가 (v4.127.0) — 이 부품이 들어간 견적 품목을 모두 견적 불가로 → 남은 품목이 없는 접수는 「견적 불가」로 마무리
+  // 견적 불가 (v4.127.0) — 이 부품이 들어간 견적 품목을 견적 불가로. 접수는 닫지 않는다 (영업이 확인하고 닫음 · v4.127.1)
   async function doNoquote(p) {
     const meName = profile?.name || null
     const memo = `부품 ${p.code}${p.item?.name ? ` (${p.item.name})` : ''}${nq.memo.trim() ? ` — ${nq.memo.trim()}` : ''}`
     const pairs = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
     setNqBusy(true)
-    let closed = 0
     try {
       for (const f of pairs) await setLineNoquote(f.rfq, f.line, nq.reason, memo, meName)
-      for (const r of [...new Map(pairs.map((f) => [f.rfq.id, f.rfq])).values()]) {
-        const { data: ls, error: e } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
-        if (e) throw e
-        // 남은 품목(견적 안 냄 · 보류 아님 · 견적 불가 아님)도, 이미 낸 품목도 없으면 → 접수 마무리
-        if ((ls || []).length && !(ls || []).some(isOpenLine) && !(ls || []).some((l) => l.quoted_at || l.hold)) {
-          await closeNoquote({ ...r, lines: ls }, [...new Set(ls.map((l) => l.noquote).filter(Boolean))].join(' · ') + ` — ${memo}`)
-          closed++
-        }
-      }
       setNq(null)
-      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 견적 품목 ${pairs.length}개 빠짐${closed ? ` · ${closed}건은 견적 불가로 마무리` : ' · 나머지 품목은 계속 진행'}`)
+      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 견적 품목 ${pairs.length}개를 견적 불가로 표시 · 영업 견적 접수에 사유가 보입니다`)
     } catch (e) {
       toastError('견적 불가 처리 실패 — ' + (e?.message || e))
     } finally {
@@ -153,7 +145,7 @@ export default function QuotePriceReqs({ onPick }) {
           <p className="text-[12px] text-slate-500">
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
-            수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품이 들어간 견적 품목이 사유와 함께 빠지고, 남은 품목이 없는 건은 견적 불가로 마무리됩니다.
+            수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품이 들어간 견적 품목에 사유가 붙어 영업 견적 접수에 보입니다 (접수를 닫는 건 영업).
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={onlyLeft} onChange={(e) => setOnlyLeft(e.target.checked)} className="w-4 h-4 accent-violet-600" data-price-reqs-only />남은 것만</label>
@@ -218,7 +210,7 @@ export default function QuotePriceReqs({ onPick }) {
                           </div>
                           <p className="mt-1.5 text-[11px] text-rose-700/80">
                             이 부품이 들어간 견적 품목 {lines.length}개가 견적에서 빠집니다 — {lines.map((f) => `${f.rfq.title} · ${f.line.pn}`).join(' / ')}.
-                            영업 견적 접수에 사유 · 부품 품번이 보이고, 그 건에 남은 품목이 없으면 「견적 불가」로 마무리됩니다. (잘못 눌렀으면 견적 접수에서 품목 줄 해제 · 마무리된 건은 「↩ 다시 진행」)
+                            영업 견적 접수에 사유 · 부품 품번이 보입니다. 같은 건의 다른 품목은 그대로 진행되고, 남은 품목이 모두 견적 불가면 「견적 불가 · 닫기 대기」로 영업이 고객사에 알린 뒤 닫습니다. (잘못 눌렀으면 견적 접수 품목 줄에서 「— 견적 가능」으로 해제)
                           </p>
                         </td>
                       </tr>

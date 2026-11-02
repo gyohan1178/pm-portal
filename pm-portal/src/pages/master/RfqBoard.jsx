@@ -375,7 +375,21 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">✓ {n(parts)}/{n(parts)}</span>}
                     {held.length > 0 && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-slate-100 text-slate-600 border border-slate-300" data-rfq-held title={held.map((l) => `${l.pn}: ${l.hold}${l.hold_memo ? ` (${l.hold_memo})` : ''}`).join('\n')}>보류 {n(held.length)}품목</span></div>}
                     {quoted.length > 0 && <div className="mt-1 text-[10.5px] text-slate-500">발송 {n(quoted.length)}품목</div>}
-                    {ls.some((l) => l.noquote && !l.quoted_at) && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200" data-rfq-nq title={ls.filter((l) => l.noquote).map((l) => `${l.pn}: ${l.noquote}${l.noquote_memo ? ` (${l.noquote_memo})` : ''}`).join('\n')}>견적 불가 {n(ls.filter((l) => l.noquote && !l.quoted_at).length)}품목</span></div>}
+                    {ls.some((l) => l.noquote && !l.quoted_at) && (() => {
+                      // 견적 불가 품목 — 사유 · 내용을 펼치지 않아도 보이게 (v4.127.1 · 구매자재가 부품 견적 불가로 표시한 것 포함)
+                      const nqs = ls.filter((l) => l.noquote && !l.quoted_at)
+                      return (
+                        <div className="mt-1 space-y-0.5" data-rfq-nq title={nqs.map((l) => `${l.pn}: ${l.noquote}${l.noquote_memo ? ` (${l.noquote_memo})` : ''}${l.noquote_by ? ` · ${l.noquote_by}` : ''}`).join('\n')}>
+                          <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">🚫 견적 불가 {n(nqs.length)}품목</span>
+                          {nqs.slice(0, 2).map((l) => (
+                            <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[420px]" data-rfq-nq-line={l.pn}>
+                              <b className="font-mono">{l.pn}</b> {l.noquote}{l.noquote_memo ? ` — ${l.noquote_memo}` : ''}{l.noquote_by ? <span className="text-rose-400"> · {l.noquote_by}</span> : null}
+                            </div>
+                          ))}
+                          {nqs.length > 2 && <div className="text-[10.5px] text-rose-400">외 {n(nqs.length - 2)}품목 — 펼쳐서 보기</div>}
+                        </div>
+                      )
+                    })()}
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
                     <span className={`px-2 py-0.5 rounded-full border text-[11px] font-bold ${STAGE_TONE[r.stage] || ''}`} data-rfq-stage-of={r.stage}>{stageLabel(r.stage)}</span>
