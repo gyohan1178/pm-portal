@@ -11,6 +11,7 @@ import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsPrice, applySupply, supplyHints } from '../../lib/costAnalysis'
 import { fetchSupply } from '../../lib/bomSupply'
+import { roundPrice } from '../../lib/marginSim'
 import { refreshProcurement } from '../../lib/refresh'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
@@ -71,9 +72,8 @@ const LEAD_LABEL = { fa: '초도품(FA)', mp: '양산' }
 //   ⚠ 단품 매입가에는 쓰지 않는다. 55원짜리 단자가 100원이 되어 단가가 틀어진다.
 const round100 = (v) => Math.round(num(v) / 100) * 100
 
-// 달러 단가 — 센트(소수 둘째 자리)까지 올림. 19564.85692 → 19564.86
-//   ⚠ 2.19 × 100 이 219.00000000000003 이 되어 2.20 으로 튀는 부동소수 오차를 막는다.
-const ceilCent = (v) => Math.ceil(num(v) * 100 - 1e-7) / 100
+// 견적 단가 끝자리 — 원화 100원 미만 절삭 · 달러 소수 둘째 자리부터 버림 (v4.129.0 · lib/marginSim roundPrice)
+//   예전: 원화 원 단위 반올림 · 달러 센트 올림
 
 const lineCost = (l) => num(l.materialKrw) + num(l.laborKrw)
 
@@ -115,7 +115,7 @@ function linePrice(line, currency, sellRate, mcfg) {
     if (labor > 0) krw += labor / (1 - laborMarg)
   }
 
-  return currency === 'KRW' ? Math.round(krw) : ceilCent(krw / (num(sellRate) || 1))
+  return roundPrice(currency === 'KRW' ? krw : krw / (num(sellRate) || 1), currency)
 }
 
 // 지난 견적 리비전 번호 — S261001-001 → S261001-001-R1 → -R2 … (2026-10-12)
@@ -1069,8 +1069,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               onApply={(p) => {
                 const f = totals.amount > 0 ? p / totals.amount : 1
                 setLines((ls) => ls.map((l) => ({ ...l,
-                  unitPrice: currency === 'KRW' ? Math.round(num(l.unitPrice) * f) : Math.round(num(l.unitPrice) * f * 100) / 100 })))
-                toastSuccess(`모든 줄 단가를 ${((f - 1) * 100).toFixed(1)}% 조정했습니다 (줄마다 반올림해 합계가 조금 다를 수 있습니다)`)
+                  unitPrice: roundPrice(num(l.unitPrice) * f, currency) })))
+                toastSuccess(`모든 줄 단가를 ${((f - 1) * 100).toFixed(1)}% 조정했습니다 (줄마다 끝자리를 버려 합계가 조금 다를 수 있습니다)`)
                 setSimFor(null)
               }} />
           )

@@ -22,9 +22,16 @@ export function priceForMargin({ cost, rate, currency, pct }) {
   return r > 0 ? Math.ceil((krw / r) * 100 - 1e-7) / 100 : null
 }
 
-// 단가 반올림 — 견적 규칙과 같게 (달러는 센트 올림, 원화는 원 단위)
-export const roundPrice = (v, currency) =>
-  currency === 'KRW' ? Math.round(num(v)) : Math.round(num(v) * 100) / 100
+// 견적 단가 끝자리 (v4.129.0 · 견적 작성 · 마진 시뮬레이션 공통)
+//   원화: 100원 미만 절삭 (107,692 → 107,600) — 100원이 안 되는 단가는 원 단위로만 (55 → 55, 0 이 되지 않게)
+//   달러: 소수 둘째 자리부터 버림 (19,564.86 → 19,564.8) — 1달러가 안 되는 단가는 센트까지 (0.057 → 0.05)
+//   ⚠ 2.3 × 10 이 22.999999… 가 되어 한 칸 내려가는 부동소수 오차를 막으려고 아주 작은 값을 더한다
+export const roundPrice = (v, currency) => {
+  const x = num(v)
+  if (x <= 0) return 0
+  if (currency === 'KRW') return x >= 100 ? Math.floor(x / 100 + 1e-9) * 100 : Math.floor(x + 1e-9)
+  return x >= 1 ? Math.floor(x * 10 + 1e-7) / 10 : Math.floor(x * 100 + 1e-7) / 100
+}
 
 // 단가 × 환율 마진표
 export function marginGrid({ price, rate, cost, currency,
