@@ -3,6 +3,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
 import { quoteFileBase } from '../../lib/quoteFileName'
+import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -149,6 +150,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [leadKindTouched, setLeadKindTouched] = useState(false)
   const [deliveryNote, setDeliveryNote] = useState(fixedKind === 'purchase' ? '(To be discussed later)' : '추후 협의')
   const [memo, setMemo] = useState('')
+  // 인쇄 방식 (v4.124.0) — auto: 줄이 많으면 갑지·을지 / single: 지금처럼 한 장 / split: 항상 갑지·을지
+  const [printMode, setPrintMode] = useState('auto')
 
   const [lines, setLines] = useState([])
   const [addCode, setAddCode] = useState('')
@@ -767,11 +770,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   function doPrint() {
     document.body.classList.add('printing-quote')
+    if (wantSplit(printMode, lines.length)) document.body.classList.add('qs-split')
     // PDF 로 저장할 때 크롬이 문서 제목을 파일 이름으로 쓴다 → 인쇄하는 동안만 바꿨다가 되돌림
     const prevTitle = document.title
     document.title = fileBase()
     const done = () => {
-      document.body.classList.remove('printing-quote')
+      document.body.classList.remove('printing-quote', 'qs-split')
       document.title = prevTitle
       window.removeEventListener('afterprint', done)
     }
@@ -883,6 +887,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         .qi{border:0;border-bottom:1px solid #e2e8f0;padding:2px 4px;font-size:12px;outline:none;background:transparent}
         .qi:focus{border-bottom-color:#6366f1}
         @media print{.qi{border:0}}
+        ${SPLIT_CSS}
       `}</style>
 
       {/* 주의 알림 (v4.100.1) — 재접수 · 반복 견적은 지난 이력과 맞춰 본다 */}
@@ -979,8 +984,20 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
           {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '💾 저장'}
         </button>
-        <button onClick={doPrint} disabled={!lines.length}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">🖨 인쇄</button>
+        <div className="flex items-stretch">
+          <button onClick={doPrint} disabled={!lines.length} data-quote-print
+            title={wantSplit(printMode, lines.length) ? '갑지(금액·납기·유효기간) + 을지(세부 품목)로 나눠 인쇄합니다' : '한 장짜리 견적서로 인쇄합니다'}
+            className="px-3 py-1.5 text-xs font-bold rounded-l-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+            🖨 인쇄{lines.length > 0 && wantSplit(printMode, lines.length) ? ' (갑지·을지)' : ''}
+          </button>
+          <select value={printMode} onChange={(e) => setPrintMode(e.target.value)} data-quote-print-mode
+            title={`인쇄 방식 — 자동은 품목 ${SPLIT_AUTO_FROM}줄부터 갑지·을지로 나눕니다`}
+            className="no-print -ml-px px-1.5 text-[11px] font-semibold rounded-r-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">
+            <option value="auto">자동</option>
+            <option value="single">한 장</option>
+            <option value="split">갑지·을지</option>
+          </select>
+        </div>
         {isSales && (
           <button data-sim-all onClick={() => setSimFor('all')} disabled={!lines.length || totals.costKrw <= 0}
             title="제출 단가 · 환율에 따라 마진이 어떻게 바뀌는지 봅니다 (네고 보고용)"
@@ -1073,6 +1090,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       {/* ── 인쇄 영역 ── */}
       <div className="quote-print-area bg-white border border-slate-200 rounded-xl p-6">
+        <QuotePrintSplit
+          ko={ko} isSales={isSales} savedNo={savedNo} quoteDate={quoteDate}
+          party={isSales ? issuedTo : (vendors.find((v) => v.id === vendorId)?.name || '')}
+          attn={attn} projectName={projectName} currency={currency} sym={sym} money={money} num={num}
+          validityDays={validityDays} validUntil={validUntil} deliveryNote={deliveryNote}
+          leadTime={leadTime} memo={memo} lines={lines} total={totals.amount}
+          contactName={contactName} contactPhone={contactPhone} contactEmail={contactEmail}
+          supplier={SUPPLIER} supplierKo={SUPPLIER_KO} />
+        <div className="qs-edit">
         <div className="text-center mb-4">
           <h2 className="text-3xl font-bold tracking-widest text-slate-900" data-quote-title>
             {ko ? '견 적 서' : isSales ? 'QUOTE' : 'PURCHASE QUOTE (수령)'}
@@ -1455,6 +1481,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           <div className="flex gap-2"><span className="w-24 text-slate-400">{ko ? '비고' : 'Remarks'}</span>
             <input value={memo} onChange={(e) => setMemo(e.target.value)} className="qi flex-1" placeholder="특이사항" /></div>
         </div>
+        </div>{/* .qs-edit */}
       </div>
 
       {/* 보관함 — 채번 전 견적을 넣어 두는 곳 */}
