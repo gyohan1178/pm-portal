@@ -2,17 +2,17 @@
 //   영업이 견적 접수(매출견적 › 견적 접수 현황)에서 「💲 구매자재에 단가 요청」한 건의 「단가 없는 부품」을 모아 보여 준다.
 //   부품마다 「단가 넣기」 → 아래 한 품목 입력칸에 채움. 등록한 뒤 「🔍 다시 점검」을 누르면 견적 접수에 반영되고,
 //   요청 건의 부품이 모두 준비되면 「단가 요청 끝」이 저절로 찍힌다 (rfq.js syncPriceDone).
-//   v4.127.0 — 부품마다 「🚫 견적 불가」(수급 불가 · 단종 …): 그 부품이 들어간 견적 품목을 견적 불가로 표시한다
-//              (사유 · 부품 품번이 영업 견적 접수에 보임)
-//   v4.127.1 — 접수를 저절로 닫지 않는다. 닫으면 견적 접수 「진행 중」에서 사라져 영업이 못 봤다.
-//              남은 품목이 모두 견적 불가면 「견적 불가 · 닫기 대기」로 남고, 고객사에 알린 뒤 영업이 닫는다
+//   v4.128.0 — 부품마다 「🚫 견적 불가」(수급 불가 · 단종 …) — 「그 부품만」 단가 요청에서 뺀다 (부품별 · nq_parts)
+//              같은 품목의 다른 부품은 계속 단가를 받는다 (견적은 못 내도 확인은 해 둔다)
+//              견적 품목은 「부품 견적 불가 — 영업 확인」 단계로 넘어가 영업이 정리한다. 접수는 저절로 닫지 않는다
+//              (v4.127.x 는 부품 하나에 품목 전체를 견적 불가로 만들어 다른 부품까지 목록에서 빠졌다)
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
-import { isOpenLine, checkRfq, dday, NOQUOTES, setLineNoquote } from '../master/rfq'
+import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqParts } from '../master/rfq'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 
@@ -30,7 +30,7 @@ export async function fetchPriceReqs() {
     .eq('status', '진행').not('price_req_at', 'is', null).is('price_done_at', null)
   if (error) throw error
   const reqs = (rs || []).sort((a, b) => String(a.due_date || '9999').localeCompare(String(b.due_date || '9999')))
-  if (!reqs.length) return { reqs: [], parts: [] }
+  if (!reqs.length) return { reqs: [], parts: [], nqs: [] }
   const { data: ls, error: e2 } = await supabase.from('pm_rfq_line').select('*').in('rfq_id', reqs.map((r) => r.id))
   if (e2) throw e2
   const byRfq = new Map(reqs.map((r) => [r.id, { ...r, lines: [] }]))
@@ -39,9 +39,16 @@ export async function fetchPriceReqs() {
 
   // 부품(품번) → 어느 요청 · 어느 품목에서 나왔나
   const map = new Map()
+  const nqMap = new Map()   // 견적 불가로 표시한 부품 — 아래에 따로 (해제할 수 있게)
   for (const r of full) {
     for (const l of r.lines.filter(isOpenLine)) {
-      for (const code of l.noprice_codes || []) {
+      for (const x of nqParts(l)) {
+        const k = String(x.code || '').trim()
+        if (!k || !(l.noprice_codes || []).includes(k)) continue   // 그 사이 단가가 들어온 부품은 뺌
+        if (!nqMap.has(k)) nqMap.set(k, { code: k, reason: x.reason, memo: x.memo, by: x.by, at: x.at, from: [] })
+        nqMap.get(k).from.push({ rfq: r, line: l })
+      }
+      for (const code of missCodes(l)) {
         const k = String(code || '').trim()
         if (!k) continue
         if (!map.has(k)) map.set(k, { code: k, item: null, from: [] })
@@ -60,7 +67,7 @@ export async function fetchPriceReqs() {
     priced: Number(p.item?.purchase_price) > 0,
     due: p.from.map((f) => f.rfq.due_date).filter(Boolean).sort()[0] || null,
   })).sort((a, b) => (a.priced - b.priced) || String(a.due || '9999').localeCompare(String(b.due || '9999')) || a.code.localeCompare(b.code))
-  return { reqs: full, parts }
+  return { reqs: full, parts, nqs: [...nqMap.values()].sort((a, b) => a.code.localeCompare(b.code)) }
 }
 
 export default function QuotePriceReqs({ onPick }) {
@@ -76,6 +83,7 @@ export default function QuotePriceReqs({ onPick }) {
   const [nqBusy, setNqBusy] = useState(false)
 
   const reqs = data?.reqs || []
+  const nqs = data?.nqs || []
   const parts = data?.parts || []
   const left = parts.filter((p) => !p.priced)
   const shown = onlyLeft ? left : parts
@@ -103,18 +111,29 @@ export default function QuotePriceReqs({ onPick }) {
     else toastSuccess('다시 점검했습니다 — 견적 접수에 반영됐습니다')
   }
 
-  // 견적 불가 (v4.127.0) — 이 부품이 들어간 견적 품목을 견적 불가로. 접수는 닫지 않는다 (영업이 확인하고 닫음 · v4.127.1)
+  // 부품 견적 불가 (v4.128.0) — 이 부품만 단가 요청에서 뺀다. 같은 품목의 다른 부품은 그대로 · 접수는 닫지 않음
   async function doNoquote(p) {
-    const meName = profile?.name || null
-    const memo = `부품 ${p.code}${p.item?.name ? ` (${p.item.name})` : ''}${nq.memo.trim() ? ` — ${nq.memo.trim()}` : ''}`
+    const entry = { reason: nq.reason, memo: nq.memo.trim() || null, by: profile?.name || null, name: p.item?.name || null }
     const pairs = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
     setNqBusy(true)
     try {
-      for (const f of pairs) await setLineNoquote(f.rfq, f.line, nq.reason, memo, meName)
+      for (const f of pairs) await setPartNoquote(f.rfq, f.line.id, p.code, entry)
       setNq(null)
-      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 견적 품목 ${pairs.length}개를 견적 불가로 표시 · 영업 견적 접수에 사유가 보입니다`)
+      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 이 부품만 단가 요청에서 뺐습니다 · 견적 품목 ${pairs.length}개에 표시되어 영업이 확인합니다`)
     } catch (e) {
       toastError('견적 불가 처리 실패 — ' + (e?.message || e))
+    } finally {
+      setNqBusy(false)
+      qc.invalidateQueries({ queryKey: PRICE_REQ_KEY }); qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
+    }
+  }
+  async function undoNoquote(x) {
+    setNqBusy(true)
+    try {
+      for (const f of x.from) await setPartNoquote(f.rfq, f.line.id, x.code, null)
+      toastSuccess(`${x.code} 견적 불가 해제 — 다시 단가 요청 목록에 들어갑니다`)
+    } catch (e) {
+      toastError('해제 실패 — ' + (e?.message || e))
     } finally {
       setNqBusy(false)
       qc.invalidateQueries({ queryKey: PRICE_REQ_KEY }); qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
@@ -137,6 +156,7 @@ export default function QuotePriceReqs({ onPick }) {
           <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-white border border-amber-200 text-amber-800" data-price-reqs-left>남은 부품 {n(left.length)}개</span>
           {doneN > 0 && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">등록됨 {n(doneN)}</span>}
           {lateReq > 0 && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-red-50 text-red-600">회신 기한 지남 {n(lateReq)}건</span>}
+          {nqs.length > 0 && <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-rose-50 text-rose-600" data-price-reqs-nqn>견적 불가 {n(nqs.length)}</span>}
         </> : <span className="text-[12px] text-slate-400">지금 요청된 단가가 없습니다</span>}
         <span className="ml-auto text-xs text-slate-400">{open ? '▲ 접기' : '▼ 펼치기'}</span>
       </button>
@@ -145,7 +165,7 @@ export default function QuotePriceReqs({ onPick }) {
           <p className="text-[12px] text-slate-500">
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
-            수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품이 들어간 견적 품목에 사유가 붙어 영업 견적 접수에 보입니다 (접수를 닫는 건 영업).
+            수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품만 목록에서 빠지고(같은 품목의 다른 부품은 그대로), 영업 견적 접수에 사유가 보입니다.
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs font-bold text-slate-600"><input type="checkbox" checked={onlyLeft} onChange={(e) => setOnlyLeft(e.target.checked)} className="w-4 h-4 accent-violet-600" data-price-reqs-only />남은 것만</label>
@@ -156,7 +176,7 @@ export default function QuotePriceReqs({ onPick }) {
                 className="px-3 py-1.5 rounded-lg text-xs font-bold bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{busy ? <span className="inline-flex items-center gap-1.5"><Spin />점검 중…</span> : `🔍 다시 점검 (${n(reqs.length)}건)`}</button>}
             </div>
           </div>
-          <div className="overflow-x-auto max-h-[360px] overflow-y-auto rounded-lg border border-slate-100">
+          <div className="overflow-x-auto max-h-[360px] overflow-y-auto rounded-lg border border-slate-100" data-price-reqs-table>
             <table className="w-full min-w-[860px] text-xs">
               <thead className="bg-slate-50 text-slate-500 sticky top-0"><tr className="text-left">
                 <th className="px-3 py-2 font-bold">품번 · 품명</th><th className="px-3 font-bold">제조사 · 제조사품번</th>
@@ -209,8 +229,8 @@ export default function QuotePriceReqs({ onPick }) {
                             <button type="button" onClick={() => setNq(null)} className="px-2 py-1 text-slate-500 hover:text-slate-700">취소</button>
                           </div>
                           <p className="mt-1.5 text-[11px] text-rose-700/80">
-                            이 부품이 들어간 견적 품목 {lines.length}개가 견적에서 빠집니다 — {lines.map((f) => `${f.rfq.title} · ${f.line.pn}`).join(' / ')}.
-                            영업 견적 접수에 사유 · 부품 품번이 보입니다. 같은 건의 다른 품목은 그대로 진행되고, 남은 품목이 모두 견적 불가면 「견적 불가 · 닫기 대기」로 영업이 고객사에 알린 뒤 닫습니다. (잘못 눌렀으면 견적 접수 품목 줄에서 「— 견적 가능」으로 해제)
+                            이 부품만 단가 요청에서 빠집니다 — 같은 품목의 다른 부품은 계속 단가를 받습니다.
+                            이 부품이 들어간 견적 품목 {lines.length}개({lines.map((f) => `${f.rfq.title} · ${f.line.pn}`).join(' / ')})에 사유가 붙어 영업이 확인합니다. 잘못 눌렀으면 아래 「견적 불가로 표시한 부품」에서 해제.
                           </p>
                         </td>
                       </tr>
@@ -220,6 +240,21 @@ export default function QuotePriceReqs({ onPick }) {
               </tbody>
             </table>
           </div>
+          {nqs.length > 0 && (
+            <div className="rounded-lg border border-rose-200 bg-rose-50/40 px-3 py-2" data-price-reqs-nq-list>
+              <p className="text-[12px] font-bold text-rose-700 mb-1">🚫 견적 불가로 표시한 부품 {n(nqs.length)} <span className="font-normal text-rose-500">— 영업 견적 접수에 사유가 보입니다 · 수급처를 찾으면 해제하고 단가를 넣으세요</span></p>
+              {nqs.map((x) => (
+                <div key={x.code} className="flex flex-wrap items-center gap-2 py-1 border-t border-rose-100 first:border-t-0 text-[11.5px]" data-price-req-nq-done={x.code}>
+                  <b className="font-mono text-rose-700">{x.code}</b>
+                  <span className="px-1.5 py-[1px] rounded bg-rose-100 text-rose-700 font-bold">{x.reason}</span>
+                  {x.memo && <span className="text-slate-600">{x.memo}</span>}
+                  <span className="text-slate-400">{[x.by, md(x.at)].filter(Boolean).join(' · ')} · {[...new Set(x.from.map((f) => `${f.rfq.title} · ${f.line.pn}`))].join(' / ')}</span>
+                  {editable && <button type="button" disabled={nqBusy} onClick={() => undoNoquote(x)} data-price-req-nq-undo={x.code}
+                    className="ml-auto px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-40">↩ 해제</button>}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </div>

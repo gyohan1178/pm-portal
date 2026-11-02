@@ -11,6 +11,10 @@
 //     준비된 품목(BOM · 단가 다 있음)만 먼저 견적 작성 · 제출할 수 있다
 //     일부만 제출하면 남은 품목(보류 · 미준비)은 새 접수(「… (잔여)」)로 나눠 계속 진행한다
 //   품목 상태: 제출됨(quoted_at) · 보류(hold) · 준비됨 · 막힘(BOM 없음 · 단가 없음)
+//
+//   부품 견적 불가(v4.128.0 · nq_parts) — 구매자재가 단가 요청 부품 하나하나에 「수급 불가 · 단종 …」을 표시한다
+//     그 부품만 단가 요청에서 빠지고, 같은 품목의 다른 부품은 계속 단가를 받는다 (확인은 해 둬야 하므로)
+//     견적 품목은 그 부품이 없으면 견적을 못 내므로 「부품 견적 불가 — 영업 확인」 단계로 → 영업이 품목 견적 불가로 정리
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { codeCandidates } from '../../lib/custPrefix'
@@ -20,14 +24,14 @@ import { fetchQuoteBOM, supplyForRows } from './QuoteSheet'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
-  ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['nq', '견적 불가 — 닫기 대기'], ['sent', '✅ 발송 완료'], ['제출', '✅ 발송 완료'], ['수주', '⑥ 수주'], ['실주', '실주'], ['불가', '견적 불가'], ['취소', '취소'],
+  ['nqp', '부품 견적 불가 — 영업 확인'], ['ready', '④ 작성 가능'], ['hold', '보류 (수급 어려움)'], ['nq', '견적 불가 — 닫기 대기'], ['sent', '✅ 발송 완료'], ['제출', '✅ 발송 완료'], ['수주', '⑥ 수주'], ['실주', '실주'], ['불가', '견적 불가'], ['취소', '취소'],
 ]
 // 견적 불가 사유 (v4.100.0) — 품목마다. 나머지 품목은 계속 진행, 전부 불가면 접수를 「불가」로 닫는다
 export const NOQUOTES = ['단종', '제작 불가', '사양 미확정', '수급 불가', '기타']
 export const STAGE_TONE = {
   new: 'bg-slate-100 text-slate-600 border-slate-200', bom: 'bg-red-50 text-red-600 border-red-200',
   noprice: 'bg-amber-50 text-amber-700 border-amber-200', price: 'bg-amber-50 text-amber-700 border-amber-200',
-  ready: 'bg-violet-50 text-violet-700 border-violet-200', hold: 'bg-slate-100 text-slate-500 border-slate-300', 제출: 'bg-slate-100 text-slate-700 border-slate-200',
+  nqp: 'bg-rose-50 text-rose-600 border-rose-200', ready: 'bg-violet-50 text-violet-700 border-violet-200', hold: 'bg-slate-100 text-slate-500 border-slate-300', 제출: 'bg-slate-100 text-slate-700 border-slate-200',
   수주: 'bg-emerald-50 text-emerald-700 border-emerald-200', 실주: 'bg-white text-slate-400 border-slate-200', 취소: 'bg-white text-slate-400 border-slate-200',
   nq: 'bg-rose-50 text-rose-600 border-rose-200', 불가: 'bg-white text-rose-500 border-rose-200',
   sent: 'bg-emerald-50 text-emerald-700 border-emerald-200',
@@ -36,6 +40,15 @@ export const stageLabel = (k) => (RFQ_STAGES.find(([x]) => x === k) || [k, k])[1
 
 export const HOLDS = ['수급 어려움', '단가 대기']
 export const isOpenLine = (l) => !l.quoted_at && !l.hold && !l.noquote      // 아직 견적 안 냈고 보류 · 견적 불가도 아님
+// 부품 견적 불가 (v4.128.0) — 줄의 nq_parts [{ code, reason, memo, by, at }] (SQL 전엔 칸이 없어 빈 목록)
+export const nqParts = (l) => (Array.isArray(l?.nq_parts) ? l.nq_parts : [])
+const nqSet = (l) => new Set(nqParts(l).map((x) => String(x.code)))
+// 아직 단가를 받아야 하는 부품 (견적 불가로 표시한 부품은 뺌)
+export const missCodes = (l) => { const s = nqSet(l); return (l?.noprice_codes || []).filter((c) => !s.has(String(c))) }
+export const missCount = (l) => (+l?.noprice_count > 0 ? (nqParts(l).length ? missCodes(l).length : +l.noprice_count) : 0)
+// 이 품목에서 견적 불가로 표시된 부품 중 아직 단가 없는 것 — 이게 있으면 품목은 견적을 못 낸다
+export const nqBlockers = (l) => { const s = nqSet(l); return (l?.noprice_codes || []).filter((c) => s.has(String(c))) }
+export const nqSummary = (l) => nqParts(l).filter((x) => nqBlockers(l).includes(x.code)).map((x) => `부품 ${x.code} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')
 export const isReadyLine = (l) => isOpenLine(l) && !!l.checked_at && (l.kind || 'none') !== 'none' && !(+l.noprice_count > 0)
 export const readyLines = (r) => (r.lines || []).filter(isReadyLine)
 
@@ -45,7 +58,8 @@ export function stageOf(r) {
   const open = ls.filter(isOpenLine)
   if (!ls.length || open.some((l) => !l.checked_at)) return 'new'
   if (open.some((l) => (l.kind || 'none') === 'none')) return 'bom'
-  if (open.some((l) => (+l.noprice_count || 0) > 0)) return r.price_req_at && !r.price_done_at ? 'price' : 'noprice'
+  if (open.some((l) => missCount(l) > 0)) return r.price_req_at && !r.price_done_at ? 'price' : 'noprice'
+  if (open.some((l) => nqBlockers(l).length)) return 'nqp'   // 부품 견적 불가 — 영업이 품목을 견적 불가로 정리 (v4.128.0)
   if (!open.length) {
     if (ls.some((l) => l.hold && !l.quoted_at)) return 'hold'
     // 남은 품목이 모두 견적 불가 — 하나도 안 냈으면 「불가」로 닫을 차례 (v4.100.0)
@@ -150,7 +164,9 @@ export async function syncPriceDone(r, meName) {
   const { data: ls, error } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)   // * — 견적 불가 칸(noquote)은 SQL 전엔 없음
   if (error) throw error
   const open = (ls || []).filter(isOpenLine)
-  const done = (ls || []).length && open.every((l) => (l.kind || 'none') !== 'none' && !(+l.noprice_count > 0))
+  // 견적 불가로 표시한 부품이 남은 품목은 영업이 품목을 정리할 때까지 끝으로 안 친다 (v4.128.0)
+  //   — 구매자재 화면에 남아 있어야 「견적 불가로 표시한 부품」을 해제할 수 있다
+  const done = (ls || []).length && open.every((l) => (l.kind || 'none') !== 'none' && missCount(l) === 0 && !nqBlockers(l).length)
   if (done && r.price_req_at && !r.price_done_at) {
     const t = new Date().toISOString()
     const { error: e2 } = await supabase.from('pm_rfq').update({ price_done_at: t, price_done_by: meName || null, updated_at: t }).eq('id', r.id)
@@ -176,6 +192,21 @@ export async function setLineNoquote(r, line, reason, memo, meName) {
   if (error) throw new Error(/noquote/.test(error.message || '') ? NOQUOTE_SQL_HINT : error.message)
   if (reason) await syncPriceDone(r, meName)
 }
+// 부품 견적 불가 표시 · 해제 (v4.128.0) — 구매자재. 품목(줄)마다 nq_parts 에 부품 하나를 넣고 뺀다
+//   줄을 다시 읽어서 고친다 (같은 품목에 다른 사람이 동시에 표시해도 안 지워지게)
+export const NQ_PART_SQL_HINT = '부품별 견적 불가 칸이 아직 없습니다 — Supabase 에서 「견적불가_부품별_반영_261102.sql」을 먼저 실행해 주세요'
+export async function setPartNoquote(r, lineId, code, entry) {
+  const { data: cur, error: e1 } = await supabase.from('pm_rfq_line').select('*').eq('id', lineId).maybeSingle()
+  if (e1) throw e1
+  if (!cur) return
+  if (!('nq_parts' in cur)) throw new Error(NQ_PART_SQL_HINT)
+  const rest = nqParts(cur).filter((x) => String(x.code) !== String(code))
+  const next = entry ? [...rest, { code: String(code), ...entry, at: new Date().toISOString() }] : rest
+  const { error } = await supabase.from('pm_rfq_line').update({ nq_parts: next }).eq('id', lineId)
+  if (error) throw new Error(/nq_parts/.test(error.message || '') ? NQ_PART_SQL_HINT : error.message)
+  if (entry) await syncPriceDone(r)
+}
+
 // 모든 품목이 견적 불가 — 접수를 「불가」로 닫는다 (사유는 품목 사유를 모아서)
 export async function closeNoquote(r, memo) {
   const reasons = [...new Set((r.lines || []).filter((l) => l.noquote).map((l) => l.noquote))].join(' · ')

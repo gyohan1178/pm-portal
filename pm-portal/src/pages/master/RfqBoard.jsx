@@ -13,7 +13,7 @@ import { logActivity } from '../../lib/activityLog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
-import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq } from './rfq'
+import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq, missCount, missCodes, nqBlockers, nqParts, nqSummary } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
@@ -244,6 +244,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
           {pill('bom', '② BOM 필요', count('bom'), 'bg-red-50 text-red-600 border-red-200')}
           {pill('noprice', '③ 단가 없음', count('noprice'), 'bg-amber-50 text-amber-700 border-amber-200')}
           {pill('price', '③ 단가 요청 중', count('price'), 'bg-amber-50 text-amber-700 border-amber-200')}
+          {pill('nqp', '부품 견적 불가 · 영업 확인', count('nqp'), 'bg-rose-50 text-rose-600 border-rose-200')}
           {pill('ready', '④ 작성 가능', count('ready'), 'bg-violet-50 text-violet-700 border-violet-200')}
           {pill('hold', '보류', count('hold'), 'bg-slate-100 text-slate-600 border-slate-300')}
           {pill('nq', '견적 불가 · 닫기 대기', count('nq'), 'bg-rose-50 text-rose-600 border-rose-200')}
@@ -336,7 +337,8 @@ export default function RfqBoard({ customers = [], onWrite }) {
               const ls = r.lines
               const openLs = ls.filter(isOpenLine)
               const none = openLs.filter((l) => (l.kind || 'none') === 'none' && l.checked_at)
-              const miss = openLs.reduce((a, l) => a + (+l.noprice_count || 0), 0)
+              const miss = openLs.reduce((a, l) => a + missCount(l), 0)   // 구매자재가 견적 불가로 표시한 부품은 뺌 (v4.128.0)
+              const nqLs = openLs.filter((l) => nqBlockers(l).length)    // 부품 견적 불가로 막힌 품목
               const held = ls.filter((l) => l.hold && !l.quoted_at)
               const quoted = ls.filter((l) => l.quoted_at)
               const ready = readyLines(r)
@@ -372,7 +374,18 @@ export default function RfqBoard({ customers = [], onWrite }) {
                     {r.stage === 'new' || none.length ? <span className="text-slate-400">—</span>
                       : miss ? <><span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700" data-rfq-miss>단가 없음 {n(miss)}</span><div className="text-[10.5px] text-slate-400 mt-0.5">부품 {n(parts)}개 중</div>
                         {r.price_req_at && !r.price_done_at && <div className="text-[10.5px] text-amber-700 mt-0.5">요청 {md(r.price_req_at)} · {r.price_req_by || ''}</div>}</>
-                      : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">✓ {n(parts)}/{n(parts)}</span>}
+                      : nqLs.length ? null : <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700">✓ {n(parts)}/{n(parts)}</span>}
+                    {nqLs.length > 0 && (
+                      // 구매자재가 부품 견적 불가로 표시 — 품목마다 부품 · 사유가 펼치지 않아도 보이게 (v4.128.0)
+                      <div className="mt-1 space-y-0.5" data-rfq-nqp title={nqLs.map((l) => `${l.pn}: ${nqSummary(l)}`).join('\n')}>
+                        <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">🚫 부품 견적 불가 · {n(nqLs.length)}품목</span>
+                        {nqLs.slice(0, 2).map((l) => (
+                          <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[420px]" data-rfq-nqp-line={l.pn}><b className="font-mono">{l.pn}</b> {nqSummary(l)}
+                            {(() => { const by = [...new Set(nqParts(l).map((x) => x.by).filter(Boolean))].join(', '); return by ? <span className="text-rose-400"> · {by}</span> : null })()}</div>
+                        ))}
+                        {nqLs.length > 2 && <div className="text-[10.5px] text-rose-400">외 {n(nqLs.length - 2)}품목 — 펼쳐서 보기</div>}
+                      </div>
+                    )}
                     {held.length > 0 && <div className="mt-1"><span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-slate-100 text-slate-600 border border-slate-300" data-rfq-held title={held.map((l) => `${l.pn}: ${l.hold}${l.hold_memo ? ` (${l.hold_memo})` : ''}`).join('\n')}>보류 {n(held.length)}품목</span></div>}
                     {quoted.length > 0 && <div className="mt-1 text-[10.5px] text-slate-500">발송 {n(quoted.length)}품목</div>}
                     {ls.some((l) => l.noquote && !l.quoted_at) && (() => {
@@ -410,6 +423,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         : <span className="col-span-3 py-1.5 rounded-lg bg-amber-50/60 text-center text-[11.5px] font-bold text-amber-700">⏳ 구매자재 처리 중</span>)}
                       {r.status === '진행' && ready.length > 0 && <Btn wide tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
                       {editable && ['bom', 'noprice', 'price', 'ready'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
+                      {r.stage === 'nqp' && <Btn wide tone="red" onClick={() => setOpen(r.id)} data="nqp-open">🚫 부품 견적 불가 — 품목 정리</Btn>}
                       {editable && r.stage === 'nq' && <Btn wide tone="red" onClick={async () => {
                         const m = await ask({ title: `${r.title} — 견적 불가로 닫을까요?`, desc: '접수가 「견적 불가」로 끝납니다. 고객사에 알린 내용 · 사유를 남기세요 (비우면 품목 사유를 모아 적음).', okText: '견적 불가로 닫기', danger: true,
                           input: { label: '고객사에 알린 내용 · 사유', value: [...new Set(ls.filter((l) => l.noquote).map((l) => l.noquote))].join(' · '), rows: 2 } })
@@ -442,7 +456,13 @@ export default function RfqBoard({ customers = [], onWrite }) {
                                   ? <span className="text-slate-400"> · {[l.item.vendor, l.item.last ? `이력 ${md(l.item.last)}` : ''].filter(Boolean).join(' · ')}</span>
                                   : <span className="ml-1 px-1.5 py-[1px] rounded-full bg-amber-50 text-amber-700 text-[10.5px] font-bold" title="품목 기준정보에 매입가만 있고 구매처 · 단가 이력이 없습니다 (처음 일괄 등록한 값일 수 있음) — 맞는 단가인지 확인하세요" data-rfq-price-nobasis>근거 없음 · 확인</span>}
                               </span>
-                            ) : +l.noprice_count > 0 ? <span title={(l.noprice_codes || []).join(', ')}><b>{n(l.noprice_count)}</b> · <span className="font-mono">{(l.noprice_codes || []).slice(0, 6).join(', ')}{(l.noprice_codes || []).length > 6 ? ` 외 ${(l.noprice_codes || []).length - 6}` : ''}</span></span> : <span className="text-slate-300">—</span>}</td>
+                            ) : +l.noprice_count > 0 ? (() => {
+                              const mc = missCodes(l), bl = nqBlockers(l)
+                              return <>
+                                {missCount(l) > 0 && <span title={mc.join(', ')}><b>{n(missCount(l))}</b> · <span className="font-mono">{mc.slice(0, 6).join(', ')}{mc.length > 6 ? ` 외 ${mc.length - 6}` : ''}</span></span>}
+                                {bl.length > 0 && <div className="text-rose-600" data-rfq-line-nqp={l.pn}>🚫 {nqParts(l).filter((x) => bl.includes(x.code)).map((x) => `${x.code} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')}</div>}
+                              </>
+                            })() : <span className="text-slate-300">—</span>}</td>
                             <td className="pl-3" data-rfq-hold-cell={l.pn}>
                               {l.quoted_at ? <span className="text-emerald-700 font-bold">✓ 발송 {md(l.quoted_at)}</span>
                                 : isBuy && editable && r.status === '진행' ? (
@@ -467,7 +487,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                                     <select value={l.noquote || ''} data-rfq-nq-sel={l.pn} disabled={busy === r.id}
                                       onChange={async (e) => {
                                         const v = e.target.value
-                                        const m = v ? await ask({ title: `${l.pn} — 견적 불가 (${v})`, desc: '이 품목은 견적에서 빠지고 영업이 고객사에 알릴 사유로 보입니다.', okText: '견적 불가로 표시', cancelText: '그만두기', danger: true, input: { label: '자세한 내용 (선택)', value: l.noquote_memo || '' } }) : { value: '' }
+                                        const m = v ? await ask({ title: `${l.pn} — 견적 불가 (${v})`, desc: '이 품목은 견적에서 빠지고 영업이 고객사에 알릴 사유로 보입니다.', okText: '견적 불가로 표시', cancelText: '그만두기', danger: true, input: { label: '자세한 내용 (선택)', value: l.noquote_memo || nqSummary(l) || '' } }) : { value: '' }
                                         if (!m) return
                                         run(r.id, () => setLineNoquote(r, l, v || null, m.value, meName), v ? `${l.pn} 견적 불가 — ${v}` : `${l.pn} 견적 불가 해제`) }}
                                       className={`px-1.5 py-1 text-[11px] border rounded bg-white ${l.noquote ? 'border-rose-300 text-rose-600 font-bold' : 'border-slate-200'}`}>
