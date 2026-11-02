@@ -14,9 +14,14 @@ export const DAILY = 5
 //   daily  : { 이름: 하루 목표 칸 수 }  — 없으면 DAILY(5)
 //   helpers: { 이름: [담당자 이름 …] } — 렉 담당이 아니라 그 사람들 렉을 같이 도는 사람 (새 직원 등)
 //            도우미는 「자기가 센 칸」만 오늘 센 칸으로 치고, 오늘 누가 이미 센 칸은 목록에서 뺀다
+//   v4.125.0 — 도우미는 맡은 렉을 「거꾸로」 돈다 (렉 담당자는 앞에서, 도우미는 뒤에서 → 같은 칸을 겹쳐 세지 않게)
+//              도우미가 붙은 렉 담당자도 「자기가 센 칸」만 오늘 센 칸으로 친다
+//              (예전: 도우미가 센 칸이 담당자 오늘 숫자에도 들어가, 도우미가 5칸 세면 담당자도 다 한 걸로 보였다)
 export const CYCLE_KEY = 'cycle_people'
 export const dailyOf = (cfg, name) => { const n = Number(cfg?.daily?.[name]); return n > 0 ? n : DAILY }
 export const helperOf = (cfg, name) => (Array.isArray(cfg?.helpers?.[name]) ? cfg.helpers[name] : null)
+// 도우미가 붙은 렉 담당자인지 — 이 사람도 「자기가 센 칸」만 센다 (v4.125.0)
+export const hasHelper = (cfg, name) => Object.values(cfg?.helpers || {}).some((of) => Array.isArray(of) && of.includes(name))
 
 const pad2 = (v) => String(v).padStart(2, '0')
 export const cellLoc = (rack, row, level) => `${String(rack).toUpperCase()}-${pad2(row)}-${level}`
@@ -71,12 +76,14 @@ export function ownerCells(racks, owners) {
 }
 
 // 담당자 표 + 도우미 — 도우미는 맡은 사람들 렉을 합친 칸 목록 (렉 정렬순 그대로)
+//   도우미: helper · reverse(거꾸로 돈다) / 도우미가 붙은 담당자: shared (둘 다 자기가 센 칸만 센다)
 export function withHelpers(byOwner, cfg) {
   const m = new Map(byOwner)
   for (const [name, of] of Object.entries(cfg?.helpers || {})) {
     const src = (Array.isArray(of) ? of : []).map((n) => byOwner.get(n)).filter(Boolean)
     if (!src.length) continue
-    const o = { racks: [], cells: [], late: new Set(), lateRacks: [], helper: true, of: of.filter((n) => byOwner.has(n)) }
+    for (const n of of) if (byOwner.has(n)) m.set(n, { ...byOwner.get(n), shared: true })
+    const o = { racks: [], cells: [], late: new Set(), lateRacks: [], helper: true, reverse: true, of: of.filter((n) => byOwner.has(n)) }
     for (const x of src) { o.racks.push(...x.racks); o.cells.push(...x.cells); o.lateRacks.push(...x.lateRacks); x.late.forEach((l) => o.late.add(l)) }
     // 맨 뒤 렉은 합친 목록에서도 맨 뒤로
     const isLate = (loc) => o.late.has(loc)
@@ -119,7 +126,9 @@ export function checkMap(checks) {
 //   late: 「맨 뒤」 칸 Set (불용재고 렉 등) — 같은 바퀴 안에서 맨 끝으로
 //   held: 보류 칸 Set (v4.114.0) — 오늘 목록에서 빼고 다음 칸으로 채운다 (오늘 이미 센 칸은 그대로 센 칸)
 //   mine: 도우미면 「내가 오늘 센 칸」 Set (v4.120.0) — 그 칸만 센 칸으로 치고, 오늘 누가 센 칸은 목록에서 뺀다
-export function todayPlan(cells, cm, today, target = DAILY, late = null, held = null, mine = null) {
+//   rev : 거꾸로 돌기 (v4.125.0 도우미) — 이번 바퀴에서 안 센 칸 중 칸 순서 「뒤」부터. 「맨 뒤」 렉은 그래도 바퀴 끝.
+//         마지막으로 센 날은 보지 않는다 — 날짜순으로 고르면 담당자와 같은 칸(가장 오래된 칸)으로 몰린다
+export function todayPlan(cells, cm, today, target = DAILY, late = null, held = null, mine = null, rev = false) {
   const info = (loc, i) => {
     const x = cm.get(loc)
     return { loc, i, last: x?.last || null, days: x?.days || 0, done: mine ? mine.has(loc) : x?.last === today, anyToday: x?.last === today, late: !!late?.has(loc) }
@@ -129,6 +138,7 @@ export function todayPlan(cells, cm, today, target = DAILY, late = null, held = 
   const pending = all.filter((c) => !c.done && !(mine && c.anyToday) && !held?.has(c.loc)).sort((a, b) => {
     if (a.days !== b.days) return a.days - b.days            // 이번 바퀴에서 안 센 칸(센 횟수 적은 칸) 먼저
     if (a.late !== b.late) return a.late ? 1 : -1            // 「맨 뒤」 렉은 그 바퀴 끝에
+    if (rev) return b.i - a.i                                 // 도우미: 칸 순서 뒤부터
     if (!a.last !== !b.last) return a.last ? 1 : -1          // 안 센 칸 먼저
     if (a.last !== b.last) return a.last < b.last ? -1 : 1   // 오래된 칸 먼저
     return a.i - b.i                                          // 칸 순서
@@ -136,7 +146,7 @@ export function todayPlan(cells, cm, today, target = DAILY, late = null, held = 
   const need = Math.max(0, target - done.length)
   const next = pending.slice(0, need)
   // 화면 순서: 오늘 센 칸(칸 순서) → 다음 칸(셀 순서)
-  const list = [...done.sort((a, b) => a.i - b.i), ...next]
+  const list = [...done.sort((a, b) => (rev ? b.i - a.i : a.i - b.i)), ...next]
   return { list, done: done.length, target, left: next.length, nextLoc: next[0]?.loc || null, pendingAll: pending.length }
 }
 

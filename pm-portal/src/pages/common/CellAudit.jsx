@@ -80,8 +80,10 @@ export default function CellAudit() {
     const o = all.get(owner)
     const cm = checkMap(cyc.checks)
     const today = todayISO()
-    const mine = o?.helper ? (mineByDate(cyc.checks, me?.id).get(today) || new Set()) : null   // 도우미는 내가 센 칸만
-    const plan = todayPlan(o?.cells || [], cm, today, 1e9, o?.late, heldSet(cyc), mine)   // 보류 칸은 「다음 칸」에서 뺌 (v4.114.0)
+    // 도우미는 내가 센 칸만 · 도우미가 붙은 담당자도 본인이 세는 중이면 본인이 센 칸만 (v4.125.0)
+    const own = o?.helper || (o?.shared && owner === me?.name && me?.id)
+    const mine = own ? (mineByDate(cyc.checks, me?.id).get(today) || new Set()) : null
+    const plan = todayPlan(o?.cells || [], cm, today, 1e9, o?.late, heldSet(cyc), mine, !!o?.reverse)   // 도우미는 거꾸로 (v4.125.0)   // 보류 칸은 「다음 칸」에서 뺌 (v4.114.0)
     const next = plan.list.find(c => !c.done && c.loc !== location)?.loc || null
     const hold = (cyc.holds || []).find(h => normLoc(h.location) === location) || null
     return { owner, done: plan.done, daily: dailyOf(cyc.people, owner), next, hold, doneToday: cm.get(location)?.last === today, holdSetup: !!cyc.holdSetup }

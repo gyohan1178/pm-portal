@@ -50,8 +50,10 @@ export function useCycleTodo({ who, me, people }) {
     const isMe = name === myName
     const daily = dailyOf(cfg, name)
     const target = daily + (isMe ? extra * DAILY : 0)
-    const mine = o.helper ? mineOf(name) : null
-    const plan = todayPlan(o.cells, cm, today, target, o.late, held, o.helper ? (mine.get(today) || new Set()) : null)
+    // 도우미 · 도우미가 붙은 담당자는 자기가 센 칸만 (v4.125.0 담당자도) — 가입 전이라 id 를 모르면 예전처럼 모두 합쳐 센다
+    const own = (o.helper || o.shared) && uidOf(name)
+    const mine = own ? mineOf(name) : null
+    const plan = todayPlan(o.cells, cm, today, target, o.late, held, own ? (mine.get(today) || new Set()) : null, !!o.reverse)
     const mineSet = new Set(o.cells)
     return {
       key: 'cycle:' + name, name, isMe, o, plan, target, daily,
@@ -69,8 +71,8 @@ export function useCycleTodo({ who, me, people }) {
     for (const [name, o] of byOwner) {
       if (o.helper && !uidOf(name)) continue   // 아직 가입 전 도우미
       const d = dailyOf(cfg, name)
-      const mine = o.helper ? (mineOf(name).get(today) || new Set()) : null
-      if (todayPlan(o.cells, cm, today, d, o.late, held, mine).done < d) s.add(name)
+      const mine = (o.helper || o.shared) && uidOf(name) ? (mineOf(name).get(today) || new Set()) : null
+      if (todayPlan(o.cells, cm, today, d, o.late, held, mine, !!o.reverse).done < d) s.add(name)
     }
     return s
   }, [base, workday, byOwner, cm, today, held, people]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -126,8 +128,8 @@ export function CycleTodoRow({ it, cyc, showName }) {
           <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-500 flex-wrap">
             {!complete && plan.nextLoc && <span>다음 칸 <b className="font-mono text-indigo-600">{plan.nextLoc}</b></span>}
             {o.helper
-              ? <span data-cycle-helper>도움 — {o.of.join(' · ')} 렉 (내가 센 칸만 셈)</span>
-              : <span>{rackRanges(o.racks.filter((c) => !o.lateRacks.includes(c)), cyc.racks)}{late}</span>}
+              ? <span data-cycle-helper>도움 — {o.of.join(' · ')} 렉 · 뒤에서부터 (내가 센 칸만 셈)</span>
+              : <span>{rackRanges(o.racks.filter((c) => !o.lateRacks.includes(c)), cyc.racks)}{late}{o.shared && <span data-cycle-shared> · 도우미와 나눠 돎 (앞에서부터 · 내가 센 칸만 셈)</span>}</span>}
             <span>{rs.round}바퀴째 {rs.pct}%</span>
             {holds.length > 0 && <span data-cycle-held-cnt className="px-1.5 py-0.5 rounded bg-amber-50 border border-amber-200 text-amber-700 font-bold">⏸ 보류 {holds.length}칸</span>}
             <span className="text-slate-400">{open ? '접기 ▴' : '칸 보기 ▾'}</span>

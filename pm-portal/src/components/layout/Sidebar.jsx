@@ -9,7 +9,7 @@ import { supabase } from '../../lib/supabase'
 import { alertCountFor } from '../../lib/todoView'
 import { todayISO } from '../../lib/utils'
 import { isHoliday } from '../../lib/bizdays'
-import { isWorkday, normLoc, rackOf, dailyOf, helperOf } from '../../lib/cycleCount'
+import { isWorkday, normLoc, rackOf, dailyOf, helperOf, hasHelper } from '../../lib/cycleCount'
 import { toast, toastError } from '../../lib/toast'
 import { visibleDepts, flowOf } from '../../lib/workflow'
 import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLOW_SEEN_EVENT } from '../../lib/flowSeen'
@@ -216,7 +216,8 @@ function useAlertCounts(buy = false) {
               : await supabase.from('pm_rack_owner').select('*').eq('owner_name', p.name)
             if (!oe && ow?.length) {
               const racks = new Set(ow.map(o => String(o.rack_code).toUpperCase()))
-              const n = new Set((ck || []).filter(c => !helpOf || c.checked_by === user.id).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
+              const own = helpOf || hasHelper(ppl?.value, p.name)   // 도우미 · 도우미가 붙은 담당자는 자기가 센 칸만 (v4.125.0)
+              const n = new Set((ck || []).filter(c => !own || c.checked_by === user.id).map(c => normLoc(c.location)).filter(l => racks.has(rackOf(l)))).size
               if (n < dailyOf(ppl?.value, p.name)) out['/todo'] = (out['/todo'] || 0) + 1
             }
           }
