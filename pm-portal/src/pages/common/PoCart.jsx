@@ -65,7 +65,9 @@ export async function addToCart(rows) {
     request_id: r.id, item_id: r.item_id,
     customer_id: r.customer_id || csOf.get(r.customer_code) || bomOf.get(r.item_id) || null,
     vendor_id: vOf.get(r.item_id) || null,
-    qty: Number(r.qty) || 0, promise_date: r.need_date || null,
+    // 일부 불출된 요청은 남은 수량만 담는다 (v4.123.0 부분 불출)
+    qty: (Number(r.qty) || 0) - (Number(r.issued_qty) || 0) > 0 ? (Number(r.qty) || 0) - (Number(r.issued_qty) || 0) : (Number(r.qty) || 0),
+    promise_date: r.need_date || null,
     unit_price: pOf.get(r.item_id) ?? null,
     memo: `자재요청 ${r.req_no || ''}${r.purpose ? ' · ' + r.purpose : ''}`.trim(),
   }))

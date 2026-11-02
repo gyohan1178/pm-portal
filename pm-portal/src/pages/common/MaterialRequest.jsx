@@ -428,7 +428,7 @@ export default function MaterialRequest() {
   function report(r, okWord, keepSel = false) {
     const done = Number(r?.done ?? 0), failed = Number(r?.failed ?? 0)
     if (failed > 0) toastError(`${n(done)}건 ${okWord} · ${failed}건 실패 — ${r?.note || ''}`)
-    else toastSuccess(`${n(done)}건 ${okWord}`)
+    else if (okWord) toastSuccess(`${n(done)}건 ${okWord}`)
     // 한 건만 처리했으면 체크해 둔 것을 지우지 않는다 — 이어서 다른 건을 처리한다
     if (!keepSel) setSel({})
     qc.invalidateQueries({ queryKey: ['materialRequests'] })
@@ -442,7 +442,59 @@ export default function MaterialRequest() {
   //   안 됐거나 실사가 안 맞는 경우가 있어 필요하다. 재고는 음수가 된다.
   // 한 건만 불출하는 경우가 잦다.
   //   품목 줄의 [불출] 을 누르면 그 줄만, 위쪽 버튼은 체크한 것을 한꺼번에.
+  // 남은 수량 — 일부 불출된 줄은 이미 낸 만큼 뺀다 (v4.123.0)
+  const leftOf = (r) => Math.max(0, (Number(r?.qty) || 0) - (Number(r?.issued_qty) || 0))
+  const isPartial = (r) => (Number(r?.issued_qty) || 0) > 0 && r?.status !== '완료' && r?.status !== '반려'
+
+  // 한 줄 불출 — 수량을 정해 일부만 낼 수 있다 (v4.123.0)
+  //   100개 요청에 50개만 내면 불출 50/100, 요청은 진행 중으로 남고 다음에 남은 수량을 이어서 낸다.
+  //   재고가 모자라면 강제로 낼지 한 번 더 묻는다.
+  async function issueOne(r) {
+    const left = leftOf(r)
+    if (!(left > 0)) return
+    const m = await ask({
+      title: `${r.std_code || r.item_name || '이 품목'} 불출`,
+      desc: `요청 ${n(r.qty)}${r.unit || ''}${isPartial(r) ? ` · 이미 불출 ${n(r.issued_qty)}` : ''} · 남은 ${n(left)}${r.unit || ''}\n일부만 내면 나머지는 진행 중으로 남고, 다음에 이어서 불출합니다.`,
+      items: [`${r.req_no || ''}${r.requester ? ` · ${r.requester}` : ''}${r.purpose ? ` · ${r.purpose}` : ''}`],
+      input: {
+        type: 'number', label: '불출 수량', value: String(left),
+        help: `1 ~ ${n(left)} — 재고에서 이 수량만큼 빠집니다`,
+        validate: (v) => {
+          const q = Number(v)
+          if (!v || !Number.isFinite(q) || q <= 0) return '불출 수량을 0보다 크게 넣어 주세요'
+          if (q > left) return `남은 수량(${n(left)})보다 많이 낼 수 없습니다`
+          return ''
+        },
+      },
+      okText: '불출 처리',
+    })
+    if (!m) return
+    const qty = Number(m.value)
+    const run = async (force) => {
+      const { data, error } = await supabase.rpc('pm_request_issue_part', { p_id: r.id, p_qty: qty, p_force: force })
+      if (error) {
+        if (error.code === 'PGRST202' || /pm_request_issue_part/.test(error.message || '')) throw new Error('자재요청_부분불출_반영 SQL 을 먼저 실행해 주세요')
+        throw error
+      }
+      return Array.isArray(data) ? data[0] : data
+    }
+    try {
+      let res = await run(false)
+      if (Number(res?.failed) > 0 && /재고 부족/.test(res?.note || '')) {
+        const go = await ask({ title: '재고가 모자랍니다 — 강제로 불출할까요?', desc: `${res.note}\n실물은 있는데 입고 처리가 안 된 경우에만 진행하세요. 재고가 마이너스가 되고, 나중에 입고나 실사로 바로잡아야 합니다.`, okText: '강제 불출', danger: true })
+        if (!go) return
+        res = await run(true)
+      }
+      if (Number(res?.failed) > 0) { toastError(`불출 실패 — ${res?.note || ''}`); return }
+      const remain = Number(res?.remain) || 0
+      toastSuccess(remain > 0 ? `${n(qty)}${r.unit || ''} 불출 · 남은 ${n(remain)} (진행 중)` : `${n(qty)}${r.unit || ''} 불출 · 완료`)
+      report({ done: 1, failed: 0 }, '', true)
+      qc.invalidateQueries({ queryKey: ['inventory'] })
+    } catch (e) { toastError('불출 실패: ' + e.message) }
+  }
+
   async function doIssue(force = false, only = null) {
+    if (only && !force) return issueOne(only)
     const ids = only ? [only.id] : checked.map(r => r.id)
     if (!ids.length) return
     const what = only
@@ -454,7 +506,7 @@ export default function MaterialRequest() {
     if (!(await ask({ title: force ? `${what}을 강제 불출할까요?` : `${what}을 불출 처리할까요?`,
       desc: force ? '재고가 모자라도 진행해 재고가 마이너스가 됩니다. 실물은 있는데 입고 처리가 안 된 경우에만 쓰고, 나중에 입고나 실사로 바로잡아야 합니다.'
         : '재고에서 실제로 빼고 출고 이력을 남깁니다. 재고가 모자란 건은 처리되지 않고 사유가 표시됩니다.',
-      items: (only ? [only] : checked).slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${n(r.qty)}${r.unit || ''}${r.req_no ? ` · ${r.req_no}` : ''}`),
+      items: (only ? [only] : checked).slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${isPartial(r) ? `남은 ${n(leftOf(r))}/${n(r.qty)}` : n(r.qty)}${r.unit || ''}${r.req_no ? ` · ${r.req_no}` : ''}`),
       more: only ? 0 : Math.max(0, checked.length - 5),
       okText: force ? '강제 불출' : '불출 처리', danger: force }))) return
     try {
@@ -904,9 +956,9 @@ export default function MaterialRequest() {
   //   ⚠ 불출이었으면 출고를 지우고 재고도 되돌린다.
   //     실물이 나가기 전에만 써야 한다. 이미 나갔으면 재고가 실제보다 많아진다.
   async function undoDone() {
-    const done = checked.filter(r => r.status === '완료')
+    const done = checked.filter(r => r.status === '완료' || isPartial(r))   // 일부 불출된 진행 중 줄도 (v4.123.0)
     if (!done.length) return
-    const issued = done.filter(r => r.handle_type === '불출')
+    const issued = done.filter(r => r.handle_type === '불출' || isPartial(r))
     const msg = `${done.length}건을 확인 단계로 되돌립니다.\n\n`
       + (issued.length
           ? `⚠️ 불출된 ${issued.length}건은 출고를 지우고 재고를 되돌립니다.\n`
@@ -915,7 +967,7 @@ export default function MaterialRequest() {
       + '계속할까요?'
     const m = await ask({ title: `${done.length}건을 확인 단계로 되돌릴까요?`,
       desc: issued.length ? `⚠ 불출된 ${issued.length}건은 출고를 지우고 재고를 되돌립니다. 실물이 이미 나갔다면 재고가 실제보다 많아집니다.` : '발주 담기 · 처리 완료 표시가 풀리고 확인 단계로 돌아갑니다.',
-      items: done.slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${r.handle_type || ''} ${n(r.qty)}${r.unit || ''}`), more: Math.max(0, done.length - 5),
+      items: done.slice(0, 5).map(r => `${r.std_code || r.item_name || '-'} · ${isPartial(r) ? `부분 불출 ${n(r.issued_qty)}/${n(r.qty)}` : `${r.handle_type || ''} ${n(r.qty)}`}${r.unit || ''}`), more: Math.max(0, done.length - 5),
       okText: '되돌리기', danger: issued.length > 0, input: { label: '되돌리는 사유 (선택)', value: '실수로 처리' } })
     if (!m) return
     const memo = m.value
@@ -1727,7 +1779,7 @@ export default function MaterialRequest() {
                     ↩ 반려 취소
                   </button>
                 )}
-                {checked.some(r => r.status === '완료') && (
+                {checked.some(r => r.status === '완료' || isPartial(r)) && (
                   <button onClick={undoDone}
                     title="실수로 처리한 건을 확인 단계로 되돌립니다 — 불출된 건은 재고도 되돌립니다"
                     className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">
@@ -2064,6 +2116,9 @@ export default function MaterialRequest() {
                           </span>
                           <span className="font-bold text-slate-700 text-right whitespace-nowrap">
                             {n(r.qty)}<span className="font-normal text-slate-400 ml-0.5">{r.unit}</span>
+                            {isPartial(r) && (
+                              <span data-mr-partial className="block text-[10px] font-bold text-amber-600" title={`불출 ${n(r.issued_qty)} · 남은 ${n(leftOf(r))}`}>불출 {n(r.issued_qty)}/{n(r.qty)}</span>
+                            )}
                           </span>
                           {/* 품목마다 준비되는 날이 다르다 */}
                           <span className="text-right text-[11px] font-bold text-rose-600 whitespace-nowrap">
@@ -2083,7 +2138,7 @@ export default function MaterialRequest() {
                             {canEdit && r.item_id && !['완료', '반려'].includes(r.status) && (
                               <button
                                 onClick={e => { e.stopPropagation(); doIssue(false, r) }}
-                                title="이 품목만 불출 처리합니다"
+                                title="이 품목만 불출 — 수량을 정해 일부만 낼 수 있습니다"
                                 className="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-[10px] font-bold whitespace-nowrap">
                                 불출
                               </button>
@@ -2318,7 +2373,7 @@ export default function MaterialRequest() {
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-sky-700" title={r.reason || ''}>{r.reason || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.maker || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right font-bold text-slate-800">{n(r.qty)}</td>
-                      <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-right text-emerald-700">{r.issued_qty == null ? '' : n(r.issued_qty)}</td>
+                      <td className={`px-3 py-2 whitespace-nowrap overflow-hidden text-right ${isPartial(r) ? 'text-amber-600 font-bold' : 'text-emerald-700'}`}>{r.issued_qty == null ? '' : isPartial(r) ? `${n(r.issued_qty)}/${n(r.qty)}` : n(r.issued_qty)}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">{r.unit || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.need_date || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden font-bold text-rose-600">{r.ready_date || ''}</td>

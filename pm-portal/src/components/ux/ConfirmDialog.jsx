@@ -1,6 +1,7 @@
 // 포털 확인 창 — 브라우저 기본 confirm · prompt 대신 (v4.104.0)
 //   const [ask, dialog] = useConfirm()
 //   const ok = await ask({ title, desc, items: ['…'], okText: '삭제', danger: true, input: { label, required, placeholder } })
+//   숫자 칸: input: { type: 'number', label, value, help, validate: (v) => '틀린 이유' | '' }  (v4.123.0)
 //   → 취소 버튼 false · Esc · 바깥 누름 null (둘 다 「아니오」로 보면 됨) · 입력 칸이 있으면 { value } · 없으면 true
 //   알림만 (버튼 하나): ask({ title, items, okText: '확인', cancelText: null })
 import { useEffect, useRef, useState } from 'react'
@@ -44,8 +45,10 @@ function ConfirmDialog({ title, desc, items = [], more = 0, okText = '확인', c
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const ok = () => {
     if (input) {
-      if (input.required && !val.trim()) { setErr(input.requiredMsg || `${input.label}을(를) 적어 주세요`); ref.current?.focus(); return }
-      onDone({ value: val.trim() })
+      if (input.required && !String(val).trim()) { setErr(input.requiredMsg || `${input.label}을(를) 적어 주세요`); ref.current?.focus(); return }
+      const bad = input.validate ? input.validate(String(val).trim()) : ''
+      if (bad) { setErr(bad); ref.current?.focus(); return }
+      onDone({ value: String(val).trim() })
     } else onDone(true)
   }
   return createPortal(
@@ -62,9 +65,17 @@ function ConfirmDialog({ title, desc, items = [], more = 0, okText = '확인', c
         {input && (
           <div className="mt-3">
             <label className="block text-[12px] font-bold text-slate-600 mb-1">{input.label} {input.required && <span className="text-rose-500">*</span>}</label>
+            {input.type === 'number' ? (
+              <input ref={ref} type="number" inputMode="decimal" value={val} onChange={(e) => { setVal(e.target.value); setErr('') }} placeholder={input.placeholder || ''}
+                onFocus={(e) => e.target.select()}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); ok() } }}
+                className={`w-full h-10 px-3 text-[15px] font-bold text-right border rounded-lg focus:outline-none ${err ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 focus:border-violet-500'}`} data-confirm-input />
+            ) : (
             <textarea ref={ref} rows={input.rows || 2} value={val} onChange={(e) => { setVal(e.target.value); setErr('') }} placeholder={input.placeholder || ''}
               onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) ok() }}
               className={`w-full px-3 py-2 text-[13px] border rounded-lg focus:outline-none ${err ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200 focus:border-violet-500'}`} data-confirm-input />
+            )}
+            {input.help && !err && <p className="text-[11px] text-slate-400 mt-1" data-confirm-help>{input.help}</p>}
             {err && <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error>{err}</p>}
           </div>
         )}
