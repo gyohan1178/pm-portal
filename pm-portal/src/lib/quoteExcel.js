@@ -184,6 +184,10 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     put(ws, `B${r}`, t, { size: 10 })
   })
 
+  // ── 세부견적서 (v4.138.0) — 고객 제출용. 어셈블리마다 부품별 판매가 · 조립비 · 합계(= 견적 단가) ──
+  const cd = extra.customerDetail
+  if (cd?.details?.length) addDetailSheet(wb, cd, { ko, money, cur, head })
+
   // ── 내부 관리용 시트 (고객 제출 시 삭제해도 무방) ──
   const addPlain = (name, rows) => {
     if (!rows?.length) return
@@ -199,7 +203,7 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     })
     s.views = [{ state: 'frozen', ySplit: 1 }]
   }
-  addPlain('세부견적', extra.detailRows)
+  addPlain(cd?.details?.length ? '원가내역(내부)' : '세부견적', extra.detailRows)   // 고객용 「세부견적서」와 헷갈리지 않게
   addPlain('부품명세', extra.bomRows)
   addPlain('견적정보', extra.infoRows)
 
@@ -211,4 +215,57 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   a.download = fileName
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// 세부견적서 시트 — 어셈블리 블록을 위에서 아래로 (블록 사이 두 줄 띄움)
+function addDetailSheet(wb, cd, { ko, money, cur, head }) {
+  const ws = wb.addWorksheet(ko ? '세부견적서' : 'Detail', {
+    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+  })
+  const mk = !!cd.showMaker
+  const cols = mk
+    ? [['No', 5], [ko ? '품번' : 'Part no.', 16], [ko ? '품명' : 'Description', 40], [ko ? '제조사' : 'Maker', 16], [ko ? '제조사 품번' : 'Maker P/N', 22], [ko ? '대당 수량' : "Q'ty/Unit", 10], [ko ? '단위' : 'Unit', 7], [`${ko ? '단가' : 'Unit Price'}(${cur})`, 14], [`${ko ? '금액' : 'Amount'}(${cur})`, 15]]
+    : [['No', 5], [ko ? '품번' : 'Part no.', 16], [ko ? '품명' : 'Description', 48], [ko ? '대당 수량' : "Q'ty/Unit", 10], [ko ? '단위' : 'Unit', 7], [`${ko ? '단가' : 'Unit Price'}(${cur})`, 14], [`${ko ? '금액' : 'Amount'}(${cur})`, 15]]
+  cols.forEach(([, w], i) => { ws.getColumn(i + 1).width = w })
+  const L = (i) => String.fromCharCode(65 + i)
+  const last = L(cols.length - 1), prev = L(cols.length - 2)
+  let r = 1
+  ws.mergeCells(`A${r}:${last}${r}`)
+  put(ws, `A${r}`, ko ? '세 부 견 적 서' : 'DETAILED QUOTATION', { bold: true, size: 22, align: 'center' }); ws.getRow(r).height = 34; r++
+  ws.mergeCells(`A${r}:${last}${r}`)
+  put(ws, `A${r}`, `${ko ? '견적번호' : 'NO'} : ${head.quoteNo || ''} · ${head.quoteDate || ''} · ${ko ? '수신' : 'To'} : ${head.issuedTo || ''}${head.projectName ? ` · ${ko ? '건명' : 'Project'} : ${head.projectName}` : ''}`, { size: 10, align: 'center' })
+  r += 2
+  for (const { line: l, detail: d, idx } of cd.details) {
+    ws.mergeCells(`A${r}:${last}${r}`)
+    put(ws, `A${r}`, `${idx + 1}. ${l.std_code || ''}${l.rev ? ` Rev.${l.rev}` : ''}  ${l.description || ''}  —  ${ko ? '견적 단가' : 'Unit Price'} ${cur} ${Number(l.unitPrice || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} / ${l.unit || 'EA'} (${ko ? '수량' : "Q'ty"} ${Number(l.qty) || 0})`,
+      { bold: true, size: 11, fill: 'FFEEF2FF' })
+    ws.getRow(r).height = 22; r++
+    cols.forEach(([label], i) => put(ws, `${L(i)}${r}`, label, { bold: true, size: 10, align: 'center', border: true, fill: 'FFF1F5F9' }))
+    r++
+    for (const x of d.rows) {
+      const vals = mk ? [x.no, x.std_code, x.name, x.maker, x.makerPn, x.qty, x.unit, x.price, x.amount] : [x.no, x.std_code, x.name, x.qty, x.unit, x.price, x.amount]
+      vals.forEach((v, i) => {
+        const isMoney = i >= cols.length - 2
+        put(ws, `${L(i)}${r}`, v ?? '', { size: 10, border: true, align: i === 0 || i === cols.length - 3 ? 'center' : isMoney || i === cols.length - 4 ? 'right' : undefined, fmt: isMoney ? money : undefined, wrap: i === 2 })
+      })
+      r++
+    }
+    ws.mergeCells(`A${r}:${prev}${r}`)
+    put(ws, `A${r}`, ko ? '자재 소계' : 'Material Subtotal', { bold: true, size: 10, align: 'right', border: true })
+    put(ws, `${last}${r}`, d.partsSum, { bold: true, size: 10, align: 'right', border: true, fmt: money }); r++
+    if (d.laborKind) {
+      const t = d.laborKind === 'labor' ? (ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test') : (ko ? '단수 조정' : 'Rounding adjustment')
+      put(ws, `A${r}`, d.rows.length + 1, { size: 10, border: true, align: 'center' })
+      ws.mergeCells(`B${r}:${L(cols.length - 4)}${r}`)
+      put(ws, `B${r}`, t, { size: 10, border: true })
+      put(ws, `${L(cols.length - 3)}${r}`, ko ? '1 식' : '1 Lot', { size: 10, border: true, align: 'center' })
+      put(ws, `${prev}${r}`, d.labor, { size: 10, border: true, align: 'right', fmt: money })
+      put(ws, `${last}${r}`, d.labor, { size: 10, border: true, align: 'right', fmt: money }); r++
+    }
+    ws.mergeCells(`A${r}:${prev}${r}`)
+    put(ws, `A${r}`, ko ? `${l.std_code || ''} 1${l.unit || 'EA'} 합계 (= 견적 단가)` : `Total per ${l.unit || 'EA'} (= quoted unit price)`, { bold: true, size: 11, align: 'right', border: true, fill: 'FFF1F5F9' })
+    put(ws, `${last}${r}`, d.total, { bold: true, size: 11, align: 'right', border: true, fmt: money, fill: 'FFF1F5F9' })
+    r += 3
+  }
 }

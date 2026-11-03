@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
 import { quoteFileBase } from '../../lib/quoteFileName'
 import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
+import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
+import { buildDetails, noPartsAssy, CUT_OPTS, cutLabel, defaultCut, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -160,6 +162,13 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [memo, setMemo] = useState('')
   // 인쇄 방식 (v4.124.0) — auto: 줄이 많으면 갑지·을지 / single: 지금처럼 한 장 / split: 항상 갑지·을지
   const [printMode, setPrintMode] = useState('auto')
+  // 세부견적서 (v4.138.0) — 켜면 인쇄 · 엑셀에 어셈블리마다 부품별 판매가 장이 붙는다. 기본은 꺼짐 (부품 판매가가 고객에게 보이므로)
+  //   제조사 칸(기본 숨김 — 필요할 때만 켬) · 절삭 단위는 이 PC 에 기억 (견적마다 다시 고르지 않게)
+  const [detailOn, setDetailOn] = useState(false)
+  const [detailPref, setDetailPref] = useState(() => {
+    try { return { maker: false, cut: { KRW: 10, USD: 0.01 }, ...JSON.parse(localStorage.getItem('quote_detail_pref') || '{}') } } catch { return { maker: false, cut: { KRW: 10, USD: 0.01 } } }
+  })
+  const setPref = (p) => setDetailPref((o) => { const n = { ...o, ...p, cut: { ...o.cut, ...(p.cut || {}) } }; try { localStorage.setItem('quote_detail_pref', JSON.stringify(n)) } catch { /* 저장 못 해도 이번 화면에선 동작 */ } return n })
 
   const [lines, setLines] = useState([])
   const [addCode, setAddCode] = useState('')
@@ -545,9 +554,27 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     if (error) toastError('L/T·MOQ 저장 실패: ' + error.message)
   }
 
+  // 세부견적 — 견적 단가를 부품별 판매가로 푼 것 (lib/quoteDetail)
+  const detailCut = detailPref.cut?.[currency === 'KRW' ? 'KRW' : 'USD'] ?? defaultCut(currency)
+  const details = useMemo(() => (isSales && detailOn ? buildDetails(lines, { currency, sellRate, mcfg, cut: detailCut }) : []),
+    [isSales, detailOn, lines, currency, sellRate, mcfg, detailCut])
+  const detailMissing = details.reduce((a, d) => a + d.detail.missing, 0)
+  const detailNoParts = isSales && detailOn ? noPartsAssy(lines) : []
+  // 켜면 세부가 붙는 줄 비고에 「세부견적 참조」(비어 있을 때만) · 끄면 그 글자만 지운다
+  function toggleDetail(on) {
+    setDetailOn(on)
+    const txt = ko ? DETAIL_REMARK.ko : DETAIL_REMARK.en
+    if (on) {
+      const keys = new Set(buildDetails(lines, { currency, sellRate, mcfg, cut: detailCut }).map((d) => d.line.key))
+      setLines((ls) => ls.map((l) => (keys.has(l.key) && !String(l.remarks || '').trim() ? { ...l, remarks: txt } : l)))
+    } else {
+      setLines((ls) => ls.map((l) => (l.remarks === DETAIL_REMARK.ko || l.remarks === DETAIL_REMARK.en ? { ...l, remarks: '' } : l)))
+    }
+  }
+
   const draftPayload = () => ({
     v: 1, quoteKind, lang, currency, quoteDate, issuedTo, vendorId, attn, projectName,
-    validityDays, leadTime, leadKind, deliveryNote, memo, lines, customerId, customerName, revOf,
+    validityDays, leadTime, leadKind, deliveryNote, memo, lines, customerId, customerName, revOf, detailOn,
   })
 
   const draftMut = useMutation({
@@ -611,6 +638,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setDeliveryNote(d.deliveryNote || '(To be discussed later)')
     setMemo(d.memo || '')
     setLines(Array.isArray(d.lines) ? d.lines : [])
+    setDetailOn(!!d.detailOn)
     setRevOf(d.revOf || null)
     setDraftId(id); setSavedNo(''); setErr(''); setDraftOpen(false)
     toastSuccess('보관해 둔 견적을 불러왔습니다')
@@ -819,14 +847,24 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     title: projectName, firstCode: lines.find((l) => l.std_code)?.std_code, purchase: !isSales, en: isSales && !ko,
   })
 
-  function doPrint() {
+  async function doPrint() {
+    if (detailOn && details.length && (detailMissing > 0 || detailNoParts.length > 0)) {
+      const ok = await ask({ title: '세부견적에 빠지는 것이 있습니다 — 그대로 인쇄할까요?',
+        items: [
+          ...(detailMissing > 0 ? [`단가 없는 부품 ${detailMissing}개 — 견적 단가에도 안 들어가 있어 세부에서도 빠집니다`] : []),
+          ...detailNoParts.map((l) => `${l.std_code || '-'} — 부품 정보가 없어 세부견적을 못 만듭니다 (지난 견적을 불러온 줄이면 원가분석에서 다시 가져오세요)`),
+        ],
+        okText: '그대로 인쇄' })
+      if (!ok) return
+    }
     document.body.classList.add('printing-quote')
     if (wantSplit(printMode, lines.length)) document.body.classList.add('qs-split')
+    if (detailOn && details.length) document.body.classList.add('qs-detail')
     // PDF 로 저장할 때 크롬이 문서 제목을 파일 이름으로 쓴다 → 인쇄하는 동안만 바꿨다가 되돌림
     const prevTitle = document.title
     document.title = fileBase()
     const done = () => {
-      document.body.classList.remove('printing-quote', 'qs-split')
+      document.body.classList.remove('printing-quote', 'qs-split', 'qs-detail')
       document.title = prevTitle
       window.removeEventListener('afterprint', done)
     }
@@ -905,7 +943,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           contactName, contactPhone, contactEmail,
         },
         lines, totals,
-        extra: { detailRows, bomRows, infoRows },
+        extra: { detailRows, bomRows, infoRows, customerDetail: detailOn && details.length ? { details, showMaker: !!detailPref.maker } : null },
         fileName: `${fileBase()}.xlsx`,
       })
     } catch (e) {
@@ -939,6 +977,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         .qi:focus{border-bottom-color:#6366f1}
         @media print{.qi{border:0}}
         ${SPLIT_CSS}
+        ${DETAIL_CSS}
       `}</style>
 
       {/* 주의 알림 (v4.100.1) — 재접수 · 반복 견적은 지난 이력과 맞춰 본다 */}
@@ -1049,6 +1088,29 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             <option value="split">갑지·을지</option>
           </select>
         </div>
+        {isSales && (
+          <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 ${detailOn ? 'border-violet-300 bg-violet-50' : 'border-slate-200'}`} data-quote-detail-ctl>
+            <label className={`flex items-center gap-1 text-xs font-bold cursor-pointer ${detailOn ? 'text-violet-700' : 'text-slate-500'}`}
+              title="인쇄 · 엑셀에 어셈블리마다 부품별 판매가(매입 실적가 + 마진) 장을 붙입니다. 부품 판매가가 고객에게 보이니 필요한 건에만 켜세요">
+              <input type="checkbox" checked={detailOn} onChange={(e) => toggleDetail(e.target.checked)} data-quote-detail />세부견적 같이
+            </label>
+            {detailOn && (
+              <>
+                <select value={detailCut} onChange={(e) => setPref({ cut: { [currency === 'KRW' ? 'KRW' : 'USD']: Number(e.target.value) } })} data-quote-detail-cut
+                  title="부품 단가 끝자리 — 잘라낸 끝자리는 조립비 줄에서 맞춰 합계는 견적 단가와 같습니다"
+                  className="text-[11px] font-semibold border border-violet-200 rounded bg-white text-violet-700 px-1 py-0.5">
+                  {(CUT_OPTS[currency === 'KRW' ? 'KRW' : 'USD']).map((c) => <option key={c} value={c}>{cutLabel(c, currency === 'KRW' ? 'KRW' : 'USD')}</option>)}
+                </select>
+                <label className="flex items-center gap-1 text-[11px] text-violet-700 cursor-pointer" title="세부견적에 제조사 · 제조사 품번 칸">
+                  <input type="checkbox" checked={!!detailPref.maker} onChange={(e) => setPref({ maker: e.target.checked })} data-quote-detail-maker />제조사
+                </label>
+                <span className="text-[11px] text-violet-500" data-quote-detail-count>
+                  ASSY {details.length}건{detailMissing > 0 && <b className="text-amber-600"> · 단가없음 {detailMissing}</b>}{detailNoParts.length > 0 && <b className="text-amber-600"> · 부품정보 없음 {detailNoParts.length}</b>}
+                </span>
+              </>
+            )}
+          </div>
+        )}
         {isSales && (
           <button data-sim-all onClick={() => setSimFor('all')} disabled={!lines.length || totals.costKrw <= 0}
             title="제출 단가 · 환율에 따라 마진이 어떻게 바뀌는지 봅니다 (네고 보고용)"
@@ -1559,6 +1621,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             <input value={memo} onChange={(e) => setMemo(e.target.value)} className="qi flex-1" placeholder="특이사항" /></div>
         </div>
         </div>{/* .qs-edit */}
+        {detailOn && (
+          <QuoteDetailPrint ko={ko} savedNo={savedNo} quoteDate={quoteDate} party={issuedTo} projectName={projectName}
+            currency={currency} sym={sym} money={money} details={details} showMaker={!!detailPref.maker} />
+        )}
       </div>
 
       {/* 보관함 — 채번 전 견적을 넣어 두는 곳 */}
