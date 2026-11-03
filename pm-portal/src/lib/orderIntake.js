@@ -872,6 +872,43 @@ export async function setReleaseDate(lines, date, meName) {
   return { ids, patch: { release_date: date || null, updated_at: now } }
 }
 
+// 납기 일괄 변경 (v4.141.0) — 고객사가 납기를 옮겨 달라고 할 때 고른 줄을 한 번에 (영업 요청)
+//   · 줄마다 변경 이력 「납기 2026-11-20 → 2026-12-05 · 사유」 (사유는 적었을 때만)
+//   · 납기가 당겨진 줄에 구매자재 회신이 있으면 회신을 비운다 — 「가능」은 예전 날짜 기준이라 다시 받아야 (발주 예정 → PO 옮길 때와 같은 규칙)
+//     미뤄진 줄의 회신은 그대로 둔다
+//   · 같은 날짜인 줄은 건너뛴다 · 반환 patches 로 화면만 고친다 (되돌리기는 DUE_FIELDS 로)
+export const DUE_FIELDS = ['due_date', ...REPLY_FIELDS]
+export async function setDueDates(lines, date, reason, meName) {
+  if (!date) throw new Error('새 납기를 고르세요')
+  const ls = (lines || []).filter((l) => (l.due_date || '') !== date)
+  if (!ls.length) return { n: 0, reset: 0, patches: new Map(), ls }
+  const now = new Date().toISOString()
+  const why = String(reason || '').trim()
+  const patches = new Map(), logs = []
+  const pull = (l) => !!l.reply && !!l.due_date && date < l.due_date
+  for (const l of ls) {
+    const patch = { due_date: date, updated_at: now, ...(pull(l) ? REPLY_CLEAR : {}) }
+    patches.set(l.id, patch)
+    const key = `${l.line_no}/${l.del_line}`
+    logs.push({ order_id: l.order_id, line_key: key, field: 'due_date', before_val: l.due_date || null, after_val: why ? `${date} · ${why}` : date, source: 'manual', changed_name: meName || null })
+    if (pull(l)) logs.push({ order_id: l.order_id, line_key: key, field: 'reply_reset', before_val: replyText(l), after_val: '납기 당겨짐으로 재회신 필요', source: 'manual', changed_name: meName || null })
+  }
+  // 이력 먼저 — 중간에 끊겨도 무엇을 바꾸려 했는지 남게 (saveOrder 와 같은 순서)
+  for (let i = 0; i < logs.length; i += 500) {
+    const { error } = await supabase.from('pm_order_change').insert(logs.slice(i, i + 500))
+    if (error) throw error
+  }
+  const plain = ls.filter((l) => !pull(l)).map((l) => l.id), reset = ls.filter(pull).map((l) => l.id)
+  for (const [ids, patch] of [[plain, { due_date: date, updated_at: now }], [reset, { due_date: date, updated_at: now, ...REPLY_CLEAR }]]) {
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await supabase.from('pm_order_line').update(patch).in('id', ids.slice(i, i + 200))
+      if (error) throw error
+    }
+  }
+  logActivity('update', 'pm_order', poNosOf(ls), `납기 일괄 변경 → ${date}${why ? ` (${why})` : ''} · ${ls.length}품목${reset.length ? ` · 회신 초기화 ${reset.length}` : ''}`, null, custNameOf(ls))
+  return { n: ls.length, reset: reset.length, patches, ls }
+}
+
 // ── 수주대장 납품 → CSK 생산관리 호기 완료 (v4.110.0) ─────────────────
 //   CSK 는 발주 1건 = 1대 — 생산관리 줄(production.csk.plnd)과 수주대장 줄(plnd_no)이 Plnd 번호로 이어져 있다.
 //   그 Plnd 의 진행 중 수주 줄이 다 납품되면 생산관리 호기를 「완료」로 (납품일 = 수주대장 납품일).

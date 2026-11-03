@@ -21,7 +21,7 @@ import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
-  replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
+  replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, setDueDates, DUE_FIELDS, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
@@ -579,6 +579,44 @@ export default function OrderIntake() {
     onError: (e) => toastError(/release_date/.test(e.message || '') ? '불출일 칸이 아직 없습니다 — 수주대장_에드워드납기_반영_261023.sql 을 먼저 실행하세요' : '저장 실패: ' + e.message),
   })
   const [relDate, setRelDate] = useState('')
+  // 납기 일괄 변경 (v4.141.0, 영업 요청) — 고객사가 납기를 옮겨 달라고 하면 체크한 줄을 한 번에 · 6초 되돌리기
+  const [dueDate, setDueDate] = useState('')
+  const dueMut = useMutation({
+    mutationFn: ({ ls, date, reason }) => setDueDates(ls, date, reason, meName),
+    onSuccess: (r) => {
+      patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set()); setDueDate('')
+      if (r.reset) qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+      const msg = `납기 변경 ${r.n}품목${r.reset ? ` · 회신 초기화 ${r.reset}` : ''}`
+      if (undoable(r.ls)) snack.show(msg, () => undoMut(r.ls, DUE_FIELDS, { field: 'due_date', textOf: (l) => l.due_date || null, label: '납기 변경' }))
+      else toastSuccess(msg)
+    },
+    onError: (e) => toastError('납기 변경 실패: ' + e.message),
+  })
+  async function bulkDue() {
+    if (!dueDate) return
+    const ls = checkedLines.filter((l) => (l.due_date || '') !== dueDate)
+    if (!ls.length) { toastError(`고른 품목이 이미 납기 ${dueDate} 입니다`); return }
+    const pulled = ls.filter((l) => l.reply && l.due_date && dueDate < l.due_date)
+    const same = checkedLines.length - ls.length
+    const r = await ask({
+      title: `${ls.length}품목 납기를 ${dueDate} 로 바꿀까요?`,
+      desc: [pulled.length ? `납기가 당겨지는 ${pulled.length}품목은 구매자재 회신이 지워져 다시 회신을 받습니다.` : '',
+        same ? `이미 ${dueDate} 인 ${same}품목은 건너뜁니다.` : '', '변경 이력에 남고, 저장 뒤 6초 동안 되돌릴 수 있습니다.'].filter(Boolean).join(' '),
+      items: ls.slice(0, 6).map((l) => `${l.items?.std_code || l.raw_pn || '—'} · ${l.o?.po_no || ''} · ${l.due_date || '납기 없음'} → ${dueDate}${pulled.includes(l) ? ' (회신 다시)' : ''}`),
+      more: Math.max(0, ls.length - 6),
+      input: { label: '사유 (선택)', placeholder: '예: 고객사 요청 · 장비 일정 변경' },
+      okText: '납기 변경',
+    })
+    if (!r) return
+    dueMut.mutate({ ls, date: dueDate, reason: typeof r === 'object' ? r.value : '' })
+  }
+  // 두 일괄 줄(영업 · 구매자재)에 같이 쓰는 「📅 납기 변경」 칸
+  const dueCtl = (
+    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 whitespace-nowrap" title="고객사가 납기를 옮겨 달라고 할 때 — 체크한 품목의 납기를 한 번에 바꿉니다" data-bulk-due-ctl>📅 납기
+      <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} data-bulk-due-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
+      <button type="button" disabled={!dueDate || dueMut.isPending} onClick={bulkDue} data-bulk-due className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dueMut.isPending && <Spin />}변경</button>
+    </label>
+  )
   const headMut = useMutation({
     mutationFn: async ({ id, patch, log }) => {
       const { error } = await supabase.from('pm_order').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
@@ -888,7 +926,8 @@ export default function OrderIntake() {
           <b className="text-xs text-violet-700 whitespace-nowrap">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</b>
           <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다{editable ? ' · 나간 품목은 「납품 표시」' : ''}</span>
           {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
-          {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
+          {editable && <span className="ml-auto">{dueCtl}</span>}
+          {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청 {checkedLines.length}</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
         </div>
@@ -901,6 +940,7 @@ export default function OrderIntake() {
             <input type="date" value={relDate} onChange={(e) => setRelDate(e.target.value)} data-bulk-release-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
             <button type="button" disabled={!relDate || relMut.isPending} onClick={() => relMut.mutate({ ls: checkedLines, date: relDate }, { onSuccess: () => { setRelDate(''); setChecked(new Set()) } })} data-bulk-release className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">저장</button>
           </label>
+          {editable && dueCtl}
           {checkedLines.some((l) => l.odd) && <button type="button" disabled={oddMut.isPending} onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인 {checkedLines.filter((l) => l.odd).length}</button>}
           <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
