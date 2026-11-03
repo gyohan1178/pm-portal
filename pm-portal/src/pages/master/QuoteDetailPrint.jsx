@@ -1,8 +1,9 @@
 // 세부견적서 인쇄 (v4.138.0) — 견적서 뒤에 어셈블리마다 부품별 판매가 장을 붙인다
 //   화면에는 안 보이고, 「세부견적 같이」를 켜고 인쇄할 때만 찍힌다 (body.qs-detail).
-//   한 장에 부품 16줄 — 넘으면 같은 어셈블리를 다음 장에 이어 찍고, 마지막 장에만 소계 · 조립비 · 합계
+//   한 장에 부품 16줄 — 넘으면 같은 어셈블리를 다음 장에 이어 찍고, 마지막 장에만 자재 소계 · 조립비 · 소계 · 단수 절삭 · 합계
 //   매입가 · 마진율은 찍지 않는다. 계산은 lib/quoteDetail.js
 import { paginate } from './QuotePrintSplit'
+import { adjustLabel } from '../../lib/quoteDetail'
 
 export const DETAIL_ROWS_PER_PAGE = 16   // 머리글 · 소계 · 조립비 · 합계 자리를 남긴다 (20줄은 넘쳐서 다음 장으로 밀렸음 — 시험 확인)
 
@@ -17,7 +18,6 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
   })
   const cols = showMaker ? 9 : 7
   const m = (v) => money(v, currency)
-  const laborTxt = (k) => (k === 'labor' ? (ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test') : (ko ? '단수 조정' : 'Rounding adjustment'))
   return (
     <div className="qd-print" data-quote-detail-print>
       {sheets.map((s, si) => {
@@ -68,13 +68,20 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
               {s.last && (
                 <tfoot>
                   <tr className="qd-sub"><td colSpan={cols - 1} className="text-right pr-3">{ko ? '자재 소계' : 'Material Subtotal'}</td><td className="text-right" data-qd-parts>{m(dt.partsSum)}</td></tr>
-                  {dt.laborKind && (
-                    <tr className="qd-labor" data-qd-labor={dt.laborKind}>
+                  {dt.labor > 0 && (
+                    <tr className="qd-labor" data-qd-labor>
                       <td className="text-slate-400">{dt.rows.length + 1}</td>
-                      <td colSpan={showMaker ? 4 : 2}>{laborTxt(dt.laborKind)}</td>
+                      <td colSpan={showMaker ? 4 : 2}>{ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test'}</td>
                       <td className="text-right">1</td><td className="text-center">{ko ? '식' : 'Lot'}</td>
                       <td className="text-right">{m(dt.labor)}</td><td className="text-right">{m(dt.labor)}</td>
                     </tr>
+                  )}
+                  {dt.adjust !== 0 && (
+                    <>
+                      <tr className="qd-sub"><td colSpan={cols - 1} className="text-right pr-3">{ko ? '소계' : 'Subtotal'}</td><td className="text-right" data-qd-subtotal>{m(dt.subtotal)}</td></tr>
+                      <tr data-qd-adjust={dt.adjust}><td colSpan={cols - 1} className="text-right pr-3 text-slate-500">{adjustLabel(dt.adjust, ko)}</td>
+                        <td className="text-right text-slate-500">{dt.adjust < 0 ? '−' : '+'}{m(Math.abs(dt.adjust))}</td></tr>
+                    </>
                   )}
                   <tr className="qs-total"><td colSpan={cols - 1} className="text-right pr-3">{ko ? `${l.std_code} 1${l.unit || 'EA'} 합계 (= 견적 단가)` : `Total per ${l.unit || 'EA'} (= quoted unit price)`}</td>
                     <td className="text-right" data-qd-total>{sym}{m(dt.total)}</td></tr>

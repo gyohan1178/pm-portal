@@ -24,6 +24,7 @@ export default function SalesQuote() {
   const [csCode, setCsCode] = useState(null)
   // 견적 이력 「✏ 수정」 → 작성 탭으로 넘어가 그 견적을 불러온다 (n: 같은 견적을 다시 눌러도 다시 불러오게)
   const [reviseReq, setReviseReq] = useState(null)
+  const [histAll, setHistAll] = useState(false)   // 견적 이력 「전체 고객사」
   const code = csCode || primaryCsCode(profile)
   const { data: cs } = useCustomer(code)
   // 처음 여는 사람 안내 (v4.104.0) — 접수 → 견적 작성 → 이력 순서
@@ -80,8 +81,15 @@ export default function SalesQuote() {
             ))}
           </div>
           {tab === 'rfq' && <button type="button" onClick={coach.start} data-coach-again className="px-2.5 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>}
-          {tab !== 'rfq' && <select value={code} onChange={(e) => setCsCode(e.target.value)}
+          {tab === 'write' && <select value={code} onChange={(e) => setCsCode(e.target.value)}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
+            {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>}
+          {/* 견적 이력 — 고객사로 거른다 · 「전체 고객사」도 고를 수 있다 (v4.139.0) */}
+          {tab === 'history' && <select value={histAll ? '__all' : code} data-qh-cust-sel
+            onChange={(e) => { if (e.target.value === '__all') setHistAll(true); else { setHistAll(false); setCsCode(e.target.value) } }}
+            className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
+            <option value="__all">전체 고객사</option>
             {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>}
           {tab === 'write' && <Field label="매입환율">
@@ -110,7 +118,7 @@ export default function SalesQuote() {
           setPrefill({ n: Date.now(), customerId: etc ? null : (r.customer_id || null), etcName: etc ? r.customer_code : null, title: r.title, lines: (r.lines || []).map((l) => ({ pn: l.std_code || l.pn, qty: l.qty })) })
           setTab('write')
         }} />
-      ) : tab === 'history' ? <QuoteHistory onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
+      ) : tab === 'history' ? <QuoteHistory customer={histAll ? null : (cs ? { id: cs.id, code: cs.code, name: custList.find((c) => c.id === code)?.name || cs.name } : null)} onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
       <QuoteSheet
         fixedKind="sales"
         reviseReq={reviseReq}

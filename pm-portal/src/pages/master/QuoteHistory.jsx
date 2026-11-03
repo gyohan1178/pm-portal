@@ -40,7 +40,7 @@ const STATUS = {
 async function fetchQuotes(kind) {
   const rows = await fetchAll(() => supabase
     .from('pm_quotes')
-    .select('id, quote_no, quote_kind, quote_date, currency, project_name, issued_to, total_amount, total_cost_krw, margin_pct, status, memo')
+    .select('id, quote_no, quote_kind, quote_date, currency, project_name, issued_to, customer_id, total_amount, total_cost_krw, margin_pct, status, memo')
     .eq('quote_kind', kind)
     .order('quote_date', { ascending: false })
     .order('created_at', { ascending: false }).order('id', { ascending: true }))
@@ -61,8 +61,21 @@ async function fetchItems(quoteIds) {
   return out
 }
 
+// 고객사로 거르기 (v4.139.0) — 매출견적 화면 위 고객사 선택을 따른다. 예전엔 받기만 하고 안 걸러서 VM 을 골라도 AXCELIS 가 그대로 보였다
+//   · 견적의 customer_id 가 그 고객사인 것
+//   · customer_id 가 빈 예전 견적 · 기타 고객사 견적은 받는 곳(issued_to) 이름이 고객사 이름 · 코드와 같으면 같이 본다
+//   · customer 가 없으면(전체) 거르지 않는다 · 매입견적은 업체 기준이라 거르지 않는다
+const normName = (v) => String(v || '').toLowerCase().replace(/[\s().,㈜]|주식회사|co\.?|ltd\.?|inc\.?|korea|코리아/g, '')
+export function quoteOfCustomer(q, customer) {
+  if (!customer) return true
+  if (q.customer_id) return q.customer_id === customer.id
+  const it = normName(q.issued_to)
+  if (!it) return false
+  return [customer.name, customer.code].map(normName).filter(Boolean).some((c) => it === c || it.startsWith(c))
+}
+
 // onRevise: 매출견적 화면에서 넘겨주면 견적별 줄에 「✏ 수정」 버튼이 생긴다 (지난 견적 → 리비전 저장)
-export default function QuoteHistory({ onRevise } = {}) {
+export default function QuoteHistory({ onRevise, customer = null } = {}) {
   const qc = useQueryClient()
   const [kind, setKind] = useState('sales')
   const [view, setView] = useState('item')   // item = 품번별, quote = 견적별
@@ -80,11 +93,13 @@ export default function QuoteHistory({ onRevise } = {}) {
   const canRevise = !!onRevise && isSales
   const [ask, confirmEl] = useConfirm()   // v4.104.0 — 견적 삭제 확인 창
 
-  const { data: quotes = [], isLoading } = useQuery({
+  const { data: allQuotes = [], isLoading } = useQuery({
     queryKey: ['quoteHistory', kind],
     queryFn: () => fetchQuotes(kind),
     staleTime: 60 * 1000,
   })
+  const custFilter = isSales ? customer : null
+  const quotes = useMemo(() => allQuotes.filter((x) => quoteOfCustomer(x, custFilter)), [allQuotes, custFilter?.id, custFilter?.name, custFilter?.code])
 
   const { data: items = [] } = useQuery({
     queryKey: ['quoteHistoryItems', kind, quotes.map((x) => x.id).join(',')],
@@ -368,7 +383,9 @@ export default function QuoteHistory({ onRevise } = {}) {
           </label>
         )}
         <span className="text-xs text-slate-500 ml-auto">
-          견적 <b>{quotes.length}</b>건 · 품목 <b>{items.length}</b>행
+          {isSales && <span data-qh-cust className="mr-1.5 px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-700 font-bold">{customer ? customer.name : '전체 고객사'}</span>}
+          {!isSales && customer && <span className="mr-1.5 text-slate-400">매입견적은 고객사 구분 없이 전체 ·</span>}
+          견적 <b data-qh-count>{quotes.length}</b>건 · 품목 <b>{items.length}</b>행
         </span>
       </div>
 

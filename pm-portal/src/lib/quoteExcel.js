@@ -254,14 +254,23 @@ function addDetailSheet(wb, cd, { ko, money, cur, head }) {
     ws.mergeCells(`A${r}:${prev}${r}`)
     put(ws, `A${r}`, ko ? '자재 소계' : 'Material Subtotal', { bold: true, size: 10, align: 'right', border: true })
     put(ws, `${last}${r}`, d.partsSum, { bold: true, size: 10, align: 'right', border: true, fmt: money }); r++
-    if (d.laborKind) {
-      const t = d.laborKind === 'labor' ? (ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test') : (ko ? '단수 조정' : 'Rounding adjustment')
+    if (d.labor > 0) {
+      const t = ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test'
       put(ws, `A${r}`, d.rows.length + 1, { size: 10, border: true, align: 'center' })
       ws.mergeCells(`B${r}:${L(cols.length - 4)}${r}`)
       put(ws, `B${r}`, t, { size: 10, border: true })
       put(ws, `${L(cols.length - 3)}${r}`, ko ? '1 식' : '1 Lot', { size: 10, border: true, align: 'center' })
       put(ws, `${prev}${r}`, d.labor, { size: 10, border: true, align: 'right', fmt: money })
       put(ws, `${last}${r}`, d.labor, { size: 10, border: true, align: 'right', fmt: money }); r++
+    }
+    // 끝자리 절삭은 합계에서 한 번 — 소계 → 단수 절삭(−) → 합계 (v4.139.0)
+    if (d.adjust) {
+      ws.mergeCells(`A${r}:${prev}${r}`)
+      put(ws, `A${r}`, ko ? '소계' : 'Subtotal', { bold: true, size: 10, align: 'right', border: true })
+      put(ws, `${last}${r}`, d.subtotal, { bold: true, size: 10, align: 'right', border: true, fmt: money }); r++
+      ws.mergeCells(`A${r}:${prev}${r}`)
+      put(ws, `A${r}`, d.adjust < 0 ? (ko ? '단수 절삭' : 'Rounding discount') : (ko ? '단수 조정' : 'Rounding adjustment'), { size: 10, align: 'right', border: true })
+      put(ws, `${last}${r}`, d.adjust, { size: 10, align: 'right', border: true, fmt: money }); r++
     }
     ws.mergeCells(`A${r}:${prev}${r}`)
     put(ws, `A${r}`, ko ? `${l.std_code || ''} 1${l.unit || 'EA'} 합계 (= 견적 단가)` : `Total per ${l.unit || 'EA'} (= quoted unit price)`, { bold: true, size: 11, align: 'right', border: true, fill: 'FFF1F5F9' })

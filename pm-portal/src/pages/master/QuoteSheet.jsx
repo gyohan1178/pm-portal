@@ -5,7 +5,7 @@ import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
 import { quoteFileBase } from '../../lib/quoteFileName'
 import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
-import { buildDetails, noPartsAssy, CUT_OPTS, cutLabel, defaultCut, DETAIL_REMARK } from '../../lib/quoteDetail'
+import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -163,12 +163,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   // 인쇄 방식 (v4.124.0) — auto: 줄이 많으면 갑지·을지 / single: 지금처럼 한 장 / split: 항상 갑지·을지
   const [printMode, setPrintMode] = useState('auto')
   // 세부견적서 (v4.138.0) — 켜면 인쇄 · 엑셀에 어셈블리마다 부품별 판매가 장이 붙는다. 기본은 꺼짐 (부품 판매가가 고객에게 보이므로)
-  //   제조사 칸(기본 숨김 — 필요할 때만 켬) · 절삭 단위는 이 PC 에 기억 (견적마다 다시 고르지 않게)
+  //   제조사 표기(기본 숨김 — 필요할 때만 켬)는 이 PC 에 기억 (견적마다 다시 고르지 않게) · 끝자리 절삭은 합계에서 한 번(lib/quoteDetail)
   const [detailOn, setDetailOn] = useState(false)
   const [detailPref, setDetailPref] = useState(() => {
-    try { return { maker: false, cut: { KRW: 10, USD: 0.01 }, ...JSON.parse(localStorage.getItem('quote_detail_pref') || '{}') } } catch { return { maker: false, cut: { KRW: 10, USD: 0.01 } } }
+    try { return { maker: false, ...JSON.parse(localStorage.getItem('quote_detail_pref') || '{}') } } catch { return { maker: false } }
   })
-  const setPref = (p) => setDetailPref((o) => { const n = { ...o, ...p, cut: { ...o.cut, ...(p.cut || {}) } }; try { localStorage.setItem('quote_detail_pref', JSON.stringify(n)) } catch { /* 저장 못 해도 이번 화면에선 동작 */ } return n })
+  const setPref = (p) => setDetailPref((o) => { const n = { ...o, ...p }; try { localStorage.setItem('quote_detail_pref', JSON.stringify(n)) } catch { /* 저장 못 해도 이번 화면에선 동작 */ } return n })
 
   const [lines, setLines] = useState([])
   const [addCode, setAddCode] = useState('')
@@ -555,9 +555,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   }
 
   // 세부견적 — 견적 단가를 부품별 판매가로 푼 것 (lib/quoteDetail)
-  const detailCut = detailPref.cut?.[currency === 'KRW' ? 'KRW' : 'USD'] ?? defaultCut(currency)
-  const details = useMemo(() => (isSales && detailOn ? buildDetails(lines, { currency, sellRate, mcfg, cut: detailCut }) : []),
-    [isSales, detailOn, lines, currency, sellRate, mcfg, detailCut])
+  const details = useMemo(() => (isSales && detailOn ? buildDetails(lines, { currency, sellRate, mcfg }) : []),
+    [isSales, detailOn, lines, currency, sellRate, mcfg])
   const detailMissing = details.reduce((a, d) => a + d.detail.missing, 0)
   const detailNoParts = isSales && detailOn ? noPartsAssy(lines) : []
   // 켜면 세부가 붙는 줄 비고에 「세부견적 참조」(비어 있을 때만) · 끄면 그 글자만 지운다
@@ -565,7 +564,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     setDetailOn(on)
     const txt = ko ? DETAIL_REMARK.ko : DETAIL_REMARK.en
     if (on) {
-      const keys = new Set(buildDetails(lines, { currency, sellRate, mcfg, cut: detailCut }).map((d) => d.line.key))
+      const keys = new Set(buildDetails(lines, { currency, sellRate, mcfg }).map((d) => d.line.key))
       setLines((ls) => ls.map((l) => (keys.has(l.key) && !String(l.remarks || '').trim() ? { ...l, remarks: txt } : l)))
     } else {
       setLines((ls) => ls.map((l) => (l.remarks === DETAIL_REMARK.ko || l.remarks === DETAIL_REMARK.en ? { ...l, remarks: '' } : l)))
@@ -1096,17 +1095,15 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             </label>
             {detailOn && (
               <>
-                <select value={detailCut} onChange={(e) => setPref({ cut: { [currency === 'KRW' ? 'KRW' : 'USD']: Number(e.target.value) } })} data-quote-detail-cut
-                  title="부품 단가 끝자리 — 잘라낸 끝자리는 조립비 줄에서 맞춰 합계는 견적 단가와 같습니다"
-                  className="text-[11px] font-semibold border border-violet-200 rounded bg-white text-violet-700 px-1 py-0.5">
-                  {(CUT_OPTS[currency === 'KRW' ? 'KRW' : 'USD']).map((c) => <option key={c} value={c}>{cutLabel(c, currency === 'KRW' ? 'KRW' : 'USD')}</option>)}
-                </select>
-                <label className="flex items-center gap-1 text-[11px] text-violet-700 cursor-pointer" title="세부견적에 제조사 · 제조사 품번 칸">
-                  <input type="checkbox" checked={!!detailPref.maker} onChange={(e) => setPref({ maker: e.target.checked })} data-quote-detail-maker />제조사
+                <label className="flex items-center gap-1 pl-1.5 border-l border-violet-200 text-[11px] font-semibold text-violet-700 cursor-pointer" title="세부견적서에 제조사 · 제조사 품번 칸을 넣습니다 (기본은 품번 · 품명만)">
+                  <input type="checkbox" checked={!!detailPref.maker} onChange={(e) => setPref({ maker: e.target.checked })} data-quote-detail-maker />제조사 표기
                 </label>
-                <span className="text-[11px] text-violet-500" data-quote-detail-count>
-                  ASSY {details.length}건{detailMissing > 0 && <b className="text-amber-600"> · 단가없음 {detailMissing}</b>}{detailNoParts.length > 0 && <b className="text-amber-600"> · 부품정보 없음 {detailNoParts.length}</b>}
-                </span>
+                {(detailMissing > 0 || detailNoParts.length > 0) && (
+                  <span className="pl-1.5 border-l border-violet-200 text-[11px] font-bold text-amber-600" data-quote-detail-count
+                    title="단가 없는 부품은 견적 단가에도, 세부견적에도 빠집니다 · 부품 정보가 없는 ASSY 는 세부견적을 못 만듭니다">
+                    ⚠ {[detailMissing > 0 && `단가없음 ${detailMissing}`, detailNoParts.length > 0 && `부품정보 없음 ${detailNoParts.length}`].filter(Boolean).join(' · ')}
+                  </span>
+                )}
               </>
             )}
           </div>
