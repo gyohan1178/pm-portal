@@ -28,6 +28,7 @@ import { parseVmHtml, parseVmCsv, planVm, planVmText, applyVm } from '../../lib/
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import BulkMissingModal from './BulkMissingModal'
 import QcCell from '../../components/QcCell'
 import { useMe } from '../../hooks/useProfile'
 import { AUTO_CUST, vmBoxesNeeded, qcIndex, qcKey, stagesOf, applyAutoStatus, fetchProdQc } from '../../lib/prodAuto'
@@ -391,6 +392,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const [edF, setEdF] = useState({ kind: 'all', po: 'all', quick: null })
   const [showRules, setShowRules] = useState(false)
   const [missRow, setMissRow] = useState(null)
+  const [bulkMiss, setBulkMiss] = useState(false)   // 미불출 일괄 입력 · 해제 창 (v4.137.0)
   const [fcUnknown, setFcUnknown] = useState([])
   const { data: edRulesData } = useQuery({
     queryKey: ['edFcRules'], queryFn: () => loadRules(supabase), enabled: isED, staleTime: 60000,
@@ -972,6 +974,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   okText: '날짜 비우기', danger: true })) bulkMut.mutate({ ids:[...sel], field:bulkField, value:null })
               }} data-bulk-clear
                 className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">날짜 비우기</button>
+              {/* 미불출 일괄 — 여러 대가 같은 품목이 모자랄 때 호기마다 열지 않고 한 번에 (v4.137.0) */}
+              <button onClick={()=>setBulkMiss(true)} data-bulk-missing-open
+                title="고른 호기에 모자란 품목을 한 번에 넣거나 지웁니다"
+                className="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100">⚠ 미불출 일괄</button>
               <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
                 className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
                 {woRows ? <span className="inline-flex items-center gap-1.5"><Spin />QR 만드는 중…</span> : `🖨 작업지시서 (${sel.size})`}
@@ -1458,6 +1464,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             </div>
           </div>
         </div>
+      )}
+      {bulkMiss && (
+        <BulkMissingModal rows={rows.filter(r => sel.has(r.id))} csCode={csCode} by={me?.name}
+          onClose={() => setBulkMiss(false)} onDone={() => { setBulkMiss(false); setSel(new Set()) }} />
       )}
       {missRow && (
         <MissingModal row={missRow} saving={toggleMut.isPending} onClose={() => setMissRow(null)}
