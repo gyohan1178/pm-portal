@@ -9,6 +9,8 @@ import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
 import QrScanner from '../../components/QrScanner'
 import StockPaste from '../../components/StockPaste'
+import InventoryInsight from '../../components/InventoryInsight'
+import PoCart from './PoCart'
 import AuditApplyModal from '../../components/AuditApplyModal'
 import AuxLocs from '../../components/AuxLocs'
 import { fetchAllAux, locWithAux } from '../../lib/cellAux'
@@ -312,6 +314,7 @@ export default function Inventory() {
   const { data: invAll, isLoading, error } = useQuery({
     queryKey:['inventory','all'], queryFn:()=>fetchInventory(),
   })
+  const [cartOpen, setCartOpen] = useState(false)
   const { data: same } = useQuery({ queryKey: ['sameItem'], queryFn: () => sameMap(), staleTime: 5 * 60 * 1000 })
   const sameReps = useMemo(() => membersByRep(same), [same])
   const allRows = useMemo(() => filterInventory(invAll || [], appliedSearch, same), [invAll, appliedSearch, same])
@@ -406,6 +409,10 @@ export default function Inventory() {
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">재고 금액 <InfoTip text={KPI_TIP.value} align="right" /></p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
       </div>
       )}
+
+      {/* 재고금액은 어디에 · 안전재고 미달 발주 여부 (v4.133.0) */}
+      <InventoryInsight rows={rows} same={same} brandFilter={brandFilter} onBrand={setBrandFilter} onOpenCart={() => setCartOpen(true)} />
+      <PoCart open={cartOpen} onClose={() => setCartOpen(false)} />
 
       {/* 조회 조건 + 실사 — 한 카드 (v4.96.0) */}
       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 flex items-center gap-3 flex-wrap" data-inv-toolbar>
