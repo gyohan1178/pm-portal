@@ -12,6 +12,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { tierMargin, DEFAULT_TIERS, DEFAULT_CFG, explodeBOM, computeCost, needsPrice, applySupply, supplyHints } from '../../lib/costAnalysis'
 import { fetchSupply } from '../../lib/bomSupply'
 import { roundPrice } from '../../lib/marginSim'
+import { fetchRefSetup, refCustomers, findAssyFor, itemCandidatesFor } from '../../lib/etcCustomerRef'
 import { refreshProcurement } from '../../lib/refresh'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { todayISO } from '../../lib/utils'
@@ -314,21 +315,29 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         const { data: cs0 } = await supabase.from('customers').select('code').eq('id', customerId).maybeSingle()
         if (cs0?.code) csCode = cs0.code
       }
-      const cands = codeCandidates(raw, csCode)
+      let cands = codeCandidates(raw, csCode)
       const pickFirst = (list, key) => cands.map(c => (list || []).find(x => x[key] === c)).find(Boolean) || null
       const code = cands[0]
+      // 기타 고객사(제스코 · 남일 …) — BOM 기준 고객사의 등록 BOM 으로 (v4.130.0 · lib/etcCustomerRef)
+      let bomCs = customerId, etcHit = null
+      if (etc) {
+        const refs = refCustomers(etcRef.current, await fetchRefSetup())
+        etcHit = await findAssyFor(raw, refs)
+        if (etcHit) bomCs = etcHit.cs.id
+        cands = itemCandidatesFor(raw, refs)
+      }
       // ⚠ 조회 오류를 반드시 드러낸다. 삼키면 「하위품목이 없는 것」처럼 보인다.
       //   (v4.8.3 배포 중에 lt_days 칸이 지워져 부품이 0건으로 보였던 사례)
-      const { data: projs, error: pErr } = etc ? { data: [], error: null } : await supabase
+      const { data: projs, error: pErr } = etc ? { data: etcHit ? [etcHit.proj] : [], error: null } : await supabase
         .from('projects').select('id, code, name, rev')
         .eq('customer_id', customerId).in('code', cands)
       if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
-      const proj = pickFirst(projs, 'code')
+      const proj = etc ? (etcHit?.proj || null) : pickFirst(projs, 'code')
 
       if (proj) {
         let rows
         // 전개가 빠진 조립품은 별도 BOM 을 끼워 넣어 부품 원가까지 센다 (2026-09-30)
-        try { rows = (await spliceSubBoms(customerId, await fetchQuoteBOM(customerId, proj.id), fetchQuoteBOM, proj.id)).rows }
+        try { rows = (await spliceSubBoms(bomCs, await fetchQuoteBOM(bomCs, proj.id), fetchQuoteBOM, proj.id)).rows }
         catch (bErr) { throw new Error('하위품목 조회 — ' + (bErr?.message || bErr)) }
 
         const mapped = (rows || []).map((b, i) => ({
@@ -1152,7 +1161,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         <div className="grid grid-cols-2 gap-6 mb-4 text-xs">
           <div>
             <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">{ko ? '수신' : 'Issued by'}
-              {etcCust && <span className="no-print ml-2 px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold" data-etc-cust title="견적 접수에서 「기타 · 직접 입력」한 고객사 — 고객사 BOM 없이 품목만 찾고, 고객사 없이 저장합니다. 위에서 고객사를 바꾸면 풀립니다">기타 고객사 · {etcCust}</span>}</div>
+              {etcCust && <span className="no-print ml-2 px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10.5px] font-bold" data-etc-cust title="견적 접수에서 「기타 · 직접 입력」한 고객사 — BOM 기준 고객사(제스코 → AXCELIS 등)의 등록 BOM 으로 찾고, 고객사 없이 저장합니다. 위에서 고객사를 바꾸면 풀립니다">기타 고객사 · {etcCust}</span>}</div>
             {isSales
               ? <div className="flex items-center gap-1"><input value={issuedTo} onChange={(e) => setIssuedTo(e.target.value)} data-quote-issued
                   className="qi w-full font-bold text-sm" placeholder={ko ? '고객사 이름' : 'AXCELIS Corp.'} />{ko && <span className="font-bold text-sm shrink-0">귀중</span>}</div>

@@ -13,6 +13,7 @@ import { logActivity } from '../../lib/activityLog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import { fetchRefSetup, refCodeOf, saveRefCode } from '../../lib/etcCustomerRef'
 import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq, missCount, missCodes, nqBlockers, nqParts, nqSummary } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
@@ -34,6 +35,17 @@ export default function RfqBoard({ customers = [], onWrite }) {
   const setF = (patch, k) => { setForm((f) => ({ ...f, ...patch })); if (k && ferr[k]) setFerr((e) => ({ ...e, [k]: '' })) }
 
   const { data: rfqs = [], isLoading, error } = useQuery({ queryKey: ['rfqs'], queryFn: fetchRfqs, staleTime: 30 * 1000 })
+  // 기타 고객사의 BOM 기준 고객사 (v4.130.0) — 제스코 · 벨류엔지니어링 → AXCELIS · 남일 → Edwards …
+  const { data: refSetup } = useQuery({ queryKey: ['etcRefSetup'], queryFn: fetchRefSetup, staleTime: 5 * 60 * 1000 })
+  const refOf = (name) => refCodeOf(name, refSetup)
+  // 접수 폼에서 고른 기준 — 고른 적 없으면 이름으로 정해진 값 (form.ref === undefined)
+  const formRef = (f) => (f?.ref !== undefined ? f.ref : (refOf(f?.etc_name) || ''))
+  async function keepRef(f) {
+    if (f?.customer_code !== '__etc' || f.ref === undefined) return
+    const name = String(f.etc_name || '').trim()
+    if (!name || (refOf(name) || '') === (f.ref || '')) return
+    try { await saveRefCode(name, f.ref); qc.invalidateQueries({ queryKey: ['etcRefSetup'] }) } catch (e) { toastError('BOM 기준 고객사 저장 실패 — ' + e.message) }
+  }
   const refresh = () => { qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] }) }
 
   const [stage, setStage] = useState('live')     // live 진행 중 · all · 단계 키
@@ -102,6 +114,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
     const c = csRows.find((x) => String(x.code).toLowerCase() === code)
     setBusy('new')
     try {
+      await keepRef(form)
       await editRfq(r, { head: { customer_code: code, customer_id: c?.id || null, title: form.title.trim(), cust_ref: form.cust_ref.trim() || null, due_date: form.due_date || null, owner_name: form.owner_name.trim() || null, memo: form.memo.trim() || null },
         lines: keep, removed: form.removed, added })
       logActivity('update', 'pm_rfq', form.title, `견적 접수 수정 — ${form.title}${form.removed.length ? ` · 뺀 품목 ${form.removed.length}` : ''}${added.length ? ` · 더한 품목 ${added.length}` : ''}`)
@@ -131,6 +144,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
     const c = csRows.find((x) => String(x.code).toLowerCase() === code)
     setBusy('new')
     try {
+      await keepRef(form)
       const r = await saveRfq({
         head: { customer_code: code, customer_id: c?.id || null, title: form.title.trim(), cust_ref: form.cust_ref.trim() || null, due_date: form.due_date || null, owner_name: form.owner_name.trim() || meName, memo: form.memo.trim() || null },
         lines, meName,
@@ -273,7 +287,15 @@ export default function RfqBoard({ customers = [], onWrite }) {
               <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP} data-rfq-cs>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__etc">기타 (직접 입력)</option></select>
               {form.customer_code === '__etc' && <input value={form.etc_name} onChange={(e) => setF({ etc_name: e.target.value }, 'etc')} placeholder="고객사 이름 (예: 한화컨버전스)" className={`${INP} ${ferr.etc ? '!border-rose-400 ring-2 ring-rose-100' : ''}`} data-rfq-etc autoFocus />}
               {ferr.etc && <span className="block text-[11px] text-rose-600" data-field-error="etc">{ferr.etc}</span>}
-              {form.customer_code === '__etc' && <span className="block text-[10.5px] font-normal text-slate-400">등록 안 된 고객사 — BOM 없이 품목(단품)만 찾아 점검합니다</span>}</label>
+              {form.customer_code === '__etc' && (
+                <span className="block space-y-1" data-rfq-ref-wrap>
+                  <select value={formRef(form)} onChange={(e) => setForm({ ...form, ref: e.target.value })} className={INP} data-rfq-ref>
+                    <option value="">BOM 기준: 자동 (등록된 BOM 전체에서 찾기)</option>
+                    {(refSetup?.customers || []).map((c) => <option key={c.id} value={c.code}>BOM 기준: {c.name}</option>)}
+                  </select>
+                  <span className="block text-[10.5px] font-normal text-slate-400">등록 안 된 고객사 — 고른 고객사의 등록 BOM · 품목으로 점검합니다 (예: 제스코 · 벨류엔지니어링 → AXCELIS, 남일 → Edwards). 고르면 이 이름으로 기억합니다</span>
+                </span>
+              )}</label>
             <label className="text-xs font-bold text-slate-600 space-y-1 md:col-span-2">건명 <span className="text-red-500">*</span>
               <input value={form.title} onChange={(e) => setF({ title: e.target.value }, 'title')} placeholder="예: EFEM PD 리뉴얼 견적" className={`${INP} ${ferr.title ? '!border-rose-400 ring-2 ring-rose-100' : ''}`} data-rfq-title />
               {ferr.title && <span className="block text-[11px] text-rose-600" data-field-error="title">{ferr.title}</span>}</label>
@@ -415,7 +437,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
                     <div className="grid grid-cols-3 gap-1.5 w-[300px]" data-rfq-next>
                       {editable && r.stage === 'new' && <Btn wide tone="primary" onClick={() => check(r)} busy={b} data="check">🔍 점검</Btn>}
                       {r.stage === 'bom' && (isEtc(r.customer_code)
-                        ? <Btn wide tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>
+                        ? (refOf(r.customer_code)
+                          ? <Btn wide tone="red" onClick={() => nav(`/customer/${refOf(r.customer_code)}/bom`)} data="bom">🧬 BOM 올리기 ({String(refOf(r.customer_code)).toUpperCase()})</Btn>
+                          : <Btn wide tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>)
                         : <Btn wide tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
                       {editable && r.stage === 'noprice' && <Btn wide tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
                       {r.stage === 'price' && (isBuy

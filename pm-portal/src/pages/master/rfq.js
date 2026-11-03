@@ -21,6 +21,7 @@ import { codeCandidates } from '../../lib/custPrefix'
 import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { explodeBOM, computeCost, needsPrice, applySupply, DEFAULT_CFG } from '../../lib/costAnalysis'
 import { fetchQuoteBOM, supplyForRows } from './QuoteSheet'
+import { fetchRefSetup, refCustomers, findAssyFor, itemCandidatesFor } from '../../lib/etcCustomerRef'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
@@ -105,12 +106,20 @@ export function parsePaste(text) {
 
 // 한 품목 점검 — 견적 작성(QuoteSheet)이 품번을 넣을 때와 같은 규칙
 //   어셈블리(projects + BOM) → 부품 단가 없는 수 / 단품(items) → 매입가 없으면 1 / 둘 다 없으면 BOM 필요
-export async function checkLine(customerId, csCode, pn) {
-  const cands = codeCandidates(pn, csCode)
+//   refs(v4.130.0) — 기타 고객사면 BOM 기준 고객사 목록 [{id, code}] (제스코 → AXCELIS 등). 그 고객사의 등록 BOM 으로 점검
+export async function checkLine(customerId, csCode, pn, refs = null) {
+  let cands = codeCandidates(pn, csCode)
   const pick = (list, key) => cands.map((c) => (list || []).find((x) => x[key] === c)).find(Boolean) || null
-  const { data: projs, error: pErr } = customerId ? await supabase.from('projects').select('id, code, name').eq('customer_id', customerId).in('code', cands) : { data: [], error: null }
-  if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
-  const proj = pick(projs, 'code')
+  let proj = null
+  if (customerId) {
+    const { data: projs, error: pErr } = await supabase.from('projects').select('id, code, name').eq('customer_id', customerId).in('code', cands)
+    if (pErr) throw new Error('어셈블리 조회 — ' + pErr.message)
+    proj = pick(projs, 'code')
+  } else if (refs?.length) {
+    const hit = await findAssyFor(pn, refs)
+    if (hit) { proj = hit.proj; customerId = hit.cs.id }
+    cands = itemCandidatesFor(pn, refs)   // 단품도 기준 고객사 접두로 (110123660 → AX-110123660)
+  }
   if (proj) {
     const rows = (await spliceSubBoms(customerId, await fetchQuoteBOM(customerId, proj.id), fetchQuoteBOM, proj.id)).rows || []
     if (rows.length) {
@@ -145,12 +154,14 @@ export async function checkRfq(r) {
   if (!customerId) {
     const { data, error } = await supabase.from('customers').select('id').eq('code', String(r.customer_code).toLowerCase()).maybeSingle()
     if (error) throw error
-    // 등록 안 된 고객사(「기타 · 직접 입력」 · v4.99.0)는 고객사 BOM 없이 품목(단품)만 찾는다
+    // 등록 안 된 고객사(「기타 · 직접 입력」 · v4.99.0) — v4.130.0 부터 BOM 기준 고객사의 BOM 으로 찾는다
     customerId = data?.id || null
   }
+  // 기타 고객사 — BOM 기준 고객사(정해진 곳 · 없으면 등록 고객사 전부)의 BOM 으로 (v4.130.0)
+  const refs = customerId ? null : refCustomers(r.customer_code, await fetchRefSetup())
   for (const l of r.lines || []) {
     if (l.quoted_at) continue                                   // 이미 견적 낸 품목은 다시 안 봄
-    const { found_name: fname, ...res } = await checkLine(customerId, r.customer_code, l.pn)
+    const { found_name: fname, ...res } = await checkLine(customerId, r.customer_code, l.pn, refs)
     // 품명을 안 붙여넣었으면 찾은 품목 · 어셈블리 이름을 채운다 — 무엇과 매칭됐는지 보이게 (v4.99.0)
     const patch = { ...res, checked_at: now, ...(!String(l.name || '').trim() && fname ? { name: fname } : {}) }
     const { error } = await supabase.from('pm_rfq_line').update(patch).eq('id', l.id)
