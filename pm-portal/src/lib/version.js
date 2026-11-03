@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.135.0'
+export const APP_VERSION = 'v4.136.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.135.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.136.0',
+    date: '2026-11-03',
+    changes: [
+      'Edwards 생산관리 줄의 업체를 「Edwards」로 — 수주대장 불러오기 · 호기 추가가 업체 칸을 비워 넣어 DB 기본값 「AXCELIS」가 들어가 있었음. 기존 줄은 SQL(Edwards생산_업체정리_반영_261103.sql)로 고침 · 아침 자동 불러오기도 Edwards 로 넣음. 협력사(남일 · 두웰) 줄은 업체 이름 그대로',
+    ],
+  },
   {
     version: 'v4.135.0',
     date: '2026-11-03',

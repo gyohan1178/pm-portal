@@ -661,6 +661,8 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         for (const k of ['req_date', 'machine_date', 'arrival_date', 'harness_done', 'elec_done']) if (patch[k] === '') patch[k] = null
         patch.id = 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6)
         patch.customer_code = csCode
+        // Edwards 줄의 업체는 「Edwards」 — 비워 두면 DB 기본값 「AXCELIS」가 들어갔다 (v4.136.0)
+        if (isED && !String(patch.company || '').trim()) patch.company = 'Edwards'
         patch.created_at = new Date().toISOString()
         const { error } = await supabase.from('production').insert(patch)
         if (error) throw error
@@ -719,6 +721,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           toInsert.push({
             id: 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
             customer_code: csCode, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            ...(isED ? { company: 'Edwards' } : {}),   // v4.136.0 — 비우면 DB 기본값 AXCELIS
             name: rec.name, pn: rec.pn, hogi: rec.hogi, ccn: rec.ccn, rev: rec.rev,
             // Edwards 발주서 체크는 사람이 확인하면서 켠다 — 새 줄은 꺼진 채로
             status: rec.status, po_received: isED ? false : rec.po_received,

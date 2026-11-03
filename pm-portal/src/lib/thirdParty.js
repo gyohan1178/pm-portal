@@ -21,7 +21,7 @@ export const tpKey = (r) => `3P|${s(r.third_party)}|${s(r.po_number)}|${s(r.orde
 // 생산관리에 올릴 품번인가 — 11 · 12번대만
 export const isTpProdCode = (code) => /^(AX-)?1[12]\d/.test(s(code))
 // 3rd party 생산 줄인가 (호기 칸이 「10EA」 · company 가 업체 이름)
-export const isTpRow = (r) => !!r && !!s(r.company) && !/^axcelis$/i.test(s(r.company)) && /EA$/i.test(s(r.hogi))
+export const isTpRow = (r) => !!r && !!s(r.company) && !/^(axcelis|edwards)$/i.test(s(r.company)) && /EA$/i.test(s(r.hogi))   // Edwards 본 줄 제외 (v4.136.0)
 
 // 시트 읽기.
 //   머리글(M · N… = Item Desc · 열1…)이 실제 값 자리(Q · S · AG)와 어긋나 있어 칸 위치로 읽는다.

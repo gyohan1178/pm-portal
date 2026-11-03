@@ -68,6 +68,7 @@ export function rowFromGroup(g, by) {
   const now = new Date().toISOString()
   return {
     id: newId(), customer_code: 'ED', created_at: now, updated_at: now,
+    company: 'Edwards',                                     // 비우면 DB 기본값 「AXCELIS」가 들어갔다 (v4.136.0)
     name: pn, pn, hogi: g.hogiNums.length ? '#' + g.hogiNums.join(',') : '-',
     part: g.part === '미분류' ? null : g.part, part2: g.sub || null, part3: null,
     status: 'PO접수', po_received: true,                   // 수주대장에 발주서가 있으니 접수
