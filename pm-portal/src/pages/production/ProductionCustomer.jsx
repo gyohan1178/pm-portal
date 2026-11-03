@@ -182,6 +182,7 @@ function ProductionCustomerInner() {
               ? '11번대 PO 연동 — 품번 기준 호기 매칭, 부족분 자동 생성, 납기·REV 동기화'
               : '프로젝트 · 호기 · 구분별 진행 상황'}
           </p>
+          <AutoSyncNote cs={cs} />
         </div>
         <div className="flex items-center gap-2">
           {/* PO 연동은 AXCELIS 만. 11번대 품번 기준이라 다른 고객사엔 걸리지 않는다.
@@ -213,4 +214,43 @@ function ProductionCustomerInner() {
       {tab === 'list' && <ProductionPDBox rows={rows} csCode={cs} isLoading={isLoading} />}
     </div>
   )
+}
+
+// 매일 아침 자동 불러오기 결과 (v4.135.0) — 서버 예약(pm_prod_autosync)이 07:00 에 돈다
+//   표가 없으면(SQL 전) 아무것도 안 보인다. VM 은 불러오기가 없어 빠진다.
+const AUTO_CS = ['AX', 'ED', 'CSK']
+function autoNums(cs, r) {
+  const x = r || {}, tp = x.tp || {}
+  const n = (v) => Number(v) || 0
+  if (cs === 'AX') return { add: n(x.created) + n(tp.created), fix: n(x.matched) + n(x.updated) + n(tp.updated) + n(tp.unlinked), done: n(x.done) }
+  if (cs === 'ED') return { add: n(x.created) + n(x.partner_created), fix: n(x.partner_updated), done: 0 }
+  return { add: n(x.created), fix: n(x.updated), done: 0 }
+}
+function AutoSyncNote({ cs }) {
+  const on = AUTO_CS.includes(cs)
+  const { data: last } = useQuery({
+    queryKey: ['prodAutoSync', cs], enabled: on, staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const { data, error } = await supabase.from('pm_prod_autosync_log').select('run_at,ok,result,error,trigger')
+        .eq('cs', cs).order('run_at', { ascending: false }).limit(1)
+      if (error) return null
+      return data?.[0] || false
+    },
+  })
+  if (!on || last == null) return null
+  if (last === false) return <p data-autosync="none" className="text-[11px] text-slate-400 mt-1">🤖 매일 07:00 수주대장에서 자동으로 불러옵니다 — 아직 돈 기록이 없습니다</p>
+  const t = new Date(last.run_at)
+  const when = `${t.getMonth() + 1}/${t.getDate()} ${String(t.getHours()).padStart(2, '0')}:${String(t.getMinutes()).padStart(2, '0')}`
+  const old = Date.now() - t.getTime() > 36 * 3600 * 1000
+  if (!last.ok) return (
+    <p data-autosync="fail" className="text-[11px] font-semibold text-rose-600 mt-1" title={last.error || ''}>
+      ⚠ 자동 불러오기 실패 ({when}) — {String(last.error || '').slice(0, 80)} · 위 단추로 직접 불러와 주세요
+    </p>)
+  const { add, fix, done } = autoNums(cs, last.result)
+  return (
+    <p data-autosync="ok" className={`text-[11px] mt-1 ${old ? 'text-amber-600 font-semibold' : 'text-slate-400'}`}
+      title="매일 07:00 서버가 「수주대장에서 불러오기」(AXCELIS 는 「PO 연동」)를 자동으로 돌립니다. 낮에 바뀐 건 단추로 바로 불러올 수 있습니다.">
+      🤖 자동 불러오기 {when} — {add || fix || done ? [add && `새 줄 ${add}`, fix && `고침 ${fix}`, done && `완료 ${done}`].filter(Boolean).join(' · ') : '바뀐 것 없음'}
+      {old && ' · ⚠ 하루 넘게 안 돌았습니다'}
+    </p>)
 }

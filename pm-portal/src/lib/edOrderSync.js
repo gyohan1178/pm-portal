@@ -10,7 +10,8 @@ import { projOf } from './edMonthly'
 
 // '#3' · '3' · '#3,4' → [3] · [3] · [3, 4]
 export const hogiNums = (h) => [...String(h || '').matchAll(/\d+/g)].map((m) => +m[0])
-const partKey = (p) => String(p || '').trim().toUpperCase()
+// 「미분류」 = 빈칸 — 생산관리 줄은 미분류를 빈칸(null)으로 저장한다. 예전엔 열쇠가 달라 불러올 때마다 다시 만들었다 (v4.135.0)
+const partKey = (p) => { const x = String(p || '').trim().toUpperCase(); return x === '미분류' ? '' : x }
 // 호기 번호 없이도 만드는 파트
 export const NO_HOGI_PARTS = ['SIC']
 // 생산관리에 만들지 않는 파트 — 단품은 생산 관리 대상이 아님 (2026-10-29)
