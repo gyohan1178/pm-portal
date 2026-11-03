@@ -1032,90 +1032,99 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </div>
       </div>
 
-      {/* 조작부 */}
-      <div className="no-print flex flex-wrap items-center gap-2 bg-white border border-slate-200 rounded-xl p-3">
-        {isSales && (
-          <div className="flex gap-1 bg-slate-100 rounded-lg p-1" data-quote-lang title="견적서 언어 — 인쇄 · 엑셀이 이 언어로 나옵니다">
-            {[['ko', '국문'], ['en', '영문']].map(([k, l]) => (
-              <button key={k} type="button" onClick={() => switchLang(k)} data-quote-lang-btn={k}
-                className={`px-3 py-1 text-xs font-bold rounded-md ${lang === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{l}</button>
+      {/* 조작부 — 두 줄로 나눠 버튼 자리를 고정 (v4.140.0)
+          예전엔 한 줄에 다 넣어서 세부견적 체크 · 글자 길이(임시저장/보관 갱신 · 인쇄/인쇄(갑지·을지))에 따라 버튼이 옮겨 다녔다
+          ① 작성 — 언어 · 통화 · 품번 추가 · 마진구간 · 마진 시뮬레이션
+          ② 저장 · 내보내기 — 임시저장 · 보관함 · 저장 | 인쇄 · 세부견적 · 엑셀 (켜고 꺼도 칸이 그대로) | 경고는 맨 오른쪽 */}
+      <div className="no-print bg-white border border-slate-200 rounded-xl divide-y divide-slate-100" data-quote-toolbar>
+        <div className="flex flex-wrap items-center gap-2 p-3" data-quote-toolbar-row="edit">
+          <span className="w-12 shrink-0 text-[11px] font-bold text-slate-400">작성</span>
+          {isSales && (
+            <div className="flex gap-1 bg-slate-100 rounded-lg p-1" data-quote-lang title="견적서 언어 — 인쇄 · 엑셀이 이 언어로 나옵니다">
+              {[['ko', '국문'], ['en', '영문']].map(([k, l]) => (
+                <button key={k} type="button" onClick={() => switchLang(k)} data-quote-lang-btn={k}
+                  className={`px-3 py-1 text-xs font-bold rounded-md ${lang === k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{l}</button>
+              ))}
+            </div>
+          )}
+          <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+            {['USD', 'KRW'].map((c) => (
+              <button key={c} onClick={() => switchCurrency(c)} data-quote-cur-btn={c} data-on={currency === c ? '1' : undefined}
+                className={`px-3 py-1 text-xs font-bold rounded-md ${currency === c ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{c}</button>
             ))}
           </div>
-        )}
-        <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-          {['USD', 'KRW'].map((c) => (
-            <button key={c} onClick={() => switchCurrency(c)} data-quote-cur-btn={c} data-on={currency === c ? '1' : undefined}
-              className={`px-3 py-1 text-xs font-bold rounded-md ${currency === c ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{c}</button>
-          ))}
-        </div>
-        <input value={addCode} onChange={(e) => setAddCode(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && addByCode()}
-          placeholder="품번 입력 (ASSY·단품 자동 판별)"
-          className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
-        <button onClick={() => addByCode()} disabled={adding}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-          {adding ? <span className="inline-flex items-center gap-1.5"><Spin />조회 중…</span> : '+ 추가'}
-        </button>
-        <button onClick={() => setLines((ls) => [...ls, newLine()])}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
-        <button onClick={openCfg} title="금액대별 마진율 · 기준 환율(모든 PC 공통)을 고칩니다"
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 마진구간</button>
-        <div className="flex-1" />
-        <button onClick={() => draftMut.mutate()} disabled={draftMut.isPending || !lines.length}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
-          {draftMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />보관 중…</span> : draftId ? '📝 보관 갱신' : '📝 임시저장'}
-        </button>
-        <button onClick={() => setDraftOpen(true)}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
-          📂 보관함{drafts.length ? ` ${drafts.length}` : ''}
-        </button>
-        <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !lines.length}
-          className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
-          {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '💾 저장'}
-        </button>
-        <div className="flex items-stretch">
-          <button onClick={doPrint} disabled={!lines.length} data-quote-print
-            title={wantSplit(printMode, lines.length) ? '갑지(금액·납기·유효기간) + 을지(세부 품목)로 나눠 인쇄합니다' : '한 장짜리 견적서로 인쇄합니다'}
-            className="px-3 py-1.5 text-xs font-bold rounded-l-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
-            🖨 인쇄{lines.length > 0 && wantSplit(printMode, lines.length) ? ' (갑지·을지)' : ''}
+          <input value={addCode} onChange={(e) => setAddCode(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && addByCode()}
+            placeholder="품번 입력 (ASSY·단품 자동 판별)"
+            className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
+          <button onClick={() => addByCode()} disabled={adding}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
+            {adding ? <span className="inline-flex items-center gap-1.5"><Spin />조회 중…</span> : '+ 추가'}
           </button>
-          <select value={printMode} onChange={(e) => setPrintMode(e.target.value)} data-quote-print-mode
-            title={`인쇄 방식 — 자동은 품목 ${SPLIT_AUTO_FROM}줄부터 갑지·을지로 나눕니다`}
-            className="no-print -ml-px px-1.5 text-[11px] font-semibold rounded-r-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">
-            <option value="auto">자동</option>
-            <option value="single">한 장</option>
-            <option value="split">갑지·을지</option>
-          </select>
+          <button onClick={() => setLines((ls) => [...ls, newLine()])}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
+          <button onClick={openCfg} title="금액대별 마진율 · 기준 환율(모든 PC 공통)을 고칩니다"
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 마진구간</button>
+          <div className="flex-1" />
+          {isSales && (
+            <button data-sim-all onClick={() => setSimFor('all')} disabled={!lines.length || totals.costKrw <= 0}
+              title="제출 단가 · 환율에 따라 마진이 어떻게 바뀌는지 봅니다 (네고 보고용)"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">📊 마진 시뮬레이션</button>
+          )}
+          {onClose && <button onClick={onClose} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">✕ 닫기</button>}
         </div>
-        {isSales && (
-          <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 ${detailOn ? 'border-violet-300 bg-violet-50' : 'border-slate-200'}`} data-quote-detail-ctl>
-            <label className={`flex items-center gap-1 text-xs font-bold cursor-pointer ${detailOn ? 'text-violet-700' : 'text-slate-500'}`}
-              title="인쇄 · 엑셀에 어셈블리마다 부품별 판매가(매입 실적가 + 마진) 장을 붙입니다. 부품 판매가가 고객에게 보이니 필요한 건에만 켜세요">
-              <input type="checkbox" checked={detailOn} onChange={(e) => toggleDetail(e.target.checked)} data-quote-detail />세부견적 같이
-            </label>
-            {detailOn && (
-              <>
-                <label className="flex items-center gap-1 pl-1.5 border-l border-violet-200 text-[11px] font-semibold text-violet-700 cursor-pointer" title="세부견적서에 제조사 · 제조사 품번 칸을 넣습니다 (기본은 품번 · 품명만)">
-                  <input type="checkbox" checked={!!detailPref.maker} onChange={(e) => setPref({ maker: e.target.checked })} data-quote-detail-maker />제조사 표기
-                </label>
-                {(detailMissing > 0 || detailNoParts.length > 0) && (
-                  <span className="pl-1.5 border-l border-violet-200 text-[11px] font-bold text-amber-600" data-quote-detail-count
-                    title="단가 없는 부품은 견적 단가에도, 세부견적에도 빠집니다 · 부품 정보가 없는 ASSY 는 세부견적을 못 만듭니다">
-                    ⚠ {[detailMissing > 0 && `단가없음 ${detailMissing}`, detailNoParts.length > 0 && `부품정보 없음 ${detailNoParts.length}`].filter(Boolean).join(' · ')}
-                  </span>
-                )}
-              </>
-            )}
+        <div className="flex flex-wrap items-center gap-2 p-3" data-quote-toolbar-row="out">
+          <span className="w-12 shrink-0 text-[11px] font-bold text-slate-400">내보내기</span>
+          <button onClick={() => draftMut.mutate()} disabled={draftMut.isPending || !lines.length}
+            style={{ minWidth: '6.5rem' }} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">
+            {draftMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />보관 중…</span> : draftId ? '📝 보관 갱신' : '📝 임시저장'}
+          </button>
+          <button onClick={() => setDraftOpen(true)} style={{ minWidth: '6rem' }}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
+            📂 보관함{drafts.length ? ` ${drafts.length}` : ''}
+          </button>
+          <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !lines.length}
+            style={{ minWidth: '5.5rem' }} className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
+            {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '💾 저장'}
+          </button>
+          <span className="mx-1 h-6 border-l border-slate-200" />
+          <div className="flex items-stretch">
+            <button onClick={doPrint} disabled={!lines.length} data-quote-print
+              title={wantSplit(printMode, lines.length) ? '갑지(금액·납기·유효기간) + 을지(세부 품목)로 나눠 인쇄합니다' : '한 장짜리 견적서로 인쇄합니다'}
+              style={{ width: '10.5rem' }} className="whitespace-nowrap text-left px-3 py-1.5 text-xs font-bold rounded-l-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
+              🖨 인쇄{lines.length > 0 && wantSplit(printMode, lines.length) ? ' (갑지·을지)' : ''}
+            </button>
+            <select value={printMode} onChange={(e) => setPrintMode(e.target.value)} data-quote-print-mode
+              title={`인쇄 방식 — 자동은 품목 ${SPLIT_AUTO_FROM}줄부터 갑지·을지로 나눕니다`}
+              className="no-print -ml-px px-1.5 text-[11px] font-semibold rounded-r-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">
+              <option value="auto">자동</option>
+              <option value="single">한 장</option>
+              <option value="split">갑지·을지</option>
+            </select>
           </div>
-        )}
-        {isSales && (
-          <button data-sim-all onClick={() => setSimFor('all')} disabled={!lines.length || totals.costKrw <= 0}
-            title="제출 단가 · 환율에 따라 마진이 어떻게 바뀌는지 봅니다 (네고 보고용)"
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100 disabled:opacity-40">📊 마진 시뮬레이션</button>
-        )}
-        <button onClick={doExcel} disabled={!lines.length}
-          className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 엑셀</button>
-        {onClose && <button onClick={onClose} className="px-2 py-1.5 text-xs text-slate-400 hover:text-slate-600">✕ 닫기</button>}
+          {isSales && (
+            <div className={`flex items-center gap-1.5 rounded-lg border px-2 py-1 ${detailOn ? 'border-violet-300 bg-violet-50' : 'border-slate-200'}`} data-quote-detail-ctl>
+              <label className={`flex items-center gap-1 text-xs font-bold cursor-pointer ${detailOn ? 'text-violet-700' : 'text-slate-500'}`}
+                title="인쇄 · 엑셀에 어셈블리마다 부품별 판매가(매입 실적가 + 마진) 장을 붙입니다. 부품 판매가가 고객에게 보이니 필요한 건에만 켜세요">
+                <input type="checkbox" checked={detailOn} onChange={(e) => toggleDetail(e.target.checked)} data-quote-detail />세부견적 같이
+              </label>
+              {/* 세부견적을 꺼도 칸은 남겨 둔다 (흐리게) — 켜고 끌 때 옆 버튼이 안 움직이게 */}
+              <label className={`flex items-center gap-1 pl-1.5 border-l text-[11px] font-semibold ${detailOn ? 'border-violet-200 text-violet-700 cursor-pointer' : 'border-slate-200 text-slate-300'}`}
+                title="세부견적서에 제조사 · 제조사 품번 칸을 넣습니다 (기본은 품번 · 품명만)">
+                <input type="checkbox" checked={!!detailPref.maker} disabled={!detailOn} onChange={(e) => setPref({ maker: e.target.checked })} data-quote-detail-maker />제조사 표기
+              </label>
+            </div>
+          )}
+          <button onClick={doExcel} disabled={!lines.length}
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 엑셀</button>
+          <div className="flex-1" />
+          {detailOn && (detailMissing > 0 || detailNoParts.length > 0) && (
+            <span className="text-[11px] font-bold text-amber-600" data-quote-detail-count
+              title="단가 없는 부품은 견적 단가에도, 세부견적에도 빠집니다 · 부품 정보가 없는 ASSY 는 세부견적을 못 만듭니다">
+              ⚠ 세부견적 {[detailMissing > 0 && `단가없음 ${detailMissing}`, detailNoParts.length > 0 && `부품정보 없음 ${detailNoParts.length}`].filter(Boolean).join(' · ')}
+            </span>
+          )}
+        </div>
       </div>
 
       {revLoading && <div className="no-print rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-500">지난 견적 불러오는 중…</div>}
