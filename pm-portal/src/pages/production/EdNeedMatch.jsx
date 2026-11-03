@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react'
 import { useQuery, keepPreviousData } from '@tanstack/react-query'
 import { ruleKindOf } from '../../lib/edForecast'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { explodeProjects } from '../../lib/bomSupply'
 import { buildEvents, matchNeed, STATUS, WHICH_LABEL, bomGroupOf, bomProjectFor } from '../../lib/edNeed'
@@ -48,7 +49,7 @@ async function fetchNeedData(csId, projIds, missPns) {
     const part = ids.slice(i, i + 300)
     const [it, iv, po] = await Promise.all([
       supabase.from('items').select('id,std_code,name,manufacturer,manufacturer_code').in('id', part),
-      supabase.from('inventory').select('item_id,qty').in('item_id', part),
+      invIn('item_id,qty', part),
       fetchAll(() => supabase.from('purchase_orders')
         .select('id,po_number,item_id,qty_remaining,promise_date,vendor_id')
         .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').in('item_id', part).order('id')),

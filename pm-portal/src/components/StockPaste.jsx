@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { sameMap, invIn } from '../lib/sameItem'
 import { toastError, toastSuccess } from '../lib/toast'
 import { logActivity } from '../lib/activityLog'
 import { useConfirm } from './ux/ConfirmDialog'
@@ -71,18 +72,42 @@ export default function StockPaste({ onClose }) {
         })
       }
 
-      setRows(parsed.map(p => {
+      // 같은품목 묶음 품번은 대표 품번 재고와 대조한다 — 재고가 대표에 있다 (v4.131.0)
+      const sm = await sameMap()
+      const memIds = [...new Set(Object.values(found).filter(it => sm.has(it.id)).map(it => it.id))]
+      const repInv = new Map()
+      if (memIds.length) {
+        const { data: iv, error: e2 } = await invIn('item_id,qty,location', memIds)
+        if (e2) throw e2
+        ;(iv || []).forEach(x => repInv.set(x.item_id, x))
+      }
+      const out = parsed.map(p => {
         if (p.err) return { ...p, status: 'error' }
         const it = found[p.code]
         if (!it) return { ...p, status: 'notfound' }
-        const book = Number(it.inventory?.[0]?.qty) || 0
+        const mem = sm.get(it.id)
+        const inv = mem ? repInv.get(it.id) : it.inventory?.[0]
+        const book = Number(inv?.qty) || 0
         return {
-          ...p, status: 'ok',
-          item_id: it.id, std_code: it.std_code, name: it.name,
-          unit: it.unit, location: it.inventory?.[0]?.location || '',
+          ...p, status: 'ok', src_id: it.id,
+          item_id: mem ? mem.rep : it.id, std_code: mem ? mem.repCode : it.std_code,
+          name: mem ? `${it.std_code} 묶음 · ${it.name || ''}` : it.name,
+          unit: it.unit, location: inv?.location || '',
           book, diff: p.qty - book,
         }
-      }))
+      })
+      // 한 묶음 품번이 여러 줄이면 대표 줄 하나로 더한다 (나머지 줄은 「합산」으로 표시만)
+      //   대표 품번 자기 줄이 있으면 그 줄로, 없으면 먼저 나온 줄로 모은다
+      const repSet = new Set([...sm.values()].map(v => v.rep))
+      const first = new Map()
+      const okRows = out.filter(r => r.status === 'ok' && repSet.has(r.item_id))
+      for (const r of [...okRows.filter(r => r.src_id === r.item_id), ...okRows.filter(r => r.src_id !== r.item_id)]) {
+        const f = first.get(r.item_id)
+        if (!f) { first.set(r.item_id, r); continue }
+        f.qty += r.qty; f.diff = f.qty - f.book; f.joined = (f.joined || 0) + 1
+        r.status = 'joined'; r.err = `묶음 대표 ${f.std_code} 줄에 더함`
+      }
+      setRows(out)
     } catch (e) {
       toastError('조회 실패: ' + e.message)
     } finally { setBusy(false) }
@@ -232,13 +257,14 @@ export default function StockPaste({ onClose }) {
                   <tbody>
                     {shown.map((r, i) => (
                       <tr key={i} className={`border-t border-slate-100 ${
-                        r.status !== 'ok' ? 'bg-rose-50' : r.diff !== 0 ? 'bg-amber-50/40' : ''}`}>
+                        r.status === 'joined' ? 'bg-slate-50 text-slate-400' : r.status !== 'ok' ? 'bg-rose-50' : r.diff !== 0 ? 'bg-amber-50/40' : ''}`}>
                         <td className="px-2 py-1.5 font-mono text-indigo-600">
                           {r.std_code || r.code || `${r.line}행`}
                         </td>
                         <td className="px-2 py-1.5 text-slate-600 max-w-[220px] truncate">
                           {r.status === 'ok' ? r.name
                             : r.status === 'notfound' ? <span className="text-rose-600">등록되지 않은 품번</span>
+                            : r.status === 'joined' ? <span className="text-violet-500">{r.code} · {r.err}</span>
                             : <span className="text-rose-600">{r.err}</span>}
                         </td>
                         <td className="px-2 py-1.5 text-right text-slate-500">

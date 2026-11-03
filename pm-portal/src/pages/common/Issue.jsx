@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { attachStock } from '../../lib/stockLookup'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { deptStyle, deptShort } from '../../lib/bomStyle'
@@ -512,7 +513,7 @@ export default function Issue() {
     queryKey: ['issueLocMeta', metaIds.join(',')],
     enabled: metaIds.length > 0,
     queryFn: async () => {
-      const { data } = await supabase.from('inventory').select('item_id,location').in('item_id', metaIds)
+      const { data } = await invIn('item_id,location', metaIds)
       const m = {}
       ;(data || []).forEach(r => { if (r.location) m[r.item_id] = r.location })
       return m

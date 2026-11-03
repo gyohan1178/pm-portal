@@ -7,12 +7,16 @@
 //   표가 없으면(DB 설정 전) 모든 함수가 빈 값을 돌려준다 — 화면은 예전과 같다.
 import { supabase } from './supabase'
 import { normLoc } from './cycleCount'
+import { sameMap, repOf } from './sameItem'
 
 const missing = (e) => e && (e.code === '42P01' || e.code === 'PGRST205' || /pm_cell_aux/.test(e.message || ''))
 
 // 품목들의 보조 칸 — Map(item_id → [{ id, location, qty, counted_at }])
+//   같은품목 묶음 품번은 대표 품번의 보조 칸을 돌려준다 (v4.131.0 — 재고 · 위치가 대표에 있다)
 export async function fetchAuxByItems(itemIds) {
-  const ids = [...new Set((itemIds || []).filter(Boolean))]
+  const want = [...new Set((itemIds || []).filter(Boolean))]
+  const sm = await sameMap()
+  const ids = [...new Set(want.map((id) => repOf(sm, id)))]
   const m = new Map()
   for (let i = 0; i < ids.length; i += 200) {
     const { data, error } = await supabase.from('pm_cell_aux')
@@ -20,6 +24,7 @@ export async function fetchAuxByItems(itemIds) {
     if (error) { if (missing(error)) return m; throw error }
     ;(data || []).forEach((a) => { if (!m.has(a.item_id)) m.set(a.item_id, []); m.get(a.item_id).push(a) })
   }
+  if (sm.size) for (const id of want) { const r = repOf(sm, id); if (r !== id && m.has(r)) m.set(id, m.get(r)) }
   return m
 }
 

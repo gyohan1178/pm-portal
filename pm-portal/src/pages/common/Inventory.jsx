@@ -12,6 +12,7 @@ import StockPaste from '../../components/StockPaste'
 import AuditApplyModal from '../../components/AuditApplyModal'
 import AuxLocs from '../../components/AuxLocs'
 import { fetchAllAux, locWithAux } from '../../lib/cellAux'
+import { sameMap, repOf, membersByRep } from '../../lib/sameItem'
 import { useNavigate } from 'react-router-dom'
 import { ResizableTable } from '../../components/ResizableTable'
 import * as XLSX from 'xlsx'
@@ -46,13 +47,20 @@ async function fetchInventory() {
   return all
 }
 // 검색은 화면에서 거른다 — 예전엔 검색할 때마다 재고 전체(수천 행)를 다시 받아 왔다.
-function filterInventory(all, search) {
-  if (!search) return all
+//   같은품목 묶음 품번(대표가 아닌 것)은 재고 · 위치가 대표 품번 줄에 모여 있다 (v4.131.0)
+//     → 빈 줄(재고 0 · 위치 없음)은 숨기고, 그 품번으로 찾으면 대표 줄이 나온다
+function filterInventory(all, search, same) {
+  const mem = same || new Map()
+  const reps = membersByRep(mem)
+  const base = mem.size ? all.filter(r => !(mem.has(r.item_id) && !Number(r.qty) && !r.location)) : all
+  if (!search) return base
   const s = search.toLowerCase()
-  return all.filter(r=>{
+  return base.filter(r=>{
     const csCodes=(r.items?.customer_item_codes||[]).map(c=>c.customer_code?.toLowerCase()).join(' ')
+    const memCodes=(reps.get(r.item_id)||[]).map(x=>String(x.code||'').toLowerCase()).join(' ')
     return r.items?.std_code?.toLowerCase().includes(s)||r.items?.name?.toLowerCase().includes(s)
       ||r.items?.manufacturer?.toLowerCase().includes(s)||r.items?.manufacturer_code?.toLowerCase().includes(s)||csCodes.includes(s)
+      ||memCodes.includes(s)
   })
 }
 
@@ -155,6 +163,8 @@ export default function Inventory() {
     mutationFn: async ({ row, qty }) => {
       // 음수 재고는 받지 않는다 (v4.57.0) — 출고 기록이 빠졌으면 출고 화면에서 바로잡는다
       if (!(Number(qty) >= 0)) throw new Error('재고는 0 이상으로 적어 주세요')
+      const sm = await sameMap()
+      if (sm.has(row.item_id)) throw new Error(`같은품목 묶음 품번입니다 — 재고는 대표 품번 ${sm.get(row.item_id).repCode} 에서 고쳐 주세요`)
       const { data: cur, error: e1 } = await supabase.from('inventory').select('qty').eq('id', row.id).maybeSingle()
       if (e1) throw e1
       const dbQty = Number(cur?.qty) || 0
@@ -228,10 +238,20 @@ export default function Inventory() {
       }
       // item_id별 최종 값 (중복 std_code는 마지막 줄이 이긴다) + 미매칭 수집
       const byId = {}; const skipped = []
+      // 같은품목 묶음 품번은 대표 품번 한 줄로 더한다 — 재고가 대표에 있다 (v4.131.0)
+      const sm = await sameMap()
+      const grpSeen = new Set(), repSet = membersByRep(sm)
       for (const r of rows) {
         const itemId = idMap[r.std_code]
         if (!itemId) { skipped.push(r.std_code); continue }
-        byId[itemId] = r
+        const rep = repOf(sm, itemId)
+        const inGroup = sm.has(itemId) || repSet.has(itemId)
+        if (inGroup && grpSeen.has(rep)) {
+          byId[rep] = { ...byId[rep], qty: (Number(byId[rep].qty) || 0) + (Number(r.qty) || 0), location: byId[rep].location ?? r.location ?? null }
+        } else {
+          byId[rep] = inGroup ? { ...r } : r
+          if (inGroup) grpSeen.add(rep)
+        }
       }
       const payload = Object.entries(byId).map(([item_id, r]) => ({
         item_id, qty: r.qty, fileLoc: r.location ?? null,
@@ -270,6 +290,7 @@ export default function Inventory() {
       }
       // 조정 이력 — 누가 언제 얼마를 얼마로 바꿨는지 작업 기록에 남긴다
       const codeOf = {}; Object.entries(idMap).forEach(([c, id]) => { codeOf[id] = c })
+      for (const [id, v] of sm) if (v.repCode) codeOf[v.rep] = v.repCode
       const changed = merged.filter(m => (qtyMap.get(m.item_id) ?? 0) !== m.qty)
       logActivity('update', 'inventory', `실사 ${applied}건`,
         `재고 실사 반영 ${applied}건 · 수량 변동 ${changed.length}건` +
@@ -291,7 +312,9 @@ export default function Inventory() {
   const { data: invAll, isLoading, error } = useQuery({
     queryKey:['inventory','all'], queryFn:()=>fetchInventory(),
   })
-  const allRows = useMemo(() => filterInventory(invAll || [], appliedSearch), [invAll, appliedSearch])
+  const { data: same } = useQuery({ queryKey: ['sameItem'], queryFn: () => sameMap(), staleTime: 5 * 60 * 1000 })
+  const sameReps = useMemo(() => membersByRep(same), [same])
+  const allRows = useMemo(() => filterInventory(invAll || [], appliedSearch, same), [invAll, appliedSearch, same])
   // 보조 칸(넘쳐 보관) — 보관위치 옆에 · 엑셀에도 (v4.79.0)
   const { data: auxAll = EMPTY_AUX } = useQuery({ queryKey: ['cellAuxAll'], queryFn: fetchAllAux, staleTime: 60 * 1000 })
 
@@ -554,7 +577,9 @@ export default function Inventory() {
                 const itemValue=r.qty*(r.items?.purchase_price||0)
                 return (
                   <tr key={r.id} className={`border-b border-slate-100 hover:bg-slate-50 ${status==='zero'?'bg-red-50/20':status==='low'?'bg-amber-50/20':''}`}>
-                    <td className="px-3 py-2 font-mono text-xs text-indigo-600 overflow-hidden truncate"><ItemLink code={r.items?.std_code} /></td>
+                    <td className="px-3 py-2 font-mono text-xs text-indigo-600 overflow-hidden truncate"><ItemLink code={r.items?.std_code} />
+                      {sameReps.has(r.item_id) && <div className="text-[10px] font-sans font-semibold text-violet-500 truncate" title={`같은품목 묶음 — ${sameReps.get(r.item_id).map(x => x.code).join(', ')} 의 재고가 여기에 합쳐져 있습니다`}>묶음 +{sameReps.get(r.item_id).map(x => x.code).join(', ')}</div>}
+                      {same?.has(r.item_id) && <div className="text-[10px] font-sans font-semibold text-violet-500 truncate">묶음 → {same.get(r.item_id).repCode}</div>}</td>
                     <td className="px-3 py-2 font-semibold text-slate-800 overflow-hidden truncate">{r.items?.name}</td>
                     <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">{r.items?.manufacturer||'-'}</td>
                     <td className="px-3 py-2 font-mono text-xs text-slate-400 overflow-hidden truncate">{r.items?.manufacturer_code||'-'}</td>

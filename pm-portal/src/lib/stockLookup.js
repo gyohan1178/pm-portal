@@ -8,6 +8,7 @@
 //   다품목 출고 · 구매발주 · 통합검색이 같은 함수를 쓴다.
 
 import { supabase } from './supabase'
+import { invIn } from './sameItem'
 import { fetchAuxByItems, locWithAux } from './cellAux'
 
 // 한 품목이 여러 위치에 나뉘어 있을 수 있어 합산하고 위치는 모은다
@@ -18,9 +19,7 @@ export async function stockByItemIds(ids) {
 
   // .in() 에 한꺼번에 넣으면 결과가 잘리고 주소도 길어진다
   for (let i = 0; i < list.length; i += 200) {
-    const { data, error } = await supabase.from('inventory')
-      .select('item_id,qty,location')
-      .in('item_id', list.slice(i, i + 200))
+    const { data, error } = await invIn('item_id,qty,location', list.slice(i, i + 200))
     if (error) throw error
     for (const r of data || []) {
       const o = out[r.item_id] || (out[r.item_id] = { qty: 0, locs: new Set() })

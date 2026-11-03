@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router-dom'
 import { createPortal } from 'react-dom'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
 import { toastError, toastSuccess } from '../../lib/toast'
@@ -431,7 +432,7 @@ async function stockOf(ids) {
   const inv = {}, po = {}
   for (let i = 0; i < ids.length; i += 200) {
     const part = ids.slice(i, i + 200)
-    const a = must(await supabase.from('inventory').select('item_id,qty').in('item_id', part), '재고 조회')
+    const a = must(await invIn('item_id,qty', part), '재고 조회')
     ;(a || []).forEach(r => { inv[r.item_id] = (inv[r.item_id] || 0) + (Number(r.qty) || 0) })
     const b = must(await supabase.from('purchase_orders').select('item_id,qty_ordered,qty_received,qty_remaining,status')
       .in('item_id', part).eq('order_type', 'purchase').not('status', 'in', '(완료,취소)'), '발주잔 조회')

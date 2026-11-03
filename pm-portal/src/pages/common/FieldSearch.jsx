@@ -5,6 +5,7 @@ import RackSpot, { parseLoc } from '../../components/RackSpot'
 import RackMiniMap, { useRackMap } from '../../components/RackMiniMap'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { fetchAll } from '../../lib/paginate'
 import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
@@ -31,8 +32,7 @@ async function searchItems(q) {
   const qtyMap = {}
   for (let i = 0; i < ids.length; i += 200) {
     // 위치만 보면 몇 개 남았는지 몰라 재고현황을 다시 열어야 한다
-    const { data: inv } = await supabase.from('inventory')
-      .select('item_id,location,qty').in('item_id', ids.slice(i, i + 200))
+    const { data: inv } = await invIn('item_id,location,qty', ids.slice(i, i + 200))
     ;(inv || []).forEach(r => {
       if (r.location) {
         if (!locMap[r.item_id]) locMap[r.item_id] = new Set()

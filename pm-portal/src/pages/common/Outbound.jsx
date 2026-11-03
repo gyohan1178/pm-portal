@@ -14,6 +14,7 @@ import { useCompact } from '../../hooks/useCompact'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
 import { supabase } from '../../lib/supabase'
+import { invIn, repId } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
@@ -204,9 +205,11 @@ export default function Outbound() {
     })
   }
   // 위치(inventory.location) 저장 — 품목 기준이라 모든 BOM·현장검색에 자동 반영
-  async function saveLocation(item_id, location) {
+  async function saveLocation(bomItemId, location) {
     if (!guardEdit()) return
     const loc = (location || '').trim()
+    // 같은품목 묶음 품번이면 위치는 대표 품번에 둔다 (재고가 거기 있다 · v4.131.0)
+    const item_id = await repId(bomItemId)
     // upsert 는 빠뜨린 컬럼을 null 로 덮어써 수량이 지워진다.
     //   있으면 위치만 고치고, 없을 때만 새로 만든다.
     const { data: cur } = await supabase.from('inventory')
@@ -364,7 +367,7 @@ export default function Outbound() {
     queryKey: ['outLocMeta', outItemIds.join(',')],
     enabled: outItemIds.length>0,
     queryFn: async () => {
-      const { data: inv } = await supabase.from('inventory').select('item_id,location').in('item_id', outItemIds)
+      const { data: inv } = await invIn('item_id,location', outItemIds)
       const m = {}
       ;(inv||[]).forEach(r => { if (r.location) m[r.item_id] = r.location })
       return m

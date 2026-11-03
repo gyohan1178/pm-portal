@@ -7,6 +7,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { explodeProjects } from '../../lib/bomSupply'
 import * as XLSX from 'xlsx'
@@ -240,7 +241,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
 
   const invRows = []
   for (const ids of chunk(itemIds)) {
-    const { data, error } = await supabase.from('inventory').select('item_id,qty').in('item_id', ids)
+    const { data, error } = await invIn('item_id,qty', ids)
     if (error) throw error
     invRows.push(...(data || []))
   }

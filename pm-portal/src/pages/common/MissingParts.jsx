@@ -3,6 +3,7 @@ import { codeCandidates } from '../../lib/custPrefix'
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { ResizableTable } from '../../components/ResizableTable'
 import { SkeletonRows } from '../../components/ux/Skeleton'
@@ -57,7 +58,7 @@ async function fetchMissing() {
   const ids = [...new Set(rows.map(r => r.item_id).filter(Boolean))]
   const invMap = {}
   for (let i = 0; i < ids.length; i += 300) {
-    const { data: inv, error } = await supabase.from('inventory').select('item_id,qty').in('item_id', ids.slice(i, i + 300))
+    const { data: inv, error } = await invIn('item_id,qty', ids.slice(i, i + 300))
     if (error) throw error
     ;(inv || []).forEach(x => { invMap[x.item_id] = (invMap[x.item_id] || 0) + (Number(x.qty) || 0) })
   }

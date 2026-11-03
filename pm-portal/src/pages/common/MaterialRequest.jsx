@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useMemo } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { refreshProcurement } from '../../lib/refresh'
 import { attachStock } from '../../lib/stockLookup'
 import * as XLSX from 'xlsx'
@@ -711,7 +712,7 @@ export default function MaterialRequest() {
       const ids = [...new Set(rowsAll.map(r => r.item_id).filter(Boolean))]
       const locOf = new Map()
       for (let i = 0; i < ids.length; i += 300) {
-        const { data, error } = await supabase.from('inventory').select('item_id,location').in('item_id', ids.slice(i, i + 300))
+        const { data, error } = await invIn('item_id,location', ids.slice(i, i + 300))
         if (error) break            // 위치를 못 읽어도 엑셀은 나간다 (위치 칸만 빈다)
         ;(data || []).forEach(x => { if (x.location) locOf.set(x.item_id, x.location) })
       }

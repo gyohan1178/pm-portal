@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { invIn } from '../../lib/sameItem'
 import { useCustomers } from '../../hooks/useCustomers'
 import { addEffQty } from '../../lib/whereUsedEff'
 import { addPoQty, partDemand, PO_SPANS } from '../../lib/whereUsedPo'
@@ -28,7 +29,7 @@ async function searchItems(q) {
   const ids = (data || []).map(d => d.id)
   const locMap = {}
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: inv } = await supabase.from('inventory').select('item_id,location').in('item_id', ids.slice(i, i + 200))
+    const { data: inv } = await invIn('item_id,location', ids.slice(i, i + 200))
     ;(inv || []).forEach(r => {
       if (r.location) {
         if (!locMap[r.item_id]) locMap[r.item_id] = new Set()

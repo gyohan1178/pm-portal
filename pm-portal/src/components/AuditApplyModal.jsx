@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
+import { invIn } from '../lib/sameItem'
 import { fetchAll } from '../lib/paginate'
 import { toastError, toastSuccess } from '../lib/toast'
 import { useCanEdit } from '../hooks/useProfile'
@@ -25,7 +26,7 @@ export async function fetchPendingAudits() {
     const { data: its, error: e1 } = await supabase.from('items').select('id,std_code,name,manufacturer,manufacturer_code,unit').in('id', part)
     if (e1) throw e1
     ;(its || []).forEach(x => { items[x.id] = x })
-    const { data: inv, error: e2 } = await supabase.from('inventory').select('item_id,qty').in('item_id', part)
+    const { data: inv, error: e2 } = await invIn('item_id,qty', part)
     if (e2) throw e2
     ;(inv || []).forEach(x => { stock[x.item_id] = Number(x.qty) || 0 })
   }

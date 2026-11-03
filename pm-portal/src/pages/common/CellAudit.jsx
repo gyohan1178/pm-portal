@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
+import { sameMap, invIn, repId } from '../../lib/sameItem'
 import QrScanner from '../../components/QrScanner'
 import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
@@ -187,7 +188,14 @@ export default function CellAudit() {
         .select('id,std_code,name,unit,manufacturer,manufacturer_code,spec, inventory(qty,location)')
         .or(ilikeAny(['std_code', 'name', 'manufacturer_code', 'manufacturer', 'spec'], t))
         .limit(20)
-      setHits(data || []); setSearching(false)
+      // 같은품목 묶음 품번은 대표 품번의 재고 · 위치를 보여 준다 (v4.131.0)
+      const sm = await sameMap()
+      const mem = (data || []).filter((h) => sm.has(h.id)).map((h) => h.id)
+      let repInv = new Map()
+      if (mem.length) { const { data: iv } = await invIn('item_id,qty,location', mem); repInv = new Map((iv || []).map((x) => [x.item_id, x])) }
+      setHits((data || []).map((h) => sm.has(h.id)
+        ? { ...h, repCode: sm.get(h.id).repCode, inventory: repInv.has(h.id) ? [repInv.get(h.id)] : [] }
+        : h)); setSearching(false)
     }, 300)
   }
 
@@ -198,15 +206,17 @@ export default function CellAudit() {
     if (!(qty >= 0)) { setFerr(p => ({ ...p, addQty: '수량을 0 이상 숫자로 넣어 주세요' })); return }
     setBusy(true)
     try {
+      // 같은품목 묶음 품번이면 대표 품번으로 넣는다 — 재고 · 위치는 대표에 있다 (v4.131.0)
+      const target = await repId(picked.id)
       const { error } = await supabase.from('inventory')
-        .upsert({ item_id: picked.id, qty, location }, { onConflict: 'item_id' })
+        .upsert({ item_id: target, qty, location }, { onConflict: 'item_id' })
       if (error) throw error
       const prevLoc = picked.inventory?.[0]?.location
       logActivity('update', 'inventory', picked.std_code,
         prevLoc && prevLoc !== location
           ? `위치 이동 ${prevLoc} → ${location} · 수량 ${qty}`
           : `${location} 에 등록 · 수량 ${qty}`)
-      toastSuccess(`${picked.std_code} → ${location}`)
+      toastSuccess(`${picked.std_code} → ${location}${picked.repCode ? ` (묶음 대표 ${picked.repCode})` : ''}`)
       setAddOpen(false); setQ(''); setHits([]); setPicked(null); setAddQty('')
       qc.invalidateQueries({ queryKey: ['cellItems'] })
     } catch (e) {
@@ -438,7 +448,7 @@ export default function CellAudit() {
                       className={`w-full text-left px-3 py-2 rounded-lg border ${here
                         ? 'border-slate-100 bg-slate-50 opacity-50'
                         : 'border-slate-200 hover:border-indigo-300 hover:bg-indigo-50'}`}>
-                      <p className="font-mono text-sm font-bold text-indigo-600">{h.std_code}</p>
+                      <p className="font-mono text-sm font-bold text-indigo-600">{h.std_code}{h.repCode && <span className="ml-1.5 text-[10px] font-semibold text-violet-500">묶음 → {h.repCode}</span>}</p>
                       <p className="text-xs text-slate-600">{h.name}</p>
                       <p className="text-[11px] text-slate-400">
                         {h.manufacturer}{h.manufacturer && h.manufacturer_code ? ' · ' : ''}
