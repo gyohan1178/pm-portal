@@ -8,6 +8,7 @@ import { attachStock } from '../../lib/stockLookup'
 import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest, useMe } from '../../hooks/useProfile'
+import { useTableSort } from '../../hooks/useTableSort'
 import { buildView, doneView, DONE_SORTS, lastHandled, fmtHandled } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST } from '../../lib/utils'
@@ -267,6 +268,12 @@ export default function MaterialRequest() {
     return [r.std_code, r.item_name, r.maker, r.maker_code,
             r.requester, r.purpose, r.req_no, r.product_code]
       .some(v => String(v || '').toLowerCase().includes(k))
+  })
+
+  // 머리글을 누르면 그 칸으로 정렬 (한 번 더 누르면 반대로) — 요청번호 순 등 (v4.132.0)
+  //   같은 값끼리는 원래 차례(요청일 최근 순)를 지킨다. 엑셀도 화면 차례 그대로
+  const { sorted: histSorted, sortKey: hSortKey, sortDir: hSortDir, onSort: hOnSort } = useTableSort(histRows, {
+    accessors: { handle_memo: (r) => (r.status === '반려' ? rejectReasonOf(r) : r.handle_memo) },
   })
 
   // 월별 묶음 — 몇 건이 어떻게 끝났는지
@@ -648,7 +655,7 @@ export default function MaterialRequest() {
     if (!histRows.length) { toastError('내보낼 이력이 없습니다'); return }
     setXlBusy(true)
     try {
-      const data = histRows
+      const data = histSorted
 
       const rows = data.map(r => ({
         '요청번호': r.req_no || '',
@@ -2339,10 +2346,11 @@ export default function MaterialRequest() {
             </div>
           )}
           {!hBusy && histRows.length > 0 && (
-            <ResizableTable cols={HIST_COLS} storageKey="mreq_hist_cols" fill fillMin={360}>
+            <ResizableTable cols={HIST_COLS} storageKey="mreq_hist_cols" fill fillMin={360}
+              sortKey={hSortKey} sortDir={hSortDir} onSort={hOnSort}>
               {() => (
                 <tbody>
-                  {histRows.map((r, i) => (
+                  {histSorted.map((r, i) => (
                     <tr key={`${r.req_no}-${r.std_code}-${i}`}
                       className="border-b border-slate-100 hover:bg-slate-50">
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.req_date || ''}</td>
