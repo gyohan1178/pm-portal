@@ -12,7 +12,7 @@ import { supabase } from './supabase'
 import { codeCandidates } from './custPrefix'
 
 export const REF_KEY = 'etc_customer_ref'
-export const REF_DEFAULTS = { 제스코: 'ax', 벨류엔지니어링: 'ax', 남일: 'ed' }
+export const REF_DEFAULTS = { 제스코: 'ax', 벨류엔지니어링: 'ax', 남일: 'ed', 두웰: 'ed' }   // 두웰 v4.134.0
 const ORDER = ['ax', 'ed', 'csk', 'vm']
 
 // (주)벨류엔지니어링 · 벨류 엔지니어링 · ㈜제스코 → 벨류엔지니어링 · 제스코
@@ -37,7 +37,8 @@ export function refCodeOf(name, setup) {
   // 저장해 둔 값이 기본값보다 먼저 (빈 값 = 「자동」으로 고른 것)
   const saved = Object.entries(setup?.map || {}).find(([n]) => normName(n) === k)
   if (saved) return saved[1] ? String(saved[1]).toLowerCase() : null
-  const def = Object.entries(REF_DEFAULTS).find(([n]) => normName(n) === k)
+  // 기본값은 이름 앞부분만 맞아도 (남일 = 남일인스트루먼트 · v4.134.0)
+  const def = Object.entries(REF_DEFAULTS).find(([n]) => normName(n) === k) || Object.entries(REF_DEFAULTS).find(([n]) => k.startsWith(normName(n)))
   return def ? def[1] : null
 }
 

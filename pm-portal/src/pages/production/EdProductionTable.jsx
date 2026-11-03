@@ -14,6 +14,7 @@ import { KINDS, kindOf, ruleKindOf, dueOf, issueDueOf, issueBaseOf, qcDueOf } fr
 import { bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import Spin from '../../components/ux/Spin'
 import { orderOf, edHogiKey } from '../../lib/edOrderSync'
+import { partnerInfo } from '../../lib/edPartner'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -25,6 +26,8 @@ export function dday(d) {
 }
 const md = (d) => (d ? String(d).slice(5, 10) : '')
 const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 'false')
+// 협력사(남일 · 두웰 …) 발주 줄 표시 — 파트 대신 업체 (v4.134.0)
+const PartnerChip = ({ p }) => <span data-ed-partner={p.company} title={`협력사 발주 — ${p.company} ${p.po} ${p.line}`} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-fuchsia-100 text-fuchsia-700">{p.company}</span>
 const KIND_LABEL = { 'EUV': 'EUV', 'H2D-LH': 'H2D-LH', 'H2D-HPD': 'H2D-HPD' }
 
 // 화면에 쓰는 날짜 — 정한 납기, 없으면 납품요청일
@@ -314,6 +317,7 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
     const pos = o?.pos || []
     const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []
     const first = mp[0]
+    const pi = partnerInfo(r)
     return (
       <tr key={r.id}
         onMouseDown={e => rowSel.start(r.id, e, sel.has(r.id))}
@@ -323,12 +327,16 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
         <td className="px-1 py-2"><input type="checkbox" checked={sel.has(r.id)} readOnly className="pointer-events-none" /></td>
         <td data-no-select className={`py-2 text-left cursor-pointer whitespace-nowrap ${inGroup ? 'pl-8 pr-2' : 'px-2'}`} onClick={() => onEdit(r)}
           title={`${r.pn} ${r.hogi || ''} · ${r.part || '파트 없음'} — 누르면 편집`}>
-          {r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400">미분류</span>}
+          {pi && !r.part ? <PartnerChip p={pi} /> : r.part ? <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold ${partColor(r.part)}`}>{r.part}</span> : <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-400">미분류</span>}
           {!inGroup && <span className="ml-2 text-slate-700 hover:text-indigo-600">{r.pn} <span className="font-mono font-bold text-indigo-600">{r.hogi || ''}</span></span>}
           {r.fc_new && <span className="ml-1 px-1 rounded bg-sky-50 text-sky-600 text-[9px] font-bold align-middle" title="포캐스트로 만든 줄">FC</span>}
         </td>
         <td className="px-2 py-2 text-left text-[11px] text-slate-500 max-w-[110px] overflow-hidden text-ellipsis" title={r.part2 || ''}>{r.part2 && r.part2 !== r.part ? r.part2 : <span className="text-slate-300">—</span>}</td>
-        {!orderSetup || !o ? (
+        {pi && !o ? (
+          <td className="px-2 py-2 text-left whitespace-nowrap" data-ed-order={pi.po} title={`협력사 발주서 ${pi.po} ${pi.line} (수주대장 · 기타 ${pi.company})`}>
+            <span className="font-mono text-[11px] text-fuchsia-700">{pi.po}</span><span className="text-[10px] text-slate-400"> {pi.line}</span>
+          </td>
+        ) : !orderSetup || !o ? (
           <td className="px-2 py-2 text-left text-[10px] text-slate-300" title={orderSetup ? '수주대장에 진행 중인 발주가 없습니다' : 'Edwards생산_수주불러오기_반영_261029.sql 실행 전'}>{orderSetup ? '발주 없음' : '—'}</td>
         ) : (<>
           <td className="px-2 py-2 text-left whitespace-nowrap" data-ed-order={pos.join(',')}
@@ -410,7 +418,8 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
 function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, partColor, orderIdx, orderSetup }) {
   const rows = g.rows
   const ords = [...new Set(rows.map(r => orderOf(orderIdx, r)).filter(Boolean))]
-  const oPos = [...new Set(ords.flatMap(o => o.pos || []))]
+  const pis = rows.map(r => partnerInfo(r)).filter(Boolean)
+  const oPos = [...new Set([...ords.flatMap(o => o.pos || []), ...pis.map(p => p.po)])]
   const all = rows.every(r => sel.has(r.id))
   const live = rows.filter(r => r.status !== '완료')
   const order = (s) => { const i = statusOpts.indexOf(s || 'PO접수'); return i < 0 ? 0 : i }
@@ -430,10 +439,10 @@ function GroupRow({ g, open, onToggle, sel, setSel, statusOpts, statusColor, par
         <span className="inline-block w-3 text-[10px] text-violet-500">{open ? '▼' : '▶'}</span>
         <span className="font-bold text-slate-800">{g.pn}</span>
         <span className="ml-1.5 px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 font-extrabold font-mono text-[11px]">{g.hogi || '-'}</span>
-        <span className="ml-2">{rows.map((r, i) => <span key={i} className={`mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${r.part ? partColor(r.part) : 'bg-slate-100 text-slate-400'}`}>{r.part || '미분류'}</span>)}</span>
+        <span className="ml-2">{rows.map((r, i) => { const p = !r.part && partnerInfo(r); return p ? <span key={i} className="mr-1"><PartnerChip p={p} /></span> : <span key={i} className={`mr-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${r.part ? partColor(r.part) : 'bg-slate-100 text-slate-400'}`}>{r.part || '미분류'}</span> })}</span>
       </td>
       <td className="px-2 py-2.5 text-left" title={oPos.length ? `발주서 ${oPos.join(', ')}` : '수주대장에 진행 중인 발주가 없습니다'}>
-        {orderSetup && oPos.length ? <span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span> : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
+        {(orderSetup || pis.length) && oPos.length ? <span className="text-[11px] font-bold text-slate-700">발주 {oPos.length}건</span> : <span className="text-[10px] text-slate-300">{orderSetup ? '발주 없음' : '—'}</span>}
       </td>
       <td className="px-2 py-2.5 border-l border-violet-100 whitespace-nowrap" title="가장 빠른 파트 납기">
         {g.first ? <span className={n != null && n < 0 ? 'text-red-600 font-bold' : n != null && n <= 7 ? 'text-orange-600 font-bold' : 'text-slate-700'}>{md(g.first)}{n != null && n >= 0 && <span className="ml-1 text-[10px] font-bold">{n === 0 ? 'D-Day' : `D-${n}`}</span>}</span> : <span className="text-slate-300">—</span>}

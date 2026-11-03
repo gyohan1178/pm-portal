@@ -17,6 +17,7 @@ import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcAppl
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
 import { fetchEdOrderGroups, orderIndex, planEdImport, planEdText, applyEdImport } from '../../lib/edOrderSync'
+import { fetchEdPartnerLines, planEdPartner, planEdPartnerText, applyEdPartner } from '../../lib/edPartner'
 import { fetchCskOrderUnits, planCskImport, planCskText, applyCskImport } from '../../lib/cskOrderSync'
 import { ruleKindOf, KINDS } from '../../lib/edForecast'
 import { bomGroupOf } from '../../lib/edNeed'
@@ -401,9 +402,14 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   const { data: edOrd } = useQuery({ queryKey: ['edOrderGroups'], queryFn: () => fetchEdOrderGroups(supabase), enabled: isED, staleTime: 120000 })
   const edOrderIdx = useMemo(() => orderIndex(edOrd?.groups), [edOrd])
   const edImportMut = useMutation({
-    mutationFn: (plan) => applyEdImport(supabase, plan, me?.name),
-    onSuccess: (n) => {
-      toastSuccess(`수주대장에서 생산관리 ${n}줄을 만들었습니다`)
+    // 협력사(남일 · 두웰 …) 발주도 같이 맞춘다 (v4.134.0)
+    mutationFn: async ({ plan, pplan }) => {
+      const n = plan?.ins?.length ? await applyEdImport(supabase, plan, me?.name) : 0
+      const p = pplan ? await applyEdPartner(supabase, pplan, me?.name) : { created: 0, updated: 0 }
+      return { n, p }
+    },
+    onSuccess: ({ n, p }) => {
+      toastSuccess(`수주대장에서 생산관리 ${n + p.created}줄을 만들었습니다${p.created ? ` (협력사 ${p.created}줄)` : ''}${p.updated ? ` · 협력사 ${p.updated}줄 고침` : ''}`)
       qc.invalidateQueries({ queryKey: ['production'] })
       qc.invalidateQueries({ queryKey: ['edOrderGroups'] })
     },
@@ -413,17 +419,21 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     const res = await fetchEdOrderGroups(supabase)        // 지금 수주대장 기준으로 다시 받는다
     if (!res.setup) { toastError('Edwards생산_수주불러오기_반영_261029.sql 을 먼저 실행해 주세요'); return }
     const plan = planEdImport(res.groups, rows)
-    if (!plan.ins.length) {
-      toastSuccess(`새로 만들 줄이 없습니다 — 이미 있음 ${plan.exist.length}줄${plan.noHogi.lines ? ` · 호기 번호 없는 발주 ${plan.noHogi.lines}줄` : ''}`)
+    // 협력사(남일 · 두웰 …) 발주 — 「기타」 고객사 중 BOM 기준이 Edwards 인 업체 (v4.134.0)
+    let pplan = { ins: [], upd: [], same: [] }
+    try { pplan = planEdPartner(await fetchEdPartnerLines(supabase), rows) } catch (e) { toastError('협력사 발주 읽기 실패 — Edwards 발주만 불러옵니다: ' + e.message) }
+    const pN = pplan.ins.length + pplan.upd.length
+    if (!plan.ins.length && !pN) {
+      toastSuccess(`새로 만들 줄이 없습니다 — 이미 있음 ${plan.exist.length + pplan.same.length}줄${plan.noHogi.lines ? ` · 호기 번호 없는 발주 ${plan.noHogi.lines}줄` : ''}`)
       return
     }
     const ok = await ask({
-      title: `수주대장의 Edwards 발주로 생산관리 ${plan.ins.length}줄을 만들까요?`,
-      desc: '발주서 메모의 「PROJECT 이름 #호기」 · 파트별로 만듭니다 (상태 PO접수 · 발주서 접수 ✔ · 납품요청일 = 가장 빠른 발주 납기). 이미 있는 줄은 상태 · 날짜 · 불출 · 비고 모두 그대로 둡니다. 메모에 파트가 없는 발주는 같은 PO · 같은 품번의 예전 파트로 정했습니다 (만든 뒤 편집에서 바꿀 수 있음).',
-      items: planEdText(plan),
+      title: `수주대장 발주로 생산관리 ${plan.ins.length + pplan.ins.length}줄을 만들까요?${pplan.upd.length ? ` (협력사 ${pplan.upd.length}줄 고침)` : ''}`,
+      desc: '발주서 메모의 「PROJECT 이름 #호기」 · 파트별로 만듭니다 (상태 PO접수 · 발주서 접수 ✔ · 납품요청일 = 가장 빠른 발주 납기). 이미 있는 줄은 상태 · 날짜 · 불출 · 비고 모두 그대로 둡니다. 메모에 파트가 없는 발주는 같은 PO · 같은 품번의 예전 파트로 정했습니다 (만든 뒤 편집에서 바꿀 수 있음).\n협력사(남일 · 두웰 …) 발주는 AXCELIS 3rd party 처럼 발주 한 줄 = 한 줄(호기 칸 「수량EA」)로 만들고, 납기 · 수량이 바뀌면 고치고, 납품이 끝나면 완료로 바꿉니다.',
+      items: [...planEdText(plan), ...planEdPartnerText(pplan)],
       okText: '불러오기 실행' })
     if (!ok) return
-    edImportMut.mutate(plan)
+    edImportMut.mutate({ plan, pplan })
   }
   // 소요량 매칭 — 리스트 하네스 · 전장 칸에도 BOM 별 부족을 띄운다
   const edNeed = useEdNeed(rows, edRules, isED && ED_NEED_VIEW)
@@ -844,7 +854,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         <button onClick={() => openEdit(null) || setEdit({ ...EMPTY, ...(isED ? { po_received: false } : {}) })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
         <div className="flex gap-1 p-0.5 bg-indigo-100/70 rounded-lg">
           <button onClick={() => { setMainTab('main') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='main'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>⭐ 주요 관리</button>
-          <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>Sub Assy</button>
+          <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>{isED ? 'Sub Assy · 협력사' : 'Sub Assy'}</button>
         </div>
         {mainTab === 'main' && (
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
