@@ -17,6 +17,7 @@ import { useCanEdit } from '../../hooks/useProfile'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { parseHarnessPaste, matchHarnessPaste } from '../../lib/harnessPaste'
+import { fetchExtraCodes, saveExtraCodes, parseExtraCodes, formatExtraCodes, DEFAULT_EXTRA } from '../../lib/harnessExtra'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
@@ -146,6 +147,8 @@ export default function HarnessRelease() {
   const [busy, setBusy] = useState(false)
   const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 (v4.104.0)
   const [pasteOpen, setPasteOpen] = useState(false)   // 공정관리 출도 기록 붙여넣어 불출 (v4.144.0)
+  const [extraOpen, setExtraOpen] = useState(false)   // 출도 대상 품번 (16번대 밖) (v4.146.0)
+  const { data: extraCodes = DEFAULT_EXTRA } = useQuery({ queryKey: ['harnessExtra'], queryFn: fetchExtraCodes, staleTime: 5 * 60 * 1000 })
 
   // 진행 중 AXCELIS 하네스 PO 줄
   //   = 구분이 하네스(16번대)인 줄 + 하네스 공정관리에 등록된(완료 안 된) 줄 — 12번대 구매품 · 11번대 전장도 공정관리에서 만들면 여기서 출도 · 불출한다
@@ -157,11 +160,11 @@ export default function HarnessRelease() {
         .eq('customer_id', AX_ID).eq('order_type', 'customer_po').eq('division', '하네스')
         .not('status', 'in', '(완료,취소)').order('promise_date', { ascending: true }).order('id'))
       const extra = []
+      const have = new Set(base.map(p => p.id))
       try {
         const ho = await fetchAll(() => supabase.from('harness_orders').select('id,po,ord_ln,del_ln,dwg_no,manually_done').ilike('customer', 'axcelis%').order('id'))
         const live = ho.filter(o => !o.manually_done && P(o.po))
         const keys = new Set(live.map(o => N(o.ord_ln) ? `${P(o.po)}|${N(o.ord_ln)}|${N(o.del_ln)}` : `${P(o.po)}|#${P(o.dwg_no)}`))
-        const have = new Set(base.map(p => p.id))
         const nos = [...new Set(live.map(o => String(o.po).trim()))].sort()
         for (let i = 0; i < nos.length; i += 150) {
           const part = nos.slice(i, i + 150)
@@ -174,6 +177,23 @@ export default function HarnessRelease() {
           })
         }
       } catch { /* 공정관리 표를 못 읽으면 하네스 구분 줄만 — 오류는 아래 공정관리 조회(hErr)에서 안내된다 */ }
+      // 출도 대상 품번 (v4.146.0) — 16번대가 아니어도 하네스팀이 출도하는 품번 (예: 120220971~4). 공정관리 등록 전(출력 전)에도 보이게
+      try {
+        const ex = await fetchExtraCodes().catch(() => DEFAULT_EXTRA)
+        const codes = ex.map(c => 'AX-' + c)
+        const ids = []
+        for (let i = 0; i < codes.length; i += 150) {
+          const { data, error: e1 } = await supabase.from('items').select('id').in('std_code', codes.slice(i, i + 150))
+          if (e1) throw e1
+          ;(data || []).forEach(x => ids.push(x.id))
+        }
+        for (let i = 0; i < ids.length; i += 150) {
+          const rows = await fetchAll(() => supabase.from('purchase_orders').select(SEL)
+            .eq('customer_id', AX_ID).eq('order_type', 'customer_po').in('item_id', ids.slice(i, i + 150))
+            .not('status', 'in', '(완료,취소)').order('id'))
+          rows.forEach(p => { if (!have.has(p.id)) { p._extra = true; extra.push(p); have.add(p.id) } })
+        }
+      } catch { /* 설정을 못 읽어도 목록은 뜬다 */ }
       // HOT 등 Plan Exc 와 언제부터 — 따로 받는다 (칸이 없거나 실패해도 목록은 뜬다) (v4.59.0)
       const all = [...base, ...extra]
       const plan = await fetchPlanByPo(supabase, all.map(p => p.id))
@@ -353,6 +373,8 @@ export default function HarnessRelease() {
       </div>
 
       {undoBar}{confirmEl}
+      {extraOpen && <ExtraCodesModal codes={extraCodes} onClose={() => setExtraOpen(false)}
+        onSaved={() => { setExtraOpen(false); qc.invalidateQueries({ queryKey: ['harnessExtra'] }); qc.invalidateQueries({ queryKey: ['harnessRelease'], exact: false }) }} />}
       {pasteOpen && <PasteIssueModal busy={busy} onClose={() => setPasteOpen(false)}
         onIssue={async (list, toIssue) => {
           if (toIssue) { setPasteOpen(false); sendIssue(list); return }
@@ -388,6 +410,10 @@ export default function HarnessRelease() {
               className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100' : 'border-slate-200 text-slate-300'}`}>✅ 불출만 표시{selRows.length ? ` (${selRows.length})` : ''}</button>
           )}
           {canEdit && (
+            <button data-hr-extra onClick={() => setExtraOpen(true)} title="16번대가 아니어도 이 목록에 넣을 품번 (예: 120220971~4)"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">⚙ 출도 대상 품번 {extraCodes.length}</button>
+          )}
+          {canEdit && (
             <button data-hr-paste onClick={() => setPasteOpen(true)} title="하네스 공정관리 출도 기록(고객사 · PO No · Order Line · Del Line · 도면번호 …)을 복사해 붙이면 그 PO 줄을 한 번에 불출 처리합니다"
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-white hover:bg-teal-50">📋 출도 기록 붙여넣어 불출</button>
           )}
@@ -420,7 +446,7 @@ export default function HarnessRelease() {
                 <tr key={p.id} data-hr-row={p.id} onClick={() => toggle(p.id)} className={`border-t border-slate-100 cursor-pointer ${sel.has(p.id) ? 'bg-indigo-50/70' : 'hover:bg-slate-50'}`}>
                   <td className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="w-4 h-4" /></td>
                   <td className="px-2 py-1.5 font-mono whitespace-nowrap">{p.po_number} <span className="text-slate-400">· {N(p.order_line) || '-'} · {N(p.del_line) || '-'}</span></td>
-                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{p.division && p.division !== '하네스' && <span data-hr-div className="ml-1 px-1 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-sans font-bold" title="고객사 PO 구분이 하네스가 아니지만 하네스 공정관리에 등록된 줄">{p.division}</span>}{!hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
+                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{p.division && p.division !== '하네스' && <span data-hr-div={p._extra ? 'extra' : 'hs'} className="ml-1 px-1 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-sans font-bold" title={p._extra ? '「⚙ 출도 대상 품번」에 넣은 품번 — 고객사 PO 구분은 하네스가 아니지만 하네스팀이 출도' : '고객사 PO 구분이 하네스가 아니지만 하네스 공정관리에 등록된 줄'}>{p.division}{p._extra ? ' · 출도 대상' : ''}</span>}{!hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
                   <td className="px-2 py-1.5"><div className="truncate max-w-[300px]" title={p.items?.name}>{p.items?.name || '—'}</div>{p.ccn && <div className="text-[11px] text-slate-400">CCN {P(p.ccn)}</div>}</td>
                   <td className="px-2 py-1.5 text-center font-mono">{p.item_rev || '-'} / {p.item_brev || '-'}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{n(leftOf(p))}</td>
@@ -540,6 +566,44 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
             className="px-3 py-2 text-sm font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 disabled:opacity-40">🧺 다품목 출고 → 불출</button>
           <button disabled={!okRows.length || busy} onClick={() => onIssue(okRows.map(x => x.p), false)} data-hr-paste-issue
             className="px-4 py-2 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">✅ {okRows.length}줄 불출 표시</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 출도 대상 품번 (v4.146.0) — 16번대 밖인데 하네스팀이 출도하는 품번 ─────────────
+function ExtraCodesModal({ codes, onClose, onSaved }) {
+  const [text, setText] = useState(() => formatExtraCodes(codes).join('\n'))
+  const [saving, setSaving] = useState(false)
+  const parsed = parseExtraCodes(text)
+  async function save() {
+    setSaving(true)
+    try {
+      const v = await saveExtraCodes(parsed)
+      await logActivity('update', 'pm_settings', 'harness_release_extra', `하네스 출도 대상 품번 ${v.length}개`, { codes: v }, 'AXCELIS')
+      toastSuccess(`출도 대상 품번 ${v.length}개 저장 — 목록을 다시 읽습니다`)
+      onSaved()
+    } catch (e) { toastError('저장 실패: ' + e.message) } finally { setSaving(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()} data-hr-extra-modal>
+        <div className="px-5 py-3 border-b border-slate-100">
+          <h3 className="text-sm font-bold text-slate-800">⚙ 하네스 출도 대상 품번</h3>
+          <p className="text-[11px] text-slate-400">고객사 PO 구분이 하네스(16번대)가 아니어도 이 목록에 넣을 품번입니다. 진행 중인 PO 줄이 「출력 전」부터 보이고, 공정관리용 복사 · 불출 표시를 똑같이 할 수 있습니다.</p>
+        </div>
+        <div className="p-5 space-y-2">
+          <label className="text-xs font-bold text-slate-700" htmlFor="hr-extra-text">품번 (한 줄에 하나 · AX- 없이)</label>
+          <textarea id="hr-extra-text" value={text} onChange={(e) => setText(e.target.value)} rows={6} data-hr-extra-text
+            placeholder={'120220971~4\n120230001'}
+            className="w-full px-3 py-2 text-xs font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-400" />
+          <p className="text-[11px] text-slate-400">「120220971~4」처럼 이어지는 번호는 범위로 적어도 됩니다 · 하네스 공정관리에 이미 등록된 줄은 여기 없어도 원래 보입니다.</p>
+          <p className="text-[11px] text-slate-600" data-hr-extra-count>품번 <b>{parsed.length}</b>개{parsed.length ? ` — ${formatExtraCodes(parsed).slice(0, 6).join(' · ')}${formatExtraCodes(parsed).length > 6 ? ' …' : ''}` : ''}</p>
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
+          <button onClick={save} disabled={saving} data-hr-extra-save className="px-4 py-2 text-sm font-bold rounded-lg bg-violet-600 text-white disabled:opacity-40">{saving ? '저장 중…' : '저장'}</button>
         </div>
       </div>
     </div>
