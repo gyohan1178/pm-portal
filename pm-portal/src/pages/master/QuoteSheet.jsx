@@ -6,7 +6,8 @@ import { quoteFileBase } from '../../lib/quoteFileName'
 import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
 import QuotePartsModal from './QuotePartsModal'
-import { partsFromPaste } from '../../lib/quotePartsPaste'
+import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
+import { saveRfq, patchRfq, checkRfq } from './rfq'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
@@ -457,6 +458,47 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   const patch = (key, p) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)))
 
+  // 💲 부품표 줄 단가 요청 (v4.149.0) — 견적 접수 건을 만들고 구매자재에 단가 요청까지 한 번에
+  //   부품표를 그 품목에 같이 저장 → 구매자재 「영업 견적 단가 요청」에 단가 없는 부품이 뜬다
+  //   (포털 품목이면 지금처럼 품목 매입가 · 포털에 없는 부품은 그 표에서 바로 단가를 적음 — 품목 등록 없음)
+  //   다 차면 견적 접수 현황 「견적 작성」 → 채워진 단가로 이 줄이 다시 만들어진다
+  const [reqBusy, setReqBusy] = useState(null)
+  async function requestPastePrice(l) {
+    const nm = String(l.description || '').trim() || String(l.std_code || '').trim()
+    const pn = String(l.std_code || '').trim() || nm
+    if (!pn) { toastError('품번이나 품명을 먼저 적어 주세요'); return }
+    const miss = num(l.noPrice)
+    const r0 = await ask({
+      title: '💲 구매자재에 단가 요청',
+      desc: `「${nm}」 부품 ${l.partCount}개 중 단가 없는 ${miss}개를 구매자재에 요청합니다. 견적 접수 현황에 건이 하나 생기고, 구매자재가 단가를 채우면 「단가 요청 끝」이 저절로 찍힙니다. 그때 견적 접수 현황 「✏ 견적 작성」으로 이어서 쓰세요.`,
+      input: { label: '견적 건명 (견적 접수 현황 · 이력에서 이 이름으로 찾습니다)', value: projectName || nm, required: true },
+      okText: '단가 요청',
+    })
+    if (!r0?.value?.trim()) return
+    setReqBusy(l.key)
+    try {
+      let code = etcCust ? etcCust : null
+      if (!code && customerId) {
+        const { data, error } = await supabase.from('customers').select('code').eq('id', customerId).maybeSingle()
+        if (error) throw error
+        code = String(data?.code || '').toLowerCase()
+      }
+      if (!code) throw new Error('고객사를 먼저 고르세요')
+      const meName = (me?.name || '').trim() || me?.email || ''
+      const r = await saveRfq({
+        head: { customer_code: code, customer_id: etcCust ? null : (customerId || null), title: r0.value.trim(), owner_name: meName, memo: '견적 작성 「📋 부품표로 ASSY」에서 단가 요청' },
+        lines: [{ pn, name: nm, qty: Number(l.qty) || 1, paste_parts: toPasteParts(l.parts, l.laborKrw) }], meName,
+      })
+      await patchRfq(r.id, { price_req_at: new Date().toISOString(), price_req_by: meName })
+      const { data: fresh, error: e2 } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+      if (e2) throw e2
+      await checkRfq({ ...r, price_req_at: new Date().toISOString(), lines: fresh || [] })
+      patch(l.key, { priceReq: { title: r0.value.trim(), at: todayISO() } })
+      qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['quotePriceReqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
+      toastSuccess(`「${r0.value.trim()}」 — 구매자재에 단가 요청했습니다 (견적 접수 현황에서 진행을 볼 수 있습니다)`)
+    } catch (e) { toastError('단가 요청 실패 — ' + (e?.message || e)) } finally { setReqBusy(null) }
+  }
+
   // 자재비·작업비를 고치면 매출단가를 다시 산출.
   // 매입견적은 단가가 업체 제시가라 건드리지 않는다.
   const patchCost = (key, p) => setLines((ls) => ls.map((l) => {
@@ -725,7 +767,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (prefill.title) setProjectName(prefill.title)
       setEtcCust(prefill.etcName || null); etcRef.current = prefill.etcName || null
       if (prefill.etcName) setIssuedTo(prefill.etcName)
-      for (const l of prefill.lines || []) await addByCode(l.pn, l.qty)
+      for (const l of prefill.lines || []) {
+        // 부품표 품목(코드 부여 전 · v4.149.0) — 구매자재가 채운 단가 그대로 부품표 ASSY 로
+        if (l.paste?.parts?.length) addPastedAssy({ code: l.pn, name: l.name || l.pn, qty: Number(l.qty) || 1, labor: Number(l.paste.labor) || 0, matched: pasteToMatched(l.paste) })
+        else await addByCode(l.pn, l.qty)
+      }
       onPrefillDone?.()
     })()
   }, [prefillKey, customerId])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -1362,6 +1408,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                     <input value={l.std_code} onChange={(e) => patch(l.key, { std_code: e.target.value })} className="qi font-mono w-full" />
                     {l.kind === 'assy' && <span className="no-print text-[10px] font-bold text-sky-600">ASSY</span>}
                     {l.tempBom && <span className="no-print ml-1 text-[10px] font-bold text-violet-600" title="부품표 붙여넣기로 만든 줄 — BOM · 품목 등록 없음" data-temp-bom>부품표</span>}
+                    {l.tempBom && isSales && (l.priceReq
+                      ? <div className="no-print text-[10px] font-bold text-amber-700 mt-0.5" data-paste-req-done title="견적 접수 현황에서 진행을 보세요">💲 단가 요청함 · {l.priceReq.title}</div>
+                      : l.noPrice > 0 && <button type="button" onClick={() => requestPastePrice(l)} disabled={reqBusy === l.key} data-paste-req
+                          title="단가 없는 부품을 구매자재에 요청합니다 — 견적 접수 현황에 건이 생깁니다"
+                          className="no-print block mt-0.5 px-1.5 py-[1px] rounded border border-amber-300 bg-amber-50 text-amber-700 text-[10px] font-bold hover:bg-amber-100 disabled:opacity-40">{reqBusy === l.key ? '요청 중…' : '💲 단가 요청'}</button>)}
                     {/* 어셈블리는 부품에서 뽑은 최장 납기를 보여주기만 하고,
                         단품은 여기가 유일한 입력 자리라 직접 적을 수 있게 둔다. */}
                     {l.kind === 'assy' ? (

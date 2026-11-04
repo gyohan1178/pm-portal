@@ -22,6 +22,8 @@ import { spliceSubBoms } from '../../lib/bomSubExpand'
 import { explodeBOM, computeCost, needsPrice, applySupply, DEFAULT_CFG } from '../../lib/costAnalysis'
 import { fetchQuoteBOM, supplyForRows } from './QuoteSheet'
 import { fetchRefSetup, refCustomers, findAssyFor, itemCandidatesFor } from '../../lib/etcCustomerRef'
+import { prefixOf } from '../../lib/custPrefix'
+import { refreshPasteParts, pasteMissing, setPastePrice, keyLabel } from '../../lib/quotePartsPaste'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
@@ -49,7 +51,7 @@ export const missCodes = (l) => { const s = nqSet(l); return (l?.noprice_codes |
 export const missCount = (l) => (+l?.noprice_count > 0 ? (nqParts(l).length ? missCodes(l).length : +l.noprice_count) : 0)
 // 이 품목에서 견적 불가로 표시된 부품 중 아직 단가 없는 것 — 이게 있으면 품목은 견적을 못 낸다
 export const nqBlockers = (l) => { const s = nqSet(l); return (l?.noprice_codes || []).filter((c) => s.has(String(c))) }
-export const nqSummary = (l) => nqParts(l).filter((x) => nqBlockers(l).includes(x.code)).map((x) => `부품 ${x.code} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')
+export const nqSummary = (l) => nqParts(l).filter((x) => nqBlockers(l).includes(x.code)).map((x) => `부품 ${keyLabel(x.code)} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')
 export const isReadyLine = (l) => isOpenLine(l) && !!l.checked_at && (l.kind || 'none') !== 'none' && !(+l.noprice_count > 0)
 export const readyLines = (r) => (r.lines || []).filter(isReadyLine)
 
@@ -161,13 +163,45 @@ export async function checkRfq(r) {
   const refs = customerId ? null : refCustomers(r.customer_code, await fetchRefSetup())
   for (const l of r.lines || []) {
     if (l.quoted_at) continue                                   // 이미 견적 낸 품목은 다시 안 봄
-    const { found_name: fname, ...res } = await checkLine(customerId, r.customer_code, l.pn, refs)
+    let { found_name: fname, ...res } = await checkLine(customerId, r.customer_code, l.pn, refs)
+    // 코드 부여 전 · BOM 없는 품목에 부품표를 붙였으면 그 부품표로 (v4.149.0) — 나중에 BOM 을 올리면 BOM 이 먼저
+    if (res.kind === 'none' && l.paste_parts?.parts?.length) res = await checkPasteLine(l, prefixOf(r.customer_code))
     // 품명을 안 붙여넣었으면 찾은 품목 · 어셈블리 이름을 채운다 — 무엇과 매칭됐는지 보이게 (v4.99.0)
     const patch = { ...res, checked_at: now, ...(!String(l.name || '').trim() && fname ? { name: fname } : {}) }
     const { error } = await supabase.from('pm_rfq_line').update(patch).eq('id', l.id)
     if (error) throw error
   }
   await syncPriceDone(r)
+}
+
+// 부품표 품목 점검 (v4.149.0) — 포털 품목 단가를 지금 값으로 다시 읽고, 단가 없는 부품을 센다
+//   단가 없는 부품 키: 포털 품목이면 기준코드(구매자재가 품목 매입가로 넣음) · 아니면 「MPN:제조사품번」(요청 목록에서 바로 적음)
+export async function checkPasteLine(l, prefix = '') {
+  const pp = await refreshPasteParts(l.paste_parts, prefix)
+  const miss = pasteMissing(pp)
+  return { kind: 'assy', std_code: l.pn, project_id: null, item_id: null, part_count: pp.parts.length, noprice_count: miss.length, noprice_codes: miss.slice(0, 200), paste_parts: pp }
+}
+export const PASTE_SQL_HINT = '부품표 칸이 아직 없습니다 — Supabase 에서 「견적접수_부품표_반영_261104.sql」을 먼저 실행해 주세요'
+const pasteErr = (e) => (/paste_parts|schema cache|does not exist/i.test(e?.message || '') ? new Error(PASTE_SQL_HINT) : e)
+// 품목에 부품표 붙이기 · 고치기 (견적 접수 「📋 부품표」)
+export async function savePasteParts(lineId, pp) {
+  const { error } = await supabase.from('pm_rfq_line').update({ paste_parts: pp }).eq('id', lineId)
+  if (error) throw pasteErr(error)
+}
+// 구매자재가 부품표 부품 단가를 적음 — 그 키가 든 품목 전부 → 그 접수 건들 다시 점검 (요청 끝 자동)
+export async function savePastePrice(from, key, price, by) {
+  const lines = [...new Map(from.map((f) => [f.line.id, f])).values()]
+  for (const f of lines) {
+    const { data, error } = await supabase.from('pm_rfq_line').select('paste_parts').eq('id', f.line.id).maybeSingle()   // 그 사이 바뀐 것 위에
+    if (error) throw pasteErr(error)
+    await savePasteParts(f.line.id, setPastePrice(data?.paste_parts || f.line.paste_parts, key, price, by))
+  }
+  const rfqs = [...new Map(lines.map((f) => [f.rfq.id, f.rfq])).values()]
+  for (const r of rfqs) {
+    const { data: ls, error } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+    if (error) throw error
+    await checkRfq({ ...r, lines: ls || [] })
+  }
 }
 
 // 단가 요청 끝 — 보류 · 제출된 품목을 빼고 남은 품목이 모두 준비되면 (구매자재가 따로 안 눌러도)
@@ -289,8 +323,12 @@ export async function saveRfq({ head, lines, meName }) {
   const { data, error } = await supabase.from('pm_rfq').insert({ status: '진행', ...head, created_name: meName || null, updated_at: now }).select('*').single()
   if (error) throw error
   if (lines.length) {
-    const { error: e2 } = await supabase.from('pm_rfq_line').insert(lines.map((l, i) => ({ rfq_id: data.id, line_no: i + 1, pn: l.pn, name: l.name || null, rev: l.rev || null, qty: Number(l.qty) || 1 })))
-    if (e2) throw e2
+    const { error: e2 } = await supabase.from('pm_rfq_line').insert(lines.map((l, i) => ({ rfq_id: data.id, line_no: i + 1, pn: l.pn, name: l.name || null, rev: l.rev || null, qty: Number(l.qty) || 1,
+      ...(l.paste_parts ? { paste_parts: l.paste_parts } : {}) })))   // 부품표 (v4.149.0 · 있을 때만 — SQL 전에도 보통 접수는 그대로)
+    if (e2) {
+      if (lines.some((l) => l.paste_parts)) await supabase.from('pm_rfq').delete().eq('id', data.id)   // 머리만 남지 않게
+      throw lines.some((l) => l.paste_parts) ? pasteErr(e2) : e2
+    }
   }
   return data
 }

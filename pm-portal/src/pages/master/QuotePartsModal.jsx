@@ -1,6 +1,6 @@
 // 📋 부품표로 ASSY (v4.148.0) — 코드 부여 전 · BOM 등록 전 어셈블리를 부품표 붙여넣기로 견적
 //   붙이면 바로 포털 품목을 찾아(제조사품번 · 기준코드) 실적가를 채운다 → 「견적에 추가」 = ASSY 한 줄 (부품표 · 구간마진 · 작업비 · 세부견적 그대로)
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '../../lib/supabase'
 import { prefixOf } from '../../lib/custPrefix'
 import { parsePartsPaste, matchPartsPaste } from '../../lib/quotePartsPaste'
@@ -9,12 +9,13 @@ import Spin from '../../components/ux/Spin'
 
 const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 
-export default function QuotePartsModal({ customerId, onClose, onAdd }) {
-  const [code, setCode] = useState('')
-  const [name, setName] = useState('')
-  const [qty, setQty] = useState(1)
-  const [labor, setLabor] = useState('')
-  const [text, setText] = useState('')
+//   견적 접수(v4.149.0)에서도 쓴다 — initial 로 품번 · 품명 · 수량 · 작업비 · 부품표 글을 채우고, lock 이면 품번 · 품명 · 수량은 접수 품목 그대로(고칠 수 없음)
+export default function QuotePartsModal({ customerId, onClose, onAdd, initial = null, lock = false, title = '📋 부품표로 ASSY 견적', addLabel = '견적에 ASSY 로 추가' }) {
+  const [code, setCode] = useState(initial?.code || '')
+  const [name, setName] = useState(initial?.name || '')
+  const [qty, setQty] = useState(initial?.qty || 1)
+  const [labor, setLabor] = useState(initial?.labor ? String(initial.labor) : '')
+  const [text, setText] = useState(initial?.text || '')
   const [res, setRes] = useState(null)       // { rows: matched, header }
   const [busy, setBusy] = useState(false)
   const [nameErr, setNameErr] = useState(false)
@@ -29,6 +30,7 @@ export default function QuotePartsModal({ customerId, onClose, onAdd }) {
       setRes({ rows: await matchPartsPaste(p.rows, prefix), header: p.header })
     } catch (e) { toastError('품목 찾기 실패: ' + e.message) } finally { setBusy(false) }
   }
+  useEffect(() => { if (initial?.text) check(initial.text) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const rows = res?.rows || []
   const n = { found: rows.filter((r) => r.item).length, real: rows.filter((r) => r.priceSrc === '실적가').length, pasted: rows.filter((r) => r.priceSrc === '붙인 단가').length, none: rows.filter((r) => r.buyKrw == null).length }
   const mat = rows.reduce((a, r) => a + (r.buyKrw == null ? 0 : r.buyKrw * (Number(r.qty) || 0)), 0)
@@ -43,7 +45,7 @@ export default function QuotePartsModal({ customerId, onClose, onAdd }) {
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-5xl max-h-[92vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-qp-modal>
         <div className="px-5 py-3 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>
-            <h3 className="text-sm font-bold text-slate-800">📋 부품표로 ASSY 견적</h3>
+            <h3 className="text-sm font-bold text-slate-800">{title}</h3>
             <p className="text-[11px] text-slate-400">코드 부여 전 · BOM 등록 전 어셈블리 — 고객사 부품표를 붙이면 제조사품번으로 포털 품목을 찾아 실적가를 채웁니다. BOM · 품목은 등록하지 않고 이 견적 안에서만 씁니다.</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
@@ -52,18 +54,18 @@ export default function QuotePartsModal({ customerId, onClose, onAdd }) {
           <div className="grid grid-cols-2 md:grid-cols-[1fr_2fr_90px_130px] gap-3">
             <div>
               <label className="text-xs font-bold text-slate-700" htmlFor="qp-code">품번 (임시 · 선택)</label>
-              <input id="qp-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 고객사 도면번호" data-qp-code
-                className="mt-1 w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-lg" />
+              <input id="qp-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="예: 고객사 도면번호" data-qp-code disabled={lock}
+                className="mt-1 w-full px-2.5 py-1.5 text-sm font-mono border border-slate-200 rounded-lg disabled:bg-slate-50 disabled:text-slate-500" />
             </div>
             <div>
               <label className="text-xs font-bold text-slate-700" htmlFor="qp-name">품명 <span className="text-rose-500">*</span></label>
-              <input id="qp-name" value={name} onChange={(e) => { setName(e.target.value); if (e.target.value) setNameErr(false) }} placeholder="예: GAS BOX ASSY (신규)" data-qp-name
-                className={`mt-1 w-full px-2.5 py-1.5 text-sm border rounded-lg ${nameErr ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'}`} />
+              <input id="qp-name" value={name} onChange={(e) => { setName(e.target.value); if (e.target.value) setNameErr(false) }} placeholder="예: GAS BOX ASSY (신규)" data-qp-name disabled={lock}
+                className={`mt-1 w-full px-2.5 py-1.5 text-sm border rounded-lg disabled:bg-slate-50 disabled:text-slate-500 ${nameErr ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'}`} />
               {nameErr && <p className="mt-0.5 text-[11px] font-bold text-rose-600">품명을 적어 주세요</p>}
             </div>
             <div>
               <label className="text-xs font-bold text-slate-700" htmlFor="qp-qty">수량</label>
-              <input id="qp-qty" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} className="mt-1 w-full px-2.5 py-1.5 text-sm text-right border border-slate-200 rounded-lg" />
+              <input id="qp-qty" type="number" min="1" value={qty} onChange={(e) => setQty(e.target.value)} disabled={lock} className="mt-1 w-full px-2.5 py-1.5 text-sm text-right border border-slate-200 rounded-lg disabled:bg-slate-50 disabled:text-slate-500" />
             </div>
             <div>
               <label className="text-xs font-bold text-slate-700" htmlFor="qp-labor">작업비(원)</label>
@@ -114,7 +116,7 @@ export default function QuotePartsModal({ customerId, onClose, onAdd }) {
         <div className="px-5 py-3 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
           <span className="mr-auto text-[11px] text-slate-400">단가 없는 부품은 견적 화면 「▼ 부품」에서 매입가를 적으면 견적 단가가 다시 계산됩니다</span>
           <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
-          <button onClick={add} disabled={!rows.length || busy} data-qp-add className="px-4 py-2 text-sm font-bold rounded-lg bg-violet-600 text-white disabled:opacity-40">견적에 ASSY 로 추가</button>
+          <button onClick={add} disabled={!rows.length || busy} data-qp-add className="px-4 py-2 text-sm font-bold rounded-lg bg-violet-600 text-white disabled:opacity-40">{addLabel}</button>
         </div>
       </div>
     </div>

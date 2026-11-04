@@ -12,7 +12,8 @@ import { supabase } from '../../lib/supabase'
 import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
-import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqParts } from '../master/rfq'
+import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqParts, savePastePrice } from '../master/rfq'
+import { isPasteKey, keyLabel, pasteKey } from '../../lib/quotePartsPaste'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 
@@ -51,12 +52,15 @@ export async function fetchPriceReqs() {
       for (const code of missCodes(l)) {
         const k = String(code || '').trim()
         if (!k) continue
-        if (!map.has(k)) map.set(k, { code: k, item: null, from: [] })
-        map.get(k).from.push({ rfq: r, line: l })
+        if (!map.has(k)) map.set(k, { code: k, item: null, paste: null, from: [] })
+        const e = map.get(k)
+        e.from.push({ rfq: r, line: l })
+        // 부품표 부품(포털에 없는 품번 · v4.149.0) — 제조사 · 제조사품번 · 품명은 견적 품목의 부품표에서
+        if (isPasteKey(k) && !e.paste) e.paste = (l.paste_parts?.parts || []).find((x) => pasteKey(x) === k) || null
       }
     }
   }
-  const codes = [...map.keys()]
+  const codes = [...map.keys()].filter((k) => !isPasteKey(k))
   for (let i = 0; i < codes.length; i += 150) {
     const { data: its, error: e3 } = await supabase.from('items').select(`${ITEM_COLS}, vendors(name)`).in('std_code', codes.slice(i, i + 150))
     if (e3) throw e3
@@ -81,6 +85,24 @@ export default function QuotePriceReqs({ onPick }) {
   const [busy, setBusy] = useState(false)
   const [nq, setNq] = useState(null)   // 견적 불가 입력 중 — { code, reason, memo }
   const [nqBusy, setNqBusy] = useState(false)
+  const [pin, setPin] = useState({})          // 부품표 부품 단가 입력 중 { 키: '1200' } (v4.149.0)
+  const [pinBusy, setPinBusy] = useState(null)
+
+  // 부품표 부품 — 포털에 품목이 없어 여기서 바로 단가를 적는다 (품목 등록 없이 그 견적 품목 안에만 저장)
+  //   저장하면 그 부품이 든 견적 건을 다시 점검 → 부품이 다 차면 「단가 요청 끝」이 저절로
+  async function savePin(p) {
+    const v = Number(String(pin[p.code] ?? '').replace(/[^0-9.]/g, ''))
+    if (!(v > 0)) { toastError('단가를 숫자로 넣어 주세요'); return }
+    setPinBusy(p.code)
+    try {
+      await savePastePrice(p.from, p.code, v, profile?.name || null)
+      setPin((x) => { const y = { ...x }; delete y[p.code]; return y })
+      toastSuccess(`${keyLabel(p.code)} ₩${n(v)} — 견적 접수에 반영했습니다`)
+    } catch (e) { toastError('저장 실패 — ' + (e?.message || e)) } finally {
+      setPinBusy(null)
+      qc.invalidateQueries({ queryKey: PRICE_REQ_KEY }); qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
+    }
+  }
 
   const reqs = data?.reqs || []
   const nqs = data?.nqs || []
@@ -91,7 +113,7 @@ export default function QuotePriceReqs({ onPick }) {
   const doneN = parts.length - left.length
 
   // 남은 품번을 엑셀 · 협력사 견적 요청용으로 복사 (품번 · 품명 · 제조사 · 제조사품번 · 요청 건)
-  const tsv = useMemo(() => left.map((p) => [p.code, p.item?.name || '', p.item?.manufacturer || '', p.item?.manufacturer_code || '',
+  const tsv = useMemo(() => left.map((p) => [keyLabel(p.code), p.item?.name || p.paste?.name || '', p.item?.manufacturer || p.paste?.maker || '', p.item?.manufacturer_code || p.paste?.mpn || '',
     [...new Set(p.from.map((f) => f.rfq.title))].join(' / ')].join('\t')).join('\n'), [left])
   async function copyCodes() {
     try { await navigator.clipboard.writeText('품번\t품명\t제조사\t제조사품번\t견적 건\n' + tsv); toastSuccess(`${n(left.length)}개 품번을 복사했습니다 — 엑셀에 붙여넣으세요`) } catch { toastError('복사하지 못했습니다') }
@@ -119,7 +141,7 @@ export default function QuotePriceReqs({ onPick }) {
     try {
       for (const f of pairs) await setPartNoquote(f.rfq, f.line.id, p.code, entry)
       setNq(null)
-      toastSuccess(`${p.code} 견적 불가 (${nq.reason}) — 이 부품만 단가 요청에서 뺐습니다 · 견적 품목 ${pairs.length}개에 표시되어 영업이 확인합니다`)
+      toastSuccess(`${keyLabel(p.code)} 견적 불가 (${nq.reason}) — 이 부품만 단가 요청에서 뺐습니다 · 견적 품목 ${pairs.length}개에 표시되어 영업이 확인합니다`)
     } catch (e) {
       toastError('견적 불가 처리 실패 — ' + (e?.message || e))
     } finally {
@@ -131,7 +153,7 @@ export default function QuotePriceReqs({ onPick }) {
     setNqBusy(true)
     try {
       for (const f of x.from) await setPartNoquote(f.rfq, f.line.id, x.code, null)
-      toastSuccess(`${x.code} 견적 불가 해제 — 다시 단가 요청 목록에 들어갑니다`)
+      toastSuccess(`${keyLabel(x.code)} 견적 불가 해제 — 다시 단가 요청 목록에 들어갑니다`)
     } catch (e) {
       toastError('해제 실패 — ' + (e?.message || e))
     } finally {
@@ -165,6 +187,7 @@ export default function QuotePriceReqs({ onPick }) {
           <p className="text-[12px] text-slate-500">
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
+            <b className="text-violet-700">📋 부품표</b> 부품(코드 부여 전 · 포털에 없는 품번)은 이 표에서 바로 단가를 적고 💲 저장 — 품목 등록 없이 그 견적에만 들어갑니다.
             수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품만 목록에서 빠지고(같은 품목의 다른 부품은 그대로), 영업 견적 접수에 사유가 보입니다.
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -189,8 +212,11 @@ export default function QuotePriceReqs({ onPick }) {
                   const lines = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
                   return [
                     <tr key={p.code} className={`border-t border-slate-100 ${p.priced ? 'bg-emerald-50/40' : ''}`} data-price-req={p.code}>
-                      <td className="px-3 py-2"><div className="font-mono font-bold text-[#5b6ee8]">{p.code}</div><div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={p.item?.name}>{p.item?.name || <span className="text-rose-500">포털에 없는 품번</span>}</div></td>
-                      <td className="px-3"><div className="text-slate-600">{p.item?.manufacturer || '—'}</div><div className="font-mono text-[11px] text-slate-400">{p.item?.manufacturer_code || ''}</div></td>
+                      <td className="px-3 py-2">{p.paste ? <>
+                          <div className="font-mono font-bold text-slate-700">{keyLabel(p.code)} <span className="ml-1 px-1.5 py-[1px] rounded-full bg-violet-50 text-violet-700 text-[10px] font-bold font-sans" title="영업이 코드 부여 전 부품표로 붙인 부품 — 포털 품목이 없어 여기서 바로 단가를 적습니다 (품목 등록 안 함)">📋 부품표</span></div>
+                          <div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={p.paste.name}>{p.paste.name || '—'}{p.paste.qty ? <span className="text-slate-400"> · 대당 {n(p.paste.qty)}</span> : ''}</div></>
+                        : <><div className="font-mono font-bold text-[#5b6ee8]">{p.code}</div><div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={p.item?.name}>{p.item?.name || <span className="text-rose-500">포털에 없는 품번</span>}</div></>}</td>
+                      <td className="px-3"><div className="text-slate-600">{p.item?.manufacturer || p.paste?.maker || '—'}</div><div className="font-mono text-[11px] text-slate-400">{p.item?.manufacturer_code || p.paste?.mpn || ''}</div></td>
                       <td className="px-3 py-2">{rfqs.map((r) => {
                         const d = r.due_date ? dday(r.due_date, today) : null
                         return (
@@ -203,7 +229,15 @@ export default function QuotePriceReqs({ onPick }) {
                       })}</td>
                       <td className="px-3 text-right font-mono">{p.priced ? <span className="text-emerald-700 font-bold">₩{n(p.item.purchase_price)} ✓</span> : <span className="text-slate-300">—</span>}</td>
                       <td className="px-3 text-right">
-                        {p.item
+                        {p.paste && editable
+                          ? <span className="inline-flex items-center gap-1" data-price-req-pin={keyLabel(p.code)}>
+                              <input inputMode="numeric" value={pin[p.code] ?? ''} onChange={(e) => setPin((x) => ({ ...x, [p.code]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') savePin(p) }} placeholder="단가(원)" data-price-req-pin-input
+                                className="w-24 px-2 py-1 text-right font-mono text-[11.5px] border border-amber-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                              <button type="button" onClick={() => savePin(p)} disabled={pinBusy === p.code || !String(pin[p.code] ?? '').trim()} data-price-req-pin-ok
+                                className="px-2.5 py-1 rounded-lg text-[11.5px] font-bold whitespace-nowrap bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40">{pinBusy === p.code ? <Spin /> : '💲 저장'}</button>
+                            </span>
+                          : p.item
                           ? <button type="button" onClick={() => onPick?.(p.item, rfqs)} data-price-req-pick={p.code}
                               className={`px-2.5 py-1 rounded-lg text-[11.5px] font-bold whitespace-nowrap ${p.priced ? 'bg-white border border-slate-200 text-slate-500' : 'bg-amber-500 text-white hover:bg-amber-600'}`}>{p.priced ? '다시 넣기' : '💲 단가 넣기'}</button>
                           : <span className="text-[11px] text-slate-400">품목 등록 먼저</span>}
@@ -217,7 +251,7 @@ export default function QuotePriceReqs({ onPick }) {
                       <tr key={p.code + '-nq'} className="bg-rose-50/60" data-price-req-nq-form={p.code}>
                         <td colSpan={5} className="px-3 py-2.5">
                           <div className="flex flex-wrap items-center gap-2 text-[12px]">
-                            <b className="text-rose-700">🚫 {p.code} 견적 불가</b>
+                            <b className="text-rose-700">🚫 {keyLabel(p.code)} 견적 불가</b>
                             <select value={nq.reason} onChange={(e) => setNq({ ...nq, reason: e.target.value })} data-price-req-nq-reason
                               className="px-2 py-1 border border-rose-200 rounded-lg bg-white text-[12px]">
                               {NOQUOTES.map((h) => <option key={h} value={h}>{h}</option>)}
@@ -245,7 +279,7 @@ export default function QuotePriceReqs({ onPick }) {
               <p className="text-[12px] font-bold text-rose-700 mb-1">🚫 견적 불가로 표시한 부품 {n(nqs.length)} <span className="font-normal text-rose-500">— 영업 견적 접수에 사유가 보입니다 · 수급처를 찾으면 해제하고 단가를 넣으세요</span></p>
               {nqs.map((x) => (
                 <div key={x.code} className="flex flex-wrap items-center gap-2 py-1 border-t border-rose-100 first:border-t-0 text-[11.5px]" data-price-req-nq-done={x.code}>
-                  <b className="font-mono text-rose-700">{x.code}</b>
+                  <b className="font-mono text-rose-700">{keyLabel(x.code)}</b>
                   <span className="px-1.5 py-[1px] rounded bg-rose-100 text-rose-700 font-bold">{x.reason}</span>
                   {x.memo && <span className="text-slate-600">{x.memo}</span>}
                   <span className="text-slate-400">{[x.by, md(x.at)].filter(Boolean).join(' · ')} · {[...new Set(x.from.map((f) => `${f.rfq.title} · ${f.line.pn}`))].join(' / ')}</span>

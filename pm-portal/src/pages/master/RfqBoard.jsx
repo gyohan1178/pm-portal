@@ -14,6 +14,9 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
 import { fetchRefSetup, refCodeOf, saveRefCode } from '../../lib/etcCustomerRef'
+import QuotePartsModal from './QuotePartsModal'
+import { savePasteParts } from './rfq'
+import { pasteFromMatched, pasteToText, keyLabel } from '../../lib/quotePartsPaste'
 import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq, missCount, missCodes, nqBlockers, nqParts, nqSummary } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
@@ -56,6 +59,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
   const [send, setSend] = useState(null)          // 📤 발송 완료 확인 창 { r, pick, rest, split } (v4.119.0 — 「결과 입력」 대신)
   const [form, setForm] = useState(null)          // 새 접수
   const [busy, setBusy] = useState(null)
+  const [pasteFor, setPasteFor] = useState(null)   // 📋 부품표 붙이기 (v4.149.0) — { r, l }
 
   // 등록 고객사는 이름으로, 「기타 · 직접 입력」(v4.99.0)은 입력한 이름 그대로 (customer_code 에 이름이 들어 있음)
   const isEtc = (code) => csRows.length > 0 && !csRows.some((c) => String(c.code).toLowerCase() === String(code || '').toLowerCase())
@@ -83,6 +87,15 @@ export default function RfqBoard({ customers = [], onWrite }) {
     try { await fn(); if (ok) toastSuccess(ok); refresh() } catch (e) { toastError(e.message || String(e)) } finally { setBusy(null) }
   }
   const check = (r) => run(r.id, () => checkRfq(r), '점검했습니다')
+  // 코드 부여 전 품목 — 부품표를 붙여 그 부품으로 점검 · 단가 요청 (v4.149.0)
+  const savePaste = (r, l, { labor, matched }) => run(r.id, async () => {
+    await savePasteParts(l.id, pasteFromMatched(matched, labor))
+    const { data: fresh, error } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+    if (error) throw error
+    await checkRfq({ ...r, lines: fresh || [] })
+    setPasteFor(null)
+    logActivity('update', 'pm_rfq', r.title, `견적 접수 부품표 — ${l.pn} 부품 ${matched.length}`)
+  }, `${l.pn} 부품표 ${matched.length}개를 붙이고 점검했습니다`)
   const askPrice = (r) => run(r.id, async () => {
     await patchRfq(r.id, { price_req_at: new Date().toISOString(), price_req_by: meName, price_done_at: null, price_done_by: null })
     logActivity('update', 'pm_rfq', r.title, `견적 단가 요청 — ${csName(r.customer_code)} ${r.title}`)
@@ -222,6 +235,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
   return (
     <div className="space-y-3" data-rfq-board>
       {confirmEl}
+      {pasteFor && <QuotePartsModal customerId={pasteFor.r.customer_id} lock title={`📋 부품표 — ${pasteFor.l.pn}`} addLabel="부품표 저장 · 점검"
+        initial={{ code: pasteFor.l.pn, name: pasteFor.l.name || pasteFor.l.pn, qty: pasteFor.l.qty, labor: pasteFor.l.paste_parts?.labor || '', text: pasteFor.l.paste_parts ? pasteToText(pasteFor.l.paste_parts) : '' }}
+        onClose={() => setPasteFor(null)} onAdd={(x) => savePaste(pasteFor.r, pasteFor.l, x)} />}
       {send && (
         <div className="fixed inset-0 z-[80] bg-slate-900/40 flex items-center justify-center p-4" onMouseDown={() => setSend(null)} data-rfq-send>
           <div className="w-full max-w-[460px] bg-white rounded-2xl shadow-xl p-5" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
@@ -441,6 +457,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                           ? <Btn wide tone="red" onClick={() => nav(`/customer/${refOf(r.customer_code)}/bom`)} data="bom">🧬 BOM 올리기 ({String(refOf(r.customer_code)).toUpperCase()})</Btn>
                           : <Btn wide tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>)
                         : <Btn wide tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
+                      {editable && r.stage === 'bom' && <Btn wide onClick={() => setOpen(r.id)} data="paste-open">📋 코드 전이면 — 품목에 부품표 붙이기</Btn>}
                       {editable && r.stage === 'noprice' && <Btn wide tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
                       {r.stage === 'price' && (isBuy
                         ? <Btn wide tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
@@ -473,7 +490,12 @@ export default function RfqBoard({ customers = [], onWrite }) {
                               {l.item?.name && l.name && l.item.name.trim().toUpperCase() !== String(l.name).trim().toUpperCase() && <div className="text-[10px] text-slate-400" title="포털 품목 기준정보의 품명 — 붙여넣은 품명과 다르면 매칭이 맞는지 확인하세요">기준정보: {l.item.name}</div>}</td>
                             <td className="pr-3">{l.rev || '—'}</td>
                             <td className="pr-3 text-right font-mono">{n(l.qty)}</td>
-                            <td className="pr-3 whitespace-nowrap">{l.noquote ? <span className="text-rose-600 font-bold">견적 불가</span> : !l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}</td>
+                            <td className="pr-3 whitespace-nowrap">{l.noquote ? <span className="text-rose-600 font-bold">견적 불가</span> : !l.checked_at ? <span className="text-slate-400">점검 전</span> : l.kind === 'assy' && !l.project_id && l.paste_parts ? <span className="text-violet-700 font-bold" data-rfq-paste-kind={l.pn}>📋 부품표 · 부품 {n(l.part_count)}</span> : l.kind === 'assy' ? <span className="text-emerald-700 font-bold">BOM 있음 · 부품 {n(l.part_count)}</span> : l.kind === 'item' ? <span className="text-emerald-700 font-bold">단품</span> : <span className="text-red-600 font-bold">⚠ BOM · 품목 없음</span>}
+                              {editable && r.status === '진행' && !l.quoted_at && l.checked_at && !l.project_id && (l.kind || 'none') !== 'item' && (
+                                <button type="button" onClick={() => setPasteFor({ r, l })} data-rfq-paste={l.pn} disabled={busy === r.id}
+                                  title="코드 부여 전 · BOM 등록 전 — 고객사 부품표를 붙이면 그 부품으로 단가를 보고 구매자재에 단가 요청할 수 있습니다"
+                                  className="block mt-0.5 text-[10.5px] font-bold text-violet-600 hover:text-violet-800 underline disabled:opacity-40">{l.paste_parts ? '📋 부품표 고치기' : '📋 부품표 붙이기'}</button>
+                              )}</td>
                             <td className="text-amber-700" data-rfq-line-price={l.pn}>{l.kind === 'item' && !(+l.noprice_count > 0) && l.item?.price > 0 ? (
                               <span className="text-slate-600">매입가 <b className="font-mono">{n(l.item.price)}</b>원
                                 {l.item.vendor || l.item.last
@@ -483,8 +505,8 @@ export default function RfqBoard({ customers = [], onWrite }) {
                             ) : +l.noprice_count > 0 ? (() => {
                               const mc = missCodes(l), bl = nqBlockers(l)
                               return <>
-                                {missCount(l) > 0 && <span title={mc.join(', ')}><b>{n(missCount(l))}</b> · <span className="font-mono">{mc.slice(0, 6).join(', ')}{mc.length > 6 ? ` 외 ${mc.length - 6}` : ''}</span></span>}
-                                {bl.length > 0 && <div className="text-rose-600" data-rfq-line-nqp={l.pn}>🚫 {nqParts(l).filter((x) => bl.includes(x.code)).map((x) => `${x.code} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')}</div>}
+                                {missCount(l) > 0 && <span title={mc.map(keyLabel).join(', ')}><b>{n(missCount(l))}</b> · <span className="font-mono">{mc.slice(0, 6).map(keyLabel).join(', ')}{mc.length > 6 ? ` 외 ${mc.length - 6}` : ''}</span></span>}
+                                {bl.length > 0 && <div className="text-rose-600" data-rfq-line-nqp={l.pn}>🚫 {nqParts(l).filter((x) => bl.includes(x.code)).map((x) => `${keyLabel(x.code)} ${x.reason}${x.memo ? ` — ${x.memo}` : ''}`).join(' / ')}</div>}
                               </>
                             })() : <span className="text-slate-300">—</span>}</td>
                             <td className="pl-3" data-rfq-hold-cell={l.pn}>

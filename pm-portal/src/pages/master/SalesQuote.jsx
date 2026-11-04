@@ -115,7 +115,7 @@ export default function SalesQuote() {
           // 기타 · 직접 입력 고객사(v4.99.0) — 고객사 선택은 그대로 두고, 수신처에 그 이름 · 고객사 없이 저장
           const etc = !r.customer_id && !custList.some((c) => c.id === r.customer_code)
           if (!etc) setCsCode(r.customer_code)
-          setPrefill({ n: Date.now(), customerId: etc ? null : (r.customer_id || null), etcName: etc ? r.customer_code : null, title: r.title, lines: (r.lines || []).map((l) => ({ pn: l.std_code || l.pn, qty: l.qty })) })
+          setPrefill({ n: Date.now(), customerId: etc ? null : (r.customer_id || null), etcName: etc ? r.customer_code : null, title: r.title, lines: (r.lines || []).map((l) => ({ pn: l.std_code || l.pn, qty: l.qty, name: l.name || '', paste: !l.project_id && l.paste_parts?.parts?.length ? l.paste_parts : null })) })
           setTab('write')
         }} />
       ) : tab === 'history' ? <QuoteHistory customer={histAll ? null : (cs ? { id: cs.id, code: cs.code, name: custList.find((c) => c.id === code)?.name || cs.name } : null)} onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (

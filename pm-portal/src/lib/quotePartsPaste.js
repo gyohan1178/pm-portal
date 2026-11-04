@@ -92,3 +92,80 @@ export function partsFromPaste(matched) {
     pasted: true, priceSrc: m.priceSrc,
   }))
 }
+
+// ── 부품표 단가 요청 (v4.149.0) ───────────────────────────────────────────────
+//   부품표를 견적 접수 품목(pm_rfq_line.paste_parts)에 같이 저장 → 구매자재 「영업 견적 단가 요청」에 뜬다
+//   paste_parts = { labor, parts: [{ maker, mpn, name, qty, unit, item_id, std_code, price, src, by, at }] }
+//     src: '붙인 단가' · '실적가'(포털 품목 매입가) · '견적 입력'(견적 화면에서 적음) · '구매 입력'(구매자재가 요청 목록에서 적음)
+//   단가 없는 부품의 요청 키 — 포털 품목이면 기준코드(구매자재가 지금처럼 품목 매입가로 넣음), 아니면 「MPN:제조사품번」
+export const PASTE_KEY = /^(MPN|NAME):/
+export const isPasteKey = (k) => PASTE_KEY.test(String(k || ''))
+export const keyLabel = (k) => String(k ?? '').replace(PASTE_KEY, '')
+export const pasteKey = (p) => (p.std_code ? p.std_code : s(p.mpn) ? 'MPN:' + s(p.mpn).toUpperCase() : 'NAME:' + s(p.name).toUpperCase())
+const pos = (v) => (v == null || v === '' ? null : Number(v) > 0 ? Number(v) : null)
+
+// 견적 화면 부품 줄(partsFromPaste 모양 · 단가를 고친 것 포함) → 저장 모양
+export function toPasteParts(parts, labor = 0) {
+  return {
+    labor: Number(labor) || 0,
+    parts: (parts || []).filter((p) => !p.excluded).map((p) => {
+      const price = pos(p.buyKrw)
+      return {
+        maker: p.manufacturer || '', mpn: p.manufacturer_code || '', name: p.name || '', qty: Number(p.qty) || 0, unit: p.unit || 'EA',
+        item_id: p.item_id || null, std_code: p.std_code || '', price,
+        src: price == null ? null : p.priceSrc || '견적 입력',
+      }
+    }),
+  }
+}
+// 붙여넣기 결과(matchPartsPaste) → 저장 모양
+export function pasteFromMatched(matched, labor = 0) {
+  return {
+    labor: Number(labor) || 0,
+    parts: (matched || []).map((m) => ({
+      maker: m.maker || m.item?.manufacturer || '', mpn: m.mpn || m.item?.manufacturer_code || '', name: m.name || m.item?.name || '',
+      qty: Number(m.qty) || 0, unit: m.unit || m.item?.unit || 'EA', item_id: m.item?.id || null, std_code: m.item?.std_code || '',
+      price: pos(m.buyKrw), src: pos(m.buyKrw) == null ? null : m.priceSrc,
+    })),
+  }
+}
+// 저장 모양 → 견적 화면에 넣을 붙여넣기 결과 (partsFromPaste 로 넘김)
+export function pasteToMatched(pp) {
+  return (pp?.parts || []).map((p) => ({
+    maker: p.maker, mpn: p.mpn, name: p.name, qty: p.qty, unit: p.unit, price: p.price,
+    item: p.item_id ? { id: p.item_id, std_code: p.std_code, name: p.name, unit: p.unit } : null,
+    buyKrw: pos(p.price), priceSrc: pos(p.price) == null ? null : p.src,
+  }))
+}
+// 다시 붙일 때 쓸 글 (부품표 고치기)
+export function pasteToText(pp) {
+  const rows = (pp?.parts || []).map((p) => [p.maker, p.mpn, p.name, p.qty, p.price ?? '', p.std_code].map((v) => String(v ?? '').replace(/\t|\r?\n/g, ' ')).join('\t'))
+  return ['제조사\t제조사품번\t품명\t수량\t단가\t기준코드', ...rows].join('\n')
+}
+export const pasteMissing = (pp) => [...new Set((pp?.parts || []).filter((p) => pos(p.price) == null && Number(p.qty) > 0).map(pasteKey))]
+
+// 점검 — 포털 품목 단가를 지금 값으로 · 단가 없는 미등록 부품은 그 사이 등록됐는지 다시 찾는다
+//   붙인 단가 · 견적 입력 · 구매 입력은 그대로 둔다 (사람이 정한 값)
+export async function refreshPasteParts(pp, prefix = '') {
+  const parts = (pp?.parts || []).map((p) => ({ ...p }))
+  const auto = (p) => !p.src || p.src === '실적가'
+  const ids = [...new Set(parts.filter((p) => p.item_id && auto(p)).map((p) => p.item_id))]
+  const price = new Map()
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await supabase.from('items').select('id,purchase_price').in('id', ids.slice(i, i + 150))
+    if (error) throw error
+    ;(data || []).forEach((x) => price.set(x.id, pos(x.purchase_price)))
+  }
+  parts.forEach((p) => { if (p.item_id && auto(p)) { const v = price.get(p.item_id) ?? null; p.price = v; p.src = v == null ? null : '실적가' } })
+  const lost = parts.filter((p) => !p.item_id && pos(p.price) == null && (s(p.mpn) || s(p.std_code)))
+  if (lost.length) {
+    const m = await matchPartsPaste(lost.map((p) => ({ maker: p.maker, mpn: p.mpn, name: p.name, qty: p.qty, price: null, unit: p.unit, code: '' })), prefix)
+    m.forEach((r, i) => { if (r.item) Object.assign(lost[i], { item_id: r.item.id, std_code: r.item.std_code, price: r.buyKrw, src: r.priceSrc }) })
+  }
+  return { ...(pp || {}), parts }
+}
+// 구매자재가 요청 목록에서 적은 단가 — 같은 키의 부품 전부
+export function setPastePrice(pp, key, price, by) {
+  const v = pos(price)
+  return { ...(pp || {}), parts: (pp?.parts || []).map((p) => (pasteKey(p) === key ? { ...p, price: v, src: v == null ? null : '구매 입력', by: by || null, at: new Date().toISOString() } : p)) }
+}
