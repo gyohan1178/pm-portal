@@ -8,6 +8,7 @@ import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
 import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan, orderCustName } from '../../lib/orderIntake'
 import { fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { fetchSkipRules, saveSkipRules, rulesFor, skipRuleOf, ruleLabel, ruleFromLine } from '../../lib/orderSkip'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 
@@ -28,14 +29,31 @@ async function prepare(po, raw) {
   return { lines, existing, diff, planned }
 }
 
+// 빼는 줄 (v4.142.0) — 줄 번호마다 { by:'rule', rule } 규칙으로 뺌 · { by:'manual' } 이번만 뺌 · { by:'keep' } 규칙에 걸렸지만 이번엔 넣음
+//   손으로 정한 것(manual · keep)은 업체 이름 · 고객사를 바꿔도 그대로 두고, 나머지는 규칙으로 다시 정한다
+export function computeSkip(po, rules, prev = {}) {
+  const rs = rulesFor(po, rules)
+  const out = {}
+  for (const l of po.lines || []) {
+    const k = lineKey(l)
+    if (prev[k]?.by === 'manual' || prev[k]?.by === 'keep') { out[k] = prev[k]; continue }
+    const r = skipRuleOf(l, rs)
+    if (r) out[k] = { by: 'rule', rule: r }
+  }
+  return out
+}
+const isOut = (v) => v && (v.by === 'rule' || v.by === 'manual')
+const keptOf = (po, skip) => (po.lines || []).filter((l) => !isOut(skip[lineKey(l)])).map((l) => ({ ...l }))
+
 // 파일 하나 읽기 — 실패해도 목록에는 남겨 알림을 보여준다
-async function readFile(file, readLines = pdfLines) {
+async function readFile(file, readLines = pdfLines, rules = []) {
   try {
     const po = parsePO(await readLines(file))
-    let lines = po.lines.map((l) => ({ ...l }))
+    const skip = computeSkip(po, rules)
+    let lines = keptOf(po, skip)
     let existing = null, diff = null, planned = []
     if (po.customer && po.po_no) ({ lines, existing, diff, planned } = await prepare(po, lines))
-    return { name: file.name, po, lines, existing, diff, planned, ok: true }
+    return { name: file.name, po, lines, skip, existing, diff, planned, ok: true }
   } catch (e) {
     return { name: file.name, po: { kind: null, lines: [], warns: [`읽기 실패 — ${e.message}`] }, lines: [], ok: false }
   }
@@ -48,6 +66,8 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   const [drag, setDrag] = useState(false)
   const [prog, setProg] = useState(null)       // { label, done, total } — 여러 개 읽기 · 한 번에 등록 진행 (v4.104.0)
   const inp = useRef(null)
+  const [rules, setRules] = useState(null)      // PDF 등록 때 빼는 품목 규칙 (v4.142.0)
+  const loadRules = async () => { if (rules) return rules; try { const r = await fetchSkipRules(); setRules(r); return r } catch { return [] } }
 
   async function addFiles(list) {
     const pdfs = [...list].filter((f) => /\.pdf$/i.test(f.name))
@@ -56,7 +76,8 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     const out = []
     setProg({ label: 'PDF 읽고 점검하는 중', done: 0, total: pdfs.length })
     try {
-      for (const f of pdfs) { out.push(await readFile(f, readLines)); setProg((p) => p && { ...p, done: out.length }) }
+      const rs = await loadRules()
+      for (const f of pdfs) { out.push(await readFile(f, readLines, rs)); setProg((p) => p && { ...p, done: out.length }) }
     } finally {
       if (out.length) setFiles((prev) => { const next = [...prev, ...out]; setSel(prev.length); return next })
       setProg(null); setBusy(false)
@@ -72,8 +93,9 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     setBusy(true)
     try {
       const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w) && (code === 'ETC' || !/업체 이름을 못 읽음/.test(w))) }
-      const r = po.po_no ? await prepare(po, cur.po.lines.map((l) => ({ ...l }))) : { lines: await matchLines(code, cur.po.lines.map((l) => ({ ...l }))), existing: null, diff: null, planned: [] }
-      setCur({ po, ...r })
+      const skip = computeSkip(po, await loadRules(), cur.skip || {})
+      const r = po.po_no ? await prepare(po, keptOf(po, skip)) : { lines: await matchLines(code, keptOf(po, skip)), existing: null, diff: null, planned: [] }
+      setCur({ po, skip, ...r })
     } catch (e) { toastError('고객사 바꾸기 실패: ' + e.message) }
     finally { setBusy(false) }   // 실패해도 「읽는 중」에 멈추지 않게 (v4.90.6)
   }
@@ -85,10 +107,43 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     setBusy(true)
     try {
       const po = { ...cur.po, customer_name: v, warns: cur.po.warns.filter((w) => !/업체 이름을 못 읽음/.test(w) || !v) }
-      const r = po.po_no ? await prepare(po, cur.po.lines.map((l) => ({ ...l }))) : { lines: cur.lines, existing: null, diff: null, planned: [] }
-      setCur({ po, ...r })
+      const skip = computeSkip(po, await loadRules(), cur.skip || {})
+      const r = po.po_no ? await prepare(po, keptOf(po, skip)) : { lines: await matchLines(po.customer, keptOf(po, skip)), existing: null, diff: null, planned: [] }
+      setCur({ po, skip, ...r })
     } catch (e) { toastError('업체 이름 반영 실패: ' + e.message) }
     finally { setBusy(false) }
+  }
+  // 줄 빼기 · 되살리기 — 남은 줄로 다시 맞춘다. 손으로 고른 품목 · 이미 납품 체크는 그대로 옮긴다
+  async function resetSkip(skip) {
+    setBusy(true)
+    try {
+      const po = cur.po
+      const kept = keptOf(po, skip)
+      const r = po.customer && po.po_no ? await prepare(po, kept) : { lines: po.customer ? await matchLines(po.customer, kept) : kept, existing: cur.existing, diff: null, planned: cur.planned }
+      const old = new Map(cur.lines.map((l) => [lineKey(l), l]))
+      r.lines = r.lines.map((l) => { const o = old.get(lineKey(l)); return o?.pickedByHand ? { ...l, item: o.item, how: o.how, pickedByHand: true, otherCust: false } : o?.deliveredAll ? { ...l, deliveredAll: true } : l })
+      setCur({ skip, ...r })
+    } catch (e) { toastError('다시 맞추기 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+  const skipLine = (l, on) => resetSkip({ ...(cur.skip || {}), [lineKey(l)]: on ? { by: 'manual' } : { by: 'keep' } })
+  // 규칙 저장 · 지우기 — 모든 PC 공통 (pm_settings). 이 파일은 다시 맞춘다
+  async function addRule(l) {
+    try {
+      const r = ruleFromLine(cur.po, l, meName)
+      const next = await saveSkipRules([...(await loadRules()), r]); setRules(next)
+      await resetSkip({ ...(cur.skip || {}), [lineKey(l)]: { by: 'rule', rule: r } })
+      toastSuccess(`다음부터 ${ruleLabel(r)}은 자동으로 뺍니다`)
+    } catch (e) { toastError('규칙 저장 실패: ' + e.message) }
+  }
+  async function delRule(rule) {
+    try {
+      const next = await saveSkipRules((await loadRules()).filter((x) => x.id !== rule.id)); setRules(next)
+      const skip = {}
+      Object.entries(cur.skip || {}).forEach(([k, v]) => { if (!(v.by === 'rule' && v.rule?.id === rule.id)) skip[k] = v })
+      await resetSkip(computeSkip(cur.po, next, skip))
+      toastSuccess(`규칙 지움 — ${ruleLabel(rule)}`)
+    } catch (e) { toastError('규칙 지우기 실패: ' + e.message) }
   }
   const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
   const anyEtc = files.some((f) => etcOf(f.po))
@@ -324,6 +379,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                         {cur.lines.some((l) => l.note) && <th className="px-2 text-left">적요 · 메모</th>}
                         {showPlan && <th className="px-2 text-left" title="실제 발주가 오면 Plnd order number 로 「발주 예정」 줄을 찾아 이 PO 로 옮깁니다">발주 예정 연결</th>}
                         {!cur.existing && <th className="px-2 text-center">이미 납품</th>}
+                        {!cur.saved && <th className="px-2 text-center" title="수주대장에 넣지 않을 줄 — 이번만 빼거나, 다음에도 빼게 규칙으로 저장">빼기</th>}
                       </tr></thead>
                       <tbody>
                         {cur.lines.map((l, i) => (
@@ -366,16 +422,58 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                               </td>
                             )}
                             {!cur.existing && <td className="px-2 py-1.5 text-center"><input type="checkbox" disabled={!!cur.saved} checked={!!(l.deliveredAll || cur.allDelivered)} onChange={(e) => setLine(i, { deliveredAll: e.target.checked })} data-delivered={i} /></td>}
+                            {!cur.saved && <td className="px-2 py-1.5 text-center"><button type="button" disabled={busy} onClick={() => skipLine(l, true)} data-skip-line={lineKey(l)} title="이 줄을 수주대장에 넣지 않습니다" className="px-1.5 py-0.5 rounded border border-slate-200 text-[10.5px] text-slate-400 hover:text-rose-600 hover:border-rose-300 disabled:opacity-40">빼기</button></td>}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
                 )}
+                {/* 빼는 줄 (v4.142.0) — 규칙으로 뺐거나 이번만 뺀 줄. 되살리거나 다음에도 빼게 저장 */}
+                {(() => {
+                  const out = (cur.po.lines || []).filter((l) => isOut(cur.skip?.[lineKey(l)]))
+                  const rs = rules ? rulesFor(cur.po, rules) : []
+                  if (!out.length && !rs.length) return null
+                  return (
+                    <div className="px-4 py-3 border-t border-slate-100 bg-slate-50/50 text-xs space-y-2" data-skipped>
+                      {out.length > 0 && (
+                        <>
+                          <div className="font-bold text-slate-600">🚫 수주대장에 넣지 않는 줄 {out.length}{cur.existing ? <span className="font-normal text-slate-400"> — 이미 등록된 줄이면 「줄 빠짐」으로 취소 표시됩니다 (이력 남음)</span> : ''}</div>
+                          {out.map((l) => {
+                            const v = cur.skip[lineKey(l)]
+                            return (
+                              <div key={lineKey(l)} className="flex flex-wrap items-center gap-2 text-slate-500" data-skipped-line={lineKey(l)}>
+                                <span className="font-mono w-10">{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</span>
+                                <span className="font-mono line-through">{l.pn || '품번 없음'}</span>
+                                <span className="line-through">{l.desc}{l.spec ? ` · ${l.spec}` : ''}</span>
+                                <span className="font-mono">×{fmt(l.qty)}</span>
+                                <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${v.by === 'rule' ? 'bg-slate-200 text-slate-600' : 'bg-amber-50 text-amber-700'}`}>{v.by === 'rule' ? `규칙 · ${ruleLabel(v.rule)}` : '이번만'}</span>
+                                {!cur.saved && <button type="button" disabled={busy} onClick={() => skipLine(l, false)} data-unskip={lineKey(l)} className="text-[10.5px] text-indigo-500 hover:underline disabled:opacity-40">되살리기</button>}
+                                {!cur.saved && v.by === 'manual' && <button type="button" disabled={busy} onClick={() => addRule(l)} data-skip-rule-add={lineKey(l)} className="text-[10.5px] font-bold text-rose-600 hover:underline disabled:opacity-40">다음에도 빼기</button>}
+                              </div>
+                            )
+                          })}
+                        </>
+                      )}
+                      {rs.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 text-[10.5px] text-slate-400" data-skip-rules>
+                          <span>{etcOf(cur.po) ? String(cur.po.customer_name || '').trim() || '이 업체' : cust?.name} PDF 에서 늘 빼는 품목:</span>
+                          {rs.map((r) => (
+                            <span key={r.id} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full bg-white border border-slate-200 text-slate-500" title={[r.memo, r.by && `${r.by} ${r.at || ''}`].filter(Boolean).join(' · ')} data-skip-rule={r.id}>
+                              {ruleLabel(r)}
+                              <button type="button" disabled={busy} onClick={() => delRule(r)} data-skip-rule-del={r.id} className="text-slate-300 hover:text-rose-500" title="이 규칙 지우기 — 다음부터 다시 수주대장에 들어갑니다">✕</button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })()}
 
                 <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-t border-slate-100 bg-slate-50/60">
                   <span className="text-xs text-slate-500">
                     품목 {cur.lines.length} · 찾음 {cur.lines.length - unmatched}{unmatched ? <b className="text-amber-700"> · 미등록 {unmatched}</b> : ''}
+                    {(() => { const n = (cur.po.lines || []).filter((l) => isOut(cur.skip?.[lineKey(l)])).length; return n ? <b className="text-slate-500" data-skip-count> · 빼는 줄 {n}</b> : null })()}
                     {linkedN > 0 && <b className="text-violet-700" data-linked> · 발주 예정 {linkedN}건 확정</b>}
                     {cust ? ` · ${orderCustName({ customer_code: cur.po.customer, customer_name: cur.po.customer_name })}` : ''}
                   </span>
