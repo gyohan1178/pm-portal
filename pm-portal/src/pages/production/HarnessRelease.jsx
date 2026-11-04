@@ -16,6 +16,7 @@ import { fetchPlanByPo, fetchPlanChanges } from '../../lib/planExc'
 import { useCanEdit } from '../../hooks/useProfile'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { parseHarnessPaste, matchHarnessPaste } from '../../lib/harnessPaste'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
@@ -144,6 +145,7 @@ export default function HarnessRelease() {
   const [copied, setCopied] = useState(null)   // { text, n, at }
   const [busy, setBusy] = useState(false)
   const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 (v4.104.0)
+  const [pasteOpen, setPasteOpen] = useState(false)   // 공정관리 출도 기록 붙여넣어 불출 (v4.144.0)
 
   // 진행 중 AXCELIS 하네스 PO 줄
   //   = 구분이 하네스(16번대)인 줄 + 하네스 공정관리에 등록된(완료 안 된) 줄 — 12번대 구매품 · 11번대 전장도 공정관리에서 만들면 여기서 출도 · 불출한다
@@ -264,8 +266,9 @@ export default function HarnessRelease() {
     else toastError('클립보드 복사가 막혔습니다 — 아래 글자를 직접 복사하세요')
   }
 
-  async function setIssued(val) {
-    const list = selRows.filter(p => !!p.material_issued !== val)
+  // listArg: 붙여넣기 창에서 넘긴 줄 (없으면 표에서 고른 줄) · 성공하면 true
+  async function setIssued(val, listArg) {
+    const list = (listArg || selRows).filter(p => !!p.material_issued !== val)
     if (!list.length) return
     const lines = list.slice(0, 5).map(p => `${p.po_number} · ${N(p.order_line) || '-'}/${N(p.del_line) || '-'} · ${pnOf(p.items?.std_code)} · 잔량 ${n(leftOf(p))}`)
     if (!(await ask(val
@@ -292,7 +295,8 @@ export default function HarnessRelease() {
       refreshProcurement(qc)
       qc.invalidateQueries({ queryKey: ['harnessRelease'], exact: false })
       qc.invalidateQueries({ queryKey: ['production'], exact: false })
-    } catch (e) { toastError(e.message) } finally { setBusy(false) }
+      return true
+    } catch (e) { toastError(e.message); return false } finally { setBusy(false) }
   }
 
   async function excel() {
@@ -349,6 +353,11 @@ export default function HarnessRelease() {
       </div>
 
       {undoBar}{confirmEl}
+      {pasteOpen && <PasteIssueModal busy={busy} onClose={() => setPasteOpen(false)}
+        onIssue={async (list, toIssue) => {
+          if (toIssue) { setPasteOpen(false); sendIssue(list); return }
+          if (await setIssued(true, list)) setPasteOpen(false)
+        }} />}
       {justIssued && justIssued.length > 0 && (
         <div data-hr-just className="flex flex-wrap items-center gap-2 rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-800">
           <b>✅ {justIssued.length}줄 불출 처리했습니다.</b>
@@ -377,6 +386,10 @@ export default function HarnessRelease() {
             <button data-hr-issue disabled={!selRows.length || busy} onClick={() => setIssued(true)}
               title="자재 출고 없이 불출 표시만 (이미 출고했거나 출고가 따로 필요 없을 때)"
               className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100' : 'border-slate-200 text-slate-300'}`}>✅ 불출만 표시{selRows.length ? ` (${selRows.length})` : ''}</button>
+          )}
+          {canEdit && (
+            <button data-hr-paste onClick={() => setPasteOpen(true)} title="하네스 공정관리 출도 기록(고객사 · PO No · Order Line · Del Line · 도면번호 …)을 복사해 붙이면 그 PO 줄을 한 번에 불출 처리합니다"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-white hover:bg-teal-50">📋 출도 기록 붙여넣어 불출</button>
           )}
           {canEdit && tab === 'done' && (
             <button data-hr-unissue disabled={!selRows.length || busy} onClick={() => setIssued(false)}
@@ -431,6 +444,103 @@ export default function HarnessRelease() {
           줄을 누르면 선택됩니다 · 공정관리 기록은 출력(작업지시서 만들기) 때 켜지는 출력 표시와 QR 이력을 PO · 오더라인 · 납품라인으로 맞춰 봅니다 (라인 없는 옛 건은 PO · 도번).
           불출 취소는 「불출됨」에서 고르거나 고객사 PO 에서 체크를 풀면 됩니다.
         </p>
+      </div>
+    </div>
+  )
+}
+
+// ── 공정관리 출도 기록 붙여넣어 불출 (v4.144.0) ─────────────────────────────
+//   하네스 공정관리 「기록」 표를 그대로 복사해 붙이면 → PO · 오더라인 · 납품라인으로 고객사 PO 줄을 찾아 → 「✅ 불출 표시」 (또는 다품목 출고로)
+//   이 화면 목록(진행 중)에 없는 줄도 찾도록 붙인 PO 번호로 고객사 PO 를 다시 읽는다 — 완료 · 취소 · 이미 불출은 건너뛴다
+const PASTE_STATE = {
+  ok: ['teal', '불출할 줄'], done: ['green', '이미 불출'], closed: ['gray', 'PO 완료 · 취소'],
+  none: ['red', '고객사 PO 에 없음'], many: ['amber', '라인 없음 · 같은 도번 여러 줄'], dup: ['gray', '같은 줄 중복'],
+}
+function PasteIssueModal({ onClose, onIssue, busy }) {
+  const [text, setText] = useState('')
+  const [res, setRes] = useState(null)      // { rows, skipped, matched }
+  const [loading, setLoading] = useState(false)
+  async function check(t = text) {
+    const pr = parseHarnessPaste(t)
+    if (!pr.rows.length) { setRes({ ...pr, matched: [] }); return }
+    setLoading(true)
+    try {
+      const SEL = 'id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name)'
+      const nos = [...new Set(pr.rows.map(r => r.po))]
+      const pos = []
+      // PO 번호는 대소문자 그대로 저장돼 있다 — 붙인 값 · 대문자 둘 다 찾는다
+      const want = [...new Set(nos.flatMap(x => [x, x.toLowerCase()]))]
+      for (let i = 0; i < want.length; i += 150) {
+        pos.push(...await fetchAll(() => supabase.from('purchase_orders').select(SEL)
+          .eq('customer_id', AX_ID).eq('order_type', 'customer_po').in('po_number', want.slice(i, i + 150)).order('id')))
+      }
+      setRes({ ...pr, matched: matchHarnessPaste(pr.rows, pos) })
+    } catch (e) { toastError('고객사 PO 읽기 실패: ' + e.message) } finally { setLoading(false) }
+  }
+  const m = res?.matched || []
+  const okRows = m.filter(x => x.state === 'ok')
+  const cnt = m.reduce((a, x) => ({ ...a, [x.state]: (a[x.state] || 0) + 1 }), {})
+  return (
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-hr-paste-modal>
+        <div className="px-5 py-3 border-b border-slate-100 flex items-start justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-bold text-slate-800">📋 출도 기록 붙여넣어 불출</h3>
+            <p className="text-[11px] text-slate-400">하네스 공정관리 기록 표(고객사 · PO No · Order Line · Del Line · 도면번호 · 수량 · 공정 …)를 머리글째 복사해 붙이세요. PO · 오더라인 · 납품라인으로 고객사 PO 줄을 찾습니다.</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">✕</button>
+        </div>
+        <div className="p-5 space-y-3 overflow-y-auto">
+          <textarea value={text} autoFocus data-hr-paste-text
+            onChange={(e) => { setText(e.target.value); setRes(null) }}
+            onPaste={(e) => { const t = e.clipboardData.getData('text'); if (t) { e.preventDefault(); setText(t); check(t) } }}
+            placeholder={'고객사\tPO No\tOrder Line\tDel Line\t프로젝트\t도면번호\t호기\t수량\t공정 …\nAxcelis\t824470\t7\t1\t\t160024189\t\t29\t출도 …'}
+            className="w-full h-28 px-3 py-2 text-[11px] font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-400" />
+          <div className="flex items-center gap-2">
+            <button onClick={() => check()} disabled={!text.trim() || loading} data-hr-paste-check
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white disabled:opacity-40">{loading ? '찾는 중…' : '🔍 고객사 PO 찾기'}</button>
+            {res && <span className="text-[11px] text-slate-500" data-hr-paste-sum>
+              붙인 줄 {res.rows.length}{res.skipped ? ` (중복 · 빈 줄 ${res.skipped} 뺌)` : ''} — {Object.entries(cnt).map(([k, v]) => `${PASTE_STATE[k][1]} ${v}`).join(' · ')}
+            </span>}
+          </div>
+          {m.length > 0 && (
+            <div className="overflow-x-auto border border-slate-100 rounded-lg">
+              <table className="w-full text-xs">
+                <thead className="bg-slate-50 text-slate-500"><tr>
+                  <th className="px-2 py-1.5 text-left">붙인 PO / 라인</th><th className="px-2 py-1.5 text-left">도면번호</th><th className="px-2 py-1.5 text-right">붙인 수량</th>
+                  <th className="px-2 py-1.5 text-left">고객사 PO 줄</th><th className="px-2 py-1.5 text-right">잔량</th><th className="px-2 py-1.5 text-left">상태</th>
+                </tr></thead>
+                <tbody>
+                  {m.map((x, i) => {
+                    const [tone, label] = PASTE_STATE[x.state]
+                    return (
+                      <tr key={i} className={`border-t border-slate-100 ${x.state === 'ok' ? '' : 'text-slate-400'}`} data-hr-paste-row={x.state}>
+                        <td className="px-2 py-1.5 font-mono whitespace-nowrap">{x.po} · {x.ol || '-'} · {x.dl}</td>
+                        <td className="px-2 py-1.5 font-mono">{x.dwg || '—'}{x.proc && x.proc !== '출도' && <span className="ml-1 text-[10px] text-amber-600">{x.proc}</span>}</td>
+                        <td className="px-2 py-1.5 text-right font-mono">{x.qty ?? '—'}</td>
+                        <td className="px-2 py-1.5">{x.p ? <><span className="font-mono font-bold text-indigo-600">{pnOf(x.p.items?.std_code)}</span> <span className="text-slate-400">{x.p.items?.name || ''}</span>
+                          {x.dwgDiff && <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px] font-bold" title="공정관리 도면번호와 고객사 PO 품번이 다릅니다">⚠ 도번 다름</span>}
+                          {x.how === 'dwg' && <span className="ml-1 text-[10px] text-slate-400">PO+도번으로 찾음</span>}</> : '—'}</td>
+                        <td className={`px-2 py-1.5 text-right font-mono ${x.p && x.qty != null && leftOf(x.p) !== x.qty && x.state === 'ok' ? 'text-amber-600 font-bold' : ''}`}>{x.p ? n(leftOf(x.p)) : '—'}</td>
+                        <td className="px-2 py-1.5"><Badge tone={tone}>{label}</Badge></td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {res && !res.rows.length && <p className="text-xs text-rose-600">PO 번호를 못 읽었습니다 — 공정관리 기록 표를 머리글째 복사해 붙여 주세요.</p>}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
+          <span className="mr-auto text-[11px] text-slate-400">불출 표시 = 고객사 PO 자재불출 체크 (쇼티지에서 빠짐 · 재고는 그대로) · 처리 뒤 「↩ 되돌리기」 가능</span>
+          <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
+          <button disabled={!okRows.length || busy} onClick={() => onIssue(okRows.map(x => x.p), true)} data-hr-paste-toissue
+            title="자재도 같이 빼려면 — 다품목 출고에 하네스 품번 · 잔량을 채워 엽니다. 출고가 끝나면 불출 처리를 묻습니다"
+            className="px-3 py-2 text-sm font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 disabled:opacity-40">🧺 다품목 출고 → 불출</button>
+          <button disabled={!okRows.length || busy} onClick={() => onIssue(okRows.map(x => x.p), false)} data-hr-paste-issue
+            className="px-4 py-2 text-sm font-bold rounded-lg bg-teal-600 text-white hover:bg-teal-700 disabled:opacity-40">✅ {okRows.length}줄 불출 표시</button>
+        </div>
       </div>
     </div>
   )
