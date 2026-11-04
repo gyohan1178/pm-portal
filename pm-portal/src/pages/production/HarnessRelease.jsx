@@ -17,6 +17,7 @@ import { useCanEdit } from '../../hooks/useProfile'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { parseHarnessPaste, matchHarnessPaste } from '../../lib/harnessPaste'
+import PoCart, { addItemsToCart, fetchCart } from '../common/PoCart'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
@@ -29,6 +30,7 @@ import { parseHarnessPaste, matchHarnessPaste } from '../../lib/harnessPaste'
 //   「🧺 다품목 출고로」: 고른 줄의 하네스 품번 · 잔량을 다품목 출고 「붙여넣기」 칸에 채워 넘긴다 → 담기 → 전개(BOM) → 출고.
 
 export const AX_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
+const DIV_KEY = 'harness_release_div'   // 구분 바로잡기 (v4.150.0)
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const yy = (d) => (d ? String(d).slice(2, 10) : '')
 const md = (d) => { if (!d) return ''; const t = new Date(d); if (isNaN(t)) return String(d).slice(5, 10); const k = new Date(t.getTime() + 9 * 3600000).toISOString(); return `${+k.slice(5, 7)}/${+k.slice(8, 10)} ${k.slice(11, 16)}` }
@@ -147,6 +149,21 @@ export default function HarnessRelease() {
   const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 (v4.104.0)
   const [pasteOpen, setPasteOpen] = useState(false)   // 공정관리 출도 기록 붙여넣어 불출 (v4.144.0)
   const [divF, setDivF] = useState('all')   // 구분 거르기 — 하네스 · 구매품 · 전장 (v4.147.0)
+  const [cartOpen, setCartOpen] = useState(false)   // 🛒 발주 담기함 (v4.150.0 — 자재요청 · 소요량과 같은 담기함)
+  const { data: cartRows = [] } = useQuery({ queryKey: ['poCart'], queryFn: fetchCart, staleTime: 30 * 1000 })
+
+  // 구분 바로잡기 (v4.150.0) — 고객사 PO 구분은 품번 앞자리로 정해져(16 하네스 · 11 전장 · 나머지 구매품) 10번대 하네스(100139060 등)가 「구매품」이 된다
+  //   이 화면에서 품번마다 바꿔 두면 기억한다 (pm_settings 'harness_release_div' = { pn: { '100139060': '하네스' } } · 모든 PC 공통 · 다음 PO 에도)
+  const { data: divOv = {} } = useQuery({
+    queryKey: ['harnessRelease', 'divOv'],
+    queryFn: async () => {
+      const { data, error } = await supabase.from('pm_settings').select('value').eq('key', DIV_KEY).maybeSingle()
+      if (error) return {}
+      return data?.value?.pn || {}
+    },
+    staleTime: 60 * 1000,
+  })
+  const divOf = (p) => divOv[pnOf(p.items?.std_code)] || p.division || '하네스'
 
   // 진행 중 AXCELIS PO 줄 — 생산관리에 들어간 줄(PO 연동 · production.po_id)만 빼고 전부 (v4.147.0)
   //   예전(v4.146 까지): 구분이 하네스(16번대)인 줄 + 공정관리 등록분 + 「출도 대상 품번」 → 12번대 출도품(120220971~4 등)이 등록 전엔 빠졌다
@@ -154,7 +171,7 @@ export default function HarnessRelease() {
   const { data: pos = [], isLoading, error } = useQuery({
     queryKey: ['harnessRelease', 'pos'],
     queryFn: async () => {
-      const SEL = 'id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name)'
+      const SEL = 'id,item_id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name,manufacturer,manufacturer_code)'
       const base = await fetchAll(() => supabase.from('purchase_orders').select(SEL)
         .eq('customer_id', AX_ID).eq('order_type', 'customer_po')
         .not('status', 'in', '(완료,취소)').order('promise_date', { ascending: true }).order('id'))
@@ -207,7 +224,7 @@ export default function HarnessRelease() {
   })
   const hasBom = (p) => !bomCnt || (bomCnt[p.items?.std_code] || 0) > 0
   // 단품(구매품 · 전장)은 BOM 이 없어도 그 품목 자체를 출고하면 된다 — BOM 이 꼭 있어야 하는 건 하네스(완제품을 만들어 내는 것)만
-  const needBom = (p) => (p.division || '하네스') === '하네스'
+  const needBom = (p) => divOf(p) === '하네스'
 
   async function sendIssue(list) {
     const ok = list.filter(p => (hasBom(p) || !needBom(p)) && leftOf(p) > 0)
@@ -226,9 +243,8 @@ export default function HarnessRelease() {
   }
 
   const stage = (p) => p.material_issued ? 'done' : st[p.id]?.printed ? 'wait' : 'todo'
-  const divOf = (p) => p.division || '하네스'
-  const divCnt = useMemo(() => pos.reduce((m, p) => { m[divOf(p)] = (m[divOf(p)] || 0) + 1; return m }, {}), [pos])
-  const dpos = useMemo(() => (divF === 'all' ? pos : pos.filter(p => divOf(p) === divF)), [pos, divF])
+  const divCnt = useMemo(() => pos.reduce((m, p) => { m[divOf(p)] = (m[divOf(p)] || 0) + 1; return m }, {}), [pos, divOv])
+  const dpos = useMemo(() => (divF === 'all' ? pos : pos.filter(p => divOf(p) === divF)), [pos, divF, divOv])
   const cnt = useMemo(() => {
     const c = { todo: 0, wait: 0, done: 0, urgent: 0 }
     dpos.forEach(p => { const s = stage(p); c[s]++; if (s === 'todo') { const d = dDay(p.promise_date); if (d != null && d <= 14) c.urgent++ } })
@@ -240,7 +256,7 @@ export default function HarnessRelease() {
     if (tab === 'urgent') { if (stage(p) !== 'todo') return false; const d = dDay(p.promise_date); if (d == null || d > 14) return false }
     else if (tab !== 'all' && stage(p) !== tab) return false
     if (!kw) return true
-    return `${p.po_number} ${pnOf(p.items?.std_code)} ${p.items?.name || ''}`.toLowerCase().includes(kw)
+    return `${p.po_number} ${pnOf(p.items?.std_code)} ${p.items?.name || ''} ${p.items?.manufacturer || ''} ${p.items?.manufacturer_code || ''}`.toLowerCase().includes(kw)
   }), [dpos, st, tab, kw])
 
   const selRows = rows.filter(p => sel.has(p.id))
@@ -291,11 +307,75 @@ export default function HarnessRelease() {
     } catch (e) { toastError(e.message); return false } finally { setBusy(false) }
   }
 
+  // 🛒 발주 담기 (v4.150.0) — 구매품은 그 품목 그대로 · 하네스 · ASSY 는 BOM 하위로 펼쳐(다품목 출고와 같은 전개) 잔량만큼
+  //   같은 품목은 합쳐 한 줄 · 비고에 어느 PO 몫인지 · 재고 · 발주 중 수량은 빼지 않는다 (담기함에서 수량 · 구매처 · 납기를 고쳐 등록)
+  //   하위의 하네스(만드는 것)는 뺀다 · BOM 이 없는 하네스는 펼칠 수 없어 뺀다
+  async function putCart() {
+    const list = selRows.filter(p => leftOf(p) > 0 && p.items?.std_code)
+    if (!list.length) { toastError('잔량이 있는 줄이 없습니다'); return }
+    setBusy(true)
+    try {
+      const agg = new Map()
+      let made = 0
+      const noBom = []
+      for (const p of list) {
+        const q = leftOf(p), code = p.items.std_code, tag = `${p.po_number}-${N(p.order_line) || '-'}`
+        let got = []
+        if (divOf(p) === '구매품' || (!needBom(p) && !hasBom(p))) got = [{ item_id: p.item_id, std_code: code, name: p.items?.name, qty: q }]
+        else if (!hasBom(p)) { noBom.push(pnOf(code)); continue }
+        else {
+          const { data, error } = await supabase.rpc('pm_explode_assy', { p_customer_id: AX_ID, p_items: [{ code, qty: q }] })
+          if (error) throw error
+          got = (data || []).filter(r => { if (r.make_type === 'harness' && r.std_code !== code) { made++; return false } return Number(r.qty) > 0 })
+        }
+        for (const r of got) {
+          if (!r.item_id) continue
+          const e = agg.get(r.item_id) || { item_id: r.item_id, std_code: r.std_code, name: r.name, qty: 0, from: new Set() }
+          e.qty += Number(r.qty) || 0; e.from.add(tag); agg.set(r.item_id, e)
+        }
+      }
+      const lines = [...agg.values()].sort((a, b) => String(a.std_code).localeCompare(String(b.std_code)))
+      if (!lines.length) { toastError(noBom.length ? `BOM 이 없는 하네스라 펼칠 수 없습니다 — ${noBom.slice(0, 3).join(', ')}` : '담을 품목이 없습니다'); return }
+      const inCart = new Set(cartRows.map(c => c.item_id))
+      const dup = lines.filter(l => inCart.has(l.item_id)).length
+      const notes = [made ? `하위 하네스 ${made}줄은 만드는 것이라 뺐습니다.` : '', noBom.length ? `BOM 없는 하네스 ${noBom.length}줄(${noBom.slice(0, 3).join(', ')}${noBom.length > 3 ? ' …' : ''})은 펼칠 수 없어 뺐습니다.` : '',
+        dup ? `⚠ ${dup}개는 담기함에 이미 있어 한 줄씩 더 생깁니다.` : ''].filter(Boolean).join(' ')
+      if (!(await ask({
+        title: `${n(lines.length)}개 품목을 발주 담기함에 담을까요?`,
+        desc: `고른 ${list.length}줄 — 구매품은 그 품목, 하네스 · ASSY 는 BOM 하위로 펼쳐 잔량만큼. 재고 · 발주 중 수량은 빼지 않았습니다 (🛒 담기함에서 수량 · 구매처 · 납기를 고쳐 구매처별로 등록). ${notes}`,
+        items: lines.slice(0, 6).map(l => `${pnOf(l.std_code)} · ${l.name || ''} × ${n(Math.round(l.qty * 1000) / 1000)}`), more: Math.max(0, lines.length - 6),
+        okText: '담기',
+      }))) return
+      const { added } = await addItemsToCart(lines.map(l => ({ item_id: l.item_id, customer_id: AX_ID, qty: Math.round(l.qty * 10000) / 10000,
+        memo: ('하네스 출도 ' + [...l.from].join(', ')).slice(0, 200) })))
+      qc.invalidateQueries({ queryKey: ['poCart'] })
+      toastSuccess(`${added}개 품목을 발주 담기함에 담았습니다 — 🛒 담기함에서 구매처별로 묶어 등록`)
+    } catch (e) { toastError('발주 담기 실패: ' + e.message) } finally { setBusy(false) }
+  }
+
+  // 구분 바꾸기 — 고른 줄의 품번을 기억 (__reset = PO 구분대로)
+  async function setDivFor(v) {
+    const pns = [...new Set(selRows.map(p => pnOf(p.items?.std_code)).filter(Boolean))]
+    if (!pns.length) return
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.from('pm_settings').select('value').eq('key', DIV_KEY).maybeSingle()   // 그 사이 바뀐 것 위에
+      if (error) throw error
+      const map = { ...(data?.value?.pn || {}) }
+      pns.forEach(pn => { if (v === '__reset') delete map[pn]; else map[pn] = v })
+      must(await supabase.from('pm_settings').upsert({ key: DIV_KEY, value: { pn: map }, updated_at: new Date().toISOString() }, { onConflict: 'key' }), '구분 저장')
+      logActivity('update', 'pm_settings', DIV_KEY, `하네스 출도 구분 ${v === '__reset' ? 'PO 구분대로' : v} — ${pns.join(', ')}`)
+      await qc.invalidateQueries({ queryKey: ['harnessRelease', 'divOv'] })
+      setSel(new Set())
+      toastSuccess(`${pns.slice(0, 3).join(', ')}${pns.length > 3 ? ` 외 ${pns.length - 3}` : ''} → ${v === '__reset' ? 'PO 구분대로' : v}`)
+    } catch (e) { toastError('구분 저장 실패: ' + e.message) } finally { setBusy(false) }
+  }
+
   async function excel() {
     const XLSX = await import('xlsx')
     const ws = XLSX.utils.aoa_to_sheet([
-      ['PO', '오더라인', '납품라인', 'CCN', '구분', '품번', '품명', 'SREV', 'BREV', '잔량', '납기', '공정관리', '출력', '출력자', '불출'],
-      ...rows.map(p => { const s = st[p.id] || {}; return [p.po_number, N(p.order_line), N(p.del_line), P(p.ccn), p.division || '', pnOf(p.items?.std_code), p.items?.name || '', p.item_rev || '', p.item_brev || '', leftOf(p), String(p.promise_date || '').slice(0, 10), s.reg ? '등록' : '미등록', s.printed ? md(s.at) : '', s.by || '', p.material_issued ? 'Y' : ''] }),
+      ['PO', '오더라인', '납품라인', 'CCN', '구분', '품번', '품명', '제조사', '제조사품번', 'SREV', 'BREV', '잔량', '납기', '공정관리', '출력', '출력자', '불출'],
+      ...rows.map(p => { const s = st[p.id] || {}; return [p.po_number, N(p.order_line), N(p.del_line), P(p.ccn), divOf(p), pnOf(p.items?.std_code), p.items?.name || '', p.items?.manufacturer || '', p.items?.manufacturer_code || '', p.item_rev || '', p.item_brev || '', leftOf(p), String(p.promise_date || '').slice(0, 10), s.reg ? '등록' : '미등록', s.printed ? md(s.at) : '', s.by || '', p.material_issued ? 'Y' : ''] }),
     ])
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '하네스출도')
     XLSX.writeFile(wb, `하네스_출도불출_${todayKST()}.xlsx`)
@@ -345,6 +425,7 @@ export default function HarnessRelease() {
       </div>
 
       {undoBar}{confirmEl}
+      <PoCart open={cartOpen} onClose={() => setCartOpen(false)} />
       {pasteOpen && <PasteIssueModal busy={busy} onClose={() => setPasteOpen(false)}
         onIssue={async (list, toIssue) => {
           if (toIssue) { setPasteOpen(false); sendIssue(list); return }
@@ -369,34 +450,52 @@ export default function HarnessRelease() {
               className={`px-2.5 py-1 rounded-full border text-[11px] font-bold ${divF === k ? 'bg-violet-50 border-violet-300 text-violet-700' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>{l}</button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-2 mb-3">
+        {/* 위 줄 = 보기(단계 · 검색) · 아래 줄 = 고른 줄로 할 일 — 버튼은 늘 같은 자리 · 같은 폭 (단계에 안 맞으면 흐리게) (v4.150.0)
+            예전엔 단계마다 버튼이 생겼다 없어지고 「(3)」 개수가 글자에 붙어 고를 때마다 줄이 밀렸다 */}
+        <div className="flex flex-wrap items-center gap-2 mb-2" data-hr-viewbar>
           {[['todo', `출력 전 ${n(cnt.todo)}`], ['wait', `출력됨 · 불출 대기 ${n(cnt.wait)}`], ['urgent', `2주 안 납기 ${n(cnt.urgent)}`], ['done', `불출됨 ${n(cnt.done)}`], ['all', '전체']].map(([k, l]) => (
             <button key={k} data-hr-tab={k} onClick={() => go(k)} className={pill(k)}>{l}</button>
           ))}
-          <input data-hr-search value={q} onChange={(e) => setQ(e.target.value)} placeholder="PO · 품번 · 품명 검색" className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-56" />
-          <span className="ml-auto text-xs text-slate-400">{selRows.length ? `${n(selRows.length)}줄 선택 · ` : ''}{n(rows.length)}줄</span>
-          {tab !== 'done' && (
-            <button data-hr-copy disabled={!selRows.length} onClick={doCopy}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg ${selRows.length ? 'bg-indigo-600 text-white hover:bg-indigo-700' : 'bg-slate-100 text-slate-400'}`}>📋 공정관리용 복사{selRows.length ? ` (${selRows.length})` : ''}</button>
-          )}
-          {canEdit && tab !== 'done' && (
-            <button data-hr-toissue disabled={!selRows.length} onClick={() => sendIssue(selRows)} title="고른 줄의 하네스 품번 · 잔량을 다품목 출고 붙여넣기 칸에 채워 엽니다 → 담기 · 전개 · 출고 → 출고가 끝나면 이 줄들을 불출 처리할지 묻습니다"
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg ${selRows.length ? 'bg-violet-600 text-white hover:bg-violet-700' : 'bg-slate-100 text-slate-400'}`}>🧺 다품목 출고 → 불출{selRows.length ? ` (${selRows.length})` : ''}</button>
-          )}
-          {canEdit && tab !== 'done' && (
-            <button data-hr-issue disabled={!selRows.length || busy} onClick={() => setIssued(true)}
-              title="자재 출고 없이 불출 표시만 (이미 출고했거나 출고가 따로 필요 없을 때)"
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-teal-300 text-teal-700 bg-teal-50 hover:bg-teal-100' : 'border-slate-200 text-slate-300'}`}>✅ 불출만 표시{selRows.length ? ` (${selRows.length})` : ''}</button>
-          )}
-          {canEdit && (
-            <button data-hr-paste onClick={() => setPasteOpen(true)} title="하네스 공정관리 출도 기록(고객사 · PO No · Order Line · Del Line · 도면번호 …)을 복사해 붙이면 그 PO 줄을 한 번에 불출 처리합니다"
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-white hover:bg-teal-50">📋 출도 기록 붙여넣어 불출</button>
-          )}
-          {canEdit && tab === 'done' && (
-            <button data-hr-unissue disabled={!selRows.length || busy} onClick={() => setIssued(false)}
-              className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${selRows.length && !busy ? 'border-rose-300 text-rose-600 hover:bg-rose-50' : 'border-slate-200 text-slate-300'}`}>불출 취소{selRows.length ? ` (${selRows.length})` : ''}</button>
-          )}
-          <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
+          <input data-hr-search value={q} onChange={(e) => setQ(e.target.value)} placeholder="PO · 품번 · 품명 · 제조사품번 검색" className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-64" />
+          <div className="ml-auto flex items-center gap-2">
+            {canEdit && <button data-hr-paste onClick={() => setPasteOpen(true)} title="하네스 공정관리 출도 기록(고객사 · PO No · Order Line · Del Line · 도면번호 …)을 복사해 붙이면 그 PO 줄을 한 번에 불출 처리합니다"
+              style={{ width: 170 }} className="py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-white hover:bg-teal-50">📋 출도 기록 붙여넣어 불출</button>}
+            <button data-hr-cart-open onClick={() => setCartOpen(true)} style={{ width: 96 }}
+              className="py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50">🛒 담기함 <span className="font-mono">{n(cartRows.length)}</span></button>
+            <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} style={{ width: 72 }} className="py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" data-hr-actbar>
+          <span className="text-xs text-slate-500 whitespace-nowrap" style={{ width: 120 }} data-hr-selcount>
+            {selRows.length ? <b className="text-indigo-700">{n(selRows.length)}줄 선택</b> : '줄을 골라 주세요'}<span className="text-slate-400"> / {n(rows.length)}</span>
+          </span>
+          {(() => {
+            const has = selRows.length > 0, live = tab !== 'done'
+            const B = (on, cls) => `py-1.5 text-xs font-bold rounded-lg border ${on ? cls : 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'}`
+            return <>
+              <button data-hr-copy disabled={!has || !live} onClick={doCopy} style={{ width: 132 }} title={live ? '하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사' : '불출됨 목록에선 쓰지 않습니다'}
+                className={B(has && live, 'border-indigo-600 bg-indigo-600 text-white hover:bg-indigo-700')}>📋 공정관리용 복사</button>
+              {canEdit && <button data-hr-toissue disabled={!has || !live} onClick={() => sendIssue(selRows)} style={{ width: 150 }}
+                title="고른 줄의 하네스 품번 · 잔량을 다품목 출고 붙여넣기 칸에 채워 엽니다 → 담기 · 전개 · 출고 → 출고가 끝나면 이 줄들을 불출 처리할지 묻습니다"
+                className={B(has && live, 'border-violet-600 bg-violet-600 text-white hover:bg-violet-700')}>🧺 다품목 출고 → 불출</button>}
+              {canEdit && <button data-hr-cart disabled={!has || busy} onClick={putCart} style={{ width: 104 }}
+                title="구매품은 그 품목 그대로, 하네스 · ASSY 는 BOM 하위로 펼쳐 잔량만큼 발주 담기함에 담습니다 (담기함에서 수량 · 구매처 · 납기를 고쳐 구매처별로 등록)"
+                className={B(has && !busy, 'border-indigo-300 bg-indigo-50 text-indigo-700 hover:bg-indigo-100')}>🛒 발주 담기</button>}
+              {canEdit && <button data-hr-issue disabled={!has || !live || busy} onClick={() => setIssued(true)} style={{ width: 104 }}
+                title="자재 출고 없이 불출 표시만 (이미 출고했거나 출고가 따로 필요 없을 때)"
+                className={B(has && live && !busy, 'border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100')}>✅ 불출만 표시</button>}
+              {canEdit && <button data-hr-unissue disabled={!has || tab !== 'done' || busy} onClick={() => setIssued(false)} style={{ width: 84 }}
+                title={tab === 'done' ? '고른 줄의 불출 표시를 풉니다' : '「불출됨」 목록에서 씁니다'}
+                className={B(has && tab === 'done' && !busy, 'border-rose-300 bg-white text-rose-600 hover:bg-rose-50')}>불출 취소</button>}
+              {canEdit && <select data-hr-setdiv value="" disabled={!has || busy} onChange={(e) => { const v = e.target.value; e.target.value = ''; if (v) setDivFor(v) }} style={{ width: 112 }}
+                title="고객사 PO 구분이 틀린 품번(예: 10번대 하네스가 「구매품」으로 들어옴)을 이 화면에서 바로잡습니다 — 품번 기준으로 기억해 다음 PO 에도 적용"
+                className={`py-1.5 px-1.5 text-xs font-bold rounded-lg border ${has && !busy ? 'border-amber-300 bg-white text-amber-700' : 'border-slate-200 bg-white text-slate-300'}`}>
+                <option value="">구분 바꾸기…</option>
+                <option value="하네스">→ 하네스</option><option value="구매품">→ 구매품</option><option value="전장">→ 전장</option>
+                <option value="__reset">↩ PO 구분대로</option>
+              </select>}
+            </>
+          })()}
         </div>
 
         <div ref={tblRef} className={`overflow-auto border border-slate-200 rounded-xl ${tblH ? '' : 'max-h-[640px]'}`} style={tblH ? { height: tblH + 'px' } : undefined}>
@@ -421,8 +520,11 @@ export default function HarnessRelease() {
                 <tr key={p.id} data-hr-row={p.id} onClick={() => toggle(p.id)} className={`border-t border-slate-100 cursor-pointer ${sel.has(p.id) ? 'bg-indigo-50/70' : 'hover:bg-slate-50'}`}>
                   <td className="px-2 py-1.5 text-center" onClick={(e) => e.stopPropagation()}><input type="checkbox" checked={sel.has(p.id)} onChange={() => toggle(p.id)} className="w-4 h-4" /></td>
                   <td className="px-2 py-1.5 font-mono whitespace-nowrap">{p.po_number} <span className="text-slate-400">· {N(p.order_line) || '-'} · {N(p.del_line) || '-'}</span></td>
-                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{p.division && p.division !== '하네스' && <span data-hr-div={p.division} className="ml-1 px-1 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-sans font-bold" title="고객사 PO 구분 — 하네스(16번대)가 아닌 단품">{p.division}</span>}{needBom(p) && !hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
-                  <td className="px-2 py-1.5"><div className="truncate max-w-[300px]" title={p.items?.name}>{p.items?.name || '—'}</div>{p.ccn && <div className="text-[11px] text-slate-400">CCN {P(p.ccn)}</div>}</td>
+                  <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{pnOf(p.items?.std_code)}{(divOf(p) !== '하네스' || divOv[pnOf(p.items?.std_code)]) && <span data-hr-div={divOf(p)} className={`ml-1 px-1 py-0.5 rounded text-[10px] font-sans font-bold ${divOf(p) === '하네스' ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-600'}`}
+                    title={divOv[pnOf(p.items?.std_code)] ? `이 화면에서 바꾼 구분 (PO 구분: ${p.division || '—'})` : '고객사 PO 구분 — 하네스(16번대)가 아닌 단품'}>{divOf(p)}{divOv[pnOf(p.items?.std_code)] ? ' ✎' : ''}</span>}{needBom(p) && !hasBom(p) && <span data-hr-nobom className="ml-1 px-1 py-0.5 rounded bg-slate-100 text-slate-400 text-[10px] font-sans font-bold" title="고객사 BOM 이 없어 다품목 출고에서 전개되지 않습니다">BOM 없음</span>}</td>
+                  <td className="px-2 py-1.5"><div className="truncate max-w-[300px]" title={p.items?.name}>{p.items?.name || '—'}</div>
+                    {divOf(p) === '구매품' && (p.items?.manufacturer || p.items?.manufacturer_code) && <div className="text-[11px] text-slate-500 truncate max-w-[300px]" data-hr-maker>{p.items?.manufacturer || '—'} · <span className="font-mono">{p.items?.manufacturer_code || '—'}</span></div>}
+                    {p.ccn && <div className="text-[11px] text-slate-400">CCN {P(p.ccn)}</div>}</td>
                   <td className="px-2 py-1.5 text-center font-mono">{p.item_rev || '-'} / {p.item_brev || '-'}</td>
                   <td className="px-2 py-1.5 text-right font-mono">{n(leftOf(p))}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap">{yy(p.promise_date) || '—'} {!p.material_issued && <DBadge d={dDay(p.promise_date)} />}{p.plan_exc && <PlanBadge plan={p.plan_exc} changes={p.changes} className="ml-1" />}</td>
