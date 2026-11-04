@@ -16,7 +16,7 @@ import { parseEdMonthly } from '../../lib/edMonthly'
 import { DEFAULT_RULES, mergeRules, loadRules, parseEdForecastDetail, planFcApply, applyFcPlan, planSummary, normProj } from '../../lib/edForecast'
 import { EdTable, EdSummary, EdFilters, MissingModal, RulesModal, edPass, edDateOf } from './EdProductionTable'
 import EdNeedMatch, { fetchEdProjects, useEdNeed } from './EdNeedMatch'
-import { fetchEdOrderGroups, orderIndex, planEdImport, planEdText, applyEdImport } from '../../lib/edOrderSync'
+import { fetchEdOrderGroups, orderIndex, planEdImport, planEdText, applyEdImport, applyEdDue } from '../../lib/edOrderSync'
 import { fetchEdPartnerLines, planEdPartner, planEdPartnerText, applyEdPartner } from '../../lib/edPartner'
 import { fetchCskOrderUnits, planCskImport, planCskText, applyCskImport } from '../../lib/cskOrderSync'
 import { ruleKindOf, KINDS } from '../../lib/edForecast'
@@ -407,11 +407,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     // 협력사(남일 · 두웰 …) 발주도 같이 맞춘다 (v4.134.0)
     mutationFn: async ({ plan, pplan }) => {
       const n = plan?.ins?.length ? await applyEdImport(supabase, plan, me?.name) : 0
+      const d = plan?.due?.length ? await applyEdDue(supabase, plan, me?.name) : 0   // 납기 맞추기 (v4.143.0)
       const p = pplan ? await applyEdPartner(supabase, pplan, me?.name) : { created: 0, updated: 0 }
-      return { n, p }
+      return { n, d, p }
     },
-    onSuccess: ({ n, p }) => {
-      toastSuccess(`수주대장에서 생산관리 ${n + p.created}줄을 만들었습니다${p.created ? ` (협력사 ${p.created}줄)` : ''}${p.updated ? ` · 협력사 ${p.updated}줄 고침` : ''}`)
+    onSuccess: ({ n, d, p }) => {
+      toastSuccess(`수주대장에서 생산관리 ${n + p.created}줄을 만들었습니다${p.created ? ` (협력사 ${p.created}줄)` : ''}${d ? ` · 납기 ${d}줄 맞춤` : ''}${p.updated ? ` · 협력사 ${p.updated}줄 고침` : ''}`)
       qc.invalidateQueries({ queryKey: ['production'] })
       qc.invalidateQueries({ queryKey: ['edOrderGroups'] })
     },
@@ -425,13 +426,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     let pplan = { ins: [], upd: [], same: [] }
     try { pplan = planEdPartner(await fetchEdPartnerLines(supabase), rows) } catch (e) { toastError('협력사 발주 읽기 실패 — Edwards 발주만 불러옵니다: ' + e.message) }
     const pN = pplan.ins.length + pplan.upd.length
-    if (!plan.ins.length && !pN) {
+    if (!plan.ins.length && !plan.due.length && !pN) {
       toastSuccess(`새로 만들 줄이 없습니다 — 이미 있음 ${plan.exist.length + pplan.same.length}줄${plan.noHogi.lines ? ` · 호기 번호 없는 발주 ${plan.noHogi.lines}줄` : ''}`)
       return
     }
     const ok = await ask({
-      title: `수주대장 발주로 생산관리 ${plan.ins.length + pplan.ins.length}줄을 만들까요?${pplan.upd.length ? ` (협력사 ${pplan.upd.length}줄 고침)` : ''}`,
-      desc: '발주서 메모의 「PROJECT 이름 #호기」 · 파트별로 만듭니다 (상태 PO접수 · 발주서 접수 ✔ · 납품요청일 = 가장 빠른 발주 납기). 이미 있는 줄은 상태 · 날짜 · 불출 · 비고 모두 그대로 둡니다. 메모에 파트가 없는 발주는 같은 PO · 같은 품번의 예전 파트로 정했습니다 (만든 뒤 편집에서 바꿀 수 있음).\n협력사(남일 · 두웰 …) 발주는 AXCELIS 3rd party 처럼 발주 한 줄 = 한 줄(호기 칸 「수량EA」)로 만들고, 납기 · 수량이 바뀌면 고치고, 납품이 끝나면 완료로 바꿉니다.',
+      title: `수주대장 발주로 생산관리 ${plan.ins.length + pplan.ins.length}줄을 만들까요?${plan.due.length ? ` (납기 ${plan.due.length}줄 맞춤)` : ''}${pplan.upd.length ? ` (협력사 ${pplan.upd.length}줄 고침)` : ''}`,
+      desc: '발주서 메모의 「PROJECT 이름 #호기」 · 파트별로 만듭니다 (상태 PO접수 · 발주서 접수 ✔ · 납품요청일 = 가장 빠른 발주 납기). 이미 있는 줄은 납품요청일만 수주대장 납기에 맞추고(확정 납기 ✎ 는 그대로), 상태 · 불출 · 비고는 그대로 둡니다. 메모에 파트가 없는 발주는 같은 PO · 같은 품번의 예전 파트로 정했습니다 (만든 뒤 편집에서 바꿀 수 있음).\n협력사(남일 · 두웰 …) 발주는 AXCELIS 3rd party 처럼 발주 한 줄 = 한 줄(호기 칸 「수량EA」)로 만들고, 납기 · 수량이 바뀌면 고치고, 납품이 끝나면 완료로 바꿉니다.',
       items: [...planEdText(plan), ...planEdPartnerText(pplan)],
       okText: '불러오기 실행' })
     if (!ok) return

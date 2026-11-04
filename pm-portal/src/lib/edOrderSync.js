@@ -5,7 +5,7 @@
 //   이미 있는 줄은 건드리지 않는다 (상태 · 날짜 · 불출 · 미불출 · 비고 그대로)
 //   호기 번호가 없는 발주(IS Factored · KFA · 단품류 …)는 만들지 않는다
 //     단 SIC 는 호기 없이 오는 발주라 프로젝트 하나 = 한 줄(호기 「-」)로 만든다 (2026-10-29)
-import { normProj } from './edForecast'
+import { normProj, hasOrderMark } from './edForecast'
 import { projOf } from './edMonthly'
 
 // '#3' · '3' · '#3,4' → [3] · [3] · [3, 4]
@@ -47,9 +47,27 @@ export function orderOf(idx, r) {
 }
 
 // 불러오기 계획 — rows: 지금 생산관리(Edwards) 줄 전부
+//   due (v4.143.0) — 이미 있는 진행 중 줄의 납품요청일을 수주대장 가장 빠른 발주 납기로 맞춘다 (납기가 바뀌면 따라감 · 발주서 접수 ✔)
+//     예전엔 처음 만들 때 한 번만 넣고 다시 안 봐서, 수주대장에서 납기를 바꿔도 생산관리는 그대로였다
+const isPartnerRow = (r) => (Array.isArray(r?.changes) ? r.changes : []).some((c) => c && c.pkey)
 export function planEdImport(groups, rows) {
   const have = new Set()
   for (const r of rows || []) for (const n of nsOf(hogiNums(r.hogi))) have.add(edKey(r.pn, n, r.part))
+  // 묶음 열쇠 → 가장 빠른 발주 납기
+  const dueBy = new Map()
+  for (const g of groups || []) {
+    if (SKIP_PARTS.includes(partKey(g.part)) || !g.proj || (!g.hogiNums.length && !noHogiOk(g)) || !g.due) continue
+    for (const n of nsOf(g.hogiNums)) { const k = edKey(g.proj, n, g.part); const d = String(g.due).slice(0, 10); if (!dueBy.has(k) || d < dueBy.get(k)) dueBy.set(k, d) }
+  }
+  const due = []
+  for (const r of rows || []) {
+    if (r.status === '완료' || isPartnerRow(r)) continue
+    const ds = nsOf(hogiNums(r.hogi)).map((n) => dueBy.get(edKey(r.pn, n, r.part))).filter(Boolean)
+    if (!ds.length) continue
+    const to = ds.reduce((a, c) => (c < a ? c : a))
+    const from = r.req_date ? String(r.req_date).slice(0, 10) : null
+    if (from !== to || !r.po_received || !hasOrderMark(r)) due.push({ r, from, to, po: !r.po_received })
+  }
   const ins = [], exist = [], noHogi = { lines: 0, projs: new Set() }, skip = { lines: 0, projs: new Set() }
   for (const g of groups || []) {
     if (SKIP_PARTS.includes(partKey(g.part))) { skip.lines += g.n_lines || 0; if (g.proj) skip.projs.add(g.proj); continue }
@@ -57,7 +75,24 @@ export function planEdImport(groups, rows) {
     if (nsOf(g.hogiNums).some((n) => have.has(edKey(g.proj, n, g.part)))) exist.push(g)
     else ins.push(g)
   }
-  return { ins, exist, noHogi: { lines: noHogi.lines, projs: [...noHogi.projs] }, skip: { lines: skip.lines, projs: [...skip.projs] } }
+  return { ins, exist, due, noHogi: { lines: noHogi.lines, projs: [...noHogi.projs] }, skip: { lines: skip.lines, projs: [...skip.projs] } }
+}
+
+// 납기 맞추기 실행 — 줄마다 이력 「납기변경 11-16 → 11-20 (수주대장)」
+export async function applyEdDue(supabase, plan, by) {
+  const now = new Date().toISOString()
+  let n = 0
+  for (const u of plan?.due || []) {
+    const msg = u.from !== u.to ? `${u.from || '-'} → ${u.to}` : `수주대장 PO 납기 ${u.to} 연결`
+    const chg = { type: u.from !== u.to ? '납기변경' : 'PO연결', msg: msg + (u.po ? ' · 발주서 접수' : ''), from: u.from, to: u.to, src: '수주대장', at: now, by: by || null }
+    const { error } = await supabase.from('production').update({
+      req_date: u.to, po_received: true, updated_at: now,
+      changes: [...(Array.isArray(u.r.changes) ? u.r.changes : []), chg],
+    }).eq('id', u.r.id)
+    if (error) throw error
+    n++
+  }
+  return n
 }
 
 const newId = () => 'pb' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -91,7 +126,8 @@ export async function applyEdImport(supabase, plan, by) {
 export function planEdText(plan) {
   const lines = plan.ins.map((g) =>
     `＋ ${g.proj} ${g.hogiNums.length ? '#' + g.hogiNums.join(',') : '(호기 없음)'} · ${g.part}${g.sub ? ` (${g.sub})` : ''} — 발주서 ${g.pos.join(', ')} · 납기 ${String(g.due || '').slice(5)}${g.guessed ? ` · 파트 추정` : ''}`)
-  if (plan.exist.length) lines.push(`이미 있음 ${plan.exist.length}줄 — 그대로 둠`)
+  for (const u of plan.due || []) lines.push(`✎ ${u.r.pn} ${u.r.hogi || ''} · ${u.r.part || '미분류'} — ${u.from !== u.to ? `납기 ${u.from ? u.from.slice(5) : '없음'} → ${u.to.slice(5)}` : `PO 납기 ${u.to.slice(5)} 로 보기`}${u.po ? ' · 발주서 접수' : ''}`)
+  if (plan.exist.length) lines.push(`이미 있음 ${plan.exist.length}줄 — 상태 · 불출 · 비고는 그대로 (납기만 수주대장에 맞춤)`)
   if (plan.skip?.lines) lines.push(`단품 발주 ${plan.skip.lines}줄 — 만들지 않음`)
   if (plan.noHogi.lines) lines.push(`호기 번호 없는 발주 ${plan.noHogi.lines}줄 — 만들지 않음 (${plan.noHogi.projs.slice(0, 5).join(' · ')}${plan.noHogi.projs.length > 5 ? ' …' : ''})`)
   return lines

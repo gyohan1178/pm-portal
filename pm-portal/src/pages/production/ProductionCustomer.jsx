@@ -223,7 +223,7 @@ function autoNums(cs, r) {
   const x = r || {}, tp = x.tp || {}
   const n = (v) => Number(v) || 0
   if (cs === 'AX') return { add: n(x.created) + n(tp.created), fix: n(x.matched) + n(x.updated) + n(tp.updated) + n(tp.unlinked), done: n(x.done) }
-  if (cs === 'ED') return { add: n(x.created) + n(x.partner_created), fix: n(x.partner_updated), done: 0 }
+  if (cs === 'ED') return { add: n(x.created) + n(x.partner_created), fix: n(x.partner_updated) + n(x.due_updated), done: 0 }
   return { add: n(x.created), fix: n(x.updated), done: 0 }
 }
 function AutoSyncNote({ cs }) {

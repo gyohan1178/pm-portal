@@ -186,9 +186,15 @@ export function fcDueOf(r) {
   const frame = r.arrival_date || r.fc_frame
   return r.fc_h2d || (frame ? addDays(String(frame).slice(0, 10), -7) : null) || r.fc_to || null
 }
+// 정한 납기 (v4.143.0 순서 바꿈) — ① 확정 납기(✎) ② 수주대장 PO 납기(발주서 접수 줄의 납품요청일) ③ 포캐스트(PO 가 없을 때만)
+//   예전엔 포캐스트가 PO 납기보다 앞이라, H2D 는 「Frame 입고 − 7일」(10-01)이 PO 납기(11-16) 대신 보이고 불출 · 품질 예정도 그걸로 계산됐다
+//   PO 납기 = 수주대장에서 온 줄(이력에 「수주대장 불러오기」 · src 수주대장)의 납품요청일 — 불러오기 · 아침 자동이 수주대장 가장 빠른 발주 납기로 맞춰 둔다
+//     (월간 실적 · 직접 넣은 줄의 납품요청일은 PO 납기가 아니라 포캐스트보다 앞세우지 않는다)
+export const hasOrderMark = (r) => (Array.isArray(r?.changes) ? r.changes : []).some((c) => c && (c.type === '수주대장 불러오기' || c.src === '수주대장') && !c.pkey)
 export function dueOf(r) {
   const fc = fcDueOf(r)
   if (r.due_fix) return { date: String(r.due_fix).slice(0, 10), fixed: true, fc }
+  if (r.po_received && r.req_date && hasOrderMark(r)) return { date: String(r.req_date).slice(0, 10), fixed: false, po: true, fc }
   return fc ? { date: fc, fixed: false, fc } : null
 }
 // which: 'harn' 하네스 · 'elec' 전장
@@ -196,7 +202,7 @@ export function dueOf(r) {
 //   (2026-10-01) 불출 기준만 정해져 있으면 정한 납기 칸에 보이는 날짜로 늘 역산되게 한다.
 export function issueBaseOf(r) {
   const d = dueOf(r)
-  if (d) return { date: d.date, src: d.fixed ? '확정 납기' : '포캐스트 납기' }
+  if (d) return { date: d.date, src: d.fixed ? '확정 납기' : d.po ? 'PO 납기' : '포캐스트 납기' }
   return r.req_date ? { date: String(r.req_date).slice(0, 10), src: '납품요청일 (포캐스트 날짜 없음)' } : null
 }
 export function issueDueOf(r, rules, which) {

@@ -156,10 +156,10 @@ function DueCell({ r, onField }) {
   const src = k === 'EUV' ? 'to 정한' : 'H2D 자재'
   return (
     <td data-no-select className="px-2 py-2 border-l border-slate-100 text-center whitespace-nowrap group"
-      title={d ? (d.fixed ? `확정 납기 · 포캐스트 ${d.fc || '없음'}` : `포캐스트 ${src} 기준 · ✎ 로 확정 납기 입력`)
-        : '납품요청일 (수주대장 발주 납기) · ✎ 로 확정 납기 입력'}>
+      title={d ? (d.fixed ? `확정 납기 · 포캐스트 ${d.fc || '없음'}` : d.po ? `PO 납기 (수주대장 가장 빠른 발주 납기)${d.fc ? ` · 포캐스트 ${d.fc}` : ''} · ✎ 로 확정 납기 입력` : `포캐스트 ${src} 기준 (발주서 없음) · ✎ 로 확정 납기 입력`)
+        : '납품요청일 · ✎ 로 확정 납기 입력'} data-ed-due={d?.fixed ? 'fix' : d?.po ? 'po' : d ? 'fc' : 'req'}>
       {d
-        ? <span className={d.fixed ? 'font-semibold text-slate-800 border-b-2 border-emerald-400' : 'text-slate-500'}>{md(d.date)}</span>
+        ? <span className={d.fixed ? 'font-semibold text-slate-800 border-b-2 border-emerald-400' : d.po ? 'text-slate-700' : 'text-slate-500'}>{md(d.date)}</span>
         : r.req_date ? <span className="text-slate-700">{md(r.req_date)}</span> : <span className="text-slate-300">—</span>}
       {tag}
       <button type="button" onClick={() => setEditing(true)} title="확정 납기 입력 (비우면 포캐스트 날짜)"
@@ -392,7 +392,7 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
           <th className="px-2 py-2 text-left font-bold">프로젝트 #호기 / 파트</th>
           <th className="px-2 py-2 text-left font-bold" title="H2D HP · H2D LH 등 (발주서 메모 두 번째 칸)">구분</th>
           <th className="px-2 py-2 text-left font-bold" title="수주대장의 진행 중 발주 (같은 프로젝트 · 호기 · 파트)">🧾 발주서</th>
-          <th className="px-2 py-2 font-bold text-indigo-600 border-l border-slate-200" title="확정 납기 → 포캐스트 → 납품요청일(가장 빠른 발주 납기) · ✎ 로 확정">📅 납기</th>
+          <th className="px-2 py-2 font-bold text-indigo-600 border-l border-slate-200" title="확정 납기(✎) → 수주대장 PO 납기(가장 빠른 발주 납기) → 포캐스트(발주서 없을 때) · ✎ 로 확정">📅 납기</th>
           <th className="px-2 py-2 font-bold">상태</th>
           <th className="px-2 py-2 font-bold text-amber-600 border-l border-slate-200" title="Frame · 누르면 입고 · ✎ 로 확정일">⚙ 가공물 입고</th>
           <th className="px-2 py-2 font-bold text-teal-600 border-l border-slate-200" title="납기 − EUV 35일 · H2D 20일 · 누르면 불출 완료">⚡ 하네스 불출</th>
