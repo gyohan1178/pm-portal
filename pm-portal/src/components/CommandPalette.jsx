@@ -59,7 +59,7 @@ function buildCommands() {
   push('생산', '생산 전광판', '/board', 'board jeongwangpan display')
   push('생산', '생산 관리', '/production/AX', 'production gwanri pdbox')
   push('생산', '도면 조회', '/drawings', 'drawing domyeon')
-  push('생산', '하네스 출도 · 불출', '/production/harness-release', 'harness chuldo bulchul')
+  push('자재', '하네스 출도 · 불출', '/production/harness-release', 'harness chuldo bulchul')
   push('생산', '생산관리 대상', '/production/targets', 'production targets daesang 품번 그룹')
   // 품질
   push('품질', '초도품 진행관리', '/quality/fa-progress', 'fa first article chodopum')

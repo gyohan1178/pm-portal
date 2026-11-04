@@ -163,6 +163,7 @@ export function canAccessSection(profile, key) {
 export function sectionOfPath(pathname) {
   if (pathname === '/' || pathname === '') return 'home'
   if (pathname === '/todo') return 'todo'
+  if (pathname === '/production/harness-release') return 'mat'   // 하네스 출도 · 불출 — 자재 메뉴 (v4.147.0, 예전 영업)
   if (pathname.startsWith('/production') || pathname === '/field-search' || pathname === '/board' || pathname === '/drawings' || pathname === '/material-request') return 'floor'
   if (pathname === '/inventory' || pathname === '/outbound' || pathname === '/outbound-history' || pathname === '/issue' || pathname === '/missing' || pathname === '/search' || pathname === '/rack-layout' || pathname === '/finder' || pathname === '/upload' || pathname.startsWith('/cell/') || pathname.startsWith('/rack/')) return 'mat'
   // 구매 — 입고·품목 단가 등록(/quote)

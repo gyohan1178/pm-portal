@@ -49,7 +49,7 @@ const PATH_LABELS = {
   'outbound-history': ['자재', '출고 현황'],
   'rack-layout':      ['자재', '창고 배치도'],
   'payment-plan':     ['구매', '결제 계획'],
-  'production/harness-release': ['영업', '하네스 출도·불출'],
+  'production/harness-release': ['자재', '하네스 출도·불출'],
   'sales-quote':      ['영업', '매출견적'],
   orders:             ['영업', '수주대장'],
   'material-request': ['현장', '자재 요청'],

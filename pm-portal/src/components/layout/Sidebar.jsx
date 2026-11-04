@@ -460,6 +460,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/outbound"  icon="📤" onNavigate={onNavigate}>ASSY 출고</MenuItem>
           <MenuItem to="/issue"     icon="🧺" onNavigate={onNavigate}>다품목 출고</MenuItem>
           <MenuItem to="/outbound-history" icon="📋" onNavigate={onNavigate}>출고 현황</MenuItem>
+          <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/rack-layout" icon="🗺" onNavigate={onNavigate}>창고 배치도</MenuItem>
         </CollapseSection>
         )}
@@ -483,7 +484,6 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         <CollapseSection mover={mv} label="🤝 영업" sKey="sales">
           <MenuItem to="/orders" icon="📨" onNavigate={onNavigate} badge={isPurchasing(profile) ? alerts['/orders'] : 0}>수주대장</MenuItem>
           <MenuItem to={`/customer/${pcs}/cpo`} icon="📑" onNavigate={onNavigate}>고객사 PO</MenuItem>
-          <MenuItem to="/production/harness-release" icon="🧵" onNavigate={onNavigate}>하네스 출도·불출</MenuItem>
           <MenuItem to="/sales-quote" icon="📤" onNavigate={onNavigate}>매출견적</MenuItem>
           <MenuItem to={`/customer/${pcs}/forecast`} icon="📈" onNavigate={onNavigate}>포캐스트</MenuItem>
           {!canAccessSection(profile, 'master') && <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>}
