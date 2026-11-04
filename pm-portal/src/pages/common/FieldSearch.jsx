@@ -13,6 +13,8 @@ import AutoInput from '../../components/AutoInput'
 import { ilikeAny } from '../../lib/pgFilter'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
 import { useCoach } from '../../components/ux/CoachMarks'
+import { downloadBomExcel, downloadBomCsv } from '../../lib/bomExport'
+import { toastError } from '../../lib/toast'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
 //    노출: 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM
@@ -359,6 +361,11 @@ export default function FieldSearch() {
                       <span className="font-mono font-bold text-indigo-600 text-sm">{bom.assembly.code}</span>
                       {bom.assembly.rev && <span className="text-[11px] text-slate-400">Rev {bom.assembly.rev}</span>}
                       <span className="ml-auto text-xs text-slate-400">{bom.rows.length}개 부품</span>
+                      {/* 내려받기 (v4.145.0) — 엑셀은 제목 · 머리글 고정 · 필터 · 레벨 들여쓰기 · 인쇄 한 폭 / CSV 는 칸만 */}
+                      <button type="button" data-fs-bom-xlsx onClick={() => downloadBomExcel(bom.assembly, bom.rows, dwMap).catch(e => toastError('엑셀 만들기 실패: ' + e.message))}
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
+                      <button type="button" data-fs-bom-csv onClick={() => downloadBomCsv(bom.assembly, bom.rows, dwMap)}
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">CSV</button>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full text-xs whitespace-nowrap">
