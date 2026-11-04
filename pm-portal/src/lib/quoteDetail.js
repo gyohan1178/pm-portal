@@ -46,7 +46,8 @@ export function buildDetail(line, opt = {}) {
   const f = scaled ? target / rawTotal : 1
   const rows = parts.map((p, i) => {
     const price = cents(rawUnit[i] * f, cur)
-    return { no: i + 1, std_code: p.std_code || '', name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur) }
+    return { no: i + 1, std_code: p.std_code || p.manufacturer_code || '',   // 부품표로 만든 줄(코드 없음)은 제조사품번 (v4.148.0)
+       name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur) }
   })
   const partsSum = cents(rows.reduce((a, r) => a + r.amount, 0), cur)
   let labor = rawLabor > 0 ? cents(rawLabor * f, cur) : 0   // 조립비도 계산 그대로 (부품 반올림 몇 원은 절삭 줄에 같이)

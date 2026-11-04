@@ -5,6 +5,8 @@ import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
 import { quoteFileBase } from '../../lib/quoteFileName'
 import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
+import QuotePartsModal from './QuotePartsModal'
+import { partsFromPaste } from '../../lib/quotePartsPaste'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
@@ -176,6 +178,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   const [history, setHistory] = useState({})
   const [savedNo, setSavedNo] = useState('')
   const [openParts, setOpenParts] = useState({})
+  const [partsOpen, setPartsOpen] = useState(false)   // 📋 부품표로 ASSY — 코드 부여 전 견적 (v4.148.0)
   // 마진 시뮬레이션 — 줄 key 또는 'all'(견적 전체)
   const [simFor, setSimFor] = useState(null)
   // 지난 견적 수정 중 — { id, quote_no, base, customer_id } (저장하면 base-Rn 으로 새로 저장)
@@ -433,6 +436,23 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     } catch (e) {
       setErr('조회 실패: ' + e.message)
     } finally { setAdding(false) }
+  }
+
+  // 부품표 붙여넣기로 만든 ASSY 줄 (v4.148.0) — BOM 없이 이 견적 안에서만 (부품 단가 · 제외는 「▼ 부품」에서)
+  function addPastedAssy({ code, name, qty, labor, matched }) {
+    const parts = partsFromPaste(matched)
+    const noPrice = parts.filter((x) => x.buyKrw == null).length
+    const ltMax = parts.reduce((a, x) => (x.lt == null ? a : Math.max(a, num(x.lt))), 0)
+    const nl = newLine({
+      kind: 'assy', std_code: code, description: name, unit: 'EA', qty,
+      materialKrw: round100(sumParts(parts)), laborKrw: labor, origin: 'dom',
+      noPrice, partCount: parts.length, lt: ltMax || null, parts, tempBom: true,
+    })
+    nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
+    setLines((ls) => [...ls, nl])
+    setOpenParts((o) => ({ ...o, [nl.key]: noPrice > 0 }))   // 단가 없는 부품이 있으면 부품표를 펼쳐 둔다
+    setPartsOpen(false)
+    toastSuccess(`「${name}」 부품 ${parts.length}개로 추가${noPrice ? ` — 단가 없음 ${noPrice}개는 부품표에서 적어 주세요` : ''}`)
   }
 
   const patch = (key, p) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...p } : l)))
@@ -1032,6 +1052,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </div>
       </div>
 
+      {partsOpen && <QuotePartsModal customerId={customerId} onClose={() => setPartsOpen(false)} onAdd={addPastedAssy} />}
       {/* 조작부 — 두 줄로 나눠 버튼 자리를 고정 (v4.140.0)
           예전엔 한 줄에 다 넣어서 세부견적 체크 · 글자 길이(임시저장/보관 갱신 · 인쇄/인쇄(갑지·을지))에 따라 버튼이 옮겨 다녔다
           ① 작성 — 언어 · 통화 · 품번 추가 · 마진구간 · 마진 시뮬레이션
@@ -1063,6 +1084,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           </button>
           <button onClick={() => setLines((ls) => [...ls, newLine()])}
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">+ 빈 줄</button>
+            <button onClick={() => setPartsOpen(true)} data-quote-parts-paste title="코드 부여 전 · BOM 등록 전 어셈블리 — 고객사 부품표를 붙여 실적가로 견적"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100">📋 부품표로 ASSY</button>
           <button onClick={openCfg} title="금액대별 마진율 · 기준 환율(모든 PC 공통)을 고칩니다"
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 마진구간</button>
           <div className="flex-1" />
@@ -1338,6 +1361,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5">
                     <input value={l.std_code} onChange={(e) => patch(l.key, { std_code: e.target.value })} className="qi font-mono w-full" />
                     {l.kind === 'assy' && <span className="no-print text-[10px] font-bold text-sky-600">ASSY</span>}
+                    {l.tempBom && <span className="no-print ml-1 text-[10px] font-bold text-violet-600" title="부품표 붙여넣기로 만든 줄 — BOM · 품목 등록 없음" data-temp-bom>부품표</span>}
                     {/* 어셈블리는 부품에서 뽑은 최장 납기를 보여주기만 하고,
                         단품은 여기가 유일한 입력 자리라 직접 적을 수 있게 둔다. */}
                     {l.kind === 'assy' ? (
