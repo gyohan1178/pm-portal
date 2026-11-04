@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.148.0'
+export const APP_VERSION = 'v4.148.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.148.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.148.1',
+    date: '2026-11-04',
+    changes: [
+      '고객사 PO 「🧺 장바구니 담기」 전개도 다품목 출고와 같은 함수(pm_explode_assy)로 — 예전엔 BOM 줄을 그대로 더해 상위 키트 · 하위가 같이 담기고 하위 수량에 상위 수량을 안 곱했다 (다품목 출고 2 배와 같은 원인 · SQL 다품목출고_전개_반영_261104.sql 실행 후 맞게 나옴)',
+    ],
+  },
   {
     version: 'v4.148.0',
     date: '2026-11-04',

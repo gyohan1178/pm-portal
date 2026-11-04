@@ -277,18 +277,19 @@ export default function CustomerPO() {
       const rows = []
       for (const p of pos) {
         const qty = (p.qty_remaining ?? p.qty_ordered) || 1
-        // 어셈블리 프로젝트 찾기: project_id 우선, 없으면 품목코드로 프로젝트 조회
-        let projId = p.project_id
-        if (!projId && p.items?.std_code) {
-          const { data: pj } = await supabase.from('projects').select('id').eq('code', p.items.std_code).maybeSingle()
-          projId = pj?.id
+        // 전개는 다품목 출고와 같은 함수(pm_explode_assy · v4.148.1) — 예전엔 BOM 줄을 그대로 더해
+        //   상위(L1) 밑에 하위(L2)가 있으면 상위 · 하위가 같이 담기고, 하위 수량에 상위 수량을 안 곱했다 (다품목 출고 2배와 같은 원인)
+        const code = p.projects?.code || p.items?.std_code
+        let ex = null
+        if (code && cs?.id) {
+          const { data, error } = await supabase.rpc('pm_explode_assy', { p_customer_id: cs.id, p_items: [{ code, qty: Number(qty) }] })
+          if (error) throw error
+          ex = data || []
         }
-        if (projId) {
-          const { data: bom } = await supabase.from('bom')
-            .select('qty_per_unit,item_id, items!bom_item_id_fkey(std_code,name,unit)').eq('project_id', projId)
-          for (const b of (bom || [])) {
-            if (!b.item_id) continue
-            rows.push({ customer_id: cs?.id, item_id: b.item_id, std_code: b.items?.std_code, name: b.items?.name, unit: b.items?.unit, qty: (Number(b.qty_per_unit) || 0) * qty, issue_qty: (Number(b.qty_per_unit) || 0) * qty, source: 'direct', po_id: p.id, issued: true })
+        if (ex?.length) {
+          for (const b of ex) {
+            if (!b.item_id || !(Number(b.qty) > 0)) continue
+            rows.push({ customer_id: cs?.id, item_id: b.item_id, std_code: b.std_code, name: b.name, unit: b.unit, qty: Number(b.qty), issue_qty: Number(b.qty), source: 'direct', po_id: p.id, issued: true })
           }
         } else if (p.item_id) {
           rows.push({ customer_id: cs?.id, item_id: p.item_id, std_code: p.items?.std_code, name: p.items?.name, unit: p.items?.unit, qty, issue_qty: qty, source: 'direct', po_id: p.id, issued: true })
