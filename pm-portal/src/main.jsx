@@ -7,6 +7,7 @@ import Toaster from './components/Toaster'
 import { toast } from './lib/toast'
 import './index.css'
 import { initScale } from './lib/viewPrefs'
+import { isNetErr, reportNetFail, reportNetOk, queryRetry, queryRetryDelay } from './lib/netStatus'
 
 // 화면 크기 (노트북이면 조금 작게) — 첫 화면부터 맞춘다 (v4.63.0)
 initScale()
@@ -21,17 +22,23 @@ const queryClient = new QueryClient({
   mutationCache: new MutationCache({
     // 화면에서 직접 오류를 알리는 작업(onError 있음)은 여기서 또 띄우지 않는다 — 같은 오류가 두 번 뜨던 문제
     onError: (err, _v, _c, mutation) => {
+      // 인터넷 끊김 (v4.154.0) — 위 「⚠ 인터넷 불안정」 줄을 켜고, 저장이 안 됐다고 알아듣게
+      if (isNetErr(err)) reportNetFail()
       if (mutation?.options?.onError) return
-      toast(err?.message || '작업 중 오류가 발생했습니다', 'error')
+      toast(isNetErr(err) ? '인터넷이 불안정해 저장하지 못했습니다 — 연결을 확인하고 다시 눌러 주세요' : (err?.message || '작업 중 오류가 발생했습니다'), 'error')
     },
+    onSuccess: () => reportNetOk(),
   }),
   queryCache: new QueryCache({
-    onError: (err) => toast(err?.message || '데이터 불러오기 오류', 'error'),
+    // 인터넷 끊김은 알림 대신 위 줄로 (다시 시도까지 다 실패한 뒤에만 옴) — 화면마다 빨간 알림이 쏟아지지 않게
+    onError: (err) => { if (isNetErr(err)) { reportNetFail(); return } toast(err?.message || '데이터 불러오기 오류', 'error') },
+    onSuccess: () => reportNetOk(),
   }),
   defaultOptions: {
     queries: {
       staleTime: 1000 * 60 * 5, // 5분
-      retry: 1,
+      retry: queryRetry,            // 인터넷 끊김이면 3번까지 (1 · 2 · 4초 뒤) · 서버 오류는 예전처럼 1번 (v4.154.0)
+      retryDelay: queryRetryDelay,
       refetchOnWindowFocus: false, // 창/탭 전환마다 재조회 방지 — 전환 즉각화 (mutation·수동갱신으로 신선도 유지)
     },
   },

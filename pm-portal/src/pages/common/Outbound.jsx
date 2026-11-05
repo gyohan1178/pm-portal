@@ -20,6 +20,7 @@ import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
 import { useDebounced } from '../../hooks/useDebounced'
 import { matcher } from '../../lib/searchMatch'
+import { withNetRetry, isNetErr } from '../../lib/netStatus'
 import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 
@@ -211,23 +212,40 @@ export default function Outbound() {
     })
   }
   // 위치(inventory.location) 저장 — 품목 기준이라 모든 BOM·현장검색에 자동 반영
+  // 위치 저장 (v4.154.0) — 인터넷이 끊기면 3번까지 다시 · 그래도 안 되면 칸에 「저장 안 됨」을 남기고(입력값 그대로)
+  //   다시 연결되면 저절로 한 번 더 · 저장되면 화면 위치도 바로 바꾼다 (다시 불러오기를 기다리지 않음)
+  const [locPend, setLocPend] = useState({})   // item_id → 저장 못 한 위치
+  const [locSaved, setLocSaved] = useState({}) // item_id → 방금 저장한 위치 (다시 불러오기 전 표시)
   async function saveLocation(bomItemId, location) {
     if (!guardEdit()) return
     const loc = (location || '').trim()
     // 같은품목 묶음 품번이면 위치는 대표 품번에 둔다 (재고가 거기 있다 · v4.131.0)
-    const item_id = await repId(bomItemId)
-    // upsert 는 빠뜨린 컬럼을 null 로 덮어써 수량이 지워진다.
-    //   있으면 위치만 고치고, 없을 때만 새로 만든다.
-    const { data: cur } = await supabase.from('inventory')
-      .select('item_id').eq('item_id', item_id).maybeSingle()
-    const { error } = cur
-      ? await supabase.from('inventory').update({ location: loc || null }).eq('item_id', item_id)
-      : await supabase.from('inventory').insert({ item_id, location: loc || null, qty: 0 })
-    if (error) { toastError('위치 저장 오류: ' + error.message); return }
-    qc.invalidateQueries(['outLocMeta'])
-    qc.invalidateQueries(['inventory'])
-    toastSuccess('위치 저장: ' + (loc || '(비움)'))
+    try {
+      const item_id = await repId(bomItemId)
+      // upsert 는 빠뜨린 컬럼을 null 로 덮어써 수량이 지워진다.
+      //   있으면 위치만 고치고, 없을 때만 새로 만든다.
+      const cur = await withNetRetry(() => supabase.from('inventory').select('item_id').eq('item_id', item_id).maybeSingle())
+      if (cur.error) throw cur.error
+      const { error } = await withNetRetry(() => cur.data
+        ? supabase.from('inventory').update({ location: loc || null }).eq('item_id', item_id)
+        : supabase.from('inventory').insert({ item_id, location: loc || null, qty: 0 }))
+      if (error) throw error
+      setLocPend(p => { const n = { ...p }; delete n[bomItemId]; return n })
+      setLocSaved(p => ({ ...p, [bomItemId]: loc }))
+      qc.invalidateQueries({ queryKey: ['outLocMeta'], exact: false })
+      qc.invalidateQueries({ queryKey: ['inventory'], exact: false })
+      toastSuccess('위치 저장: ' + (loc || '(비움)'))
+    } catch (e) {
+      setLocPend(p => ({ ...p, [bomItemId]: loc }))
+      toastError(isNetErr(e) ? `위치 저장 안 됨 (인터넷 불안정) — 「${loc || '비움'}」 은 칸에 남겨 두고 연결되면 다시 저장합니다` : '위치 저장 오류: ' + (e?.message || e))
+    }
   }
+  // 다시 연결되면 저장 못 한 위치를 한 번 더
+  useEffect(() => {
+    const f = () => { Object.entries(locPend).forEach(([id, loc]) => saveLocation(id, loc)) }
+    window.addEventListener('online', f)
+    return () => window.removeEventListener('online', f)
+  }, [locPend])   // eslint-disable-line react-hooks/exhaustive-deps
 
   const MT_LABEL = { normal: '전장', field_stock: '전장(현장재고)', harness: '하네스자재', exclude: '불출 미대상' }
   const MT_COLOR = { normal: 'text-slate-600 font-semibold', field_stock: 'text-teal-600 font-semibold', harness: 'text-amber-600 font-bold', exclude: 'text-slate-400 line-through' }
@@ -373,9 +391,28 @@ export default function Outbound() {
     queryKey: ['outLocMeta', outItemIds.join(',')],
     enabled: outItemIds.length>0,
     queryFn: async () => {
-      const { data: inv } = await invIn('item_id,location', outItemIds)
+      // 오류를 삼키지 않는다 (v4.154.0) — 예전엔 실패하면 위치가 전부 빈칸으로 보였다
+      const { data: inv, error } = await invIn('item_id,location', outItemIds)
+      if (error) throw error
       const m = {}
       ;(inv||[]).forEach(r => { if (r.location) m[r.item_id] = r.location })
+      return m
+    },
+  })
+  // 실사 때 센 칸 (v4.154.0) — 품목 위치가 비어 있으면 가장 최근 실사 칸을 보여 준다 (누르면 품목 위치로 저장)
+  //   실사(칸 순환 실사 · 예전 실사)는 실사 기록(pm_stock_audit)에만 칸이 남고 품목 위치(inventory.location)는 안 바뀐다
+  const noLocIds = useMemo(() => outItemIds.filter(id => !locMeta[id]), [outItemIds.join(','), locMeta])   // eslint-disable-line react-hooks/exhaustive-deps
+  const { data: auditLoc = {} } = useQuery({
+    queryKey: ['outAuditLoc', noLocIds.join(',')],
+    enabled: noLocIds.length > 0,
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () => {
+      const m = {}, at = {}
+      for (let i = 0; i < noLocIds.length; i += 150) {
+        const { data, error } = await supabase.from('pm_stock_audit').select('item_id,location,audit_date').in('item_id', noLocIds.slice(i, i + 150)).not('location', 'is', null)
+        if (error) throw error
+        ;(data || []).forEach(r => { const l = String(r.location || '').trim(); if (l && (!at[r.item_id] || String(r.audit_date) > at[r.item_id])) { m[r.item_id] = l; at[r.item_id] = String(r.audit_date) } })
+      }
       return m
     },
   })
@@ -419,7 +456,8 @@ export default function Outbound() {
         makerPn: b.items?.manufacturer_code || '',
         // 비고는 불출표에 그대로 적는다
         altNote: noteOf(id) || '',
-        location: locMeta[id] || '',
+        location: locSaved[id] ?? locMeta[id] ?? auditLoc[id] ?? '',
+        locSrc: locSaved[id] != null || locMeta[id] ? '' : auditLoc[id] ? 'audit' : '',
         // 라벨 출력 단위 — 행에 직접 담아야 새로고침 후에도 값이 살아난다
         label_mode: b.items?.label_mode ?? null,
         pack_qty: b.items?.pack_qty ?? null,
@@ -444,7 +482,7 @@ export default function Outbound() {
       (rank[mtOf(a.item_id)] - rank[mtOf(b.item_id)]) ||   // 하네스·제외는 하단
       cmp[sortBy](a,b)
     )
-  }, [bomItems, locMeta, makeTypes, sortBy])
+  }, [bomItems, locMeta, auditLoc, locSaved, makeTypes, sortBy])
 
   // 제조사 목록 (필터 드롭다운용)
   const makerList = useMemo(() => [...new Set(outOrder.map(o=>o.maker).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko')), [outOrder])
@@ -740,10 +778,17 @@ export default function Outbound() {
                           </td>
                           <td className="px-2 py-2 text-center text-slate-400" title="박스 불출표 번호">{sheetNo.get(item.item_id) || '—'}</td>
                           <td className="px-2 py-2">
-                            <input defaultValue={item.location||''} placeholder="위치"
-                              key={`loc-${item.item_id}-${item.location||''}`}
-                              onBlur={e=>{ if(e.target.value.trim()!==(item.location||'')) saveLocation(item.item_id, e.target.value) }}
-                              className="w-14 px-1 py-1 text-xs font-mono font-bold text-slate-700 border border-slate-200 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"/>
+                            {(() => { const pend = locPend[item.item_id]; const isAudit = item.locSrc === 'audit'; return (<>
+                            <input defaultValue={pend ?? (item.location||'')} placeholder="위치"
+                              key={`loc-${item.item_id}-${item.location||''}-${pend ?? ''}`}
+                              title={pend != null ? '저장 안 됨 (인터넷 불안정) — 칸을 눌렀다 나오면 다시 저장 · 연결되면 저절로' : isAudit ? '품목 위치는 비어 있고, 실사 때 이 칸에서 셌습니다 — ✓ 를 누르면 품목 위치로 저장' : ''}
+                              onBlur={e=>{ const v = e.target.value.trim(); if (pend != null ? true : (isAudit ? v !== item.location : v !== (item.location||''))) saveLocation(item.item_id, e.target.value) }}
+                              className={`w-14 px-1 py-1 text-xs font-mono font-bold border rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 ${pend != null ? 'border-rose-300 bg-rose-50 text-rose-700' : isAudit ? 'border-amber-300 bg-amber-50 text-amber-700' : 'border-slate-200 text-slate-700'}`} data-out-loc={item.item_id}/>
+                            {pend != null && <button onClick={e=>{ e.stopPropagation(); saveLocation(item.item_id, pend) }} onMouseDown={e=>e.stopPropagation()} data-out-loc-retry
+                              className="block mt-0.5 text-[10px] font-bold text-rose-600 hover:underline">저장 안 됨 ↻</button>}
+                            {isAudit && pend == null && <button onClick={e=>{ e.stopPropagation(); saveLocation(item.item_id, item.location) }} onMouseDown={e=>e.stopPropagation()} data-out-loc-adopt
+                              title="실사 때 센 칸을 품목 위치로 저장" className="block mt-0.5 text-[10px] font-bold text-amber-700 hover:underline">실사 칸 ✓ 저장</button>}
+                            </>) })()}
                           </td>
                           <td className="px-2 py-2 text-slate-500 truncate" title={item.cat||''}>{item.cat||'—'}</td>
                           {/* 제조사·제조사품번이 80/100px 로 못 박혀 있어 긴 것은 뒤가 안 보였다.

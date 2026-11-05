@@ -66,8 +66,16 @@ export async function invIn(cols, ids) {
   const m = await sameMap()
   const sel = /\bitem_id\b/.test(cols) ? cols : `item_id,${cols}`
   const ask = m.size ? [...new Set(list.map((id) => repOf(m, id)))] : list
-  const res = await supabase.from('inventory').select(sel).in('item_id', ask)
-  if (res.error || !m.size) return res
+  // v4.154.0 — 150개씩 나눠 묻는다. 한 번에 1,600개(110211211 BOM 등)를 넣으면 주소가 너무 길어 실패하고,
+  //   붙어도 1,000줄에서 잘려 위치 · 재고가 비어 보였다 (출고 화면 위치 안 보임 · 저장해도 안 된 것처럼 보임)
+  const rows = []
+  for (let i = 0; i < ask.length; i += 150) {
+    const r = await supabase.from('inventory').select(sel).in('item_id', ask.slice(i, i + 150))
+    if (r.error) return r
+    rows.push(...(r.data || []))
+  }
+  const res = { data: rows, error: null }
+  if (!m.size) return res
   const by = new Map()
   for (const r of res.data || []) if (!by.has(r.item_id)) by.set(r.item_id, r)
   const out = []

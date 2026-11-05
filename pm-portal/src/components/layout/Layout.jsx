@@ -5,6 +5,7 @@ import { supabase } from '../../lib/supabase'
 import Sidebar from './Sidebar'
 import SettingsModal from '../SettingsModal'
 import CommandPalette from '../CommandPalette'
+import NetBanner from '../NetBanner'
 import { getSidebarCollapsed, setSidebarCollapsed } from '../../lib/viewPrefs'
 
 const CUSTOMER_NAMES = { ax:'AXCELIS', ed:'Edwards', vm:'VM', csk:'CSK' }
@@ -196,6 +197,7 @@ export default function Layout({ profile }) {
             </div>
           )
         })()}
+        <NetBanner />
         <main className="pm-main flex-1 overflow-y-auto p-4 lg:p-5">
           <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">불러오는 중...</div>}>
             <Outlet />
