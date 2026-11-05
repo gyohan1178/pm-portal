@@ -18,6 +18,8 @@ import { invIn, repId } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { buildLabelZpl } from '../../lib/labelZpl'
 import { catOf } from '../../lib/utils'
+import { useDebounced } from '../../hooks/useDebounced'
+import { matcher } from '../../lib/searchMatch'
 import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 
@@ -106,7 +108,11 @@ export default function Outbound() {
         : b)   // outOrder 는 bomItems 에서 파생되므로 items 만 갱신하면 함께 반영됨
     })
   }
-  const [showAll, setShowAll] = useState(false)         // 제외 품목도 표시
+  // 보기 (v4.153.0) — 1,600줄짜리 BOM 정리용. 기본 = 출고 대상(소요 0 · 제외 빼고)
+  //   target 출고 대상 · normal 전장 · field_stock 현장재고 · harness 하네스 · zero 소요 0 · exclude 불출 미대상 · all 전체
+  const [view, setView] = useState('target')
+  const [bomQ, setBomQ] = useState('')
+  const dBomQ = useDebounced(bomQ, 200)
   const [selectedIds, setSelectedIds] = useState(new Set()) // 다중선택
   // 행을 눌러 고르고 끌어서 여러 줄을 한 번에.
   //   훅은 {id:true} 객체를 다루므로 Set 과 오가도록 감싼다.
@@ -255,7 +261,7 @@ export default function Outbound() {
     // 전장(normal)만 + 위치'라벨' 제외 + 미출력(none) 제외 + 수량 입력된 것만
     // ★ 라벨 NO 는 화면 목록(outItems)의 순번과 일치해야 현장에서 불출표와 대조된다.
     //   출력 대상만 다시 1,2,3... 매기면 하네스·미출력이 섞였을 때 번호가 어긋난다.
-    const noMap = new Map(outItems.map((o, i) => [o.item_id, i + 1]))
+    const noMap = sheetNo   // v4.153.0 — 불출표와 같은 번호 (보기 · 검색으로 줄을 숨겨도 번호는 그대로)
     const rows = outItems
       .filter(r => mtOf(r.item_id) === 'normal'
         && String(r.location||'').trim() !== '라벨'
@@ -444,13 +450,27 @@ export default function Outbound() {
   const makerList = useMemo(() => [...new Set(outOrder.map(o=>o.maker).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'ko')), [outOrder])
 
   // 화면 표시용 = 정렬 순서 + 필터 적용 (수량은 렌더에서 outQtys로)
+  //   소요 0 = BOM/대가 0 (문서 · 스펙 · 구매로 정한 상위의 하위 · 수량 0 참조 줄) — 불출할 것이 없어 기본으로 숨긴다
+  // 줄 번호 = 박스 불출표 번호 (불출 미대상만 빼고 전체 순서) — 보기 · 검색으로 숨겨도 현장 불출표 · 라벨과 같은 번호
+  //   v4.153.0 — 불출표에서 소요 0 줄(문서 · 스펙 · 수량 0 참조)은 뺀다 (출고 수량을 직접 넣은 줄은 남김)
+  const onSheet = (o) => mtOf(o.item_id) !== 'exclude' && (Number(o.bom_qty) > 0 || Number(outQtys[o.item_id]) > 0)
+  const sheetNo = useMemo(() => new Map(outOrder.filter(onSheet).map((o, i) => [o.item_id, i + 1])), [outOrder, makeTypes, outQtys])   // eslint-disable-line react-hooks/exhaustive-deps
+  const viewOf = (o) => (mtOf(o.item_id) === 'exclude' ? 'exclude' : !(Number(o.bom_qty) > 0) ? 'zero' : mtOf(o.item_id))
+  const viewCnt = useMemo(() => {
+    const c = { target: 0, normal: 0, field_stock: 0, harness: 0, zero: 0, exclude: 0, all: outOrder.length }
+    outOrder.forEach(o => { const v = viewOf(o); c[v] = (c[v] || 0) + 1; if (v !== 'zero' && v !== 'exclude') c.target++ })
+    return c
+  }, [outOrder, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
   const outItems = useMemo(() => {
     let rows = outOrder
-    if (!showAll) rows = rows.filter(o => mtOf(o.item_id) !== 'exclude')  // 기본: 제외만 숨김(전장·현장재고·하네스는 표시)
+    if (view === 'target') rows = rows.filter(o => !['zero', 'exclude'].includes(viewOf(o)))
+    else if (view !== 'all') rows = rows.filter(o => viewOf(o) === view)
     if (makerFilter === '__none__') rows = rows.filter(o => !o.maker)
     else if (makerFilter) rows = rows.filter(o => o.maker === makerFilter)
+    const m = matcher(dBomQ)   // 품번 · 품명 · 제조사 · 제조사품번 · 위치 · 비고 (낱말 여러 개 · 띄어쓰기 · 하이픈 무시)
+    if (m) rows = rows.filter(o => m([o.std_code, o.name, o.maker, o.makerPn, o.location, o.cat, noteOf(o.item_id)]))
     return rows
-  }, [outOrder, makerFilter, showAll, makeTypes])
+  }, [outOrder, makerFilter, view, dBomQ, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
   const noMakerCount = useMemo(() => outOrder.filter(o=>!o.maker).length, [outOrder])
 
   const round2 = (v) => { const n = Number(v); return isNaN(n) ? "" : Math.round(n * 100) / 100 }
@@ -509,7 +529,7 @@ export default function Outbound() {
   //     그런데 불출표에는 0으로 찍혀 현장에서 몇 개인지 알 수가 없었다.
   //     종이에는 BOM 소요(BOM/대 × 대수)를 적어 준다.
   function printIssueSheet() {
-    const rows = outOrder.filter(r => mtOf(r.item_id) !== 'exclude')
+    const rows = outOrder.filter(onSheet)   // 불출 미대상 · 소요 0 빼고 (v4.153.0) — 화면 번호(No)와 같은 순서
     if (!rows.length) { toastError('출력할 품목이 없습니다'); return }
     const qtyFn = r => {
       const out = Number(outQtys[r.item_id]) || 0
@@ -641,10 +661,6 @@ export default function Outbound() {
                         {noMakerCount>0 && <option value="__none__">⚠ 제조사 없음 ({noMakerCount})</option>}
                       </select>
                     )}
-                    <label className="flex items-center gap-1 text-xs font-semibold text-slate-500 cursor-pointer">
-                      <input type="checkbox" checked={showAll} onChange={e=>setShowAll(e.target.checked)} />
-                      제외 품목도 표시
-                    </label>
                     <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
                     <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
                     <button onClick={printOutLabels} title="전장 자재를 ZM400 라벨로 출력 (수량 입력된 것만, 라벨류·현장재고·하네스 제외)" className="text-xs font-bold text-white bg-teal-600 px-2.5 py-1 rounded hover:bg-teal-700">🏷 라벨 출력</button>
@@ -654,6 +670,27 @@ export default function Outbound() {
                       <button onClick={printHarnessSheet} title="하네스 제작구분 품목만, 입력 대수분" className="font-bold text-white bg-amber-600 px-2.5 py-1 rounded hover:bg-amber-700">🖨 하네스 불출표</button>
                     </span>
                   </div>
+                </div>
+              )}
+              {/* 보기 · 찾기 (v4.153.0) — 1,600줄짜리 BOM 을 출고 대상만 / 소요 0 만 / 구분별로 */}
+              {bomItems.length > 0 && (
+                <div className="flex items-center gap-2 flex-wrap" data-out-view>
+                  <div className="flex gap-0.5 bg-slate-100 rounded-lg p-0.5">
+                    {[['target','출고 대상','소요가 있는 줄 (불출 미대상 · 소요 0 빼고)'],['normal','전장',''],['field_stock','현장재고',''],['harness','하네스',''],
+                      ['zero','소요 0','BOM/대가 0 — 문서 · 스펙 · 구매로 정한 상위의 하위 · 수량 0 참조 줄 (불출할 것 없음)'],['exclude','불출 미대상','제작구분을 「불출 미대상」으로 정한 품목'],['all','전체','']].map(([k,l,t])=>(
+                      <button key={k} onClick={()=>{ setView(k); setSelectedIds(new Set()) }} title={t} data-out-view-btn={k}
+                        className={`px-2.5 py-1 text-[11.5px] font-bold rounded-md whitespace-nowrap ${view===k ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
+                        {l} <span className={`font-mono ${k==='zero'&&viewCnt.zero ? 'text-amber-600' : 'text-slate-400'}`}>{(viewCnt[k]||0).toLocaleString()}</span></button>
+                    ))}
+                  </div>
+                  <div className="relative">
+                    <input value={bomQ} onChange={e=>setBomQ(e.target.value)} data-out-bomq placeholder="품번 · 품명 · 제조사품번 · 위치 찾기"
+                      className="w-60 pl-7 pr-6 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500" />
+                    <span className="absolute left-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400">🔍</span>
+                    {bomQ && <button onClick={()=>setBomQ('')} className="absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-slate-400">✕</button>}
+                  </div>
+                  <span className="text-[11px] text-slate-400" data-out-shown>{outItems.length.toLocaleString()}줄 보는 중{view==='target' && viewCnt.zero ? ` · 소요 0 ${viewCnt.zero.toLocaleString()}줄 숨김` : ''}</span>
+                  <span className="text-[11px] text-slate-400 ml-auto" title="출고 처리는 보기와 상관없이 전체 BOM 기준 · 박스 불출표는 소요 0 · 불출 미대상을 빼고 화면 번호(No) 순서 그대로">보기만 바뀜 — 출고는 전체 · 불출표는 소요 0 빼고</span>
                 </div>
               )}
               {/* 제작구분 일괄 — BOM 이 열려 있으면 늘 보인다 (안 고르면 흐리게 · v4.151.0) */}
@@ -688,7 +725,7 @@ export default function Outbound() {
                 {() => (
                   <tbody>
                     {outItems.length===0
-                      ? <tr><td colSpan={14} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':'BOM 데이터가 없습니다'}</td></tr>
+                      ? <tr><td colSpan={14} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':bomItems.length?'이 보기 · 검색에 맞는 줄이 없습니다':'BOM 데이터가 없습니다'}</td></tr>
                       : outItems.map((item,idx)=>{
                         const mt = mtOf(item.item_id)
                         const dim = mt !== 'normal'
@@ -701,7 +738,7 @@ export default function Outbound() {
                             <input type="checkbox" checked={selectedIds.has(item.item_id)} readOnly
                               className="pointer-events-none" />
                           </td>
-                          <td className="px-2 py-2 text-center text-slate-400">{idx+1}</td>
+                          <td className="px-2 py-2 text-center text-slate-400" title="박스 불출표 번호">{sheetNo.get(item.item_id) || '—'}</td>
                           <td className="px-2 py-2">
                             <input defaultValue={item.location||''} placeholder="위치"
                               key={`loc-${item.item_id}-${item.location||''}`}
