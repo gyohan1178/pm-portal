@@ -7,6 +7,8 @@ import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useDebounced } from '../../hooks/useDebounced'
+import { useNarrow } from '../../hooks/useNarrow'
+import { matcher } from '../../lib/searchMatch'
 import { refreshProcurement } from '../../lib/refresh'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
@@ -174,6 +176,7 @@ export default function Inbound() {
   const [selCustomer, setSelCustomer] = useState('')
   const [selVendor, setSelVendor] = useState('')
   const [checked, setChecked] = useState({})
+  const narrow = useNarrow()   // 휴대폰 — 표 대신 카드 · 검색칸 크게 (v4.152.0)
   const [rowSearch, setRowSearch] = useState('')
   // 발주 목록이 많으면 한 글자마다 다시 거르느라 입력이 멈춘다
   const dRowSearch = useDebounced(rowSearch, 250)
@@ -390,11 +393,11 @@ export default function Inbound() {
 
   // 미입고 발주를 "품목 행"으로 나열 (검색 + 헤더 정렬) + 제조사/품번/코드/품명 검색
   const rows = useMemo(() => {
-    const q = dRowSearch.trim().toLowerCase()
-    const vq = vendorText.trim().toLowerCase()
     // 비고(발주 메모) · 발주번호로도 찾는다 — 세트로 묶어 낸 발주를 비고에 적은 이름으로 불러 본다
-    let list = !q ? pendingPOs : pendingPOs.filter(po => pendingHay(po).includes(q))
-    if (vq) list = list.filter(po => (po.vendors?.name||'').toLowerCase().includes(vq))
+    // v4.152.0 — 낱말 여러 개(모두 맞는 줄) · 띄어쓰기 · 하이픈 무시 · 구매처 이름도 같이 (「로이코 db25」)
+    const qm = matcher(dRowSearch), vm = matcher(vendorText)
+    let list = !qm ? pendingPOs : pendingPOs.filter(po => qm([pendingHay(po), po.vendors?.name]))
+    if (vm) list = list.filter(po => vm([po.vendors?.name]))
     const col = PROC_COLS.find(c => c.key === sort.key)
     if (col && col.get) {
       list = [...list].sort((a, b) => {
@@ -618,11 +621,16 @@ export default function Inbound() {
               setSelCustomer(v)
             }} />
             <input value={vendorText} onChange={e=>setVendorText(e.target.value)} placeholder="구매처명 검색"
-              className="w-36 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
-            <input value={rowSearch} onChange={e=>setRowSearch(e.target.value)}
-              placeholder="품번·품명·제조사·비고·발주번호 검색"
-              title="기준코드 · 품명 · 제조사 · 제조사품번 · 발주할 때 적은 비고(세트 이름 등) · 발주번호로 찾습니다"
-              className="w-60 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+              className="hidden md:block w-36 px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            {/* 휴대폰 — 검색칸을 한 줄 다 쓰게 크게 · 구매처 이름도 여기서 (v4.152.0) */}
+            <div className="relative order-first md:order-none w-full md:w-60">
+              <input type="search" enterKeyHint="search" value={rowSearch} onChange={e=>setRowSearch(e.target.value)} data-inb-search
+                placeholder={narrow ? '품번 · 품명 · 제조사품번 · 구매처 · 발주번호' : '품번·품명·제조사·비고·발주번호 검색'}
+                title="기준코드 · 품명 · 제조사 · 제조사품번 · 구매처 · 발주할 때 적은 비고(세트 이름 등) · 발주번호 — 낱말 여러 개는 모두 맞는 줄"
+                className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 max-md:h-11 max-md:pl-10 max-md:pr-10 max-md:text-base max-md:border-2 max-md:border-indigo-200 max-md:rounded-xl"/>
+              {narrow && <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>}
+              {narrow && rowSearch && <button onClick={()=>setRowSearch('')} aria-label="지우기" className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full text-slate-400 active:bg-slate-100">✕</button>}
+            </div>
             <span className="text-xs text-slate-400">입고일</span>
             <input type="date" value={inboundDate} onChange={e=>setInboundDate(e.target.value)}
               className={`px-2 py-1 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
@@ -649,6 +657,63 @@ export default function Inbound() {
               : (
                 <div className="flex-1 min-h-0 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
                   <div data-inb-table className="flex-1 min-h-0 overflow-auto">
+                    {narrow ? (
+                      /* 📱 휴대폰 카드 (v4.152.0) — 누르면 담기 · 담으면 입고 수량 · 단가 칸이 열림 */
+                      <div className="divide-y divide-slate-100 bg-white" data-inb-mlist>
+                        <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 text-xs text-slate-500">
+                          <label className="flex items-center gap-1.5 font-semibold"><input type="checkbox" className="w-4 h-4" checked={rows.length>0 && rows.every(r=>checked[r.id])} onChange={toggleAll} />전체</label>
+                          <span className="ml-auto">미입고 <b className="font-mono text-slate-700">{rows.length}</b>건</span>
+                        </div>
+                        {vis.shown.map(po=>{
+                          const on = !!checked[po.id]
+                          const due = po.vendor_date || po.promise_date
+                          const delayed = due && due < today
+                          const justDone = doneIds.has(po.id)
+                          const over = Number(inboundData[po.id]?.qty||0) > (po.qty_remaining||0)
+                          return (
+                            <div key={po.id} data-inb-card={po.id} data-inb-done={justDone ? '1' : undefined} onClick={() => !justDone && toggleRow(po)}
+                              className={`px-3 py-2.5 ${justDone ? 'pm-row-done' : on ? 'bg-indigo-50/70' : 'active:bg-slate-50'}`}>
+                              <div className="flex items-start gap-2.5">
+                                {justDone
+                                  ? <span className="mt-1 w-5 h-5 rounded-full bg-emerald-500 text-white text-[11px] flex items-center justify-center shrink-0">✓</span>
+                                  : <input type="checkbox" checked={on} readOnly className="mt-1 w-5 h-5 pointer-events-none shrink-0" />}
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-mono text-[13px] font-bold text-indigo-600 truncate">{po.items?.std_code}</span>
+                                    <span className={`ml-auto shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${delayed ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'}`}>{delayed ? '지연 · ' : ''}받을 날 {due ? String(due).slice(5) : '-'}{po.vendor_date ? ' (변경)' : ''}</span>
+                                  </div>
+                                  <div className="text-[13px] text-slate-700 truncate">{po.items?.name||''}</div>
+                                  {(po.items?.manufacturer || po.items?.manufacturer_code) && <div className="text-[12px] text-slate-500 truncate">{po.items?.manufacturer||'—'} · <span className="font-mono">{po.items?.manufacturer_code||''}</span></div>}
+                                  <div className="mt-0.5 flex flex-wrap gap-x-2 text-[12px] text-slate-500">
+                                    <span className="font-semibold text-slate-600">{po.vendors?.name||'-'}</span>
+                                    {po.po_number && <span className="font-mono">{po.po_number}</span>}
+                                    <span className="text-indigo-500 font-semibold">{po.customers?.code||''}</span>
+                                  </div>
+                                  {po.memo && <div className="mt-1 text-[11.5px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 truncate">{po.memo}</div>}
+                                  <div className="mt-1 flex items-center gap-3 text-[12px] text-slate-500">
+                                    <span>발주 <b className="font-mono text-slate-700">{po.qty_ordered}</b></span>
+                                    <span>입고 <b className="font-mono text-emerald-600">{po.qty_received}</b></span>
+                                    <span>미입고 <b className="font-mono text-slate-900">{po.qty_remaining}</b></span>
+                                  </div>
+                                  {on && (
+                                    <div className="mt-2 grid grid-cols-2 gap-2" onClick={e=>e.stopPropagation()} data-inb-card-inputs>
+                                      <label className="text-[11px] font-semibold text-slate-500">입고 수량
+                                        <input type="number" inputMode="decimal" min={0} value={inboundData[po.id]?.qty??''} onChange={e=>updateData(po.id,'qty',e.target.value)}
+                                          className={`mt-0.5 w-full h-10 px-2 text-base text-right border rounded-lg ${over ? 'border-amber-400 bg-amber-50' : 'border-slate-300'}`} />
+                                      </label>
+                                      <label className="text-[11px] font-semibold text-slate-500">단가
+                                        <input type="number" inputMode="decimal" min={0} value={inboundData[po.id]?.unit_price??''} onChange={e=>updateData(po.id,'unit_price',e.target.value)} placeholder={po.unit_price||'단가'}
+                                          className="mt-0.5 w-full h-10 px-2 text-base text-right border border-slate-300 rounded-lg" />
+                                      </label>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
                     <table className="w-full text-xs whitespace-nowrap">
                       <thead className="sticky top-0 z-10">
                         <tr className="bg-slate-100 border-b border-slate-200 text-slate-500">
@@ -717,6 +782,7 @@ export default function Inbound() {
                         })}
                       </tbody>
                     </table>
+                    )}
                     <MoreRows {...vis} />
                   </div>
 
