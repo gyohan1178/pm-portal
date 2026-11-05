@@ -214,8 +214,9 @@ export default function PurchasePage() {
   const [vendorSearch, setVendorSearch] = useState('')
   const [vendorOpen, setVendorOpen] = useState(false)
   const [checked, setChecked] = useState({})
-  const narrow = useNarrow()                    // 휴대폰 — 검색칸 위에 크게 · 표 대신 카드 (v4.152.0)
-  const [mMore, setMMore] = useState(false)     // 휴대폰 — 발주일 · 기간 조건 펼치기
+  const narrow = useNarrow()                    // 휴대폰 — 고객사별 발주 · 입고 확인만 (v4.152.1)
+  const [mStat, setMStat] = useState('open')    // 휴대폰 — open 미입고 · done 입고 완료 · all 전체 (v4.152.1)
+  useEffect(() => { if (narrow && tab !== 'po') setTab('po') }, [narrow])   // eslint-disable-line react-hooks/exhaustive-deps
   const [bulkPo, setBulkPo] = useState('')
   // 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다
   const [delAsk, setDelAsk] = useState(false)
@@ -254,6 +255,17 @@ export default function PurchasePage() {
   const markup = Number(curVendor?.markup) || 1.2
   const { data: purchases=[], isLoading, error } = useQuery({
     queryKey:['purchase',cs?.id], queryFn:()=>fetchPurchases(cs?.id), enabled:!!cs?.id,
+  })
+  // 📱 휴대폰 「입고 완료」 — 다 들어온 발주 (최근 120일 발주분 · v4.152.1). 진행 중 목록엔 완료가 빠져 있어서 따로 받는다
+  const { data: donePOs=[], isLoading: doneLoading } = useQuery({
+    queryKey:['purchaseDone',cs?.id], enabled:!!cs?.id && narrow && mStat!=='open', staleTime: 60*1000,
+    queryFn: async () => {
+      const from = ymdKST(new Date(Date.now() - 120*86400000))
+      return (await fetchAll(() => supabase.from('purchase_orders')
+        .select('*, items!purchase_orders_item_id_fkey(std_code,name,type,manufacturer,manufacturer_code,unit), vendors(name)')
+        .eq('customer_id', cs.id).eq('order_type','purchase').eq('status','완료').gte('order_date', from)
+        .order('order_date', { ascending: false }).order('id'))) || []
+    },
   })
   const { data: history=[], isLoading:histLoading } = useQuery({
     queryKey:['purchaseHist',cs?.id,hQuery],
@@ -787,6 +799,24 @@ export default function PurchasePage() {
   })
   const sortLabel = k => PO_COLS.find(c => c.key === k)?.label || k
   const checkedPOs = filtered.filter(p=>checked[p.id])
+  // 📱 휴대폰 목록 (v4.152.1) — 조건 칩 없이 검색만. 미입고 = 진행 중 발주 (받을 날 빠른 순) · 입고 완료 = 최근 다 들어온 것 (발주일 최근 순)
+  const mOpen = useMemo(() => (narrow ? purchases.filter(p => !qm || qm(poHay(p))) : []), [narrow, purchases, qm])
+  const mDone = useMemo(() => (narrow ? donePOs.filter(p => !qm || qm(poHay(p))) : []), [narrow, donePOs, qm])
+  const mRows = useMemo(() => (mStat === 'open' ? mOpen : mStat === 'done' ? mDone : [...mOpen, ...mDone]), [mStat, mOpen, mDone])
+  // 언제 들어왔나 — 화면에 보이는 발주의 마지막 입고일
+  const mIds = useMemo(() => mRows.slice(0, visibleCount).filter(p => Number(p.qty_received) > 0).map(p => p.id), [mRows, visibleCount])
+  const { data: mInDate = {} } = useQuery({
+    queryKey: ['purchaseLastIn', mIds.join(',')], enabled: narrow && mIds.length > 0, staleTime: 60 * 1000,
+    queryFn: async () => {
+      const out = {}
+      for (let i = 0; i < mIds.length; i += 150) {
+        const { data, error } = await supabase.from('stock_movements').select('po_id,movement_date').eq('movement_type', '입고').in('po_id', mIds.slice(i, i + 150))
+        if (error) throw error
+        ;(data || []).forEach(r => { if (!out[r.po_id] || String(r.movement_date) > String(out[r.po_id])) out[r.po_id] = r.movement_date })
+      }
+      return out
+    },
+  })
   // 발주 → 입고: 입고 화면을 고른 발주가 체크된 채로 연다 (잔량 있는 것만)
   function goInbound(list) {
     const ids = list.filter(p => Number(p.qty_remaining) > 0).map(p => p.id).slice(0, 200)
@@ -923,8 +953,8 @@ export default function PurchasePage() {
     <div className="space-y-4">
       {confirmEl}
       <PageHead crumb={`${cs?.name || ''} · 구매`} title="구매발주"
-        desc="발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다.">
-        {tab==='po' && <>
+        desc={narrow ? '고객사별로 발주했는지 · 입고됐는지 확인합니다' : "발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다."}>
+        {tab==='po' && !narrow && <>
           <button data-po-excel onClick={exportStatusExcel} title="현재 목록(검색/필터 적용)을 엑셀로 — 구매처 피드백 요청용"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
             📥 현황 엑셀
@@ -941,7 +971,7 @@ export default function PurchasePage() {
       </PageHead>
       <div className="flex items-center gap-3 flex-wrap justify-between">
         <CustomerTabs flush />
-        <div className="flex gap-1 bg-slate-100 rounded-xl p-1">
+        <div className={`flex gap-1 bg-slate-100 rounded-xl p-1 ${narrow ? 'hidden' : ''}`}>
           {[['po','📋 구매발주'],['history','📊 구매현황'],['proposal','📝 품의서']].map(([k,l])=>(
             <button key={k} onClick={()=>setTab(k)}
               className={`px-4 py-1.5 text-xs font-semibold rounded-lg transition-all ${tab===k?'bg-white text-slate-900 shadow-sm':'text-slate-500 hover:text-slate-700'}`}>{l}</button>
@@ -1371,47 +1401,23 @@ export default function PurchasePage() {
 
           {/* 조회 조건 + 선택한 건 일괄 작업 — 표 바로 위 한 카드 (선택 줄은 늘 같은 자리라 표가 밀리지 않는다) */}
           {narrow ? (
-            /* 📱 휴대폰 (v4.152.0) — 검색칸을 맨 위에 크게 · 화면을 내려도 붙어 있음 · 조건은 옆으로 미는 칩 */
+            /* 📱 휴대폰 (v4.152.1) — 고객사별 발주했는지 · 입고됐는지만. 검색칸 맨 위 · 화면을 내려도 붙어 있음 */
             <div className="sticky top-0 z-20 -mx-1 px-1 pt-1 pb-2 bg-[#f7f8fb]" data-po-mfilter>
               <div className="rounded-xl border border-slate-200 bg-white p-2.5 space-y-2 shadow-sm">
                 <div className="relative">
                   <input type="search" enterKeyHint="search" value={search} onChange={e=>setSearch(e.target.value)} data-po-msearch
-                    placeholder="품번 · 품명 · 제조사품번 · 거래처 · 발주번호"
+                    placeholder="품번 · 품명 · 제조사품번 · 구매처 · 발주번호"
                     className="w-full h-11 pl-10 pr-10 text-base border-2 border-indigo-200 rounded-xl bg-white focus:outline-none focus:border-indigo-500" />
                   <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400">🔍</span>
                   {search && <button onClick={()=>setSearch('')} aria-label="지우기" className="absolute right-1.5 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full text-slate-400 active:bg-slate-100">✕</button>}
                 </div>
-                <div className="flex gap-1.5 overflow-x-auto -mx-2.5 px-2.5 pb-0.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden" data-po-mchips>
-                  {['전체','가공','자재'].map(t=>(
-                    <button key={t} onClick={()=>setTypeTab(t)} data-po-mtype={t}
-                      className={`shrink-0 px-3 h-8 rounded-full text-[13px] font-bold border whitespace-nowrap ${typeTab===t?'bg-slate-800 border-slate-800 text-white':'bg-white border-slate-200 text-slate-600'}`}>{t}</button>
-                  ))}
-                  <span className="shrink-0 w-px my-1.5 bg-slate-200" />
-                  {[['','납기 전체'],['over','지남'],['vchg','변경 약속'],['d7','7일 안'],['d14','14일 안'],['month','이달'],['next','다음달'],['range','기간']].map(([k,l])=>(
-                    <button key={k||'all'} onClick={()=>{ setDueFilter(k); if (k==='range') setMMore(true) }} data-po-mdue={k}
-                      className={`shrink-0 px-3 h-8 rounded-full text-[13px] font-bold border whitespace-nowrap ${dueFilter===k
-                        ? (k==='over' ? 'bg-rose-500 border-rose-500 text-white' : 'bg-indigo-600 border-indigo-600 text-white')
-                        : 'bg-white border-slate-200 text-slate-600'}`}>{l}{['over','d7','vchg'].includes(k) && dueCount[k]>0 && <span className={`ml-1 font-mono ${dueFilter===k?'':'text-rose-500'}`}>{dueCount[k]}</span>}</button>
+                <div className="grid grid-cols-3 gap-1 bg-slate-100 rounded-xl p-1" data-po-mstat>
+                  {[['open','미입고',mOpen.length],['done','입고 완료',mStat==='open'?null:mDone.length],['all','전체',null]].map(([k,l,c])=>(
+                    <button key={k} onClick={()=>setMStat(k)} data-po-mstat-btn={k}
+                      className={`h-9 rounded-lg text-[13px] font-bold ${mStat===k?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>{l}{c!=null && <span className="ml-1 font-mono text-[12px] text-slate-400">{c.toLocaleString()}</span>}</button>
                   ))}
                 </div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-slate-500" data-po-mcount><b className="text-slate-800 font-mono">{filtered.length.toLocaleString()}</b>건{q ? ' · 검색 중' : ''} · 미입고 <b className="font-mono text-emerald-700">{filtered.reduce((a,p)=>a+(Number(p.qty_remaining)||0),0).toLocaleString()}</b>{filterOrderDate ? ` · 발주일 ${filterOrderDate.slice(5)}` : ''}</span>
-                  <button onClick={()=>setMMore(v=>!v)} className="px-2 py-1 rounded-lg text-slate-500 font-semibold active:bg-slate-100" data-po-mmore>⚙ 발주일 · 기간 {mMore ? '▲' : '▼'}</button>
-                </div>
-                {mMore && (
-                  <div className="space-y-2 pt-1 border-t border-slate-100" data-po-mmore-box>
-                    <label className="flex items-center gap-2 text-xs font-semibold text-slate-500">발주일
-                      <input type="date" value={filterOrderDate} onChange={e=>setFilterOrderDate(e.target.value)} className="flex-1 h-9 px-2 text-sm border border-slate-200 rounded-lg" />
-                      {filterOrderDate && <button onClick={()=>setFilterOrderDate('')} className="px-2 text-slate-400">✕</button>}
-                    </label>
-                    {dueFilter==='range' && (
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500">받을 날
-                        <input type="date" value={dueFrom} onChange={e=>setDueFrom(e.target.value)} className="flex-1 min-w-0 h-9 px-1.5 text-sm border border-slate-200 rounded-lg" />~
-                        <input type="date" value={dueTo} onChange={e=>setDueTo(e.target.value)} className="flex-1 min-w-0 h-9 px-1.5 text-sm border border-slate-200 rounded-lg" />
-                      </div>
-                    )}
-                  </div>
-                )}
+                {mStat!=='open' && <p className="text-[11px] text-slate-400">입고 완료 = 최근 120일 안에 낸 발주 중 다 들어온 것</p>}
               </div>
             </div>
           ) : (
@@ -1563,62 +1569,42 @@ export default function PurchasePage() {
               </div>
             )}
             {narrow ? (
-              /* 📱 휴대폰 카드 (v4.152.0) — 누르면 체크 · 받을 날 · 미입고를 한눈에 */
-              <div className={`space-y-2 ${checkedPOs.length ? 'pb-24' : ''}`} data-po-mlist>
-                {filtered.length===0 && <div className="py-10 text-center text-sm text-slate-400">{q ? `「${search.trim()}」 — 맞는 발주가 없습니다` : '구매 발주가 없습니다'}</div>}
-                {sorted.slice(0, visibleCount).map(p=>{
+              /* 📱 휴대폰 카드 (v4.152.1) — 보기만: 발주했나 · 얼마나 들어왔나 · 언제 들어왔나 */
+              <div className="space-y-2" data-po-mlist>
+                {mStat!=='open' && doneLoading && <div className="py-6 text-center text-sm text-slate-400">입고 완료 발주를 불러오는 중…</div>}
+                {!mRows.length && !(mStat!=='open' && doneLoading) && <div className="py-10 text-center text-sm text-slate-400">{q ? `「${search.trim()}」 — 맞는 발주가 없습니다` : mStat==='done' ? '최근 다 들어온 발주가 없습니다' : '진행 중인 발주가 없습니다'}</div>}
+                {mRows.slice(0, visibleCount).map(p=>{
+                  const done=p.status==='완료' || (Number(p.qty_remaining)||0)<=0
+                  const part=!done && Number(p.qty_received)>0
                   const due=dueOf(p)
                   const diff=due?Math.round((new Date(due)-new Date(today))/86400000):null
-                  const on=!!checked[p.id]
-                  const left=Number(p.qty_remaining)||0
+                  const lastIn=mInDate[p.id]
                   return (
-                    <div key={p.id} data-po-card={p.id} onClick={()=>setChecked(prev=>({...prev,[p.id]:!prev[p.id]}))}
-                      className={`rounded-xl border bg-white px-3 py-2.5 active:bg-slate-50 ${on?'border-indigo-400 ring-2 ring-indigo-100 bg-indigo-50/40':p.isDelayed?'border-rose-200':'border-slate-200'}`}>
-                      <div className="flex items-start gap-2.5">
-                        <input type="checkbox" checked={on} readOnly className="mt-1 w-5 h-5 accent-indigo-600 pointer-events-none shrink-0" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-mono text-[13px] font-bold text-indigo-600 truncate">{p.items?.std_code||'-'}</span>
-                            {p.item_rev && <span className="text-[10px] font-bold text-violet-600 shrink-0">REV {p.item_rev}</span>}
-                            <span className={`ml-auto shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${left<=0?'bg-emerald-50 text-emerald-700':diff==null?'bg-slate-100 text-slate-500':diff<0?'bg-rose-50 text-rose-600':diff<=7?'bg-amber-50 text-amber-700':'bg-slate-100 text-slate-600'}`} data-po-card-due>
-                              {left<=0?'입고 완료':diff==null?'납기 없음':diff<0?`${-diff}일 지남`:diff===0?'오늘':`D-${diff}`}</span>
-                          </div>
-                          <div className="text-[13px] text-slate-700 truncate">{p.items?.name||''}</div>
-                          {(p.items?.manufacturer||p.items?.manufacturer_code) && <div className="text-[12px] text-slate-500 truncate">{p.items?.manufacturer||'—'} · <span className="font-mono">{p.items?.manufacturer_code||''}</span></div>}
-                          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-500">
-                            <span className="font-semibold text-slate-600">{p.vendors?.name||'구매처 미정'}</span>
-                            <span className="font-mono">{p.po_number||'번호 없음'}</span>
-                            <span>발주 {String(p.order_date||'').slice(2)||'-'}</span>
-                          </div>
-                          <div className="mt-1.5 flex items-center gap-3 text-[12px]">
-                            <span className="text-slate-500">발주 <b className="font-mono text-slate-700">{p.qty_ordered}</b></span>
-                            <span className="text-slate-500">입고 <b className="font-mono text-emerald-600">{p.qty_received}</b></span>
-                            <span className="text-slate-500">미입고 <b className="font-mono text-slate-900">{p.qty_remaining}</b></span>
-                            <span className={`ml-auto font-mono ${diff!==null&&diff<0?'text-rose-600 font-bold':'text-slate-500'}`}>받을 날 {due?String(due).slice(5):'-'}{p.vendor_date ? <span className="text-amber-700"> (변경)</span> : ''}</span>
-                          </div>
-                          {p.memo && <div className="mt-1 text-[11.5px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 truncate">{p.memo}</div>}
-                          <div className="mt-2 flex gap-1.5" onClick={e=>e.stopPropagation()}>
-                            {left>0 && <button onClick={()=>goInbound([p])} className="px-3 h-8 rounded-lg text-xs font-bold border border-emerald-300 text-emerald-700 bg-emerald-50" data-po-card-inbound>📥 입고</button>}
-                            <button onClick={()=>setDueDlg([p])} className="px-3 h-8 rounded-lg text-xs font-bold border border-amber-200 text-amber-700 bg-white">📅 납기</button>
-                            <button onClick={()=>handleEdit(p)} className="px-3 h-8 rounded-lg text-xs font-bold border border-slate-200 text-slate-600 bg-white">수정</button>
-                          </div>
-                        </div>
+                    <div key={p.id} data-po-card={p.id} className={`rounded-xl border bg-white px-3 py-2.5 ${done?'border-emerald-200':!done&&diff!=null&&diff<0?'border-rose-200':'border-slate-200'}`}>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-[13px] font-bold text-indigo-600 truncate">{p.items?.std_code||'-'}</span>
+                        {p.item_rev && <span className="text-[10px] font-bold text-violet-600 shrink-0">REV {p.item_rev}</span>}
+                        <span data-po-card-stat className={`ml-auto shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${done?'bg-emerald-50 text-emerald-700':part?'bg-sky-50 text-sky-700':'bg-slate-100 text-slate-600'}`}>
+                          {done?'✔ 입고 완료':part?`부분 입고 ${p.qty_received}/${p.qty_ordered}`:'미입고'}</span>
                       </div>
+                      <div className="text-[13px] text-slate-700 truncate">{p.items?.name||''}</div>
+                      {(p.items?.manufacturer||p.items?.manufacturer_code) && <div className="text-[12px] text-slate-500 truncate">{p.items?.manufacturer||'—'} · <span className="font-mono">{p.items?.manufacturer_code||''}</span></div>}
+                      <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-500">
+                        <span className="font-semibold text-slate-600">{p.vendors?.name||'구매처 미정'}</span>
+                        <span className="font-mono">{p.po_number||'번호 없음'}</span>
+                      </div>
+                      <div className="mt-1.5 grid grid-cols-3 gap-1 text-[12px]">
+                        <span className="text-slate-500">발주 <b className="font-mono text-slate-700">{String(p.order_date||'').slice(5)||'-'}</b> · <b className="font-mono text-slate-700">{p.qty_ordered}</b></span>
+                        <span className="text-slate-500 text-center">입고 <b className="font-mono text-emerald-600">{lastIn?String(lastIn).slice(5):'-'}</b>{Number(p.qty_received)>0 && <> · <b className="font-mono text-emerald-600">{p.qty_received}</b></>}</span>
+                        <span className={`text-right ${done?'text-slate-400':diff!=null&&diff<0?'text-rose-600 font-bold':'text-slate-500'}`}>{done?'':<>받을 날 <b className="font-mono">{due?String(due).slice(5):'-'}</b>{diff!=null&&diff<0?' 지남':''}</>}</span>
+                      </div>
+                      {p.memo && <div className="mt-1 text-[11.5px] text-amber-700 bg-amber-50 rounded px-1.5 py-0.5 truncate">{p.memo}</div>}
                     </div>
                   )
                 })}
-                {sorted.length > visibleCount && (
+                {mRows.length > visibleCount && (
                   <button onClick={()=>setVisibleCount(v=>v+100)} className="w-full h-11 rounded-xl border border-slate-200 bg-white text-sm font-bold text-slate-600">
-                    더 보기 ({visibleCount.toLocaleString()} / {sorted.length.toLocaleString()})</button>
-                )}
-                {/* 고른 발주 — 화면 아래에 떠 있는 줄 (목록을 밀지 않음) */}
-                {checkedPOs.length > 0 && (
-                  <div className="fixed bottom-0 inset-x-0 z-30 bg-white border-t border-slate-200 shadow-[0_-6px_16px_-8px_rgba(15,23,42,0.3)] px-3 py-2.5 flex items-center gap-2" style={{ paddingBottom: 'calc(env(safe-area-inset-bottom) + 10px)' }} data-po-mbar>
-                    <b className="text-sm text-indigo-700 whitespace-nowrap">{checkedPOs.length}건</b>
-                    <button onClick={()=>goInbound(checkedPOs)} disabled={!checkedPOs.some(p=>Number(p.qty_remaining)>0)} className="flex-1 h-10 rounded-lg text-sm font-bold bg-emerald-600 text-white disabled:opacity-40">📥 입고 처리</button>
-                    <button onClick={()=>setDueDlg(checkedPOs)} className="flex-1 h-10 rounded-lg text-sm font-bold border border-amber-300 text-amber-700 bg-amber-50">📅 납기 변경</button>
-                    <button onClick={()=>setChecked({})} className="h-10 px-2 text-xs text-slate-500">해제</button>
-                  </div>
+                    더 보기 ({visibleCount.toLocaleString()} / {mRows.length.toLocaleString()})</button>
                 )}
               </div>
             ) : (
