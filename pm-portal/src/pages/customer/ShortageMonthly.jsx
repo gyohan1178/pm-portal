@@ -326,28 +326,29 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
 
         <span className="text-xs text-slate-400 whitespace-nowrap">{filtered.length}건</span>
         <button onClick={exportShortageExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">📥 엑셀</button>
-        {selEx.size > 0 && (
-          <button onClick={async () => {
+        {/* v4.151.0 — 늘 같은 자리 (안 고르면 흐리게) */}
+        {(
+          <button disabled={!selEx.size} onClick={async () => {
               const pick = items.filter(it => selEx.has(it.item_id))
               if (!(await ask({ title: `선택한 ${selEx.size}건을 재고관리 제외할까요?`, desc: '부족 목록에서 바로 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.',
                 items: pick.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''}`), more: Math.max(0, pick.length - 5),
                 okText: '재고관리 제외', danger: true }))) return
               bulkExclude()
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 whitespace-nowrap">
-            ✕ 선택 제외 ({selEx.size})
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed min-w-[104px] justify-center">
+            ✕ 선택 제외{selEx.size ? ` ${selEx.size}` : ''}
           </button>
         )}
-        {checkedItems.length > 0 && (
+        {(
           <button onClick={async () => {
               const sel = checkedItems
               if (await ask({ title: `${sel.length}건 구매발주를 생성할까요?`, desc: '발주필요 수량으로 만들어집니다. 발주번호 · 납기 · 단가는 구매발주 화면에서 채웁니다.',
                 items: sel.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''} · ${it.orderNeed}${it.unit || ''}`), more: Math.max(0, sel.length - 5),
                 okText: '발주 생성' })) orderMut.mutate(sel)
             }}
-            disabled={orderMut.isPending}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
-            {orderMut.isPending && <Spin />}🛒 발주 생성 ({checkedItems.length})
+            disabled={!checkedItems.length || orderMut.isPending}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed min-w-[112px] justify-center">
+            {orderMut.isPending && <Spin />}🛒 발주 생성{checkedItems.length ? ` ${checkedItems.length}` : ''}
           </button>
         )}
       </div>

@@ -656,9 +656,11 @@ export default function Outbound() {
                   </div>
                 </div>
               )}
-              {selectedIds.size > 0 && (
-                <div className="flex items-center gap-2 px-3 py-2 mb-2 rounded-lg bg-indigo-50 border border-indigo-200 text-xs">
-                  <span className="font-bold text-indigo-700">{selectedIds.size}개 선택</span>
+              {/* 제작구분 일괄 — BOM 이 열려 있으면 늘 보인다 (안 고르면 흐리게 · v4.151.0) */}
+              {outItems.length > 0 && (
+                <div className={`flex items-center gap-2 px-3 py-2 mb-2 rounded-lg border text-xs ${selectedIds.size ? 'bg-indigo-50 border-indigo-200' : 'bg-slate-50/60 border-slate-200'}`} data-out-mtbar>
+                  <span className="whitespace-nowrap" style={{ width: 64 }}>{selectedIds.size ? <b className="text-indigo-700">{selectedIds.size}개 선택</b> : <span className="text-slate-400">줄을 체크</span>}</span>
+                  <fieldset disabled={!selectedIds.size} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_input:disabled]:opacity-40">
                   <span className="text-slate-500">→ 제작구분 일괄:</span>
                   <button onClick={()=>{ saveMakeType([...selectedIds],'normal'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-slate-300 text-slate-700 font-semibold hover:bg-slate-50">전장</button>
                   <button onClick={()=>{ saveMakeType([...selectedIds],'field_stock'); setSelectedIds(new Set()) }} className="px-2 py-1 rounded bg-white border border-teal-200 text-teal-600 font-semibold hover:bg-teal-50">전장(현장재고)</button>
@@ -667,6 +669,7 @@ export default function Outbound() {
                   <input placeholder="비고 일괄입력 후 Enter" onKeyDown={e=>{ if(e.key==='Enter'){ saveMakeType([...selectedIds], mtOf([...selectedIds][0]), e.target.value); e.target.value=''; } }}
                     className="ml-2 px-2 py-1 border border-slate-200 rounded flex-1 min-w-[120px]" />
                   <button onClick={()=>setSelectedIds(new Set())} className="text-slate-400 hover:text-slate-600">선택해제</button>
+                  </fieldset>
                 </div>
               )}
               <ResizableTable cols={OUT_COLS} storageKey="outbound_bom_cols" fill={outItems.length > 0} fillMin={300}

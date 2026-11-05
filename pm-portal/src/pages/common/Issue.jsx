@@ -776,9 +776,7 @@ export default function Issue() {
           {itemHits.length > 0 && (
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
               <span>누르면 1개 담기 · 왼쪽 네모로 여러 개 골라 한 번에</span>
-              {hitSel.size > 0 && (
-                <button data-issue-pickmany onClick={pickMany} className="ml-auto px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-600 text-white">선택 {hitSel.size}개 담기</button>
-              )}
+              <button data-issue-pickmany onClick={pickMany} disabled={!hitSel.size} className="ml-auto min-w-[108px] px-2.5 py-1 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:bg-slate-100 disabled:text-slate-300 disabled:cursor-not-allowed">{hitSel.size ? `선택 ${hitSel.size}개 담기` : '선택 담기'}</button>
             </div>
           )}
           {itemHits.length > 0 && (

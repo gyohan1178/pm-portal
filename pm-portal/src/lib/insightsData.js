@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase'
+import { fetchShortageFolded } from './controlTowerData'
 
 async function pageAll(table, select, build) {
   // 총 개수 먼저 → 페이지 병렬 요청 (순차 왕복 제거)
@@ -24,7 +25,8 @@ export async function fetchInsightsData() {
     pageAll('purchase_orders', '*'),
     pageAll('production', '*'),
     supabase.from('stock_movements').select('*').eq('movement_type', '입고').limit(2000).then(r => r.data || []).catch(() => []),
-    pageAll('forecast_shortage_cache', 'item_id,year_month,projected'),
+    // 부족 품목 — 서버가 품목별로 묶은 요약 (v4.151.0 · 함수 없으면 예전처럼 계산표 전부)
+    fetchShortageFolded(null).then(r => r || pageAll('forecast_shortage_cache', 'item_id,year_month,projected')),
   ])
   return { priceRows, vendors, pos, prod, inbound, shortage }
 }

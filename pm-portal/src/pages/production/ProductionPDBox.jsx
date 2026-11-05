@@ -358,7 +358,10 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         if (r0) await runAuto({ ...r0, [field]: value })
       }
     },
-    onSuccess: () => qc.invalidateQueries(['production', csCode]),
+    onSuccess: (_, v) => {
+      qc.invalidateQueries(['production', csCode])
+      if (v?.field === 'part_issue') qc.invalidateQueries({ queryKey: ['lineProdMap'] })   // 수주대장 「📦 불출 ✔」도 바로 (v4.151.0)
+    },
     onError: (e) => toastError('변경 오류: ' + e.message),
   })
 
@@ -924,9 +927,11 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
         </div>
         : <><p className="sm:hidden text-[11px] text-slate-400 mb-1.5">← 좌우로 밀어서 상태·공정 전체 보기</p>
           {/* 고른 호기 일괄 작업 — 표 위 (표 안에 두면 스크롤할 때 머리글을 가린다, v4.64.0) */}
-          {view === 'list' && sel.size > 0 && (
-            <div className="flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl border border-indigo-200 bg-indigo-50/60">
-              <span className="text-xs font-bold text-indigo-700">✓ {sel.size}건 선택</span>
+          {/* v4.151.0 — 일괄 작업 줄은 목록에서 늘 보인다 (안 고르면 흐리게). 예전엔 고를 때 생겨 표가 아래로 밀렸다 */}
+          {view === 'list' && (() => { const has = sel.size > 0; return (
+            <div className={`flex items-center gap-2 flex-wrap px-3 py-2 mb-2 rounded-xl border ${has ? 'border-indigo-200 bg-indigo-50/60' : 'border-slate-200 bg-slate-50/60'}`} data-pd-bulkbar>
+              <span className="text-xs whitespace-nowrap" style={{ width: 92 }} data-pd-selcount>{has ? <b className="text-indigo-700">✓ {sel.size}건 선택</b> : <span className="text-slate-400">호기를 체크</span>}</span>
+              <fieldset disabled={!has} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
               <select value={bulkField} onChange={e=>setBulkField(e.target.value)}
                 className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400">
                 <option value="arrival_date">{isED ? '⚙ Frame 입고 (확정)' : '⚙ 가공물 입고예정'}</option>
@@ -981,12 +986,13 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                 className="px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100">⚠ 미불출 일괄</button>
               <button onClick={printWo} disabled={!!woRows} title="고른 호기의 작업지시서를 QR 과 함께 A4 로 인쇄합니다"
                 className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-white hover:bg-violet-50 disabled:opacity-40">
-                {woRows ? <span className="inline-flex items-center gap-1.5"><Spin />QR 만드는 중…</span> : `🖨 작업지시서 (${sel.size})`}
+                {woRows ? <span className="inline-flex items-center gap-1.5"><Spin />QR 만드는 중…</span> : '🖨 작업지시서'}
               </button>
               <button onClick={()=>setSel(new Set())}
                 className="ml-auto px-2.5 py-1.5 text-xs font-semibold rounded-lg text-slate-400 hover:text-slate-600">선택 해제</button>
+              </fieldset>
             </div>
-          )}
+          ) })()}
           {/* 리스트는 화면에 남은 높이를 다 쓰고 표 안에서 스크롤 — 머리글 고정 (노트북, v4.64.0) */}
           <div ref={listRef} data-pd-list className={`${view === 'list' && listH ? 'overflow-auto' : 'overflow-x-auto'} rounded-xl border border-slate-200 bg-white`}
             style={view === 'list' && listH ? { height: listH + 'px' } : undefined}>
@@ -1270,10 +1276,18 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{md(r.arrival_date) || '—'}</td>
                   {isVM ? <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{r.elec_recv ? '✔' : '—'}</td> : (<>
                   <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">{truthy(r.harness_recv) ? '✔' : '—'}</td>
-                  <td className="px-2 py-2 text-center text-slate-300">{truthy(r.part_issue) ? '✔' : '—'}</td>
+                  {/* 전장 불출 — sub assy · 3rd party 도 체크 (v4.151.0) · 수주대장 「자재불출」과 연결 (연결된 수주 줄이 「📦 불출 ✔」) */}
+                  <td data-no-select data-sub-part-issue={r.id} className="px-2 py-2 cursor-pointer text-center" title="전장 자재 불출 — 수주대장 자재불출과 연결됩니다"
+                    onClick={() => toggleMut.mutate({ id: r.id, field: 'part_issue', value: !truthy(r.part_issue) })}>
+                    {truthy(r.part_issue) ? <span className="text-blue-600 font-semibold">✔ 불출</span> : <span className="text-slate-300 hover:text-blue-500">불출</span>}
+                  </td>
                   <td className="px-2 py-2 text-center text-slate-300">{md(r.elec_done) || '—'}</td>
                   </>)}
-                  <td className="px-2 py-2 border-l border-slate-100 text-center text-slate-300">—</td>
+                  {/* 품질 검수 — sub assy · 3rd party 도 체크 (v4.151.0) */}
+                  <td data-no-select data-sub-quality={r.id} className="px-2 py-2 border-l border-slate-100 cursor-pointer text-center" title="품질 검수 완료"
+                    onClick={() => toggleMut.mutate({ id: r.id, field: 'quality_recv', value: !truthy(r.quality_recv) })}>
+                    {truthy(r.quality_recv) ? <span className="text-rose-600 font-bold">✔ 완료</span> : <span className="text-slate-300 hover:text-rose-500">검수</span>}
+                  </td>
                   </>)}
                   {/* VM 자재 상태 — 눌러서 바로 바꾼다 */}
                   {vmCols && (() => { const need = new Set(vmBoxesNeeded(r)); return VM_MAT.map(([k, l]) => { const v = r.vm?.[k] || ''; return (<Fragment key={k}>

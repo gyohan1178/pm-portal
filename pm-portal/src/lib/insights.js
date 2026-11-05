@@ -170,6 +170,7 @@ export function computeNorthStar({ shortage = [], pos = [] }) {
   const tm = new Date().toISOString().slice(0, 7)
   const negItems = new Set()
   for (const r of shortage) {
+    if (r.folded) { if (r.first_neg) negItems.add(r.item_id); continue }   // 서버가 묶은 줄 (v4.151.0)
     if (r.year_month >= tm && r.projected < 0) negItems.add(r.item_id)
   }
 

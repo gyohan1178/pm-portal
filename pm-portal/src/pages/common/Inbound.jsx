@@ -936,19 +936,19 @@ export default function Inbound() {
             </div>
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:'',vendorId:null})}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
-            {histShown.length>0&&(
-              <button onClick={exportHistory}
-                className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
-            )}
-            {selAll.length>0&&(<>
+            {/* v4.151.0 — 버튼은 늘 같은 자리 (안 맞으면 흐리게) · 고른 개수는 앞에 따로. 예전엔 고를 때 버튼 3개가 생겨 밀렸다 */}
+            <button onClick={exportHistory} disabled={!histShown.length}
+              className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">📥 엑셀</button>
+            <fieldset disabled={!selAll.length} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed">
+              <span className="self-center text-xs whitespace-nowrap" style={{ width: 64 }} data-hist-selcount>{selAll.length ? <b className="text-indigo-700">{selAll.length}건 선택</b> : <span className="text-slate-400">줄을 체크</span>}</span>
               <button data-hist-ecount onClick={()=>setEcpOpen(true)}
                 title="체크한 입고 줄을 이카운트 「구매입력」 엑셀 업로드 양식으로 — 같은 입고일 · 구매처 = 전표 1장"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100">
-                📤 이카운트 구매입력 {selAll.length}건</button>
+                📤 이카운트 구매입력</button>
               <button data-hist-date onClick={()=>setDateForm({ date:'', memo:'' })}
                 title="수량·단가·재고는 그대로 두고 날짜만 바꿉니다"
                 className="px-3 py-2 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
-                📅 입고일 변경 {selAll.length}건</button>
+                📅 입고일 변경</button>
               <button data-hist-del onClick={async ()=>{
                   const ids = [...selAll]
                   const pick = selRows
@@ -959,8 +959,8 @@ export default function Inbound() {
                     delHistMut.mutate(ids)
                 }} disabled={delHistMut.isPending}
                 className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-red-200 text-red-600 bg-white hover:bg-red-50 disabled:opacity-40">
-                {delHistMut.isPending && <Spin />}🗑 선택 {selAll.length}건 삭제</button>
-            </>)}
+                {delHistMut.isPending && <Spin />}🗑 선택 삭제</button>
+            </fieldset>
             <div className="ml-auto text-xs text-slate-400 self-center">
               총 {histShown.length}건 / {histTotal.toLocaleString()} {history[0]?.items?.unit||''}
             </div>

@@ -8,7 +8,24 @@ async function getCustomers() {
   return must(await supabase.from('customers').select('id, code, name'), '고객사 조회') || []
 }
 
+// 이 달 (한국 날짜) — 'YYYY-MM'
+const ymKST = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 7)
+
+// 부족 품목 요약 (v4.151.0) — 서버가 품목별 「첫 부족 달 · 최저 예상 재고」로 묶어 보낸다 (pm_shortage_fold)
+//   예전: 계산표 8천여 줄을 1천 줄씩 받아 브라우저에서 묶었다 · 함수가 없으면(SQL 전) null → 예전 방식
+export async function fetchShortageFolded(customerIds) {
+  try {
+    const rows = await fetchAll(() => supabase.rpc('pm_shortage_fold', { p_customer_ids: customerIds, p_from: ymKST() }).order('item_id').order('customer_id'))
+    return rows.map(r => ({ ...r, folded: true }))
+  } catch (e) {
+    if (/pm_shortage_fold|Could not find the function|does not exist|schema cache|PGRST202/i.test(e?.message || '') || e?.code === 'PGRST202') return null
+    throw e
+  }
+}
+
 async function fetchShortageFor(customerIds) {
+  const folded = await fetchShortageFolded(customerIds)
+  if (folded) return folded
   // 고객사별로 병렬 + 페이지도 병렬 (순차 왕복 제거)
   const perCustomer = await Promise.all(customerIds.map(async (cid) => {
     // 1) 총 개수 파악

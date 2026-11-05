@@ -331,12 +331,13 @@ export default function Shortage() {
           </button>
         )}
         <div className="flex-1"/>
-        {checkedItems.length>0&&(
-          <button onClick={()=>{ setOrderQtys({}); setShowOrderForm(true) }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-            📋 선택 {checkedItems.length}건 구매발주
-          </button>
-        )}
+        {/* v4.151.0 — 늘 같은 자리 · 같은 폭 (안 고르면 흐리게) · 개수는 버튼 앞에 따로 */}
+        <span className="text-xs text-right whitespace-nowrap" style={{ width: 70 }} data-short-selcount>{checkedItems.length ? <b className="text-indigo-700">{checkedItems.length}건 선택</b> : ''}</span>
+        <button onClick={()=>{ setOrderQtys({}); setShowOrderForm(true) }} disabled={!checkedItems.length} style={{ width: 112 }} data-short-order
+          title={checkedItems.length ? '고른 품목을 구매발주로' : '품목을 체크하면 한 번에 구매발주'}
+          className="inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-300 disabled:cursor-not-allowed">
+          📋 선택 구매발주
+        </button>
         <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀 추출</button>
       </div>
 

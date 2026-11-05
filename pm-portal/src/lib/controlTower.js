@@ -31,6 +31,11 @@ function monthDiff(ym) {
 
 // 쇼티지 캐시 행들을 품번별로 묶어 "첫 음수월 / 최저재고" 산출
 function foldShortage(cacheRows) {
+  // 서버가 이미 묶어 보낸 줄 (pm_shortage_fold · v4.151.0) — 부족이 생기는 품목만 온다
+  if (cacheRows.length && cacheRows[0].folded) {
+    return cacheRows.map(r => ({ item_id: r.item_id, std_code: r.std_code, name: r.name, lt_weeks: r.lt_weeks == null ? null : Number(r.lt_weeks),
+      firstNeg: r.first_neg || null, minProjected: r.min_projected == null ? null : Number(r.min_projected) }))
+  }
   const tm = thisMonth()
   const map = {}
   for (const r of cacheRows) {

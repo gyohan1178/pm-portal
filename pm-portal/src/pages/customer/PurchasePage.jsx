@@ -1410,66 +1410,58 @@ export default function PurchasePage() {
             {search&&<button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>}
           </div>
             </div>
-            <div className={`flex flex-wrap items-center gap-2 px-3 py-2 border-t border-slate-100 rounded-b-xl ${checkedPOs.length>0 ? 'bg-indigo-50/60' : 'bg-slate-50/60'}`} data-po-selbar>
+            {/* 고른 발주로 할 일 — 늘 같은 자리 · 같은 폭 (v4.151.0). 안 고르면 흐리게 · 개수는 왼쪽에만
+                예전엔 고르면 버튼 8개가 새로 생겨 줄이 늘고 표가 내려갔다 · 「(3)」 개수가 글자에 붙어 폭이 바뀌었다 */}
+            {(() => {
+              const has = checkedPOs.length > 0
+              const inN = checkedPOs.filter(p=>Number(p.qty_remaining)>0).length
+              const fv = [...new Set(checkedPOs.map(p => p.vendor_id))].map(id => vendorMap[id]).filter(v => v?.is_foreign)
+              const fRows = fv.length === 1 ? checkedPOs.filter(p => p.vendor_id === fv[0].id) : []
+              const off = 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'
+              const B = (on, cls) => `inline-flex items-center justify-center gap-1 py-1.5 text-xs font-bold rounded-lg border whitespace-nowrap ${on ? cls : off}`
+              return (
+            <div className={`flex flex-wrap items-center gap-1.5 px-3 py-2 border-t border-slate-100 rounded-b-xl ${has ? 'bg-indigo-50/60' : 'bg-slate-50/60'}`} data-po-selbar>
           <button onClick={()=>{
             const allOn = sorted.length>0 && sorted.every(p=>checked[p.id])
             if (allOn) setChecked({})
             else setChecked(Object.fromEntries(sorted.map(p=>[p.id,true])))
-          }} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50">
+          }} style={{ width: 88 }} className="inline-flex items-center justify-center py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 bg-white hover:bg-slate-50" data-po-allbtn>
             {sorted.length>0 && sorted.every(p=>checked[p.id]) ? '☐ 전체해제' : '☑ 전체선택'}
-            {checkedPOs.length>0 ? ` (${checkedPOs.length})` : ''}
           </button>
-              {checkedPOs.length===0
-                ? <span className="text-[11.5px] text-slate-400">체크하면 여기서 입고 처리 · 납기 이월 · 발주번호 부여 · 이카운트 발주서 · 삭제를 한 번에 합니다</span>
-                : <>
-          <span className="text-xs font-bold text-indigo-700">
-            {checkedPOs.length}건 선택됨
+          <span className="text-xs whitespace-nowrap" style={{ width: 96 }} data-po-selcount>
+            {has ? <><b className="text-indigo-700">{checkedPOs.length}건</b> <button onClick={()=>setChecked({})} className="ml-1 text-[11px] text-slate-500 hover:text-slate-700 underline">선택 해제</button></> : <span className="text-slate-400">발주를 체크</span>}
           </span>
-          <button onClick={()=>setChecked({})}
-            className="text-[11px] text-slate-500 hover:text-slate-700 underline">선택 해제</button>
 
           {/* 물건이 왔으면 여기서 바로 입고 화면으로 — 고른 발주가 체크된 채 열린다 */}
-          {checkedPOs.some(p=>Number(p.qty_remaining)>0) && (
-            <button onClick={()=>goInbound(checkedPOs)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700">
-              📥 입고 처리 ({checkedPOs.filter(p=>Number(p.qty_remaining)>0).length})
-            </button>
-          )}
+          <button onClick={()=>goInbound(checkedPOs)} disabled={!inN} style={{ width: 84 }} data-po-inbound
+            title={has && !inN ? '고른 발주에 남은 수량이 없습니다' : '고른 발주를 체크한 채 입고 화면으로'}
+            className={B(inN, 'border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700')}>📥 입고 처리</button>
 
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+          <div className="w-px h-5 bg-indigo-200"/>
 
-          {/* 납기 일괄 — 이월할 때 가장 많이 쓰므로 앞에 */}
-          <div className="inline-flex items-center gap-1">
-            {/* 납기 — 「협력사가 바꿈(변경 납기)」과 「우리 필요일 변경」을 나눠 사유 · 이력과 함께 남긴다 (v4.98.0) */}
-            <button onClick={()=>setDueDlg(checkedPOs)} data-po-due-btn
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100 disabled:opacity-40">
-              📅 납기 이월 · 변경 ({checkedPOs.length})
-            </button>
-          </div>
+          {/* 납기 — 「협력사가 바꿈(변경 납기)」과 「우리 필요일 변경」을 나눠 사유 · 이력과 함께 남긴다 (v4.98.0) · 이월할 때 가장 많이 쓰므로 앞에 */}
+          <button onClick={()=>setDueDlg(checkedPOs)} disabled={!has} data-po-due-btn style={{ width: 112 }}
+            className={B(has, 'border-amber-300 text-amber-700 bg-amber-50 hover:bg-amber-100')}>📅 납기 이월 · 변경</button>
 
           <div className="inline-flex items-center gap-1">
-            <input type="date" value={bulkOrderDate} onChange={e=>setBulkOrderDate(e.target.value)}
-              className="px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
+            <input type="date" value={bulkOrderDate} onChange={e=>setBulkOrderDate(e.target.value)} disabled={!has}
+              className="w-[118px] px-1.5 py-1.5 text-xs border border-slate-200 rounded-lg bg-white disabled:text-slate-300"/>
             <button onClick={()=>bulkDateMut.mutate({ids:checkedPOs.map(p=>p.id),field:'order_date',value:bulkOrderDate})}
-              disabled={!bulkOrderDate||bulkDateMut.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-100 disabled:opacity-40">
-              📅 발주일자
-            </button>
+              disabled={!has||!bulkOrderDate||bulkDateMut.isPending} style={{ width: 84 }}
+              className={B(has && bulkOrderDate && !bulkDateMut.isPending, 'border-slate-300 text-slate-700 bg-white hover:bg-slate-100')}>📅 발주일자</button>
           </div>
 
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+          <div className="w-px h-5 bg-indigo-200"/>
 
           <div className="inline-flex items-center gap-1">
-            <input value={bulkPo} onChange={e=>setBulkPo(e.target.value)} placeholder="이카운트 발주번호"
-              className="w-36 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white"/>
+            <input value={bulkPo} onChange={e=>setBulkPo(e.target.value)} placeholder="이카운트 발주번호" disabled={!has}
+              className="w-28 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white disabled:bg-slate-50"/>
             <button onClick={()=>bulkPoMut.mutate({ids:checkedPOs.map(p=>p.id),poNo:bulkPo.trim()})}
-              disabled={!bulkPo.trim()||bulkPoMut.isPending}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-100 disabled:opacity-40">
-              🔖 발주번호 부여
-            </button>
+              disabled={!has||!bulkPo.trim()||bulkPoMut.isPending} style={{ width: 104 }}
+              className={B(has && bulkPo.trim() && !bulkPoMut.isPending, 'border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-100')}>🔖 발주번호 부여</button>
           </div>
 
-          <button onClick={async ()=>{
+          <button disabled={!has} style={{ width: 112 }} data-po-ecount onClick={async ()=>{
             // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
             const need = checkedPOs.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
             let revOf = {}
@@ -1481,40 +1473,28 @@ export default function PurchasePage() {
             } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 내려받습니다 (' + e.message + ')') }
             exportEcount(checkedPOs, vendors, ecountStaff, revOf)
           }}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100">
-            📑 이카운트 발주서
-          </button>
-          {/* 해외 업체 건이 섞여 있으면 영문 발주서도 뽑을 수 있게 한다 */}
-          {(() => {
-            const fv = [...new Set(checkedPOs.map(p => p.vendor_id))]
-              .map(id => vendorMap[id]).filter(v => v?.is_foreign)
-            if (fv.length !== 1) return null
-            const rows = checkedPOs.filter(p => p.vendor_id === fv[0].id)
-            return (
-              <button onClick={() => {
-                  const r = printForeignPO(rows, fv[0])
-                  if (!r.ok) { toastError(r.msg); return }
-                  toastSuccess(`${r.cnt}건 · ${r.cur} ${r.total.toLocaleString()}`)
-                  if (r.odd?.length) {
-                    toastError(`발주 단위(75M 배수)가 아닌 건: ${r.odd.slice(0,3).join(', ')}${r.odd.length>3?` 외 ${r.odd.length-3}건`:''}`)
-                  }
-                }}
-                title="해외 업체용 영문 발주서 — 인쇄하거나 PDF 로 저장합니다"
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-sky-300 text-sky-700 bg-white hover:bg-sky-100">
-                🌏 해외 발주서 ({rows.length})
-              </button>
-            )
-          })()}
+            className={B(has, 'border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100')}>📑 이카운트 발주서</button>
+          {/* 해외 업체 건 — 해외 업체가 한 곳만 섞여 있을 때 영문 발주서 (아니면 흐리게) */}
+          <button disabled={!fRows.length} style={{ width: 92 }} data-po-foreign
+            onClick={() => {
+              const r = printForeignPO(fRows, fv[0])
+              if (!r.ok) { toastError(r.msg); return }
+              toastSuccess(`${r.cnt}건 · ${r.cur} ${r.total.toLocaleString()}`)
+              if (r.odd?.length) {
+                toastError(`발주 단위(75M 배수)가 아닌 건: ${r.odd.slice(0,3).join(', ')}${r.odd.length>3?` 외 ${r.odd.length-3}건`:''}`)
+              }
+            }}
+            title={fRows.length ? `해외 업체(${fv[0].name}) ${fRows.length}건 영문 발주서 — 인쇄하거나 PDF 로 저장` : '해외 업체 발주를 한 곳만 고르면 영문 발주서를 뽑습니다'}
+            className={B(fRows.length, 'border-sky-300 text-sky-700 bg-white hover:bg-sky-100')}>🌏 해외 발주서</button>
 
-          <div className="w-px h-5 bg-indigo-200 mx-1"/>
+          <div className="w-px h-5 bg-indigo-200"/>
 
-          <button onClick={()=>{ setDelWord(''); setDelAsk(true) }}
+          <button onClick={()=>{ setDelWord(''); setDelAsk(true) }} disabled={!has} style={{ width: 60 }} data-po-del
             title="선택한 발주를 지웁니다 — 되돌릴 수 없습니다"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-red-300 text-red-600 bg-white hover:bg-red-50">
-            🗑 삭제 ({checkedPOs.length})
-          </button>
-                </>}
+            className={B(has, 'border-red-300 text-red-600 bg-white hover:bg-red-50')}>🗑 삭제</button>
             </div>
+              )
+            })()}
           </div>
 
           {isLoading ? <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-po-loading><table className="w-full"><tbody><SkeletonRows cols={9} rows={8} two={[1, 2]} /></tbody></table></div> : (

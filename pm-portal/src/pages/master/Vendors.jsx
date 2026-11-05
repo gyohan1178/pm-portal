@@ -266,8 +266,10 @@ export default function Vendors() {
             전체 선택
           </label>
         )}
-        {checkedIds.length > 0 && (
-          <select defaultValue="" disabled={bulkTermsMut.isPending}
+        {/* v4.151.0 — 결제조건 일괄 · 선택 삭제는 늘 같은 자리 (안 고르면 흐리게) */}
+        <span className="text-xs whitespace-nowrap" style={{ width: 60 }} data-vendor-selcount>{checkedIds.length ? <b className="text-indigo-700">{checkedIds.length}곳 선택</b> : <span className="text-slate-400">체크</span>}</span>
+        {(
+          <select defaultValue="" disabled={!checkedIds.length || bulkTermsMut.isPending}
             onChange={async (e) => {
               const t = e.target.value
               e.target.value = ''
@@ -277,21 +279,21 @@ export default function Vendors() {
                 items: sel.slice(0, 5).map(v => `${v.name} · ${v.payment_terms || '(미지정)'} → ${t}`), more: Math.max(0, checkedIds.length - 5), okText: '바꾸기' }))) return
               bulkTermsMut.mutate({ ids: checkedIds, terms: t })
             }}
-            className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50">
+            className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-700 bg-indigo-50 disabled:opacity-40">
             <option value="">결제조건 일괄 지정</option>
             {PAY_TERMS.map(t => <option key={t} value={t}>{t}</option>)}
           </select>
         )}
-        {checkedIds.length > 0 && (
+        {(
           <button onClick={async () => {
               const sel = vendors.filter(v => checked[v.id])
               if (!(await ask({ title: `선택한 ${checkedIds.length}곳을 삭제할까요?`, desc: '발주·품목·견적·이슈에 쓰인 협력사는 건너뜁니다. 되돌릴 수 없습니다.',
                 items: sel.slice(0, 5).map(v => [v.name, v.category, v.ecount_code].filter(Boolean).join(' · ')), more: Math.max(0, checkedIds.length - 5), okText: '삭제', danger: true }))) return
               bulkDeleteMut.mutate(checkedIds)
             }}
-            disabled={bulkDeleteMut.isPending}
+            disabled={!checkedIds.length || bulkDeleteMut.isPending}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 disabled:opacity-40">
-            {bulkDeleteMut.isPending ? <><Spin />삭제 중...</> : `🗑 선택 삭제 (${checkedIds.length})`}
+            {bulkDeleteMut.isPending ? <><Spin />삭제 중...</> : '🗑 선택 삭제'}
           </button>
         )}
         <button onClick={async () => { if (await ask({ title: '어디에도 연결 안 된 미사용 협력사를 모두 삭제할까요?', desc: '발주 · 견적 · 이슈에 쓰인 협력사는 안 지워집니다. 지운 협력사는 되돌릴 수 없습니다.', okText: '정리', danger: true })) cleanupMut.mutate() }}

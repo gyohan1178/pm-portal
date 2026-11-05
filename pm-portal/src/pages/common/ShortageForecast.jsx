@@ -597,16 +597,17 @@ export default function ShortageForecast() {
               className="w-14 px-1.5 py-1.5 text-right border border-slate-200 rounded" />주
           </label>
         )}
-        {selEx.size > 0 && (
-          <button onClick={async () => {
+        {/* v4.151.0 — 늘 같은 자리 (안 고르면 흐리게) */}
+        {(
+          <button disabled={!selEx.size} onClick={async () => {
               const pick = items.filter(it => selEx.has(it.item_id))
               if (!(await ask({ title: `선택한 ${selEx.size}건을 재고관리 제외할까요?`, desc: '「↻ 재계산」하면 목록에서 빠집니다. 기준코드 DB에서 다시 관리대상으로 되돌릴 수 있습니다.',
                 items: pick.slice(0, 5).map(it => `${it.std_code} · ${it.name || ''}`), more: Math.max(0, pick.length - 5),
                 okText: '재고관리 제외', danger: true }))) return
               bulkExclude()
             }}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100">
-            ✕ 선택 제외 ({selEx.size})
+            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg border border-rose-300 text-rose-600 bg-rose-50 hover:bg-rose-100 disabled:opacity-40 disabled:cursor-not-allowed min-w-[104px] justify-center">
+            ✕ 선택 제외{selEx.size ? ` ${selEx.size}` : ''}
           </button>
         )}
         <span className="text-xs text-slate-400 ml-auto">{filtered.length}건</span>

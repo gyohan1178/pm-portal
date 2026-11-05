@@ -170,7 +170,7 @@ export default function MaterialRequest() {
       return data || []
     },
     staleTime: 20 * 1000,        // 여러 명이 동시에 처리하므로 짧게 둔다
-    refetchInterval: 60 * 1000,
+    refetchInterval: 2 * 60 * 1000,   // v4.151.0 1분 → 2분 (서버 요청 절반 · 창으로 돌아오면 바로 새로 읽음)
     refetchIntervalInBackground: false,   // 화면을 안 보고 있으면 쉰다
     refetchOnWindowFocus: true,
   })
@@ -1717,9 +1717,13 @@ export default function MaterialRequest() {
             </button>
             <span className="text-xs text-slate-400" title="요청(요청번호) 건수 · 품목 줄 수">요청 {n(reqView.groups.length)}건 · 품목 {n(list.length)}줄</span>
 
-            {checked.length > 0 && (
-              <div className="flex items-center gap-1.5 ml-auto flex-wrap">
-                <span className="text-xs font-bold text-indigo-600">{checked.length}건 선택</span>
+          </div>
+
+          {/* 고른 요청으로 할 일 — 늘 같은 자리 (v4.151.0). 안 고르면 흐리게 · 상황에 안 맞는 버튼도 흐리게
+              예전엔 고를 때 위 줄 오른쪽에 버튼 14개가 생겨 줄이 늘고 표가 밀렸다 */}
+          <div className={`flex items-center gap-1.5 flex-wrap rounded-xl border px-3 py-2 ${checked.length ? 'border-indigo-200 bg-indigo-50/60' : 'border-slate-200 bg-slate-50/60'}`} data-req-actbar>
+            <span className="text-xs whitespace-nowrap" style={{ width: 92 }} data-req-selcount>{checked.length ? <b className="text-indigo-600">{checked.length}건 선택</b> : <span className="text-slate-400">요청을 체크</span>}</span>
+            <fieldset disabled={!checked.length} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40">
                 {/* 출력은 요청자도 쓴다 — 자기 요청을 뽑아 창고에 가져가야 하기 때문 */}
                 <button onClick={printRequest}
                   title="선택한 요청을 출력합니다 — 보관 위치순으로 나오고 확인칸이 있습니다"
@@ -1771,8 +1775,8 @@ export default function MaterialRequest() {
                 <button onClick={doOrder}
                   title="바로 발주하지 않고 담기함에 넣습니다. 납기·구매처·단가를 채운 뒤 한꺼번에 등록합니다"
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50">🛒 발주 담기</button>
-                {checked.some(r => !r.item_id) && (
-                  <button onClick={needCode}
+                {(
+                  <button onClick={needCode} disabled={!checked.some(r => !r.item_id)}
                     title="기준코드가 없어 처리할 수 없는 건입니다. 코드 부여를 요청합니다"
                     className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-orange-400 text-orange-700 bg-orange-50">
                     🏷 코드 부여 요청
@@ -1780,23 +1784,22 @@ export default function MaterialRequest() {
                 )}
                 <button onClick={() => changeStatus('반려')} data-mr-reject
                   className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">반려</button>
-                {checked.some(r => r.status === '반려') && (
-                  <button onClick={undoReject}
+                {(
+                  <button onClick={undoReject} disabled={!checked.some(r => r.status === '반려')}
                     title="반려를 취소하고 요청 상태로 되돌립니다"
                     className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-amber-300 text-amber-700 bg-amber-50">
                     ↩ 반려 취소
                   </button>
                 )}
-                {checked.some(r => r.status === '완료' || isPartial(r)) && (
-                  <button onClick={undoDone}
+                {(
+                  <button onClick={undoDone} disabled={!checked.some(r => r.status === '완료' || isPartial(r))}
                     title="실수로 처리한 건을 확인 단계로 되돌립니다 — 불출된 건은 재고도 되돌립니다"
                     className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-rose-300 text-rose-700 bg-rose-50">
                     ↩ 완료 되돌리기
                   </button>
                 )}
                 </>)}
-              </div>
-            )}
+            </fieldset>
           </div>
 
           {/* 완료 · 반려 · 전체 — 검색 · 처리유형 · 정렬 (v4.82.0) */}

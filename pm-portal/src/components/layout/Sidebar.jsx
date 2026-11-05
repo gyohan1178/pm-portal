@@ -118,6 +118,9 @@ const pageAll = async (mk) => {     // 1,000줄 넘게 — 1,000줄씩 이어 �
   }
 }
 async function countUnconfirmedOrders() {
+  // v4.151.0 — 서버에서 세어 숫자 하나 (SQL 속도개선_집계함수 · 함수가 없으면 아래 예전 방식)
+  const { data: cnt, error: rpcErr } = await supabase.rpc('pm_order_unconfirmed_count')
+  if (!rpcErr && cnt != null) return Number(cnt) || 0
   const heads = await pageAll(() => supabase.from('pm_order').select('id,registered_at,cancelled,migrated,planned').is('confirmed_at', null).order('id'))
   const ids = heads.filter((o) => !o.cancelled && !o.migrated && !o.planned && bizDays(o.registered_at) >= 1).map((o) => o.id)
   const hit = new Set()
