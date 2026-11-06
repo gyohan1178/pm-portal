@@ -67,8 +67,28 @@ async function fetchByCustomer(code) {
       .then(({ data, error }) => (error ? [] : data || []))))
     lp.flat().forEach(k => { ordPo[k.production_id] = k.po_no })
   }
-  return all.map(r => ({ ...r, po_number: (r.po_id ? (poMap[r.po_id] || null) : null) || ordPo[r.id] || null,
-    ...(ordPo[r.id] && !(r.po_id && poMap[r.po_id]) ? { _po_src: 'order' } : {}),
+  // 수주대장 줄에 붙은 호기 (PO 연동 v4 — 고객사 PO 가 없는 줄) → 그 줄의 PO 번호 (v4.157.0)
+  const lnPo = {}
+  const lnIds = [...new Set(all.filter(r => r.order_line_id && !(r.po_id && poMap[r.po_id])).map(r => r.order_line_id))]
+  if (lnIds.length) {
+    const lns = []
+    for (let i = 0; i < lnIds.length; i += 150) {
+      const { data, error } = await supabase.from('pm_order_line').select('id,order_id').in('id', lnIds.slice(i, i + 150))
+      if (error) throw error
+      lns.push(...(data || []))
+    }
+    const oIds = [...new Set(lns.map(l => l.order_id).filter(Boolean))]
+    const oPo = {}
+    for (let i = 0; i < oIds.length; i += 150) {
+      const { data, error } = await supabase.from('pm_order').select('id,po_no').in('id', oIds.slice(i, i + 150))
+      if (error) throw error
+      ;(data || []).forEach(o => { oPo[o.id] = o.po_no })
+    }
+    lns.forEach(l => { if (oPo[l.order_id]) lnPo[l.id] = oPo[l.order_id] })
+  }
+  return all.map(r => ({ ...r, po_number: (r.po_id ? (poMap[r.po_id] || null) : null) || lnPo[r.order_line_id] || ordPo[r.id] || null,
+    ...((lnPo[r.order_line_id] || ordPo[r.id]) && !(r.po_id && poMap[r.po_id]) ? { _po_src: 'order' } : {}),
+
     ...(r.po_id && plan[r.po_id] ? { _plan_exc: plan[r.po_id], _po_changes: planChg[r.po_id] || null } : {}) }))
 }
 
