@@ -358,8 +358,11 @@ export default function Issue() {
   // 되돌리기 (v4.58.0) — 출고 전 상태(담기함 · 호기 결품 · 불출 표시)를 떠 두었다가 그대로 돌려놓는다
   const { remember, bar: undoBar } = useUndo()
   const compact = useCompact()
-  async function snapForUndo(snapshot, handoffIds) {
-    const poIds = [...new Set([...snapshot.map(l => l.po_id), ...handoffIds].filter(Boolean))]
+  async function snapForUndo(snapshot, handoffRows) {
+    // 넘겨받은 줄 — 수주대장 줄(line · v4.158.0)이면 줄 id 와 같은 줄의 고객사 PO(cpo_id) 를, 아니면 고객사 PO id
+    const hLines = (handoffRows || []).filter(r => r.line)
+    const lineIds = [...new Set(hLines.map(r => r.id).filter(Boolean))]
+    const poIds = [...new Set([...snapshot.map(l => l.po_id), ...(handoffRows || []).filter(r => !r.line).map(r => r.id), ...hLines.map(r => r.cpo_id)].filter(Boolean))]
     const prodIds = [...new Set(snapshot.map(l => l.production_id).filter(Boolean))]
     const pns = [...new Set(snapshot.filter(l => l.source === 'hogi' && l.pn && l.hogi).map(l => l.pn))]
     const boxKeys = new Set(snapshot.filter(l => l.source === 'hogi' && l.pn && l.hogi).map(l => `${l.pn}|${l.hogi}`))
@@ -368,8 +371,9 @@ export default function Issue() {
     const add = rows => (rows || []).forEach(r => prods.set(r.id, r))
     for (let i = 0; i < prodIds.length; i += 200) add(must(await supabase.from('production').select(COLS).in('id', prodIds.slice(i, i + 200)), '호기 읽기'))
     for (let i = 0; i < poIds.length; i += 200) add(must(await supabase.from('production').select(COLS).in('po_id', poIds.slice(i, i + 200)), '호기 읽기'))
+    for (let i = 0; i < lineIds.length; i += 200) add(must(await supabase.from('production').select(COLS).in('order_line_id', lineIds.slice(i, i + 200)), '호기 읽기'))
     for (let i = 0; i < pns.length; i += 200) add((must(await supabase.from('production').select(COLS).in('pn', pns.slice(i, i + 200)), '호기 읽기') || []).filter(r => boxKeys.has(`${r.pn}|${r.hogi}`)))
-    const issued = await snapIssued(poIds)
+    const issued = await snapIssued(poIds, lineIds)
     const expect = snapshot.map(l => ({ item_id: l.item_id, po_id: l.po_id || null, qty: Number(l.issue_qty ?? l.qty) || 0 })).filter(e => e.qty > 0 && e.item_id)
     const itemIds = [...new Set(expect.map(e => e.item_id))]
     const before = itemIds.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }) : []
@@ -398,7 +402,7 @@ export default function Issue() {
       if (!cart.length) return null   // 담은 게 없으면 아무것도 안 함 (넘겨받은 줄 불출도 묻지 않는다)
       const snapshot = cart.map(l => ({ ...l })) // 처리 후 비워지므로 스냅샷
       let u = null
-      try { u = await snapForUndo(snapshot, (handoff?.rows || []).map(r => r.id)) } catch (e) { console.warn('되돌리기 준비 실패 — 출고는 진행', e) }
+      try { u = await snapForUndo(snapshot, handoff?.rows || []) } catch (e) { console.warn('되돌리기 준비 실패 — 출고는 진행', e) }
       // 출고 처리 전체를 Postgres 함수에서 트랜잭션으로 — 전부 성공 아니면 전부 취소(부분 실패 없음)
       const { data, error } = await supabase.rpc('pm_process_issue', { p_customer_id: csId })
       if (error) throw error
@@ -434,7 +438,7 @@ export default function Issue() {
       // 넘겨받은 줄 — 출고가 끝났으니 불출 표시를 묻는다
       if (handoff?.rows?.length) {
         const h = handoff; setHandoff(null)
-        if (await ask({ title: `출고 완료 — ${h.from}에서 넘겨받은 고객사 PO ${h.rows.length}줄을 「불출」로 표시할까요?`,
+        if (await ask({ title: `출고 완료 — ${h.from}에서 넘겨받은 ${h.rows.some(r => r.line) ? '수주대장' : '고객사 PO'} ${h.rows.length}줄을 「불출」로 표시할까요?`,
           desc: '고객사 PO 자재불출 체크가 되어 쇼티지 계산에서 빠집니다. 「표시 안 함」을 누르면 그대로 두고, 하네스 출도 · 불출 화면에서 나중에 할 수 있습니다.',
           okText: '불출로 표시', cancelText: '표시 안 함' })) {
           try {

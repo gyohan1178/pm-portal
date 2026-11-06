@@ -8,6 +8,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { refreshProcurement } from '../../lib/refresh'
 import { markPoIssued, snapIssued, restoreIssued } from '../../lib/poIssue'
+import { fetchAxLines } from '../../lib/axLines'
 import { useUndo } from '../../components/UndoBar'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
@@ -171,18 +172,15 @@ export default function HarnessRelease() {
   const { data: pos = [], isLoading, error } = useQuery({
     queryKey: ['harnessRelease', 'pos'],
     queryFn: async () => {
-      const SEL = 'id,item_id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name,manufacturer,manufacturer_code)'
-      const base = await fetchAll(() => supabase.from('purchase_orders').select(SEL)
-        .eq('customer_id', AX_ID).eq('order_type', 'customer_po')
-        .not('status', 'in', '(완료,취소)').order('promise_date', { ascending: true }).order('id'))
-      // 생산관리에 PO 연동된 줄 (상태 무관) — 그쪽 「자재불출」로 관리
-      const prod = await fetchAll(() => supabase.from('production').select('id,po_id').not('po_id', 'is', null).order('id'))
-      const inProd = new Set(prod.map(r => r.po_id))
-      const all = base.filter(p => !inProd.has(p.id))
-      // HOT 등 Plan Exc 와 언제부터 — 따로 받는다 (칸이 없거나 실패해도 목록은 뜬다) (v4.59.0)
-      const plan = await fetchPlanByPo(supabase, all.map(p => p.id))
-      const chg = await fetchPlanChanges(supabase, Object.keys(plan))
-      all.forEach(p => { if (plan[p.id]) { p.plan_exc = plan[p.id]; p.changes = chg[p.id] || null } })
+      // v4.158.0 — 고객사 PO 대신 수주대장 진행 중 줄 (정식 PO · 3rd party 「기타」 AX- 품번 포함)
+      //   생산관리 호기가 붙은 줄(in_prod — PD BOX 등)은 그쪽 「자재불출」로 관리하므로 뺀다
+      const base = await fetchAxLines()
+      const all = base.filter(p => !p.in_prod)
+      // HOT 등 Plan Exc — 수주대장 줄 값 (언제부터는 고객사 PO 에 이력이 있으면 그것)
+      const cpoIds = all.map(p => p.cpo_id).filter(Boolean)
+      const plan = cpoIds.length ? await fetchPlanByPo(supabase, cpoIds) : {}
+      const chg = Object.keys(plan).length ? await fetchPlanChanges(supabase, Object.keys(plan)) : {}
+      all.forEach(p => { if (!p.plan_exc && p.cpo_id && plan[p.cpo_id]) p.plan_exc = plan[p.cpo_id]; if (p.plan_exc && p.cpo_id) p.changes = chg[p.cpo_id] || null })
       return all.sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
     },
     staleTime: 30 * 1000,
@@ -238,7 +236,7 @@ export default function HarnessRelease() {
     }
     // v4.57.0: 출고가 끝난 뒤 다품목 출고 화면이 「넘겨받은 줄 불출 처리할까요?」를 묻는다 (아직 불출 안 된 줄만)
     //   → 출고 없이 불출만 먼저 찍혀 쇼티지에서 빠지는데 재고는 그대로인 일을 막는다
-    const poIssue = ok.filter(p => !p.material_issued).map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) }))
+    const poIssue = ok.filter(p => !p.material_issued).map(p => ({ id: p.id, line: !!p.line, cpo_id: p.cpo_id || null, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) }))
     nav('/issue', { state: { issuePaste: issueText(ok), csCode: 'ax', from: `하네스 출도 · 불출 ${ok.length}줄`, poIssue } })
   }
 
@@ -280,14 +278,14 @@ export default function HarnessRelease() {
     if (!list.length) return
     const lines = list.slice(0, 5).map(p => `${p.po_number} · ${N(p.order_line) || '-'}/${N(p.del_line) || '-'} · ${pnOf(p.items?.std_code)} · 잔량 ${n(leftOf(p))}`)
     if (!(await ask(val
-      ? { title: `${list.length}줄을 「불출」로 표시할까요?`, desc: '고객사 PO 자재불출 체크 → 쇼티지 계산에서 빠집니다. 재고 수량은 바뀌지 않습니다 (출고는 출고 화면에서). 처리 뒤 위에 뜨는 「↩ 되돌리기」로 되돌릴 수 있습니다.',
+      ? { title: `${list.length}줄을 「불출」로 표시할까요?`, desc: '수주대장 자재불출 체크 → 쇼티지 계산에서 빠집니다. 재고 수량은 바뀌지 않습니다 (출고는 출고 화면에서). 처리 뒤 위에 뜨는 「↩ 되돌리기」로 되돌릴 수 있습니다.',
           items: lines, more: Math.max(0, list.length - 5), okText: '불출 표시' }
       : { title: `${list.length}줄의 불출 표시를 풀까요?`, desc: '쇼티지 계산에 다시 들어갑니다. 처리 뒤 위에 뜨는 「↩ 되돌리기」로 되돌릴 수 있습니다.',
           items: lines, more: Math.max(0, list.length - 5), okText: '불출 표시 풀기', danger: true }))) return
     setBusy(true)
     try {
-      const snap = await snapIssued(list.map(p => p.id))   // 되돌리기용 — 바꾸기 전 값 (v4.58.0)
-      await markPoIssued(list.map(p => ({ id: p.id, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) })),
+      const snap = await snapIssued(list.filter(p => !p.line).map(p => p.id).concat(list.map(p => p.cpo_id).filter(Boolean)), list.filter(p => p.line).map(p => p.id))   // 되돌리기용 — 바꾸기 전 값 (v4.58.0 · v4.158.0 수주대장 줄)
+      await markPoIssued(list.map(p => ({ id: p.id, line: !!p.line, cpo_id: p.cpo_id || null, po_number: p.po_number, order_line: p.order_line, del_line: p.del_line, pn: pnOf(p.items?.std_code) })),
         val, val ? '하네스 출도 → 불출 처리' : '하네스 불출 취소')
       toastSuccess(val ? `${list.length}줄 불출 처리했습니다` : `${list.length}줄 불출 표시를 풀었습니다`)
       setSel(new Set())
@@ -393,11 +391,11 @@ export default function HarnessRelease() {
   return (
     <div className="space-y-4">
       <div>
-        <p className="text-[11px] font-semibold text-slate-400">📦 자재 · AXCELIS 고객사 PO (생산관리에 들어간 줄 빼고 전부 — 하네스 · 구매품 · 전장 단품)</p>
+        <p className="text-[11px] font-semibold text-slate-400">📦 자재 · AXCELIS 수주대장 진행 중 줄 (생산관리에 들어간 줄 빼고 전부 — 하네스 · 구매품 · 전장 단품)</p>
         <h1 className="text-xl font-extrabold text-slate-900">🧵 하네스 출도 · 불출</h1>
         <p className="page-desc text-[13px] text-slate-400 mt-0.5">
           아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다.
-          불출 처리 = 고객사 PO 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
+          불출 처리 = 수주대장 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
         </p>
       </div>
 
@@ -545,7 +543,7 @@ export default function HarnessRelease() {
         )}
         <p className={`mt-2 text-[11px] text-slate-400 ${compact ? 'hidden' : ''}`}>
           줄을 누르면 선택됩니다 · 공정관리 기록은 출력(작업지시서 만들기) 때 켜지는 출력 표시와 QR 이력을 PO · 오더라인 · 납품라인으로 맞춰 봅니다 (라인 없는 옛 건은 PO · 도번).
-          불출 취소는 「불출됨」에서 고르거나 고객사 PO 에서 체크를 풀면 됩니다.
+          불출 취소는 「불출됨」에서 골라 풀면 됩니다.
         </p>
       </div>
     </div>
@@ -557,7 +555,7 @@ export default function HarnessRelease() {
 //   이 화면 목록(진행 중)에 없는 줄도 찾도록 붙인 PO 번호로 고객사 PO 를 다시 읽는다 — 완료 · 취소 · 이미 불출은 건너뛴다
 const PASTE_STATE = {
   ok: ['teal', '불출할 줄'], done: ['green', '이미 불출'], closed: ['gray', 'PO 완료 · 취소'],
-  none: ['red', '고객사 PO 에 없음'], many: ['amber', '라인 없음 · 같은 도번 여러 줄'], dup: ['gray', '같은 줄 중복'],
+  none: ['red', '수주대장에 없음'], many: ['amber', '라인 없음 · 같은 도번 여러 줄'], dup: ['gray', '같은 줄 중복'],
 }
 function PasteIssueModal({ onClose, onIssue, busy }) {
   const [text, setText] = useState('')
@@ -568,17 +566,11 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
     if (!pr.rows.length) { setRes({ ...pr, matched: [] }); return }
     setLoading(true)
     try {
-      const SEL = 'id,po_number,ccn,order_line,del_line,division,item_rev,item_brev,qty_ordered,qty_received,qty_remaining,promise_date,status,material_issued, items!purchase_orders_item_id_fkey(std_code,name)'
       const nos = [...new Set(pr.rows.map(r => r.po))]
-      const pos = []
-      // PO 번호는 대소문자 그대로 저장돼 있다 — 붙인 값 · 대문자 둘 다 찾는다
-      const want = [...new Set(nos.flatMap(x => [x, x.toLowerCase()]))]
-      for (let i = 0; i < want.length; i += 150) {
-        pos.push(...await fetchAll(() => supabase.from('purchase_orders').select(SEL)
-          .eq('customer_id', AX_ID).eq('order_type', 'customer_po').in('po_number', want.slice(i, i + 150)).order('id')))
-      }
+      // v4.158.0 — 수주대장 줄 (그 PO 의 줄 전부 — 납품 · 취소는 status 로 「끝난 줄」)
+      const pos = await fetchAxLines(nos)
       setRes({ ...pr, matched: matchHarnessPaste(pr.rows, pos) })
-    } catch (e) { toastError('고객사 PO 읽기 실패: ' + e.message) } finally { setLoading(false) }
+    } catch (e) { toastError('수주대장 읽기 실패: ' + e.message) } finally { setLoading(false) }
   }
   const m = res?.matched || []
   const okRows = m.filter(x => x.state === 'ok')
@@ -601,7 +593,7 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
             className="w-full h-28 px-3 py-2 text-[11px] font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-teal-400" />
           <div className="flex items-center gap-2">
             <button onClick={() => check()} disabled={!text.trim() || loading} data-hr-paste-check
-              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white disabled:opacity-40">{loading ? '찾는 중…' : '🔍 고객사 PO 찾기'}</button>
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 bg-white disabled:opacity-40">{loading ? '찾는 중…' : '🔍 수주대장 찾기'}</button>
             {res && <span className="text-[11px] text-slate-500" data-hr-paste-sum>
               붙인 줄 {res.rows.length}{res.skipped ? ` (중복 · 빈 줄 ${res.skipped} 뺌)` : ''} — {Object.entries(cnt).map(([k, v]) => `${PASTE_STATE[k][1]} ${v}`).join(' · ')}
             </span>}
@@ -611,7 +603,7 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
               <table className="w-full text-xs">
                 <thead className="bg-slate-50 text-slate-500"><tr>
                   <th className="px-2 py-1.5 text-left">붙인 PO / 라인</th><th className="px-2 py-1.5 text-left">도면번호</th><th className="px-2 py-1.5 text-right">붙인 수량</th>
-                  <th className="px-2 py-1.5 text-left">고객사 PO 줄</th><th className="px-2 py-1.5 text-right">잔량</th><th className="px-2 py-1.5 text-left">상태</th>
+                  <th className="px-2 py-1.5 text-left">수주대장 줄</th><th className="px-2 py-1.5 text-right">잔량</th><th className="px-2 py-1.5 text-left">상태</th>
                 </tr></thead>
                 <tbody>
                   {m.map((x, i) => {
@@ -622,7 +614,7 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
                         <td className="px-2 py-1.5 font-mono">{x.dwg || '—'}{x.proc && x.proc !== '출도' && <span className="ml-1 text-[10px] text-amber-600">{x.proc}</span>}</td>
                         <td className="px-2 py-1.5 text-right font-mono">{x.qty ?? '—'}</td>
                         <td className="px-2 py-1.5">{x.p ? <><span className="font-mono font-bold text-indigo-600">{pnOf(x.p.items?.std_code)}</span> <span className="text-slate-400">{x.p.items?.name || ''}</span>
-                          {x.dwgDiff && <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px] font-bold" title="공정관리 도면번호와 고객사 PO 품번이 다릅니다">⚠ 도번 다름</span>}
+                          {x.dwgDiff && <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px] font-bold" title="공정관리 도면번호와 수주대장 품번이 다릅니다">⚠ 도번 다름</span>}
                           {x.how === 'dwg' && <span className="ml-1 text-[10px] text-slate-400">PO+도번으로 찾음</span>}</> : '—'}</td>
                         <td className={`px-2 py-1.5 text-right font-mono ${x.p && x.qty != null && leftOf(x.p) !== x.qty && x.state === 'ok' ? 'text-amber-600 font-bold' : ''}`}>{x.p ? n(leftOf(x.p)) : '—'}</td>
                         <td className="px-2 py-1.5"><Badge tone={tone}>{label}</Badge></td>
@@ -636,7 +628,7 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
           {res && !res.rows.length && <p className="text-xs text-rose-600">PO 번호를 못 읽었습니다 — 공정관리 기록 표를 머리글째 복사해 붙여 주세요.</p>}
         </div>
         <div className="px-5 py-3 border-t border-slate-100 flex flex-wrap items-center justify-end gap-2">
-          <span className="mr-auto text-[11px] text-slate-400">불출 표시 = 고객사 PO 자재불출 체크 (쇼티지에서 빠짐 · 재고는 그대로) · 처리 뒤 「↩ 되돌리기」 가능</span>
+          <span className="mr-auto text-[11px] text-slate-400">불출 표시 = 수주대장 자재불출 체크 (쇼티지에서 빠짐 · 재고는 그대로) · 처리 뒤 「↩ 되돌리기」 가능</span>
           <button onClick={onClose} className="px-4 py-2 text-sm rounded-lg border border-slate-200 text-slate-500">취소</button>
           <button disabled={!okRows.length || busy} onClick={() => onIssue(okRows.map(x => x.p), true)} data-hr-paste-toissue
             title="자재도 같이 빼려면 — 다품목 출고에 하네스 품번 · 잔량을 채워 엽니다. 출고가 끝나면 불출 처리를 묻습니다"
