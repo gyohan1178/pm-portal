@@ -20,6 +20,7 @@ import { todayISO } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
+  setLineRev,
   ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, setDueDates, DUE_FIELDS, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
@@ -573,6 +574,11 @@ export default function OrderIntake() {
     },
     onError: (e) => toastError('저장 실패: ' + e.message),
   })
+  const revMut = useMutation({
+    mutationFn: ({ l, v }) => setLineRev(l, v, meName),
+    onSuccess: (r) => { if (Object.keys(r.patch).length) { patchLines((l) => (l.id === r.id ? r.patch : null)); toastSuccess('Rev 저장 — 생산관리 호기는 다음 「↻ PO 연동」 때 따라감') } },
+    onError: (e) => toastError(/brev/.test(e.message || '') ? 'BREV 칸이 아직 없습니다 — 수주대장_SREV_BREV_반영_261026.sql 을 먼저 실행하세요' : 'Rev 저장 실패: ' + e.message),
+  })
   const relMut = useMutation({
     mutationFn: ({ ls, date }) => setReleaseDate(ls, date, meName),
     onSuccess: (r) => { const ids = new Set(r.ids); patchLines((l) => (ids.has(l.id) ? r.patch : null)); toastSuccess('협력사 불출일 저장') },
@@ -1098,6 +1104,7 @@ export default function OrderIntake() {
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
+          onRev={(l, v) => revMut.mutate({ l: { ...l, o: l.o || byOrder.get(poOpen) }, v })} revBusy={revMut.isPending}
           onConfirm={(o) => headMut.mutate({ id: o.id, patch: { confirmed_at: new Date().toISOString(), confirmed_name: meName } })}
           onShipTo={(o, v) => headMut.mutate({ id: o.id, patch: { ship_to: v || null }, log: { field: 'ship_to', before_val: o.ship_to || null, after_val: v || null } })}
           onDelete={async (o) => {
@@ -1188,7 +1195,26 @@ function PoCard({ o, ls, amount, onOpen }) {
 }
 
 // PO 한 건 — 원본 · 등록 · 품목 · 변경 이력 · PO 전체 회신
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onConfirm, onShipTo, onDelete,
+// Rev 고치기 칸 (v4.159.0) — 「✎ Rev」 를 누르면 그 자리에서 입력 · Enter 또는 저장
+function RevEdit({ l, ax, busy, onSave }) {
+  const [open, setOpen] = useState(false)
+  const [rev, setRev] = useState(l.rev || '')
+  const [brev, setBrev] = useState(l.brev || '')
+  const start = () => { setRev(l.rev || ''); setBrev(l.brev || ''); setOpen(true) }
+  const save = () => { onSave(ax ? { rev, brev } : { rev }); setOpen(false) }
+  const inp = 'w-12 h-6 px-1 text-[11px] font-mono uppercase border border-slate-300 rounded focus:border-violet-400 outline-none'
+  if (!open) return <button type="button" onClick={start} data-rev-edit={`${l.line_no}/${l.del_line}`} title="Rev 고치기" className="px-1 text-[10.5px] text-slate-400 hover:text-violet-600 font-bold">✎ Rev</button>
+  return (
+    <span className="inline-flex items-center gap-1" data-rev-form={`${l.line_no}/${l.del_line}`} onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setOpen(false) }}>
+      <label className="text-[10px] text-slate-500">{ax ? 'SREV' : 'Rev'}<input autoFocus value={rev} onChange={(e) => setRev(e.target.value)} className={`${inp} ml-0.5`} data-rev-input /></label>
+      {ax && <label className="text-[10px] text-slate-500">BREV<input value={brev} onChange={(e) => setBrev(e.target.value)} className={`${inp} ml-0.5`} data-brev-input /></label>}
+      <button type="button" disabled={busy} onClick={save} data-rev-save className="px-1.5 h-6 rounded bg-violet-600 text-white text-[10.5px] font-bold disabled:opacity-50">저장</button>
+      <button type="button" onClick={() => setOpen(false)} className="px-1 h-6 text-[10.5px] text-slate-400">취소</button>
+    </span>
+  )
+}
+
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip, onNote }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -1305,7 +1331,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                     {editable && <td className="pl-3 py-2">{cancellable(l) && <input type="checkbox" checked={pick.has(l.id)} onChange={() => togglePick(l.id)} data-pick={`${l.line_no}/${l.del_line}`} />}</td>}
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} /><OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} /></div>
+                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} />{editable && onRev && !l.st.cancelled && <RevEdit l={l} ax={o.customer_code === 'AX'} busy={revBusy} onSave={(v) => onRev(l, v)} />}<OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} /></div>
                       <ProdLink ps={prodMap?.get(l.id)} />
                       <div className="text-[11px] text-slate-500">{l.items?.name || l.raw_desc}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400">{l.note}</div>}

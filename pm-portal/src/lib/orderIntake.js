@@ -872,6 +872,26 @@ export async function setReleaseDate(lines, date, meName) {
   return { ids, patch: { release_date: date || null, updated_at: now } }
 }
 
+// Rev 고치기 (v4.159.0) — 수주대장에 직접 넣은 PO(PDF 에 Rev 칸이 없는 발주서 등) 줄의 Rev 를 손으로
+//   AXCELIS 는 SREV(지금 Rev · rev) · BREV(PO 낼 때 Rev · brev) 두 칸, 다른 고객사는 Rev 한 칸
+//   변경 이력에 줄마다 남김 · 생산관리 호기 REV 는 다음 「↻ PO 연동」 때 이 값을 따라감
+export async function setLineRev(line, { rev, brev }, meName) {
+  const now = new Date().toISOString()
+  const clean = (v) => (String(v ?? '').trim().toUpperCase() || null)
+  const patch = {}
+  if (rev !== undefined && clean(rev) !== (line.rev || null)) patch.rev = clean(rev)
+  if (brev !== undefined && clean(brev) !== (line.brev || null)) patch.brev = clean(brev)
+  if (!Object.keys(patch).length) return { id: line.id, patch: {} }
+  const { error } = await supabase.from('pm_order_line').update({ ...patch, updated_at: now }).eq('id', line.id)
+  if (error) throw error
+  const logs = Object.entries(patch).map(([f, v]) => ({ order_id: line.order_id, line_key: `${line.line_no}/${line.del_line}`, field: f,
+    before_val: line[f] || null, after_val: v, source: 'manual', changed_name: meName || null }))
+  const { error: e2 } = await supabase.from('pm_order_change').insert(logs)
+  if (e2) throw e2
+  logActivity('update', 'pm_order', poNosOf([line]), `Rev 수정 ${Object.entries(patch).map(([f, v]) => `${f === 'brev' ? 'BREV' : 'SREV'} ${line[f] || '—'}→${v || '—'}`).join(' · ')}`, null, custNameOf([line]))
+  return { id: line.id, patch: { ...patch, updated_at: now } }
+}
+
 // 납기 일괄 변경 (v4.141.0) — 고객사가 납기를 옮겨 달라고 할 때 고른 줄을 한 번에 (영업 요청)
 //   · 줄마다 변경 이력 「납기 2026-11-20 → 2026-12-05 · 사유」 (사유는 적었을 때만)
 //   · 납기가 당겨진 줄에 구매자재 회신이 있으면 회신을 비운다 — 「가능」은 예전 날짜 기준이라 다시 받아야 (발주 예정 → PO 옮길 때와 같은 규칙)

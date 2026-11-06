@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.158.0'
+export const APP_VERSION = 'v4.159.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.158.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.159.0',
+    date: '2026-11-06',
+    changes: [
+      '수주대장 — PO 창 품번 옆 「✎ Rev」 로 Rev 고치기 (AXCELIS 는 SREV · BREV 두 칸) · 변경 이력에 남음 · 생산관리 호기 REV 는 다음 「↻ PO 연동」 때 따라감',
+    ],
+  },
   {
     version: 'v4.158.0',
     date: '2026-11-06',
