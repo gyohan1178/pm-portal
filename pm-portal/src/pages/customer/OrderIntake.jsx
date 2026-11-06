@@ -628,7 +628,16 @@ export default function OrderIntake() {
     onError: (e) => toastError(/ship_to/.test(e.message || '') ? '납품처 칸이 아직 없습니다 — 수주대장_납품처_261023.sql 을 먼저 실행하세요' : /'note'/.test(e.message || '') ? NOTE_SQL_HINT : '저장 실패: ' + e.message),
   })
   const delMut = useMutation({
-    mutationFn: async (id) => { const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error },
+    mutationFn: async (id) => {
+      // 생산관리 호기가 잡혀 있는 PO 는 지우지 않는다 — 지우면 줄과 함께 호기 연결(pm_prod_order_link)이 사라진다 (v4.156.0)
+      const lineIds = (byOrder.get(id)?.lines || []).map((l) => l.id)
+      for (let i = 0; i < lineIds.length; i += 150) {
+        const { data: lk, error: le } = await supabase.from('pm_prod_order_link').select('production_id').in('order_line_id', lineIds.slice(i, i + 150)).limit(1)
+        if (le && !/does not exist|schema cache|42P01/i.test(le.message || '')) throw le
+        if (lk?.length) throw new Error('생산관리 호기가 연결된 PO 라 지울 수 없습니다 — 필요 없는 줄은 「취소」로 처리하세요 (호기 연결은 취소 때 풀립니다)')
+      }
+      const { error } = await supabase.from('pm_order').delete().eq('id', id); if (error) throw error
+    },
     onSuccess: (_, id) => { const o = byOrder.get(id); if (o) logActivity('delete', 'pm_order', o.po_no, `수주대장에서 PO 삭제 · 품목 ${o.lines.length}`, null, orderCustName(o)); setPoOpen(null); patchLocal((os) => os.filter((x) => x.id !== id)); toastSuccess('삭제했습니다') },
     onError: (e) => toastError('삭제 실패: ' + e.message),
   })
