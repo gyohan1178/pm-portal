@@ -13,7 +13,7 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import VendorPicker from '../../components/VendorPicker'
 import ShortageTabs from '../../components/ShortageTabs'
-import ShortageMonthly, { fetchMonthly } from './ShortageMonthly'
+import ShortageMonthly, { fetchMonthly, CalcError } from './ShortageMonthly'
 import { getCategoryCode, ITEM_CATEGORIES, todayISO } from '../../lib/utils'
 import { createPurchaseOrders } from '../../lib/createPO'
 import PoMadeBanner from '../../components/PoMadeBanner'
@@ -175,7 +175,7 @@ export default function Shortage() {
 
   const { widths, startResize, resetWidths } = useResizableColumns('shortage_cols', COL_DEFAULTS)
   const { data: cs } = useCustomer(csCode)
-  const { data: rows=[], isLoading } = useQuery({
+  const { data: rows=[], isLoading, error: shortErr, refetch: refetchShort, isFetching: shortFetching } = useQuery({
     queryKey:['shortage',cs?.id], queryFn:()=>fetchShortage(cs?.id), enabled:!!cs?.id,
   })
 
@@ -419,6 +419,8 @@ export default function Shortage() {
         <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">선택됨 <InfoTip align="right" text="체크한 품목 중 지금 목록에 보이고 발주필요가 0 보다 큰 품목 수 — 「선택 N건 구매발주」에 들어가는 품목입니다." /></p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
       </div>
 
+      {/* 계산이 실패하면 빈 목록(「부족 없음」)처럼 보이던 것 → 실패라고 알린다 (v4.156.0) */}
+      {shortErr && !isLoading && <CalcError err={shortErr} busy={shortFetching} onRetry={() => refetchShort()} />}
       {isLoading ? (
         <div className="rounded-xl border border-slate-200 overflow-hidden" data-shortage-loading>
           <div className="px-3 py-2 text-[11.5px] text-slate-500 border-b border-slate-100 flex items-center gap-2 bg-slate-50"><Spin />계산 중...</div>

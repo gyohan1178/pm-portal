@@ -55,6 +55,22 @@ const TIER_META = {
   '여유': { color: '#059669', bg: '#F0FDF4', border: '#BBF7D0', icon: '🟢', desc: '여유 있음' },
 }
 
+
+// 부족 계산(서버) 실패 알림 — 빈 목록을 「부족 없음」으로 오해하지 않게 (v4.156.0)
+export function CalcError({ err, busy, onRetry }) {
+  const msg = String(err?.message || err || '')
+  const slow = /timeout|canceling statement/i.test(msg)
+  return (
+    <div data-shortage-error className="rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-xs text-red-700 flex flex-wrap items-center gap-x-2 gap-y-1">
+      <span className="font-bold">부족 계산 실패</span>
+      <span className="text-red-600">— 「부족 없음」이 아니라 계산이 끝나지 못했습니다{slow ? ' (서버 계산 시간 초과)' : ''}</span>
+      <span className="text-red-400 font-mono truncate max-w-full" title={msg}>{msg.slice(0, 120)}</span>
+      <button type="button" onClick={onRetry} disabled={busy}
+        className="ml-auto shrink-0 px-2.5 py-1 rounded-lg bg-white border border-red-200 font-bold hover:bg-red-100 disabled:opacity-50">{busy ? '계산 중…' : '다시 계산'}</button>
+    </div>
+  )
+}
+
 export default function ShortageMonthly({ csId, csName = null, onMade = null }) {
   const [tierFilter, setTierFilter] = useState(null)
   const compact = useCompact()
@@ -95,7 +111,7 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
   }, [])
   const qc = useQueryClient()
 
-  const { data: rows = [], isLoading } = useQuery({
+  const { data: rows = [], isLoading, error: calcErr, refetch, isFetching } = useQuery({
     queryKey: ['shortageMonthly', csId], queryFn: () => fetchMonthly(csId), enabled: !!csId,
   })
 
@@ -252,6 +268,8 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
       </div>
     </div>
   )
+  // 계산 실패면 「부족 없음」 대신 실패 알림 (v4.156.0)
+  if (!items.length && calcErr) return <CalcError err={calcErr} busy={isFetching} onRetry={() => refetch()} />
   if (!items.length) return (
     <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/40 p-10 text-center text-sm text-slate-400">
       {confirmEl}
@@ -288,6 +306,8 @@ export default function ShortageMonthly({ csId, csName = null, onMade = null }) 
   return (
     <div className="space-y-3">
       {confirmEl}
+      {/* 계산이 실패하면 빈 목록(「부족 없음」)처럼 보이던 것 → 실패라고 알린다 (v4.156.0) */}
+      {calcErr && <CalcError err={calcErr} busy={isFetching} onRetry={() => refetch()} />}
       {/* 긴급도 요약 카드 (클릭 필터) */}
       <div className="kpi-grid grid grid-cols-3 gap-2">
         {['긴급', '임박', '여유'].map(t => {
