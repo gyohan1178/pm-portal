@@ -1204,6 +1204,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   {/* 어느 발주 건인지 — Sub Assy 에서 특히 필요하다 */}
                   <td className="px-2 py-2 font-mono text-[11px] text-slate-500 whitespace-nowrap">
                     {r.po_number || <span className="text-slate-300">-</span>}
+                    {r._po_src === 'order' && <span data-po-src-order title="수주대장(직접 등록 · PDF)에만 있는 PO — PO 엑셀에 들어오면 그 PO 에 붙습니다" className="ml-1 px-1 py-px rounded bg-sky-50 text-sky-600 text-[9.5px] font-sans font-bold">수주대장</span>}
                     {r._plan_exc && <PlanBadge plan={r._plan_exc} changes={r._po_changes} since={false} className="ml-1" />}
                   </td>
                   <td className="px-2 py-2 text-slate-400">

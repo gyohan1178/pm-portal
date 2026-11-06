@@ -55,7 +55,20 @@ async function fetchByCustomer(code) {
   // HOT 등 Plan Exc — 붙은 PO 만 이력까지 받는다 (v4.59.0). _ 로 시작해 저장할 때 빠진다 (stripDerived)
   const plan = await fetchPlanByPo(supabase, poIds)
   const planChg = await fetchPlanChanges(supabase, Object.keys(plan))
-  return all.map(r => ({ ...r, po_number: r.po_id ? (poMap[r.po_id] || null) : null,
+  // 수주대장(직접 등록 · PDF)으로 미리 만든 호기 — 아직 PO 엑셀 PO 가 없어 po_id 가 비어 있다 (v4.155.0)
+  //   pm_prod_order_link 의 PO 번호를 대신 보여 준다. 표가 없으면(SQL 전) 그냥 넘어간다
+  const ordPo = {}
+  if (code === 'AX') {
+    const noPo = all.filter(r => !r.po_id || !poMap[r.po_id]).map(r => r.id)
+    const lc = []
+    for (let i = 0; i < noPo.length; i += 150) lc.push(noPo.slice(i, i + 150))
+    const lp = await Promise.all(lc.map(ids => supabase.from('pm_prod_order_link')
+      .select('production_id,po_no').in('production_id', ids).is('adopted_at', null)
+      .then(({ data, error }) => (error ? [] : data || []))))
+    lp.flat().forEach(k => { ordPo[k.production_id] = k.po_no })
+  }
+  return all.map(r => ({ ...r, po_number: (r.po_id ? (poMap[r.po_id] || null) : null) || ordPo[r.id] || null,
+    ...(ordPo[r.id] && !(r.po_id && poMap[r.po_id]) ? { _po_src: 'order' } : {}),
     ...(r.po_id && plan[r.po_id] ? { _plan_exc: plan[r.po_id], _po_changes: planChg[r.po_id] || null } : {}) }))
 }
 

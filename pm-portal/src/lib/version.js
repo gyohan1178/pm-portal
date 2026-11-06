@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.154.0'
+export const APP_VERSION = 'v4.155.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,14 @@ export const APP_VERSION = 'v4.154.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.155.0',
+    date: '2026-11-06',
+    changes: [
+      '생산관리 AXCELIS — 수주대장에 직접 등록 · PDF 로 올린 정식 PO 도 호기를 만든다 (예전엔 AX PO 엑셀에 실릴 때까지 안 생김). PO 번호 칸에 그 PO 번호 + 「수주대장」 표시, REV 는 수주대장 줄 값(없으면 같은 품번 최근 PO REV)',
+      '  나중에 AX PO 엑셀에 같은 PO · 품번이 들어오면 새 호기를 또 만들지 않고 그 호기에 붙음 (생산관리_AX직접등록_호기_반영_261106.sql 필요)',
+    ],
+  },
   {
     version: 'v4.154.0',
     date: '2026-11-05',
