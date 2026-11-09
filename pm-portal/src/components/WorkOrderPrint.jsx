@@ -3,9 +3,11 @@ import { createPortal } from 'react-dom'
 import QRCode from 'qrcode'
 import { todayISO } from '../lib/utils'
 import { toastError } from '../lib/toast'
-import { QR_STEPS, qrText, revInfo, missingOf } from '../lib/prodFlow'
+import { qrText, revInfo, missingOf } from '../lib/prodFlow'
+import { WO_STEPS } from '../lib/prodSteps'
 
-// PD 작업지시서 (A4 세로 한 장) — 생산관리(PD BOX)와 QR 공정 데모가 같이 쓴다.
+// 작업지시서 (A4 세로 한 장) — 생산관리(PD BOX)와 공정 현황판이 같이 쓴다.
+//   공정 기록 칸 = 4단계(lib/prodSteps WO_STEPS — 불출 · 제조 시작/완료 · 검수 · 납품) · r._title 로 제목
 //   ⚠ 한 장 297mm 에 맞춰 두었다 — 칸을 늘리면 다음 장으로 넘치지 않는지 인쇄해서 확인할 것
 //
 //   호기(row) 에 필요한 값: pn · hogi · name · rev(SREV) · brev · ccn · req_date · arrival_date · missing_parts
@@ -84,7 +86,7 @@ export function WoSheet({ r, qr }) {
     <div className="wo-sheet" style={{ width: '210mm', height: '297mm', overflow: 'hidden', boxSizing: 'border-box', padding: '11mm 12mm 8mm', background: '#fff', color: '#0F172A', fontFamily: "'Pretendard Variable', Pretendard, 'Malgun Gothic', sans-serif", boxShadow: '0 1px 4px rgba(0,0,0,.15)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: '6mm' }}>
         <div style={{ flex: 1 }}>
-          <div style={{ fontSize: '20pt', fontWeight: 800 }}>PD 작업지시서</div>
+          <div style={{ fontSize: '20pt', fontWeight: 800 }}>{r._title || 'PD 작업지시서'}</div>
           <div style={{ fontSize: '9pt', color: '#475569', marginTop: '1mm' }}>진선테크 · 발행 {todayISO()} · QR 시범 운영</div>
           <div style={{ marginTop: '5mm', display: 'flex', alignItems: 'baseline', gap: '4mm' }}>
             <span style={{ fontSize: '26pt', fontWeight: 800, letterSpacing: '-0.01em' }}>{r.pn}</span>
@@ -118,10 +120,10 @@ export function WoSheet({ r, qr }) {
       <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: '1.5mm' }}>
         <thead><tr>{['공정', '찍는 것', '날짜', '시간', '작업자', '확인'].map((h, i) => <th key={h} style={{ ...head, width: ['26%', '16%', '16%', '12%', '18%', '12%'][i] }}>{h}</th>)}</tr></thead>
         <tbody>
-          {QR_STEPS.map((s) => (
+          {(r._steps || WO_STEPS).map((s) => (
             <tr key={s.k}>
               <td style={{ ...cell, fontWeight: 700 }}>{s.l}</td>
-              <td style={{ ...cell, fontSize: '8.5pt', color: '#475569' }}>{s.k === 'elec_start' ? 'QR 시작' : 'QR 완료'}</td>
+              <td style={{ ...cell, fontSize: '8.5pt', color: '#475569' }}>{s.how || (s.auto ? '생산관리 체크' : s.start ? 'QR 시작' : 'QR 완료')}</td>
               <td style={cell} /><td style={cell} /><td style={cell} /><td style={cell} />
             </tr>
           ))}

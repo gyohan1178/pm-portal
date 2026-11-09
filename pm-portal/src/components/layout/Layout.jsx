@@ -21,7 +21,7 @@ const PAGE_LABELS = {
   'po-upload':['고객사 업무', '통합 PO'],
   'forecast-shortage': ['소요·부족', '소요 예측'],
   // 생산
-  production: ['생산', '생산 대시보드'],
+  production: ['현장', '공정 현황판'],
   missing:    ['생산', '결품 현황'],
   // 주간 / 분석
   weekly:     ['주간 / 분석', '주간업무보고'],
@@ -57,8 +57,8 @@ const PATH_LABELS = {
   'doc-request':      ['공통', '자료 요청'],
   'field-search':     ['현장', '현장 검색'],
   drawings:           ['현장', '도면 조회'],
-  board:              ['현장', '생산 전광판'],
-  'production/qr-demo': ['현장', 'QR 공정 데모'],
+  board:              ['현장', '공정 현황판'],
+  'production/qr-demo': ['현장', '공정 현황판'],
   'production/targets': ['현장', '생산관리 대상'],
   'quality/fa-progress': ['품질', '초도품 진행관리'],
   'quality/fai':      ['품질', '초도품 자재 매칭'],

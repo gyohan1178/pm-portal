@@ -55,8 +55,8 @@ function buildCommands() {
   push('주간 / 분석', '납품 일정 변경', '/schedule-changes', 'schedule changes napgi ilJeong')
   push('주간 / 분석', '인사이트 (관리자)', '/insights', 'insights')
   // 생산
-  push('생산', '생산 대시보드', '/production', 'production saengsan')
-  push('생산', '생산 전광판', '/board', 'board jeongwangpan display')
+  push('생산', '공정 현황판', '/production', 'production saengsan gongjeong qr scan')
+  push('생산', '공정 현황판 (TV)', '/board', 'board jeongwangpan display tv gongjeong')
   push('생산', '생산 관리', '/production/AX', 'production gwanri pdbox')
   push('생산', '도면 조회', '/drawings', 'drawing domyeon')
   push('자재', '하네스 출도 · 불출', '/production/harness-release', 'harness chuldo bulchul')

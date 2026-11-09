@@ -63,11 +63,10 @@ const SalesDashboard = lazy(() => import('./pages/SalesDashboard'))
 const SalesUpload = lazy(() => import('./pages/customer/SalesUpload'))
 const Help = lazy(() => import('./pages/Help'))
 const SnapshotRestore = lazy(() => import('./pages/SnapshotRestore'))
-const ProductionDashboard = lazy(() => import('./pages/production/ProductionDashboard'))
+const ProcessBoard = lazy(() => import('./pages/production/ProcessBoard'))   // 공정 현황판 (v4.165.0) — 생산 대시보드 · 전광판 · QR 데모 대신
 const ProductionCustomer = lazy(() => import('./pages/production/ProductionCustomer'))
-const ProductionBoard = lazy(() => import('./pages/production/ProductionBoard'))
+const BoardPage = lazy(() => import('./pages/production/ProcessBoard').then((m) => ({ default: m.BoardPage })))   // /board = 공정 현황판 TV 화면
 const DrawingSearch = lazy(() => import('./pages/production/DrawingSearch'))
-const QrDemo = lazy(() => import('./pages/production/QrDemo'))
 const HarnessRelease = lazy(() => import('./pages/production/HarnessRelease'))
 const ProdTargets = lazy(() => import('./pages/production/ProdTargets'))
 const ScanPage = lazy(() => import('./pages/production/ScanView').then((m) => ({ default: m.ScanPage })))
@@ -143,7 +142,7 @@ export default function App() {
     <Suspense fallback={<div className="min-h-screen bg-slate-50 flex items-center justify-center"><div className="text-slate-400 text-sm">불러오는 중...</div></div>}>
     <Routes>
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
-      <Route path="/board" element={<ProtectedRoute session={session}><ProductionBoard /></ProtectedRoute>} />
+      <Route path="/board" element={<ProtectedRoute session={session}><BoardPage /></ProtectedRoute>} />
       <Route path="/scan" element={<ProtectedRoute session={session}><ScanPage /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
         {/* 첫 화면 — 업무 흐름 (v4.122.0). 관제탑은 /control-tower (menu_scope 에 'home' 이 있는 계정만) */}
@@ -216,8 +215,8 @@ export default function App() {
         <Route path="restore" element={<SnapshotRestore />} />
         <Route path="todo" element={<Todo />} />
         <Route path="flow" element={<WorkFlowPage />} />
-        <Route path="production" element={<ProductionDashboard />} />
-        <Route path="production/qr-demo" element={<QrDemo />} />
+        <Route path="production" element={<ProcessBoard />} />
+        <Route path="production/qr-demo" element={<Navigate to="/production" replace />} />
         <Route path="production/harness-release" element={<HarnessRelease />} />
         <Route path="production/targets" element={<ProdTargets />} />
         <Route path="production/:code" element={<ProductionCustomer />} />
