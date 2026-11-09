@@ -12,8 +12,9 @@ import { parseMissingPaste, mergeMissing, clearMissing, collectMissing, missKey 
 import { useDebounced } from '../../hooks/useDebounced'
 import { toastError, toastSuccess } from '../../lib/toast'
 import Spin from '../../components/ux/Spin'
+import { ymdKST } from '../../lib/utils'
 
-const today = () => new Date().toISOString().slice(0, 10)
+const today = () => ymdKST()
 
 export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) {
   const qc = useQueryClient()

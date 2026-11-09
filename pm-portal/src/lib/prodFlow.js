@@ -1,3 +1,4 @@
+import { kst } from './utils'
 // PD 공정 흐름 — 생산 전광판 · QR 공정 데모가 같이 쓰는 기준
 //
 //   생산관리(production)의 체크칸으로 호기가 지금 어느 칸에 있는지 정한다.
@@ -12,7 +13,7 @@
 //     둘이 다르면 「도면 Rev 확인」 — 빨강으로 보인다.
 
 export const truthy = (v) => v === true || (typeof v === 'string' && !!v.trim() && v !== 'false')
-export const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+export const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 
 export const LANES = [
   { k: 'mch', l: '가공물 대기', sub: '가공물 입고 전', line: '#8A99B3' },

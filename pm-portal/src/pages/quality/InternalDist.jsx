@@ -5,7 +5,7 @@ import { useState, useMemo, useDeferredValue } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
 import { CUSTOMERS } from '../../lib/customers'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kst, kstDT } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
@@ -13,7 +13,7 @@ import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { RCV_DEPTS, REASONS, myRcvDepts, fetchDwgInt, stateOf, STATE_LABEL, STATE_TONE, lastRev, parseDwgPaste, shareDwg, distribute, markRcpt, cancelDwg, fetchExtDist, revMap } from './dwgInt'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 const INP = 'w-full px-2.5 py-2 text-[13px] border border-slate-200 rounded-lg bg-white'
 const csName = (c) => CUSTOMERS.find((x) => x.id === c)?.name || (c ? String(c).toUpperCase() : '')
 
@@ -49,7 +49,7 @@ export default function InternalDist() {
     shared: cnt('shared'),
     unrcv: scoped.reduce((a, r) => a + (r.status === '배포' ? r.rcpts.filter((x) => !x.received_at).length : 0), 0),
     unret: scoped.reduce((a, r) => a + (r.status === '배포' && r.recall_old ? r.rcpts.filter((x) => x.received_at && !x.returned_at).length : 0), 0),
-    month: scoped.filter((r) => r.status === '배포' && String(r.dist_at).slice(0, 7) === month).length,
+    month: scoped.filter((r) => r.status === '배포' && kst(r.dist_at).slice(0, 7) === month).length,
   }
 
   async function run(key, fn, ok) {
@@ -227,7 +227,7 @@ export default function InternalDist() {
                     {r.status === '공유됨' ? <span className="text-slate-400">배포 전</span> : (
                       <div className="flex flex-wrap gap-1">
                         {r.rcpts.map((x) => (
-                          <span key={x.id} title={x.received_at ? `${x.received_name || ''} ${String(x.received_at).slice(0, 16).replace('T', ' ')} · ${x.copies}부` : `${x.copies}부 · 수령 확인 전`} data-dwg-rcpt={x.dept}
+                          <span key={x.id} title={x.received_at ? `${x.received_name || ''} ${kstDT(x.received_at)} · ${x.copies}부` : `${x.copies}부 · 수령 확인 전`} data-dwg-rcpt={x.dept}
                             className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${x.received_at ? 'bg-emerald-50 text-emerald-700' : late(x) ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>
                             {x.received_at ? `✓ ${x.dept} ${md(x.received_at)}` : `⏳ ${x.dept}`}
                           </span>

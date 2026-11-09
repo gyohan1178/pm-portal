@@ -1,4 +1,5 @@
 import { isHot } from './planExc'
+import { ymdKST } from './utils'
 // ─────────────────────────────────────────────────────────────
 // Control Tower KPI 계산 — 순수 함수 (프레임워크 무관)
 // 쇼티지 캐시 / PO / 생산 데이터를 받아 관제탑 지표 산출
@@ -20,7 +21,7 @@ export function dDays(dateStr, today = new Date().setHours(0, 0, 0, 0)) {
   const d = new Date(String(dateStr).slice(0, 10)); if (isNaN(d)) return null
   return Math.round((d.setHours(0, 0, 0, 0) - today) / dayMs)
 }
-const thisMonth = () => new Date().toISOString().slice(0, 7)
+const thisMonth = () => ymdKST().slice(0, 7)
 function monthDiff(ym) {
   // 'YYYY-MM' → 현재월로부터 몇 개월 뒤 (음수면 과거)
   if (!ym) return 999

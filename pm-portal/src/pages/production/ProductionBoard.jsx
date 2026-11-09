@@ -7,7 +7,7 @@ import { must } from '../../lib/db'
 import { isMainPn, isMainRow, useMainPns } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
 import { bdMinus } from '../../lib/bizdays'
-import { todayISO, ymdKST } from '../../lib/utils'
+import { todayISO, ymdKST, kstYmd } from '../../lib/utils'
 import { LANES, laneOf, revInfo, whyOf, missingOf, md } from '../../lib/prodFlow'
 import { fetchPlanByPo, isHot } from '../../lib/planExc'
 
@@ -66,9 +66,9 @@ async function fetchRevChanges(rows) {
   for (let i = 0; i < ids.length; i += 200) {
     const part = must(await supabase.from('purchase_orders').select('id,po_number,changes').in('id', ids.slice(i, i + 200)), 'Rev 변경 조회') || []
     part.forEach((p) => (Array.isArray(p.changes) ? p.changes : []).forEach((c) => {
-      if ((c.field === 'item_rev' || c.field === 'item_brev') && String(c.at || '').slice(0, 10) >= since) {
+      if ((c.field === 'item_rev' || c.field === 'item_brev') && kstYmd(c.at) >= since) {
         const r = byPo.get(p.id)[0]
-        out.push({ pn: r.pn, hogi: r.hogi, po: p.po_number, kind: c.field === 'item_brev' ? 'BREV' : 'SREV', from: c.from, to: c.to, at: String(c.at).slice(0, 10) })
+        out.push({ pn: r.pn, hogi: r.hogi, po: p.po_number, kind: c.field === 'item_brev' ? 'BREV' : 'SREV', from: c.from, to: c.to, at: kstYmd(c.at) })
       }
     }))
   }

@@ -6,6 +6,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { compareRev, REV_STATE } from '../../lib/revCompare'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
+import { kst } from '../../lib/utils'
 
 // ── 품번 정규화: 접두 AX- 자동 처리 ──
 const AX = (s) => {
@@ -52,7 +53,7 @@ const fmtRevOf = (f) => (!f ? '-' : f.is_conv ? fmtRev(f.rev, f.edition) : f.rev
 
 // REV 알파벳 순위 (rev_order = 순위*1000 + 개정)
 const rankOf = (f) => Math.floor((f?.rev_order ?? 0) / 1000)
-const fmtDate = (v) => (v ? String(v).slice(0, 10) : '-')
+const fmtDate = (v) => (v ? kst(v).slice(0, 10) : '-')
 
 // 파일 용량 (재스캔 전 기존 행은 null → '-')
 const fmtSize = (b) => {

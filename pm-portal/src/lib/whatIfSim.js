@@ -1,9 +1,10 @@
+import { ymdKST } from './utils'
 // ─────────────────────────────────────────────────────────────
 // What-if 시뮬레이터 — 쇼티지 데이터에 변수 적용해 재계산
 // 변수: 입고지연(주), 수요증감(%), 안전재고 추가
 // ─────────────────────────────────────────────────────────────
 
-function thisMonth() { return new Date().toISOString().slice(0, 7) }
+function thisMonth() { return ymdKST().slice(0, 7) }
 function addMonths(ym, n) {
   const [y, m] = ym.split('-').map(Number)
   const d = new Date(y, m - 1 + n, 1)

@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
 import { useCustomers } from '../../hooks/useCustomers'
 import { supabase } from '../../lib/supabase'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kst } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
@@ -21,7 +21,7 @@ import { pasteFromMatched, pasteToText, keyLabel } from '../../lib/quotePartsPas
 import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq, missCount, missCodes, nqBlockers, nqParts, nqSummary } from './rfq'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 const CS_BADGE = { ax: 'bg-violet-50 text-violet-700', ed: 'bg-blue-50 text-blue-700', vm: 'bg-emerald-50 text-emerald-700', csk: 'bg-amber-50 text-amber-700' }
 const INP = 'w-full px-2.5 py-2 text-[13px] border border-slate-200 rounded-lg bg-white'
 
@@ -80,7 +80,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
     price: count('price') + count('noprice'),
     priceLate: scoped.filter((r) => r.stage === 'price' && r.price_req_at && Math.round((Date.now() - new Date(r.price_req_at)) / 86400000) > 2).length,
     ready: scoped.filter((r) => r.status === '진행' && readyLines(r).length > 0).length,
-    month: scoped.filter((r) => String(r.created_at).slice(0, 7) === month).length,
+    month: scoped.filter((r) => kst(r.created_at).slice(0, 7) === month).length,
   }
 
   async function run(id, fn, ok) {

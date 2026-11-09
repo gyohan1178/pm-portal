@@ -6,8 +6,9 @@
 //     · 같은 REV 를 다시 올리면 → 그 REV 보관본이 고치기 전 내용으로 덮인다 (목록에는 안 보임 · 만일을 위한 사본)
 //   구버전을 고르면 보관본 줄(bom 행 그대로)에 품목 정보를 붙여 지금 BOM 과 같은 모양으로 돌려준다.
 import { supabase } from './supabase'
+import { kst } from './utils'
 
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 export const normRev = (r) => String(r ?? '').trim().toUpperCase() || 'A'
 
 // REV 앞뒤 — 글자 REV 만 (A < B < … < Z < AA < AB). 숫자 등 다른 모양이면 null (비교 안 함)

@@ -17,7 +17,7 @@ function getWeekRange(offset=0) {
   const day = now.getDay()||7
   const mon = new Date(now); mon.setDate(now.getDate()-day+1+offset*7); mon.setHours(0,0,0,0)
   const sun = new Date(mon); sun.setDate(mon.getDate()+6)
-  const fmt = d=>d.toISOString().split('T')[0]
+  const fmt = d=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`   // 이 PC 날짜 (자정으로 맞춘 날을 toISOString 하면 하루 전이 됐다)
   return { from:fmt(mon), to:fmt(sun), label:`${fmt(mon)} ~ ${fmt(sun)}` }
 }
 

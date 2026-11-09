@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstYmd } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useCanEdit, useMe, useMyProfile } from '../../hooks/useProfile'
@@ -340,7 +340,7 @@ function ExternalDist() {
           배포사유: r.reason, 협력사명: r.vendor_name, 수신자: r.contact_name || '', '수신 이메일': r.contact_email || '',
           도면번호: r.drawing_no, 품명: r.item_name || '', 'ISSUE NO': r.issue_no || '',
           배포형식: r.dist_form, 승인구분: r.approval_type, 상태: r.status,
-          승인자: r.approved_name || '', 승인일: r.approved_at ? String(r.approved_at).slice(0, 10) : '',
+          승인자: r.approved_name || '', 승인일: r.approved_at ? kstYmd(r.approved_at) : '',
           폐기통보일: r.scrap_notified_at || '', 작성자: r.created_name || '',
           비고: r.memo || '',
         })),

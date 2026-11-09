@@ -71,5 +71,30 @@ export const ymdKST = (d = new Date()) => new Date(d.getTime() + 9 * 3600000).to
 // 오늘 날짜 YYYY-MM-DD (한국 기준)
 export const todayISO = () => ymdKST()
 
+// 시각 → 한국 시각 글자 'YYYY-MM-DD HH:mm:ss' (v4.164.0)
+//   DB(timestamptz) · 이력(jsonb now()) · new Date().toISOString() 은 세계표준시(…Z / +00:00)로 온다.
+//   글자를 그대로 자르면 9시간 이른 시각이 보이고, 한국 오전 9시 전 기록은 날짜도 하루 전으로 보인다.
+//   · 시각대가 붙은 시각(Z · +00:00 · +00)이나 Date 만 바꾼다 — 'YYYY-MM-DD' 같은 날짜는 그대로 돌려준다
+//   · 자리는 그대로라 예전처럼 잘라 쓰면 된다: kst(t).slice(0, 10) 날짜 · slice(0, 16) 날짜+시각 · slice(5, 10) 월-일 · slice(11, 16) 시각
+const TZ_TS = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)\s*(Z|[+-]\d{2}(?::?\d{2})?)$/i
+export function kst(v) {
+  if (v == null || v === '') return ''
+  let d = null
+  if (v instanceof Date) d = v
+  else {
+    const s = String(v).trim()
+    const m = TZ_TS.exec(s)
+    if (!m) return s
+    let z = m[3].toUpperCase()
+    if (/^[+-]\d{2}$/.test(z)) z += ':00'
+    else if (/^[+-]\d{4}$/.test(z)) z = z.slice(0, 3) + ':' + z.slice(3)
+    d = new Date(`${m[1]}T${m[2]}${z}`)
+  }
+  if (isNaN(d)) return String(v)
+  return new Date(d.getTime() + 9 * 3600000).toISOString().slice(0, 19).replace('T', ' ')
+}
+export const kstDT = (v) => kst(v).slice(0, 16).replace('T', ' ')    // 'YYYY-MM-DD HH:mm'
+export const kstYmd = (v) => kst(v).slice(0, 10)   // 'YYYY-MM-DD'
+
 // 소수 1자리 (정수는 정수로)
 export const fmt1 = n => { const v = Math.round(Number(n) * 10) / 10; return Number.isInteger(v) ? String(v) : v.toFixed(1) }

@@ -17,7 +17,7 @@ import { logActivity } from '../../lib/activityLog'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstYmd } from '../../lib/utils'
 import { bomSupplyTree, fetchSupply, SUPPLY_LABEL } from '../../lib/bomSupply'
 import BomImageDialog from '../../components/BomImageDialog'
 import { refreshProcurement } from '../../lib/refresh'
@@ -1285,8 +1285,8 @@ export default function BOM() {
                     </span>
                   </td>
                   <td className="px-3 py-2.5 text-slate-600">{a.itemCount}개</td>
-                  <td className="px-3 py-2.5 text-slate-400" title={`마지막 업로드 ${String(a.uploaded_at || a.created_at || '').slice(0, 10)} · 처음 등록 ${String(a.created_at || '').slice(0, 10)}`}>
-                    {String(a.uploaded_at || a.created_at || '').slice(0, 10)}
+                  <td className="px-3 py-2.5 text-slate-400" title={`마지막 업로드 ${kstYmd(a.uploaded_at || a.created_at)} · 처음 등록 ${kstYmd(a.created_at)}`}>
+                    {kstYmd(a.uploaded_at || a.created_at)}
                   </td>
                   <td className="px-3 py-2.5">
                     <button

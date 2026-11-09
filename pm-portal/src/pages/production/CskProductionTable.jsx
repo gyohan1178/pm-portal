@@ -5,10 +5,11 @@ import { useState } from 'react'
 import { cskOrdered, optionLines } from '../../lib/cskSchedule'
 import QcCell from '../../components/QcCell'
 import { qcKey } from '../../lib/prodAuto'
+import { kst } from '../../lib/utils'
 
 const dayMs = 86400000
 const dOf = (d) => { if (!d) return null; const x = new Date(String(d).slice(0, 10) + 'T00:00:00'); if (isNaN(x)) return null; return Math.round((x - new Date(new Date().toDateString())) / dayMs) }
-const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 
 // 일정표 칸 중 ITEM NO. · 품번 · 품명 · 입고 요청일 · 납품 완료일 · 회계는 화면에서 뺐다 (2026-10-07 사용자 정리)
 //   값은 그대로 저장되어 있어 검색 · 다시 올리기에는 쓰인다. 다시 보이게 하려면 여기 칸만 되살리면 된다.

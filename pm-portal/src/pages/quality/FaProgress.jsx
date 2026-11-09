@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
-import { todayISO, ymdKST } from '../../lib/utils'
+import { todayISO, ymdKST, kst, kstYmd } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
@@ -34,7 +34,7 @@ import {
 //   건 상세    단계별 예정 · 실적 (막대로 늦은 만큼) + 하위 항목 + 이슈 · 문의 기록. ◀ ▶ 로 다음 건
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 // 기록 시각 → 날짜. 시각이 비었거나 이상해도 화면이 죽지 않게
 const dayOf = (ts) => { const t = ts ? new Date(ts) : null; return t && !isNaN(t) ? ymdKST(t) : '' }
 const fetchFa = () => fetchAll(() => supabase.from('pm_fa').select('*').order('id'))
@@ -1014,7 +1014,7 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
                 <button onClick={() => onDelete(fa)} className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-400 hover:text-rose-600 hover:border-rose-300">삭제</button>
               </div>
             )}
-            <div className="text-[10.5px] text-slate-400">등록 {fa.created_name || '-'} · {String(fa.created_at || '').slice(0, 10)}</div>
+            <div className="text-[10.5px] text-slate-400">등록 {fa.created_name || '-'} · {kstYmd(fa.created_at)}</div>
           </div>
         </div>
       </div>
@@ -1183,7 +1183,7 @@ function StepRow({ fa, step, canEdit, onStep }) {
         onBlur={() => { if (memo !== (v.m || '')) put({ m: memo.trim() }) }}
         className="flex-1 min-w-[120px] px-2 py-1 border border-slate-200 rounded" />
       <span className="w-24 text-right text-[10px] text-slate-400 whitespace-nowrap">
-        {v.by ? `${v.by} · ${String(v.at || '').slice(5, 10).replace('-', '/')}` : ''}
+        {v.by ? `${v.by} · ${kst(v.at).slice(5, 10).replace('-', '/')}` : ''}
       </span>
       {step.link === 'fai' && (
         <div className="basis-full flex items-center gap-2 pl-[12.5rem] -mt-0.5">

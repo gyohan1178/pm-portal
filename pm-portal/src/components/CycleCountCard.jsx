@@ -4,13 +4,13 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { useMe } from '../hooks/useProfile'
 import { useCycleBase } from '../hooks/useCycleCount'
-import { todayISO } from '../lib/utils'
+import { todayISO, kst, ymdKST } from '../lib/utils'
 import {
   DAILY, ownerCells, checkMap, todayPlan, roundStats, itemsByLoc, workload, rackRanges, normLoc, loadExtra, saveExtra,
 } from '../lib/cycleCount'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10) : '')
+const md = (d) => (d ? kst(d).slice(5, 10) : '')
 const OPEN_KEY = 'pm.cycleCard.open'
 const loadOpen = () => { try { return localStorage.getItem(OPEN_KEY) !== '0' } catch { return true } }
 
@@ -57,7 +57,7 @@ export default function CycleCountCard({ inv = [], onScan }) {
     enabled: !!base?.setup && open,
     staleTime: 60 * 1000,
     queryFn: async () => {
-      const since = new Date(Date.now() - 14 * 86400000).toISOString().slice(0, 10)
+      const since = ymdKST(new Date(Date.now() - 14 * 86400000))
       const { data, error } = await supabase.from('pm_stock_audit')
         .select('id,audit_date,location,std_code,book_qty,counted_qty,diff,counted_by,memo')
         .neq('diff', 0).gte('audit_date', since)

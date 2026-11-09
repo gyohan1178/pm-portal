@@ -32,6 +32,7 @@ import BulkMissingModal from './BulkMissingModal'
 import QcCell from '../../components/QcCell'
 import { useMe } from '../../hooks/useProfile'
 import { AUTO_CUST, vmBoxesNeeded, qcIndex, qcKey, stagesOf, applyAutoStatus, fetchProdQc } from '../../lib/prodAuto'
+import { kst } from '../../lib/utils'
 
 // 여러 줄 요약 글자 → 확인 창 목록 줄 (v4.104.0)
 // Edwards 「📦 소요량 매칭」(재고 · 부족) — 생산관리에서는 안 씀 (v4.118.5 · 코드는 남겨 둠, true 로 바꾸면 다시 보임)
@@ -85,9 +86,9 @@ function lastRevChange(changes) {
 }
 function dday(d) { if (!d) return null; const x = new Date(String(d).slice(0, 10)); if (isNaN(x)) return null; return Math.round((x.setHours(0, 0, 0, 0) - new Date().setHours(0, 0, 0, 0)) / dayMs) }
 function ddayCls(n) { if (n == null) return 'text-slate-300'; if (n < 0) return 'text-red-600 font-bold'; if (n <= 7) return 'text-orange-600 font-bold'; if (n <= 14) return 'text-yellow-600 font-semibold'; return 'text-emerald-600' }
-function md(d) { return d ? String(d).slice(5, 10) : '' }
+function md(d) { return d ? kst(d).slice(5, 10) : '' }
 // 납품일 — 해가 바뀌어도 구분되게 YY-MM-DD (2026-10-12 김교한 차장 요청)
-function ymd(d) { const t = d ? String(d).slice(0, 10) : ''; return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t.slice(2) : md(d) }
+function ymd(d) { const t = d ? kst(d).slice(0, 10) : ''; return /^\d{4}-\d{2}-\d{2}$/.test(t) ? t.slice(2) : md(d) }
 function truthy(v) { return v === true || (typeof v === 'string' && v.trim() && v !== 'false') }
 
 // ── 역산 상수 (영업일) — 필요시 여기만 조정 ──

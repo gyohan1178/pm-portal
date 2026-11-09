@@ -7,9 +7,10 @@ import { supabase } from '../../lib/supabase'
 import { ORDER_CUSTOMERS } from '../../lib/orderIntake'
 import { CATS, unregGroups, fetchFlags, setNonItem, registerItems, fetchBomItems, closeDone, setNeed, requestBom, cancelBomRequest, bomState, needOf, BOM_STATE } from '../../lib/orderCleanup'
 import { toastError, toastSuccess } from '../../lib/toast'
+import { kst, ymdKST } from '../../lib/utils'
 
-const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '—')
-const daysTo = (d) => (d ? Math.round((new Date(d) - new Date(new Date().toISOString().slice(0, 10))) / 86400000) : null)
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '—')
+const daysTo = (d) => (d ? Math.round((new Date(d) - new Date(ymdKST())) / 86400000) : null)
 const STATE_TONE = { need: 'bg-red-50 text-red-600 border-red-200', unknown: 'bg-white text-slate-600 border-slate-200', single: 'bg-white text-slate-600 border-slate-200', req: 'bg-violet-50 text-violet-700 border-violet-200', has: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
 
 export default function OrderCleanup({ orders, editable, meName, onChanged }) {
@@ -57,7 +58,7 @@ export default function OrderCleanup({ orders, editable, meName, onChanged }) {
     const js = new Map((last.codes || []).map((c) => [c.std_code, c.js_code]))
     const aoa = [['고객사 품번', '포털 코드', '기준코드(이카운트)', '품명', '분류'], ...last.rows.map((r) => [r.pn, r.code, js.get(r.code.toUpperCase()) || '(이미 있던 코드)', r.name, CATS.find((c) => c.code === r.cat)?.label])]
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), '코드 부여')
-    XLSX.writeFile(wb, `코드부여_${cust}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, `코드부여_${cust}_${ymdKST()}.xlsx`)
   }
 
   return (
@@ -172,7 +173,7 @@ function BomPanel({ cust, editable, meName }) {
     const ls = picked.length ? picked : shown
     const aoa = [['고객사 품번', '포털 코드', '품명', '진행 중 PO', '가장 빠른 납기'], ...ls.map((r) => [r.pn, r.std_code, r.name, r.pos, r.due_min || ''])]
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), 'BOM 요청')
-    XLSX.writeFile(wb, `BOM요청목록_${cust}_${new Date().toISOString().slice(0, 10)}.xlsx`)
+    XLSX.writeFile(wb, `BOM요청목록_${cust}_${ymdKST()}.xlsx`)
   }
 
   return (
@@ -206,7 +207,7 @@ function BomPanel({ cust, editable, meName }) {
                       <td className="px-2 py-2"><div className="font-mono font-bold">{r.std_code}</div><div className="text-[10.5px] text-slate-400 truncate max-w-[240px]" title={r.name}>{r.name} · PO {r.pos}건</div></td>
                       <td className="px-2 py-2 font-mono whitespace-nowrap">{r.due_min || '—'}{d != null && d <= 14 && <span className={`ml-1 px-1 rounded text-[10px] font-bold ${d < 0 ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700'}`}>{d < 0 ? `지연 ${-d}일` : `D-${d}`}</span>}</td>
                       <td className="px-2 py-2">
-                        {st === 'req' ? <div className="text-[11px]"><span className="text-violet-700 font-bold">{r.assignee}</span>{r.due_date && <span className="text-slate-500"> · 기한 {md(r.due_date)}</span>}<div className="text-[10px] text-slate-400">{r.req_name} · {md(String(r.req_at || '').slice(0, 10))}</div></div>
+                        {st === 'req' ? <div className="text-[11px]"><span className="text-violet-700 font-bold">{r.assignee}</span>{r.due_date && <span className="text-slate-500"> · 기한 {md(r.due_date)}</span>}<div className="text-[10px] text-slate-400">{r.req_name} · {md(r.req_at)}</div></div>
                           : st === 'has' ? <span className="text-emerald-700 font-bold">BOM 있음{r.req_status === '완료' ? ' · 요청 완료' : ''}</span>
                           : editable ? (
                             <select value={needOf(r) || ''} onChange={(e) => run(() => setNeed([r.item_id], e.target.value), e.target.value === '단품' ? '단품으로 — BOM 없이 진행' : 'BOM 필요로')} data-cl-need={r.std_code} className="h-7 px-1 text-[11.5px] border border-slate-200 rounded">

@@ -7,6 +7,7 @@ import { fetchAll } from './paginate'
 import { logActivity } from './activityLog'
 import { divisionOf } from './axPoFile'
 import { autoDeliverLegacy } from './legacyDeliver'
+import { kst, kstYmd, ymdKST } from './utils'
 
 // 여러 건을 20개씩 동시에 저장 — 하나라도 실패하면 멈춘다
 async function pool(arr, fn, n = 20) {
@@ -497,7 +498,7 @@ export async function axSyncPreview(fileRows) {
       if (r.item_id && m.item_id !== r.item_id && !m.item_id) patch.item_id = r.item_id
       if (r.division && !m.division) patch.division = r.division
       const q = Number(patch.qty ?? m.qty) || 0
-      if (r.status === '완료' && (+m.delivered_qty || 0) < q) { patch.delivered_qty = q; patch.delivered_at = (r.issued_at || '').slice(0, 10) || null; log('delivered', m.delivered_qty, q) }
+      if (r.status === '완료' && (+m.delivered_qty || 0) < q) { patch.delivered_qty = q; patch.delivered_at = kstYmd(r.issued_at) || null; log('delivered', m.delivered_qty, q) }
       // 수량이 줄어 납품 수량이 더 커진 줄 (예: 4개 중 1개가 다른 분할로 빠짐) → 납품 수량을 수량에 맞춘다 (v4.90.6)
       if ((+m.delivered_qty || 0) > q && !('delivered_qty' in patch)) { patch.delivered_qty = q; log('delivered', m.delivered_qty, q) }
       if (r.status === '취소' && !m.cancelled) { patch.cancelled = true; log('line_del', `${r.items?.std_code || ''} ×${m.qty}`, '고객사 취소') }
@@ -537,7 +538,7 @@ const importRow = (orderId, l, brevReady = false) => {
     order_id: orderId, line_no: String(l.order_line || '1'), del_line: String(l.del_line || '1'), item_id: l.item_id || null,
     raw_pn: l.items?.std_code?.replace(/^AX-/, '') || l.raw_pn || null, raw_desc: l.items?.name || l.raw_desc || null, rev: l.item_rev || null,
     qty: Number(l.qty_ordered) || 0, unit_price: l.unit_price ?? null, due_date: l.promise_date || null, division: l.division || null,
-    delivered_qty: done ? Number(l.qty_ordered) || 0 : 0, delivered_at: done ? (l.issued_at || '').slice(0, 10) || null : null,
+    delivered_qty: done ? Number(l.qty_ordered) || 0 : 0, delivered_at: done ? kstYmd(l.issued_at) || null : null,
     sales_done_at: l.fromRcv && done ? new Date().toISOString() : null, cancelled: l.status === '취소',   // Received 에서 온 납품 줄은 지난 일 → 판매입력도 끝난 것으로
   }
 }
@@ -698,7 +699,7 @@ export const FIELD_LABEL = { customer: '고객사', note: '특이사항 메모',
 //   단가는 통화(원 · 달러)가 같을 때만, ODD_PRICE_PCT(10%) 넘게 다를 때만 — AXCELIS 원화 단가는 환율 따라 몇 % 씩 늘 바뀌므로
 //   (실데이터: AX 진행 중 비교 319줄 중 3% 넘게 139 · 5% 112 · 10% 24 · 20% 7)
 export const ODD_PRICE_PCT = 10
-const oddDate = (l) => String(l.o?.order_date || l.due_date || l.o?.registered_at || '').slice(0, 10)
+const oddDate = (l) => kst(l.o?.order_date || l.due_date || l.o?.registered_at).slice(0, 10)
 const oddUsd = (o) => o?.currency === 'USD' || o?.ccn === 'B'
 export function oddsOf(lines) {
   const groups = new Map()
@@ -1008,7 +1009,7 @@ export const cskProdMsg = (r) => [
 
 export async function markDelivered(lines, delivered, meName) {
   const now = new Date().toISOString()
-  const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: now.slice(0, 10), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
+  const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: ymdKST(), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
   // 예전엔 한 줄씩 차례로 저장해 100줄이면 100번 기다렸다 — 납품 취소는 한 번에, 납품은 20줄씩 동시에 (v4.90.6)
   if (!delivered) {
     const ids = lines.map((l) => l.id)

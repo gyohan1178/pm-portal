@@ -13,9 +13,10 @@ import {
   linkSummary, addPtGroup, updatePtGroup, deletePtGroup, addPtTarget, updatePtTarget,
 } from '../../lib/prodTargets'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
+import { kst } from '../../lib/utils'
 
 const fmt = (n) => (Number(n) || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '—')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '—')
 const DONE = (st) => st === '완료'
 const isReal = (gid) => gid !== 'all' && gid !== 'none'   // 진짜 그룹 (전체 · 미분류가 아닌 것)
 

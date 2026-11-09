@@ -6,6 +6,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { refreshProcurement } from '../lib/refresh'
 import { toastError, toastSuccess } from '../lib/toast'
+import { kstYmd } from '../lib/utils'
 
 const VENDOR_WHY = ['제조사 백오더', '협력사 생산 지연', '자재 수급 지연', '운송 · 통관 지연', '협력사가 날짜 당김']
 const NEED_WHY = ['고객사 일정 연기', '고객사 일정 당김', '생산 계획 변경', '수량 · 사양 변경']
@@ -84,7 +85,7 @@ export default function PoDueDialog({ pos = [], onClose, onDone }) {
         {one && log.length > 0 && (
           <div className="rounded-lg bg-slate-50 px-3 py-2 text-[11.5px] text-slate-600" data-due-log>
             <div className="font-bold text-slate-500 mb-0.5">변경 이력</div>
-            {log.map((l) => <div key={l.id}>{String(l.at).slice(0, 10)} · {l.kind} · {l.old_date || '없음'} → {l.new_date || '지움'} · {l.reason}{l.by_name ? ` · ${l.by_name}` : ''}</div>)}
+            {log.map((l) => <div key={l.id}>{kstYmd(l.at)} · {l.kind} · {l.old_date || '없음'} → {l.new_date || '지움'} · {l.reason}{l.by_name ? ` · ${l.by_name}` : ''}</div>)}
           </div>
         )}
         <div className="flex justify-end gap-2 pt-1">

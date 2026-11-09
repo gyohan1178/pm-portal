@@ -21,7 +21,7 @@ import { logActivity } from '../../lib/activityLog'
 import AutoInput from '../../components/AutoInput'
 import { fetchAll } from '../../lib/paginate'
 import * as XLSX from 'xlsx'
-import { todayISO, ymdKST } from '../../lib/utils'
+import { todayISO, ymdKST, kstYmd } from '../../lib/utils'
 import { useSearchParams } from 'react-router-dom'
 import { pendingHay, histHay, histMemo } from '../../lib/inboundSearch'
 import LotInboundModal from '../../components/LotInboundModal'
@@ -1099,7 +1099,7 @@ export default function Inbound() {
                               onChange={e=>{ if (skipClickRef.current) return; const n=new Set(selHist); e.target.checked?n.add(r.id):n.delete(r.id); setSelHist(n); lastIdxRef.current = histIdx.get(r.id) }}/>
                           </td>
                           <td className="px-3 py-2 font-semibold text-slate-700 whitespace-nowrap">{r.movement_date}
-                            {r.ecount_purchase_at && <span data-ecp-mark title={`이카운트 구매입력 엑셀 내려받음 ${String(r.ecount_purchase_at).slice(0,10)}${r.ecount_purchase_by ? ' · ' + r.ecount_purchase_by : ''}`}
+                            {r.ecount_purchase_at && <span data-ecp-mark title={`이카운트 구매입력 엑셀 내려받음 ${kstYmd(r.ecount_purchase_at)}${r.ecount_purchase_by ? ' · ' + r.ecount_purchase_by : ''}`}
                               className="ml-1 px-1.5 py-0.5 rounded bg-violet-50 text-violet-600 text-[10px] font-bold">이카운트 ✓</span>}</td>
                           <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.items?.std_code} /></td>
                           <td className="px-3 py-2 font-semibold text-slate-800">{r.items?.name}</td>

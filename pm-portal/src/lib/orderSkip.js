@@ -7,6 +7,7 @@
 //   같은 PO 를 다시 올리면 빠진 줄은 「줄 빠짐」 → 취소 표시(이력 남음)로 정리된다 (saveOrder 의 removed)
 import { supabase } from './supabase'
 import { stripPrefix } from './custPrefix'
+import { ymdKST } from './utils'
 
 export const SKIP_KEY = 'order_pdf_skip'
 export const DEFAULT_SKIP = [
@@ -47,7 +48,7 @@ export const ruleLabel = (r) => (r.pn ? `품번 ${stripPrefix(r.pn)}` : `「${r.
 // 줄에서 규칙 하나 만들기 — 품번이 있으면 품번, 없으면 품명
 export function ruleFromLine(po, line, by) {
   const pn = s(line.pn).trim()
-  const base = { id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), cust: po.customer, by: by || null, at: new Date().toISOString().slice(0, 10) }
+  const base = { id: 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), cust: po.customer, by: by || null, at: ymdKST() }
   if (po.customer === 'ETC') base.name = s(po.customer_name).trim()
   return pn ? { ...base, pn, memo: s(line.desc).trim() || null } : { ...base, text: s(line.desc).trim() || s(line.spec).trim(), memo: '품번 없음' }
 }

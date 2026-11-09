@@ -19,6 +19,7 @@ import {
   parseCN, derive, decodeCN, summarize, searchText, repData, subTree,
   usDate, toKo, koName, DISP, TYPE_KO, revsOf,
 } from '../../lib/cnParse'
+import { kst } from '../../lib/utils'
 
 // 🔁 설계변경(CN) 이력 — 품질 (2026-10-14)
 //   Axcelis 에서 받은 CN Summary(HTML)를 올리면 분석 결과를 DB 에 남겨 누구나 다시 본다.
@@ -29,7 +30,7 @@ const AX_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
 const OLD_COLS = 'id,cn_no,title,file_name,version,summary,our_parts,date_from,date_to,memo,reviewed,reviewed_name,reviewed_at,created_name,created_at,updated_name,updated_at'
 const LIST_COLS = OLD_COLS + ',review_status,apply_from'   // v4.52.0 SQL(pm_cn_docs_review_apply) 로 생기는 칸
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const yy = (d) => (d ? String(d).slice(2, 10) : '')
+const yy = (d) => (d ? kst(d).slice(2, 10) : '')
 const axCode = (pn) => 'AX-' + String(pn || '').replace(/^AX-/i, '')
 const isMfgPn = (pn) => /_[A-Z][A-Z0-9 .,&/-]{2,}$/.test(pn || '')
 const thisMonth = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 7)
@@ -163,7 +164,7 @@ function CnList({ onOpen }) {
 
   // 이번 달 CN 의 신규 품번 등록 여부 · 단종 품번 재고/발주잔 — 지표 보조 숫자
   const month = thisMonth()
-  const monthDocs = docs.filter(x => String(x.created_at || '').slice(0, 7) === month)
+  const monthDocs = docs.filter(x => kst(x.created_at).slice(0, 7) === month)
   const monNew = [...new Set(monthDocs.flatMap(x => x.summary?.newPns || []))]
   const monEol = [...new Set(monthDocs.flatMap(x => x.summary?.eolPns || []))]
   const { data: kx } = useQuery({

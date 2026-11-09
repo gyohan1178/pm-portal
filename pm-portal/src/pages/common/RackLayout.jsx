@@ -7,7 +7,7 @@ import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
 import QrScanner from '../../components/QrScanner'
 import { useCanEdit } from '../../hooks/useProfile'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstDT } from '../../lib/utils'
 import { SkelBar } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
@@ -570,7 +570,7 @@ export default function RackLayout() {
                       </div>
                       <p className="text-[11px] text-slate-400 mt-0.5 truncate">{sp.preview} …</p>
                       <p className="text-[10px] text-slate-400">
-                        {String(sp.created_at).slice(0,16).replace('T',' ')} · {sp.who || ''}
+                        {kstDT(sp.created_at)} · {sp.who || ''}
                       </p>
                     </div>
                     {!sp.restored && (

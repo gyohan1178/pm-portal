@@ -13,7 +13,7 @@ import CustomerPOUpload from './CustomerPOUpload'
 import CustomerTabs from '../../components/CustomerTabs'
 import { downloadSheet } from '../../lib/exportSheet'
 import { useDebounced } from '../../hooks/useDebounced'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstYmd } from '../../lib/utils'
 import { planExcOf, isHot, dueSort, planSince, planSinceText, planSinceTitle } from '../../lib/planExc'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
@@ -679,7 +679,7 @@ export default function CustomerPO() {
                 <div key={i} className="rounded-lg border border-slate-200 p-3 text-xs">
                   <div className="flex items-center justify-between mb-1">
                     <span className="font-bold text-slate-700">{c.field==='promise_date'?'납기 변경':c.field==='item_rev'?'REV 변경':c.field==='qty_ordered'?'수량 변경':c.field==='division'?'구분 변경':c.field==='plan_exc'?'Plan Exc (HOT 등) 변경':c.field}</span>
-                    <span className="text-slate-400">{c.at?.slice(0,10)||''}</span>
+                    <span className="text-slate-400">{kstYmd(c.at)}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="px-2 py-0.5 rounded bg-red-50 text-red-500 line-through">{c.from??'-'}</span>

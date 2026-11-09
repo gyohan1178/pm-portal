@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstYmd } from '../../lib/utils'
 import { SkelBar } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
@@ -235,7 +235,7 @@ export default function AdminDashboard() {
                     )}
                     {done && r.done_at && (
                       <span className="text-emerald-600">
-                        {String(r.done_at).slice(0, 10)} 완료
+                        {kstYmd(r.done_at)} 완료
                       </span>
                     )}
                   </div>

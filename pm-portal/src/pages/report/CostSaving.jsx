@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
 import { must } from '../../lib/db'
-import { todayISO } from '../../lib/utils'
+import { todayISO, ymdKST } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import * as XLSX from 'xlsx'
@@ -26,7 +26,7 @@ const n = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 const won = (v) => n(v) + '원'
 const man = (v) => (Math.abs(Number(v) || 0) >= 10000 ? n((Number(v) || 0) / 10000) + '만' : n(v))
 const thisYear = () => todayISO().slice(0, 4)
-const monthsBack = (k) => { const d = new Date(); d.setMonth(d.getMonth() - k); return d.toISOString().slice(0, 10) }
+const monthsBack = (k) => { const d = new Date(); d.setMonth(d.getMonth() - k); return ymdKST(d) }
 // 포털로 입고를 받기 시작한 날. 그 전 입고는 단가가 덜 채워져 있어 지표에서 뺀다.
 //   ⚠ 화면(🎯 목표·집계 기준)에서 바꿀 수 있다. 바꾼 값은 pm_settings 에 남는다.
 const DEFAULT_START = '2026-07-01'

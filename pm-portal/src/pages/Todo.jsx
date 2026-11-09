@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { useMe } from '../hooks/useProfile'
-import { todayISO } from '../lib/utils'
+import { todayISO, kst, kstYmd } from '../lib/utils'
 import { dday, isOwnedBy, canEditTodo, isNewForMe, groupOf, postponeDate } from '../lib/todoView'
 import { useCycleTodo, CycleTodoRow } from '../components/CycleTodo'
 import { SkelBar } from '../components/ux/Skeleton'
@@ -311,7 +311,7 @@ export default function Todo() {
               {r.due_date && (
                 <span className={ddayCls(done ? null : d)}>{r.due_date.slice(5)} {!done && ddayText(d)}</span>
               )}
-              {done && r.done_at && <span className="text-emerald-600">{String(r.done_at).slice(5, 10)} 완료</span>}
+              {done && r.done_at && <span className="text-emerald-600">{kst(r.done_at).slice(5, 10)} 완료</span>}
               <button onClick={() => { setOpenCmt(cmtOpen ? null : r.id); setCmtText('') }}
                 className={`${r.comment_cnt > 0 ? 'text-indigo-600 font-semibold' : 'text-slate-400'}`}>
                 💬 {r.comment_cnt > 0 ? r.comment_cnt : '댓글'}
@@ -351,7 +351,7 @@ export default function Todo() {
               <div key={c.id} className="flex items-baseline gap-2 text-xs">
                 <span className="font-semibold text-slate-600 flex-shrink-0">{c.author || '—'}</span>
                 <span className="text-slate-600 flex-1">{c.body}</span>
-                <span className="text-[10px] text-slate-300 flex-shrink-0">{String(c.created_at).slice(5, 10)}</span>
+                <span className="text-[10px] text-slate-300 flex-shrink-0">{kst(c.created_at).slice(5, 10)}</span>
               </div>
             ))}
             {!comments.length && <p className="text-[11px] text-slate-400">아직 댓글이 없습니다</p>}
@@ -507,7 +507,7 @@ export default function Todo() {
                     <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">{r.tag}</span>
                   )}
                   {done && r.done_at && (
-                    <span className="text-emerald-600">{String(r.done_at).slice(0, 10)} 완료</span>
+                    <span className="text-emerald-600">{kstYmd(r.done_at)} 완료</span>
                   )}
                 </div>
               </div>
@@ -542,7 +542,7 @@ export default function Todo() {
                       <div className="flex items-baseline gap-2">
                         <span className="text-xs font-bold text-slate-700">{c.author || '—'}</span>
                         <span className="text-[10px] text-slate-400">
-                          {String(c.created_at).slice(5, 16).replace('T', ' ')}
+                          {kst(c.created_at).slice(5, 16)}
                         </span>
                       </div>
                       <p className="text-sm text-slate-600 mt-0.5 whitespace-pre-wrap">{c.body}</p>

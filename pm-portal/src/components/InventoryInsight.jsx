@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
-import { catOf, todayISO } from '../lib/utils'
+import { catOf, todayISO, kst } from '../lib/utils'
 import { membersByRep } from '../lib/sameItem'
 import { useCustomers } from '../hooks/useCustomers'
 import { addItemsToCart } from '../pages/common/PoCart'
@@ -21,7 +21,7 @@ const won = (v) => {
   if (Math.abs(x) >= 1e4) return `${Math.round(x / 1e4).toLocaleString('ko-KR')}만`
   return n(x)
 }
-const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 const CS_OF = [['AX-', 'AXCELIS', 'ax'], ['ED-', 'Edwards', 'ed'], ['CS-', 'CSK', 'csk'], ['VM-', 'VM', 'vm']]
 const csOf = (code) => CS_OF.find(([p]) => String(code || '').toUpperCase().startsWith(p)) || null
 const COLORS = ['bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-cyan-500', 'bg-rose-400', 'bg-slate-300']

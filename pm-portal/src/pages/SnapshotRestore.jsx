@@ -6,6 +6,7 @@ import { useCanEdit } from '../hooks/useProfile'
 import { SkelBar } from '../components/ux/Skeleton'
 import { useConfirm } from '../components/ux/ConfirmDialog'
 import Spin from '../components/ux/Spin'
+import { kstDT } from '../lib/utils'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 
@@ -80,7 +81,7 @@ export default function SnapshotRestore() {
       desc: `${n(s.cnt)}건을 되돌립니다.` + (s.src === 'rack'
         ? ' 위치가 비어 있는 품목만 복구되며, 그 사이 다른 자리가 잡혔으면 건드리지 않습니다.'
         : ' 이미 같은 내용이 있으면 건너뜁니다.'),
-      items: [s.label, s.preview ? `${s.preview} …` : '', `${String(s.created_at).slice(0, 16).replace('T', ' ')}${s.who ? ` · ${s.who}` : ''}`].filter(Boolean),
+      items: [s.label, s.preview ? `${s.preview} …` : '', `${kstDT(s.created_at)}${s.who ? ` · ${s.who}` : ''}`].filter(Boolean),
       okText: '되돌리기', danger: true,
     })
     if (ok) restore(s)
@@ -172,7 +173,7 @@ export default function SnapshotRestore() {
                     <p className="text-[11px] text-slate-400 mt-1 truncate">{s.preview} …</p>
                   )}
                   <p className="text-[11px] text-slate-400 mt-0.5">
-                    {String(s.created_at).slice(0, 16).replace('T', ' ')}
+                    {kstDT(s.created_at)}
                     {s.who ? ` · ${s.who}` : ''}
                   </p>
                 </div>

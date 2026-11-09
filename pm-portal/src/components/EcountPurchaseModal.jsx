@@ -7,7 +7,7 @@ import { buildPurchase, purchaseWorkbook, ECOUNT_WH } from '../lib/ecountPurchas
 import { ecountStaffOf } from '../lib/ecountStaff'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
-import { todayISO } from '../lib/utils'
+import { todayISO, kstYmd } from '../lib/utils'
 
 const won = (n) => Math.round(Number(n) || 0).toLocaleString('ko-KR')
 const KIND_TAG = { nopo: '발주외', nocode: '거래처코드', noprice: '단가 0', noitem: '기준코드', fx: '외화' }
@@ -69,7 +69,7 @@ export default function EcountPurchaseModal({ rows, customers = [], email, onClo
           </div>
           {done.length > 0 && (
             <div data-ecp-done className="rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800 mb-3 flex flex-wrap items-center gap-2">
-              <span>✓ 고른 줄 중 <b>{done.length}줄</b>은 이미 구매입력 엑셀로 내려받았습니다 ({[...new Set(done.map((r) => String(r.ecount_purchase_at).slice(0, 10)))].join(', ')}).</span>
+              <span>✓ 고른 줄 중 <b>{done.length}줄</b>은 이미 구매입력 엑셀로 내려받았습니다 ({[...new Set(done.map((r) => kstYmd(r.ecount_purchase_at)))].join(', ')}).</span>
               <label className="inline-flex items-center gap-1 font-bold cursor-pointer">
                 <input data-ecp-withdone type="checkbox" checked={withDone} onChange={(e) => setWithDone(e.target.checked)} /> 그래도 포함 (두 번 올리면 이카운트에 두 번 잡힘)</label>
               <button data-ecp-clear onClick={clearDone} disabled={busy} className="ml-auto px-2 py-1 rounded border border-indigo-200 bg-white font-bold hover:bg-indigo-100 disabled:opacity-40"

@@ -11,7 +11,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { prevWarn, prevMargin, isMissingSaleFn } from '../../lib/salePrice'
-import { todayISO } from '../../lib/utils'
+import { todayISO, ymdKST } from '../../lib/utils'
 
 // 판매 실적가 (v4.163.0) — 고객사에 낸 판매단가를 품목별로 본다 · 고친다
 //   실적가 = 그 품목의 가장 최근 견적 단가 (단품 줄 단가 · 세부견적으로 나간 부품 단가)
@@ -100,7 +100,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
   }, [groups, dq, warnOnly])
   const vis = useVisibleRows(filtered, 200, [dq, cur, kind, warnOnly, custKey])
 
-  const d30 = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10)
+  const d30 = ymdKST(new Date(Date.now() - 30 * 86400000))
   const kpi = {
     items: groups.filter((g) => g.used).length,
     recent: groups.filter((g) => g.used && String(g.show.quote_date || '') >= d30).length,

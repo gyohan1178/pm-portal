@@ -11,7 +11,7 @@ import { useCanEdit, useCanRequest, useMe } from '../../hooks/useProfile'
 import { useTableSort } from '../../hooks/useTableSort'
 import { buildView, doneView, DONE_SORTS, lastHandled, fmtHandled } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
-import { todayISO, ymdKST } from '../../lib/utils'
+import { todayISO, ymdKST, kstDT } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
 import { ilikeAny } from '../../lib/pgFilter'
 import { cutLabel } from '../../lib/requestCut'
@@ -683,7 +683,7 @@ export default function MaterialRequest() {
         '사유': r.reason || '',
         '처리자': r.handler || '',
         '처리유형': r.handle_type || '',
-        '처리일시': r.handled_at ? String(r.handled_at).slice(0, 16).replace('T', ' ') : '',
+        '처리일시': r.handled_at ? kstDT(r.handled_at) : '',
         '불출수량': r.issued_qty ?? '',
         '처리메모': r.handle_memo || '',
       }))
@@ -1116,7 +1116,7 @@ export default function MaterialRequest() {
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
                   {r.notice_by || '처리자 미상'}
-                  {r.notice_at ? ` · ${String(r.notice_at).slice(0, 16).replace('T', ' ')}` : ''}
+                  {r.notice_at ? ` · ${kstDT(r.notice_at)}` : ''}
                 </p>
               </div>
               <button onClick={() => seenNotice([r.id])}
@@ -2043,7 +2043,7 @@ export default function MaterialRequest() {
                               {' — '}<span className="font-semibold break-words">{rejReasons.length === 1 ? rejReasons[0] : '품목마다 다름 · 아래 품목 줄에 표시'}</span>
                               {(rejBy || rejAt) && (
                                 <span className="ml-1.5 text-[11px] text-rose-500 whitespace-nowrap">
-                                  {rejBy}{rejBy && rejAt ? ' · ' : ''}{rejAt ? String(rejAt).slice(0, 16).replace('T', ' ') : ''}
+                                  {rejBy}{rejBy && rejAt ? ' · ' : ''}{rejAt ? kstDT(rejAt) : ''}
                                 </span>
                               )}
                             </div>
@@ -2392,7 +2392,7 @@ export default function MaterialRequest() {
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-600">{r.handler || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-500">{r.handle_type || ''}</td>
                       <td className="px-3 py-2 whitespace-nowrap overflow-hidden text-slate-400">
-                        {r.handled_at ? String(r.handled_at).slice(0, 16).replace('T', ' ') : ''}
+                        {r.handled_at ? kstDT(r.handled_at) : ''}
                       </td>
                       <td data-hist-memo className={`px-3 py-2 whitespace-nowrap overflow-hidden ${r.status === '반려' ? 'font-bold text-rose-600' : 'text-slate-500'}`}
                         title={r.status === '반려' ? `반려 사유: ${rejectReasonOf(r)}` : (r.handle_memo || '')}>

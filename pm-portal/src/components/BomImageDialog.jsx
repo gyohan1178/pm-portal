@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { bomImageRows, drawBomImage, canvasToBlob, DWG_COLS, DWG_DEFAULT, DWG_SIZES } from '../lib/bomImage'
 import { toastError, toastSuccess } from '../lib/toast'
+import { ymdKST } from '../lib/utils'
 
 // BOM → 도면용 흑백 이미지 (v4.75.0)
 //   설정(열 · 줄 순서 · 글자 크기 · 머리 줄 · 참조용 빼기)을 바꾸면 미리보기가 바로 다시 그려진다.
@@ -24,7 +25,7 @@ export default function BomImageDialog({ rows, assembly, onClose }) {
   }, [cols, order, size, withTitle, dropZero])
 
   const list = useMemo(() => bomImageRows(rows, { order, dropZero }), [rows, order, dropZero])
-  const today = new Date().toISOString().slice(0, 10)
+  const today = ymdKST()
   const title = withTitle && assembly ? `${assembly.code}${assembly.name ? ' ' + assembly.name : ''} · REV ${assembly.rev || 'A'}` : ''
 
   useEffect(() => {

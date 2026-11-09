@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useMyProfile, canEdit } from '../hooks/useProfile'
 import { toastError, toastSuccess } from '../lib/toast'
 import Spin from './ux/Spin'
-import { todayISO } from '../lib/utils'
+import { todayISO, kst } from '../lib/utils'
 import { DOC_KINDS, KIND_SHOW, DOC_DEPTS, DOC_CUSTOMERS, custName, guessCustomer, lookupItem, findOpenSame, createDocRequest } from '../lib/docRequest'
 
 const addDays = (n) => { const d = new Date(todayISO()); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
@@ -129,7 +129,7 @@ export default function DocRequestModal({ preset = {}, onClose }) {
           </div>
         )}
         {same && !already && <div className="px-3 py-2 rounded-lg bg-amber-50 text-[12px] text-amber-800 leading-relaxed" data-doc-same>
-          ⚠ 같은 자료를 <b>{same.from_dept}</b>{same.requester_name ? ` (${same.requester_name})` : ''}가 {String(same.created_at || '').slice(5, 10)} 이미 요청했습니다 → 새로 만들지 않고 <b>「같이 기다리기」</b>로 붙습니다.
+          ⚠ 같은 자료를 <b>{same.from_dept}</b>{same.requester_name ? ` (${same.requester_name})` : ''}가 {kst(same.created_at).slice(5, 10)} 이미 요청했습니다 → 새로 만들지 않고 <b>「같이 기다리기」</b>로 붙습니다.
         </div>}
         {already && <div className="px-3 py-2 rounded-lg bg-slate-100 text-[12px] text-slate-600">이미 우리 부서가 요청한 자료입니다.</div>}
         <div className="flex justify-end gap-2 pt-1">

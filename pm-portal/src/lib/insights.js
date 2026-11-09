@@ -1,3 +1,4 @@
+import { ymdKST } from './utils'
 // ─────────────────────────────────────────────────────────────
 // 인사이트 분석 로직 — PPV / 공급처 스코어카드 / 활동추적 / North Star
 // 모두 순수 함수. 이미 있는 데이터(price_history, PO, production)로 계산.
@@ -167,7 +168,7 @@ export function computeNorthStar({ shortage = [], pos = [] }) {
     ? Math.round((completed.length / (completed.length + delayed.length)) * 100) : null
 
   // 쇼티지: 현재 음수 예정 품목 수 (0이면 건강)
-  const tm = new Date().toISOString().slice(0, 7)
+  const tm = ymdKST().slice(0, 7)
   const negItems = new Set()
   for (const r of shortage) {
     if (r.folded) { if (r.first_neg) negItems.add(r.item_id); continue }   // 서버가 묶은 줄 (v4.151.0)

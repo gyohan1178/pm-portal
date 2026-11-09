@@ -5,6 +5,7 @@
 //   한 요청(요청번호)은 머리 줄 하나 + 품목 줄들. 품목 줄 끝에 손으로 체크할 「확인」 칸.
 //   A4 가로 · 폭 1장 맞춤 · 머리글 줄은 페이지마다 반복 · 쪽 번호.
 import { cutLabel } from './requestCut'
+import { kst } from './utils'
 
 const F = '맑은 고딕'
 const THIN = { style: 'thin', color: { argb: 'FFB8BFCC' } }
@@ -30,7 +31,7 @@ export const REQ_COLS = [
 const SEC_FILL = { red: 'FFFDEEF0', amber: 'FFFEF8E7', blue: 'FFEEF4FF', gray: 'FFF3F4F6' }
 const SEC_TEXT = { red: 'FFB4233A', amber: 'FF8A5F00', blue: 'FF2B4C8C', gray: 'FF4A5162' }
 
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 
 // 요청 머리 한 줄 — 「R-261019-03  [긴급]  필요 10/21 (2일 지남) · 요청 홍길동 (하네스팀) · AX 110219638 #3 · 초도품」
 export function reqHeadText(g) {

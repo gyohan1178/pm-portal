@@ -10,6 +10,7 @@ import { supabase } from './supabase'
 import { logActivity } from './activityLog'
 import { ORDER_CUSTOMERS } from './orderIntake'
 import { createDocRequest, autoRecv } from './docRequest'
+import { ymdKST } from './utils'
 
 export const CATS = [
   { code: 'HS', label: '하네스 어셈블리', category: '하네스_도면' },
@@ -159,7 +160,7 @@ export async function requestBom(rows, { assignee, due, memo }, meName) {
     const { data: { user } } = await supabase.auth.getUser()
     const { data: me } = user ? await supabase.from('pm_profiles').select('name,dept').eq('id', user.id).maybeSingle() : { data: null }
     const dept = ['구매자재', '생산기술', '제조', '품질'].includes(me?.dept) ? me.dept : '구매자재'
-    const need = due || new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10)
+    const need = due || ymdKST(new Date(Date.now() + 7 * 86400000))
     for (const r of rows) {
       await createDocRequest({
         kind: 'BOM', part_no: r.std_code || r.pn, item_id: r.item_id, item_name: r.name || null, customer_code: r.cust,

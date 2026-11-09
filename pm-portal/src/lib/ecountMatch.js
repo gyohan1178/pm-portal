@@ -10,6 +10,7 @@ import { supabase } from './supabase'
 import { logActivity } from './activityLog'
 import { normKey, lineKey, orderCustName, orderCustKey } from './orderIntake'
 import { custOf, kindOf, ymd } from './orderEntry'
+import { ymdKST } from './utils'
 
 // 이카운트 판매입력 양식 머리글 — 받은 Template 그대로 (순서 · 글자)
 export const SALES_HEAD = ['일자', '순번', '거래유형', '거래처코드', '거래처명', '통화', '환율', '담당자', '출하창고', '배송방법', '프로젝트', '메모', 'PO No.', '임시(구 메모)', '품목코드', '품목명', '규격', '수량', '단가', '단가(vat포함)', '외화공급가액', '공급가액', '부가세', '적요', '생산전표생성']
@@ -169,7 +170,7 @@ export function salesInputRows(lines, custCodes = {}) {
   const sorted = [...lines].sort((a, b) => String(a.delivered_at || '').localeCompare(String(b.delivered_at || '')) || String(a.o.po_no).localeCompare(String(b.o.po_no)) || (+a.line_no - +b.line_no))
   const seqOf = new Map(), nextSeq = new Map()
   return sorted.map((l) => {
-    const o = l.o, date = String(l.delivered_at || '').slice(0, 10) || new Date().toISOString().slice(0, 10)
+    const o = l.o, date = String(l.delivered_at || '').slice(0, 10) || ymdKST()
     const k = `${date}|${o.id}`
     if (!seqOf.has(k)) { const n = (nextSeq.get(date) || 0) + 1; nextSeq.set(date, n); seqOf.set(k, n) }
     const q = shipQty(l), price = +l.unit_price || 0, usd = isUsd(o)

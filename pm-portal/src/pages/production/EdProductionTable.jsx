@@ -15,6 +15,7 @@ import { bomGroupOf, bomProjectFor } from '../../lib/edNeed'
 import Spin from '../../components/ux/Spin'
 import { orderOf, edHogiKey } from '../../lib/edOrderSync'
 import { partnerInfo } from '../../lib/edPartner'
+import { kst } from '../../lib/utils'
 
 const dayMs = 86400000
 export function dday(d) {
@@ -24,7 +25,7 @@ export function dday(d) {
   const t = new Date(); t.setHours(0, 0, 0, 0)
   return Math.round((x - t) / dayMs)
 }
-const md = (d) => (d ? String(d).slice(5, 10) : '')
+const md = (d) => (d ? kst(d).slice(5, 10) : '')
 const truthy = (v) => v === true || (typeof v === 'string' && v.trim() && v !== 'false')
 // 협력사(남일 · 두웰 …) 발주 줄 표시 — 파트 대신 업체 (v4.134.0)
 const PartnerChip = ({ p }) => <span data-ed-partner={p.company} title={`협력사 발주 — ${p.company} ${p.po} ${p.line}`} className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-fuchsia-100 text-fuchsia-700">{p.company}</span>

@@ -3,7 +3,7 @@ import PageHead from '../../components/PageHead'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
-import { PROC_CATS, catOf, todayISO } from '../../lib/utils'
+import { PROC_CATS, catOf, todayISO, kstYmd } from '../../lib/utils'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { supabase } from '../../lib/supabase'
@@ -343,7 +343,7 @@ export default function Inventory() {
   }
 
   function exportExcel() {
-    const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':locWithAux(r.location||'', auxAll.get(r.item_id), true),'최종업데이트':r.updated_at?.split('T')[0]}))
+    const data=rows.map(r=>({'기준코드':r.items?.std_code,'품명':r.items?.name,'제조사':r.items?.manufacturer||'','제조사품번':r.items?.manufacturer_code||'','구분':catOf(r.items),'자재구분':r.items?.type,'단위':r.items?.unit,'현재고':r.qty,'매입가':r.items?.purchase_price||0,'재고금액':r.qty*(r.items?.purchase_price||0),'안전재고':r.items?.safety_stock,'보관위치':locWithAux(r.location||'', auxAll.get(r.item_id), true),'최종업데이트':kstYmd(r.updated_at)}))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'재고현황')
     XLSX.writeFile(wb,`재고현황_${todayISO()}.xlsx`)

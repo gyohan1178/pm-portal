@@ -1,4 +1,4 @@
-import { todayISO } from './utils'
+import { todayISO, kstYmd } from './utils'
 // ─────────────────────────────────────────────────────────────
 // PD BOX CSV 입출력 — 명세 5·6 (AXCELIS v30.6 pbExportCSV / pbImportCSV)
 // 미불출 다중행 전개/병합, 품번+호기 upsert
@@ -30,7 +30,7 @@ export function exportPDBoxCSV(rows, csCode) {
   for (const r of rows) {
     const base = BASE_COLS.map(c => {
       let v = r[c]
-      if ((c === 'updated_at' || c === 'created_at') && v) v = String(v).slice(0, 10)
+      if ((c === 'updated_at' || c === 'created_at') && v) v = kstYmd(v)
       return cellVal(v)
     })
     const mp = Array.isArray(r.missing_parts) ? r.missing_parts : []

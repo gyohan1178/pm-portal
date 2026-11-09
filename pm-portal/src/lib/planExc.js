@@ -1,3 +1,4 @@
+import { kstYmd } from './utils'
 // 고객사 PO 엑셀의 「Plan Exc Type」 칸 (AXCELIS) — 고객사가 그 줄에 붙인 요청 표시 (2026-10-02)
 //   HOT  = 고객사 입장에서 급한 건
 //   RSIN = 리스케줄 인 · RSOU = 리스케줄 아웃 (납기 조정 요청)
@@ -29,7 +30,7 @@ export function planSince(p) {
   const hist = (Array.isArray(p?.changes) ? p.changes : []).filter(c => c && c.field === 'plan_exc')
   const last = hist[hist.length - 1]
   if (last && String(last.to || '').trim().toUpperCase() === k) {
-    return { known: true, at: String(last.at || '').slice(0, 10), from: last.from && last.from !== '-' ? last.from : '', times: hist.length }
+    return { known: true, at: kstYmd(last.at), from: last.from && last.from !== '-' ? last.from : '', times: hist.length }
   }
   return { known: false, at: null, from: '', times: hist.length }
 }

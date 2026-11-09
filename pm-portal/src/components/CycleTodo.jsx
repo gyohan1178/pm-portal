@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
 import { useCycleBase, useCellHold, holdReasonDefault, useCycleDaily } from '../hooks/useCycleCount'
 import { useCanEdit } from '../hooks/useProfile'
-import { todayISO } from '../lib/utils'
+import { todayISO, kst } from '../lib/utils'
 import { isHoliday } from '../lib/bizdays'
 import {
   DAILY, ownerCells, checkMap, todayPlan, roundStats, rackRanges, normLoc, loadExtra, saveExtra, isWorkday, weekStrip, heldSet,
@@ -19,7 +19,7 @@ import {
 //   · 누르면 오늘 칸이 펼쳐지고, 칸을 누르면 칸 실사 화면으로.
 //   DB 에 할 일 글을 따로 만들지 않는다 — 센 기록(pm_cell_check)으로 그때그때 계산.
 
-const md = (d) => (d ? String(d).slice(5, 10) : '')
+const md = (d) => (d ? kst(d).slice(5, 10) : '')
 
 // who: 'me' | 'all' | 'name:이름' | 사람 id
 export function useCycleTodo({ who, me, people }) {

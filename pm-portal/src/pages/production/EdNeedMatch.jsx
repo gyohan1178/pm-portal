@@ -12,8 +12,9 @@ import { buildEvents, matchNeed, STATUS, WHICH_LABEL, bomGroupOf, bomProjectFor 
 import { dday } from './EdProductionTable'
 import { SkelBar, SkeletonCards } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
+import { kst } from '../../lib/utils'
 
-const md = (d) => (d ? String(d).slice(5, 10) : '')
+const md = (d) => (d ? kst(d).slice(5, 10) : '')
 const n0 = (v) => (Math.round(Number(v || 0) * 100) / 100).toLocaleString()
 const todayISO = () => { const d = new Date(); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 10) }
 

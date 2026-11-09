@@ -14,15 +14,8 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { useCoach } from '../../components/ux/CoachMarks'
 import { DOC_STEPS, DOC_CUSTOMERS, KIND_BADGE, kindLabel, custName, custBadge, dLeft, fetchDocRequests, moveDoc, cancelDoc, followDoc, autoRecv, mailText, docPerms } from '../../lib/docRequest'
+import { kstDT } from '../../lib/utils'
 
-// 시각 표시 — DB · 이력의 시각은 UTC(…Z / +00:00)로 저장된다. 글자를 그대로 자르면 9시간 이른 시각(오후 2시 → 새벽 5시)으로 보인다 → 이 PC 시각(한국)으로 바꿔 보여 준다 (v4.163.1)
-const localDT = (t) => {
-  if (!t) return ''
-  const d = new Date(t)
-  if (isNaN(d)) return String(t).slice(0, 16).replace('T', ' ')
-  const p2 = (v) => String(v).padStart(2, '0')
-  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`
-}
 
 const Seg = ({ items, value, onChange, data }) => (
   <div className="inline-flex flex-wrap gap-1 p-1 rounded-lg bg-[#e9ebf2]" data-seg={data}>
@@ -199,9 +192,9 @@ export default function DocRequest() {
                   {open === r.id && (
                     <tr className="bg-slate-50/70" data-doc-history={r.id}><td colSpan={8} className="px-4 py-2 text-[11.5px] text-slate-600">
                       {r.reason && <div className="mb-2 px-3 py-2 rounded-lg bg-white border border-amber-200 text-[12.5px] text-slate-700 whitespace-pre-wrap break-words" data-doc-reason-full><b className="text-amber-700">💬 왜 필요한가요</b> — {r.reason}</div>}
-                      <div className="font-bold text-slate-500 mb-1">이력 — 요청 {localDT(r.created_at)} {r.requester_name || ''}</div>
+                      <div className="font-bold text-slate-500 mb-1">이력 — 요청 {kstDT(r.created_at)} {r.requester_name || ''}</div>
                       {(r.history || []).map((h, i) => (
-                        <div key={i}>{localDT(h.at)} · {h.by} · {h.to === 'cancel' ? '취소' : h.from === h.to ? '' : `${DOC_STEPS[h.from] || h.from} → ${DOC_STEPS[h.to] || h.to}`}{h.note ? ` · ${h.note}` : ''}</div>
+                        <div key={i}>{kstDT(h.at)} · {h.by} · {h.to === 'cancel' ? '취소' : h.from === h.to ? '' : `${DOC_STEPS[h.from] || h.from} → ${DOC_STEPS[h.to] || h.to}`}{h.note ? ` · ${h.note}` : ''}</div>
                       ))}
                     </td></tr>
                   )}

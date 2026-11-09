@@ -5,7 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { fetchAll } from '../lib/paginate'
 import * as XLSX from 'xlsx'
-import { todayISO } from '../lib/utils'
+import { todayISO, kstDT, kstYmd } from '../lib/utils'
 import Spin from '../components/ux/Spin'
 
 const CUSTOMERS = [
@@ -70,7 +70,7 @@ export default function ERPExport() {
           '현재고': r.qty,
           '안전재고': r.items?.safety_stock,
           '보관위치': r.location || '',
-          '최종업데이트': r.updated_at?.split('T')[0],
+          '최종업데이트': kstYmd(r.updated_at),
         }))
       } else {
         const mvType = selType === 'inbound' ? '입고' : '출고'
@@ -88,7 +88,7 @@ export default function ERPExport() {
           return q
         })
         data = (mvs || []).map(r => ({
-          '일시': r.processed_at?.replace('T', ' ').slice(0, 16),
+          '일시': kstDT(r.processed_at),
           '고객사': r.customers?.name,
           '프로젝트': r.projects?.name || '',
           '기준코드': r.items?.std_code,

@@ -9,7 +9,7 @@
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kst } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
 import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqParts, savePastePrice } from '../master/rfq'
@@ -18,7 +18,7 @@ import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const md = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 const CS = { ax: 'AXCELIS', ed: 'Edwards', vm: 'VM', csk: 'CSK' }
 const csName = (c) => CS[String(c || '').toLowerCase()] || String(c || '')
 const ITEM_COLS = 'id, std_code, name, type, unit, lt_weeks, purchase_price, manufacturer, manufacturer_code'

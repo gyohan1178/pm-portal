@@ -24,6 +24,7 @@ import { fetchQuoteBOM, supplyForRows } from './QuoteSheet'
 import { fetchRefSetup, refCustomers, findAssyFor, itemCandidatesFor } from '../../lib/etcCustomerRef'
 import { prefixOf } from '../../lib/custPrefix'
 import { refreshPasteParts, pasteMissing, setPastePrice, keyLabel } from '../../lib/quotePartsPaste'
+import { ymdKST } from '../../lib/utils'
 
 export const RFQ_STAGES = [
   ['new', '① 점검 전'], ['bom', '② BOM 필요'], ['noprice', '③ 단가 없음'], ['price', '③ 단가 요청 (구매자재)'],
@@ -255,7 +256,7 @@ export async function setPartNoquote(r, lineId, code, entry) {
 // 모든 품목이 견적 불가 — 접수를 「불가」로 닫는다 (사유는 품목 사유를 모아서)
 export async function closeNoquote(r, memo) {
   const reasons = [...new Set((r.lines || []).filter((l) => l.noquote).map((l) => l.noquote))].join(' · ')
-  const { error } = await supabase.from('pm_rfq').update({ status: '불가', result_at: new Date().toISOString().slice(0, 10), result_memo: memo || reasons || null, updated_at: new Date().toISOString() }).eq('id', r.id)
+  const { error } = await supabase.from('pm_rfq').update({ status: '불가', result_at: ymdKST(), result_memo: memo || reasons || null, updated_at: new Date().toISOString() }).eq('id', r.id)
   if (error) throw new Error(/check constraint|pm_rfq_status_chk/.test(error.message || '') ? NOQUOTE_SQL_HINT : error.message)
 }
 

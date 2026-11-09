@@ -16,7 +16,7 @@ import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
 import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kst, kstDT } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
@@ -42,8 +42,8 @@ const OrderCleanup = lazy(() => import('./OrderCleanup'))
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 const won = (v) => `₩${Math.round(v || 0).toLocaleString('ko-KR')}`
-const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '—')
-const ts = (t) => String(t || '').slice(0, 16).replace('T', ' ')
+const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '—')
+const ts = (t) => kstDT(t)
 const isUsd = (o) => o.currency === 'USD' || o.ccn === 'B'
 const amountOf = (l) => (+l.qty || 0) * (+l.unit_price || 0)
 const money = (o, v) => (isUsd(o) ? `$${fmt(Math.round(v * 100) / 100)}` : won(v))
@@ -84,8 +84,8 @@ const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.
   : view === 'done' ? l.st.delivered && !l.st.cancelled : view === 'cancel' ? l.st.cancelled : true)
 // 누가 등록했는지 (v4.103.0) — 엑셀로 옮긴 옛 PO 는 「이관」으로만 보인다
 const regBy = (o) => (!o || o.migrated ? '' : String(o.registered_name || '').trim() === '엑셀 이관' ? '' : String(o.registered_name || '').trim())
-const regTitle = (o) => `등록 ${regBy(o) || (o?.migrated ? '이관' : '—')} · ${String(o?.registered_at || '').slice(0, 16).replace('T', ' ')}`
-const isMonthPo = (o, month) => String(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
+const regTitle = (o) => `등록 ${regBy(o) || (o?.migrated ? '이관' : '—')} · ${kstDT(o?.registered_at)}`
+const isMonthPo = (o, month) => kst(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
 
 // 열 너비 — 머리글 오른쪽 끝을 끌어 조절 (사람마다 이 브라우저에 기억) · 다른 화면 표와 같은 방식
 const LINE_COLS = [['chk', 40], ['due', 112], ['cust', 160], ['po', 170], ['pn', 320], ['qty', 80], ['amt', 130], ['st', 110], ['reply', 230]]
@@ -160,7 +160,7 @@ function OddBadges({ odd, onOk, done, onUndo }) {
   if (!odd && done) {
     return <span className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded bg-slate-100 text-slate-500 text-[10px] font-bold whitespace-nowrap" data-odd-done
       title={`특이사항(${[done.rev && `Rev ${done.rev.prev}→${done.rev.now}`, done.price && `단가 ${done.price.pct > 0 ? '+' : ''}${done.price.pct.toFixed(0)}%`, done.note && '⚠ 메모'].filter(Boolean).join(' · ')}) 확인함`}>
-      ✓ 특이사항 확인{done.ok?.name ? ` · ${done.ok.name}` : ''}{done.ok?.at ? ` ${md(String(done.ok.at).slice(0, 10))}` : ''}
+      ✓ 특이사항 확인{done.ok?.name ? ` · ${done.ok.name}` : ''}{done.ok?.at ? ` ${md(done.ok.at)}` : ''}
       {onUndo && <button type="button" onClick={onUndo} className="ml-0.5 text-slate-400 hover:text-red-500" title="확인 취소 — 다시 특이사항에 나옵니다" data-odd-undo>✕</button>}
     </span>
   }
@@ -246,7 +246,7 @@ function ReplyCell({ l, memo }) {
       {l.reply_date && <span className="ml-1 text-[11px] text-slate-500">준비 {md(l.reply_date)}</span>}
       {risk && l.reply_memo && <div className={`mt-0.5 text-[11.5px] font-semibold leading-snug break-words ${l.reply === '불가' ? 'text-red-600' : 'text-amber-700'}`} data-reply-reason>사유: {l.reply_memo}</div>}
       {!risk && memo && l.reply_memo && <div className="text-[10.5px] text-slate-400 mt-0.5 truncate">{l.reply_memo}</div>}
-      {risk && (l.replied_name || l.replied_at) && <div className="text-[10px] text-slate-400 mt-0.5">{[l.replied_name, l.replied_at && md(String(l.replied_at).slice(0, 10))].filter(Boolean).join(' · ')}</div>}
+      {risk && (l.replied_name || l.replied_at) && <div className="text-[10px] text-slate-400 mt-0.5">{[l.replied_name, l.replied_at && md(l.replied_at)].filter(Boolean).join(' · ')}</div>}
     </div>
   )
 }
@@ -266,7 +266,7 @@ function RiskBanner({ ls }) {
             <span className="text-slate-400">Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</span>
             <span className={`font-semibold ${l.reply === '불가' ? 'text-red-600' : 'text-amber-700'}`}>{l.reply_memo || '사유 없음'}</span>
             {l.reply_date && <span className="text-slate-500">준비 {md(l.reply_date)}</span>}
-            <span className="text-[10.5px] text-slate-400">{[l.replied_name, l.replied_at && md(String(l.replied_at).slice(0, 10))].filter(Boolean).join(' · ')}</span>
+            <span className="text-[10.5px] text-slate-400">{[l.replied_name, l.replied_at && md(l.replied_at)].filter(Boolean).join(' · ')}</span>
           </div>
         ))}
       </div>
@@ -1009,7 +1009,7 @@ export default function OrderIntake() {
                       <button type="button" onClick={() => setPoOpen(l.order_id)} className={`font-mono font-bold hover:underline ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button><KindBadge o={l.o} />
                       {l.o.planned
                         ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'} · ${regTitle(l.o)}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}{regBy(l.o) && <> · <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}</div>
-                        : <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={regTitle(l.o)}>Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(String(l.o.registered_at).slice(0, 10))}{regBy(l.o) && <> <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
+                        : <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={regTitle(l.o)}>Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(l.o.registered_at)}{regBy(l.o) && <> <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
                       <PoNote o={l.o} />
                     </td>
                     <td className="px-3 py-3 overflow-hidden">
@@ -1060,7 +1060,7 @@ export default function OrderIntake() {
                 const first = { ...liveL.slice().sort((a, b) => String(a.due_date || '9').localeCompare(String(b.due_date || '9')))[0], st: { live: true } }
                 return (
                   <tr key={o.id} onClick={() => setPoOpen(o.id)} className="border-t border-slate-100 align-top cursor-pointer hover:bg-slate-50/70" data-order={o.po_no}>
-                    <td className="px-4 py-3 whitespace-nowrap overflow-hidden"><div className={`font-mono font-bold ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}<KindBadge o={o} /></div><div className="text-[11px] text-slate-400 mt-0.5">{o.planned ? '실제 발주 오면 PO 로 옮겨짐' : `접수 ${md(String(o.registered_at).slice(0, 10))}${o.migrated ? ' · 이관' : ''}`}</div></td>
+                    <td className="px-4 py-3 whitespace-nowrap overflow-hidden"><div className={`font-mono font-bold ${o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`}>{o.po_no}<KindBadge o={o} /></div><div className="text-[11px] text-slate-400 mt-0.5">{o.planned ? '실제 발주 오면 PO 로 옮겨짐' : `접수 ${md(o.registered_at)}${o.migrated ? ' · 이관' : ''}`}</div></td>
                     <td className="px-3 py-3"><CustCell o={o} /></td>
                     <td className="px-3 py-3 overflow-hidden"><div className="font-bold text-slate-700">{rp.length}품목</div><div className="text-[11px] text-slate-400 truncate">{rp.slice(0, 3).map((l) => `${l.items?.std_code || l.raw_pn || l.raw_desc} ×${fmt(l.qty)}`).join(' · ')}</div></td>
                     <td className="px-3 py-3">{liveL.length ? <DueCell l={first} /> : <span className="text-slate-400">납품 완료</span>}</td>
@@ -1261,8 +1261,8 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                 {ship !== (o.ship_to || '') && <button type="button" onClick={() => onShipTo(o, ship.trim())} data-ship-save className="text-[11px] text-violet-600 font-bold">저장</button>}</span>
             ) : (o.ship_to || '—')}</Info>
             <Info k="금액">{usd ? `$${fmt(Math.round(amount * 100) / 100)} ≈ ${won(amount * fx)}` : won(amount)}</Info>
-            <Info k="등록">{o.registered_name || SOURCE_LABEL[o.source] || '—'} · {md(String(o.registered_at).slice(0, 10))}</Info>
-            <Info k="확인">{o.confirmed_at ? [o.confirmed_name, md(String(o.confirmed_at).slice(0, 10))].filter(Boolean).join(' · ') : <span className="text-red-500">확인 전</span>}</Info>
+            <Info k="등록">{o.registered_name || SOURCE_LABEL[o.source] || '—'} · {md(o.registered_at)}</Info>
+            <Info k="확인">{o.confirmed_at ? [o.confirmed_name, md(o.confirmed_at)].filter(Boolean).join(' · ') : <span className="text-red-500">확인 전</span>}</Info>
           </div>
           {!o.planned && (
             <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs">
@@ -1349,7 +1349,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                       ? <div className="text-[11px] min-w-[140px]" data-dline-cancel>
                           <span className="px-1.5 py-[1px] rounded-full bg-slate-200 text-slate-600 font-bold text-[10.5px]">취소</span>
                           {l.cancel_reason && <div className="text-slate-600 mt-0.5">{l.cancel_reason}</div>}
-                          {(l.cancelled_name || l.cancelled_at) && <div className="text-[10px] text-slate-400">{[l.cancelled_name, l.cancelled_at && md(String(l.cancelled_at).slice(0, 10))].filter(Boolean).join(' · ')}</div>}
+                          {(l.cancelled_name || l.cancelled_at) && <div className="text-[10px] text-slate-400">{[l.cancelled_name, l.cancelled_at && md(l.cancelled_at)].filter(Boolean).join(' · ')}</div>}
                           {editable && <button type="button" onClick={() => onUncancel([l])} data-uncancel={`${l.line_no}/${l.del_line}`} className="mt-0.5 text-[10.5px] text-violet-600 font-bold hover:underline">취소 되돌리기</button>}
                         </div>
                       : <ReplyCell l={l} memo />}</td>

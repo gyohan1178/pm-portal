@@ -1,6 +1,6 @@
 import { supabase } from '../supabase'
 import { fetchAll } from '../paginate'
-import { todayISO } from '../utils'
+import { todayISO, kst } from '../utils'
 
 // 구매전표 — 초도품 PPT 의 「실제 사용 자재」 증빙 (이카운트 「구 매 전 표」 양식)
 //
@@ -82,7 +82,7 @@ const COLS = [
 ]
 const MAXROWS = 14
 const num = (v) => (v == null || v === '' ? '' : (Math.round(Number(v) * 1000) / 1000).toLocaleString('ko-KR'))
-const mmdd = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+const mmdd = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
 const unitOf = (u) => (/^(EA|EACH)$/i.test(u || '') || !u ? 'EA' : u)
 
 export function wrapLines(ctx, text, w) {

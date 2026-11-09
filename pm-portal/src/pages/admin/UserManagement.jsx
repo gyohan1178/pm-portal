@@ -6,6 +6,7 @@ import { ROLE_LABEL, SECTIONS, allowedSections, DEPTS } from '../../hooks/usePro
 import { ResizableTable } from '../../components/ResizableTable'
 import { useTableSort } from '../../hooks/useTableSort'
 import { SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
+import { kstYmd } from '../../lib/utils'
 
 const USER_COLS = [
   { key:'name',       label:'이름',   defaultWidth:120 },
@@ -170,7 +171,7 @@ export default function UserManagement() {
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center text-slate-400 whitespace-nowrap">{p.created_at?.slice(0, 10)}</td>
+                    <td className="px-3 py-2 text-center text-slate-400 whitespace-nowrap">{kstYmd(p.created_at)}</td>
                     <td className="px-3 py-2 text-center whitespace-nowrap">
                       {tab === 'pending' ? (
                         <div className="flex gap-1 justify-center">

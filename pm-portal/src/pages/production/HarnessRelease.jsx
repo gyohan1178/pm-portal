@@ -19,6 +19,7 @@ import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { parseHarnessPaste, matchHarnessPaste } from '../../lib/harnessPaste'
 import PoCart, { addItemsToCart, fetchCart } from '../common/PoCart'
+import { kst } from '../../lib/utils'
 
 // 🧵 하네스 출도 · 불출 (v4.53.0, 2026-10-14)
 //   미불출 AXCELIS 하네스(16번대) PO 줄을 골라 → 하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사
@@ -33,7 +34,7 @@ import PoCart, { addItemsToCart, fetchCart } from '../common/PoCart'
 export const AX_ID = 'd7b268b4-1e8e-45f3-860b-4bd0e08ded77'
 const DIV_KEY = 'harness_release_div'   // 구분 바로잡기 (v4.150.0)
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
-const yy = (d) => (d ? String(d).slice(2, 10) : '')
+const yy = (d) => (d ? kst(d).slice(2, 10) : '')
 const md = (d) => { if (!d) return ''; const t = new Date(d); if (isNaN(t)) return String(d).slice(5, 10); const k = new Date(t.getTime() + 9 * 3600000).toISOString(); return `${+k.slice(5, 7)}/${+k.slice(8, 10)} ${k.slice(11, 16)}` }
 export const todayKST = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10)
 const N = (s) => String(s ?? '').trim().replace(/\.0$/, '')

@@ -21,7 +21,7 @@ import { roundPrice } from '../../lib/marginSim'
 import { fetchRefSetup, refCustomers, findAssyFor, itemCandidatesFor } from '../../lib/etcCustomerRef'
 import { refreshProcurement } from '../../lib/refresh'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
-import { todayISO } from '../../lib/utils'
+import { todayISO, kstDT } from '../../lib/utils'
 import MarginSimulator from '../../components/MarginSimulator'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { useUndoSnack } from '../../components/ux/UndoSnack'
@@ -1811,7 +1811,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <div className="flex-1 min-w-0">
                     <p className="text-xs font-semibold text-slate-700 truncate">{d.title || '(제목 없음)'}</p>
                     <p className="text-[10px] text-slate-400">
-                      {String(d.updated_at || '').slice(0, 16).replace('T', ' ')}{d.created_by ? ` · ${d.created_by}` : ''}
+                      {kstDT(d.updated_at)}{d.created_by ? ` · ${d.created_by}` : ''}
                     </p>
                   </div>
                   <button onClick={() => loadDraft(d.id)}
