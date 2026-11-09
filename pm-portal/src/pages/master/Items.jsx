@@ -13,6 +13,8 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
+import { isTempCode, promoteTempCode } from '../../lib/tempCode'
+import { checkRfq } from './rfq'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
@@ -111,6 +113,24 @@ const COLS = [
 export default function Items() {
   const qc = useQueryClient()
   const [ask, confirmEl] = useConfirm()
+  // 견적용 임시코드(TMP-) → 고객사 정식 코드 (v4.160.0) — 단가 · 이력은 이어지고, 이 품목을 쓰는 견적 접수는 다시 점검
+  async function promote(item) {
+    const m = await ask({ title: `${item.std_code} — 정식 코드로 바꿀까요?`,
+      desc: '새 코드가 아직 없으면 이 품목의 기준코드만 바뀝니다 (매입가 · 이력 그대로 · 재고관리 다시 켬). 이미 있는 코드면 견적 부품표를 그 품목으로 옮기고, 그쪽에 매입가가 없으면 넘긴 뒤 임시 품목을 지웁니다.',
+      items: [[item.name, item.manufacturer, item.manufacturer_code].filter(Boolean).join(' · ')],
+      okText: '정식 코드로', input: { label: '정식 코드', required: true, placeholder: '예: ED-IE0441400 · AX-110173680', rows: 1 } })
+    if (!m) return
+    try {
+      const r = await promoteTempCode(item, m.value)
+      for (const id of r.rfqIds) {
+        const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
+        const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
+        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(() => {})
+      }
+      qc.invalidateQueries(['items'])
+      toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ''}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)
+    } catch (e) { toastError('정식 코드 전환 실패: ' + (e.message || e)) }
+  }
   const [search, setSearch] = useState('')
   const [searchField, setSearchField] = useState('전체')  // 전체/코드/품명/규격/구매처
   const [catFilter, setCatFilter] = useState('전체')
@@ -698,6 +718,7 @@ export default function Items() {
                       {item.js_code
                         ? <span className="text-violet-700">{item.js_code}</span>
                         : item.std_code}
+                      {isTempCode(item.std_code) && <span title="견적용 임시코드 — 고객사 코드가 나오면 「정식 코드로」" className="ml-1 text-[10px] px-1 rounded bg-amber-100 text-amber-700 font-bold" data-tmp-badge>임시</span>}
                       {item.prod_managed && <span title="생산관리 대상" className="ml-1">🏭</span>}{item.stock_managed === false && <span title="재고관리 제외" className="ml-1 text-[10px] px-1 rounded bg-slate-100 text-slate-400 font-bold">재고X</span>}
                     </td>
                     {/* 2. 품명 */}
@@ -765,6 +786,8 @@ export default function Items() {
                     {/* 12. 액션 */}
                     <td className="px-3 py-2">
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {isTempCode(item.std_code) && <button onClick={(e)=>{ e.stopPropagation(); promote(item) }} data-tmp-promote
+                          className="px-2 py-1 text-xs font-semibold rounded border border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 whitespace-nowrap">정식 코드로</button>}
                         <button onClick={()=>handleEdit(item)}
                           className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 hover:border-indigo-300 hover:text-indigo-600">수정</button>
                         <button onClick={async()=>{ if(await ask({ title:'이 품목을 삭제할까요?', desc:'기준코드 DB 에서 품목이 지워지며 되돌릴 수 없습니다.', items:[[item.js_code||item.std_code, item.name, item.manufacturer].filter(Boolean).join(' · ')], okText:'삭제', danger:true })) deleteMut.mutate(item.id) }}

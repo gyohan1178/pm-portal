@@ -16,6 +16,7 @@ import Spin from '../../components/ux/Spin'
 import { fetchRefSetup, refCodeOf, saveRefCode } from '../../lib/etcCustomerRef'
 import QuotePartsModal from './QuotePartsModal'
 import { savePasteParts } from './rfq'
+import { issueTempCodes, tempTargets } from '../../lib/tempCode'
 import { pasteFromMatched, pasteToText, keyLabel } from '../../lib/quotePartsPaste'
 import { RFQ_STAGES, STAGE_TONE, stageLabel, stageOf, fetchRfqs, parsePaste, checkRfq, saveRfq, patchRfq, deleteRfq, dday, HOLDS, isOpenLine, readyLines, setLineHold, submitRfq, NOQUOTES, setLineNoquote, closeNoquote, editRfq, missCount, missCodes, nqBlockers, nqParts, nqSummary } from './rfq'
 
@@ -87,6 +88,23 @@ export default function RfqBoard({ customers = [], onWrite }) {
     try { await fn(); if (ok) toastSuccess(ok); refresh() } catch (e) { toastError(e.message || String(e)) } finally { setBusy(null) }
   }
   const check = (r) => run(r.id, () => checkRfq(r), '점검했습니다')
+  // 🏷 임시코드로 단가 요청 (v4.160.0) — 등록 안 된 단품 부품을 TMP- 임시코드로 등록(있는 품목은 그대로 연결) → 구매자재 단가 요청
+  async function tempIssue(r) {
+    const ts = tempTargets(r)
+    const ok = await ask({ title: `「${r.title}」 등록 안 된 부품 ${ts.length}개에 임시코드를 붙여 단가 요청할까요?`,
+      desc: '제조사품번으로 포털 품목을 먼저 찾고, 없는 것만 TMP-YYMM-0001 임시코드로 등록합니다 (재고관리 제외). 구매자재 「영업 견적 단가 요청」에 뜨고, 적어 준 단가는 품목에 남아 다음 견적에도 씁니다. 어셈블리(BOM 이 필요한 품목)는 이 방법 말고 BOM 이나 부품표를 붙이세요. 고객사 코드가 나오면 품목 화면 「정식 코드로」로 바꿉니다.',
+      items: ts.map((l) => l.pn), okText: '🏷 임시코드 발행 · 단가 요청' })
+    if (!ok) return
+    setBusy(r.id)
+    try {
+      const res = await issueTempCodes(r, meName)
+      const { data: fresh, error } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', r.id)
+      if (error) throw error
+      await checkRfq({ ...r, lines: fresh || [] })
+      toastSuccess(`${res.lines}품목 — 있던 품목 연결 ${res.linked} · 임시코드 ${res.created}개 발행${res.codes?.length ? ` (${res.codes[0]}${res.codes.length > 1 ? ` 외 ${res.codes.length - 1}` : ''})` : ''} → 단가 요청`)
+      refresh()
+    } catch (e) { toastError(e.message || String(e)) } finally { setBusy(null) }
+  }
   // 코드 부여 전 품목 — 부품표를 붙여 그 부품으로 점검 · 단가 요청 (v4.149.0)
   const savePaste = (r, l, { labor, matched }) => run(r.id, async () => {
     await savePasteParts(l.id, pasteFromMatched(matched, labor))
@@ -457,6 +475,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                           ? <Btn wide tone="red" onClick={() => nav(`/customer/${refOf(r.customer_code)}/bom`)} data="bom">🧬 BOM 올리기 ({String(refOf(r.customer_code)).toUpperCase()})</Btn>
                           : <Btn wide tone="red" onClick={() => nav('/master/items')} data="bom">📦 품목 등록 →</Btn>)
                         : <Btn wide tone="red" onClick={() => nav(`/customer/${r.customer_code}/bom`)} data="bom">🧬 BOM 올리기</Btn>)}
+                      {editable && r.stage === 'bom' && tempTargets(r).length > 0 && <Btn wide onClick={() => tempIssue(r)} busy={b} data="tmp-issue">🏷 단품 부품 — 임시코드로 단가 요청 ({tempTargets(r).length})</Btn>}
                       {editable && r.stage === 'bom' && <Btn wide onClick={() => setOpen(r.id)} data="paste-open">📋 코드 전이면 — 품목에 부품표 붙이기</Btn>}
                       {editable && r.stage === 'noprice' && <Btn wide tone="amber" onClick={() => askPrice(r)} busy={b} data="ask">💲 구매자재에 단가 요청</Btn>}
                       {r.stage === 'price' && (isBuy
