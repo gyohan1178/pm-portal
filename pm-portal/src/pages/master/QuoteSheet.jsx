@@ -9,6 +9,7 @@ import QuotePartsModal from './QuotePartsModal'
 import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
 import { saveRfq, patchRfq, checkRfq } from './rfq'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
+import { prevOf, prevEligible, prevWarn, prevMargin, saleKeys, fetchSalePrev, attachSalePrev, saleRows, recordSalePrices, etcKey, isMissingSaleFn } from '../../lib/salePrice'
 import { useMyProfile } from '../../hooks/useProfile'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -94,23 +95,35 @@ const sumParts = (parts) =>
 //   ⚠ 자재비 칸을 손으로 고쳐 부품 합계와 어긋나면 부품별 계산을 쓰지 않는다.
 //     그 줄은 더 이상 부품표가 대표하지 못하기 때문이다.
 function linePrice(line, currency, sellRate, mcfg) {
+  // 판매 실적가 (v4.162.0) — 단품은 같은 고객사에 전에 낸 단가 그대로 (「지금 계산가로」 누르기 전까지)
+  if (line.kind !== 'assy') { const pv = prevOf(line, currency); if (pv != null) return pv }
   const mat = num(line.materialKrw)
   const labor = num(line.laborKrw)
-  if (mat <= 0 && labor <= 0) return 0
+  const rate = currency === 'KRW' ? 1 : (num(sellRate) || 1)
   const tiers = mcfg?.tiers
   const laborMarg = num(mcfg?.laborMarg)
+  const fixed = line.marginPct != null ? num(line.marginPct) : null
+  const all = Array.isArray(line.parts) ? line.parts : []
+  const parts = all.filter((p) => !p.excluded && p.buyKrw != null)
+  const partsSum = parts.reduce((a, p) => a + num(p.buyKrw) * num(p.qty), 0)
+  // 자재비를 100원 단위로 반올림해 두므로 부품합과 최대 50원 차이가 난다. 그 안이면 같은 것으로 본다.
+  const usable = line.kind === 'assy' && parts.length > 0 && Math.abs(partsSum - mat) <= 50.0001
+  // ASSY 판매 실적가 부품 — 매입가가 없어도 실적가가 있으면 센다 (ASSY = 하위 합계 + 작업비)
+  const prevParts = line.kind === 'assy' && (usable || mat <= 0) ? all.filter((p) => prevEligible(p) && prevOf(p, currency) != null) : []
+  if (mat <= 0 && labor <= 0 && !prevParts.length) return 0
   let krw = 0
 
-  if (line.marginPct != null) {
-    krw = (mat + labor) / (1 - num(line.marginPct))
+  if (prevParts.length) {
+    const pset = new Set(prevParts)
+    for (const pt of prevParts) krw += prevOf(pt, currency) * rate * num(pt.qty)
+    for (const pt of parts) {
+      if (pset.has(pt)) continue
+      krw += (num(pt.buyKrw) / (1 - (fixed != null ? fixed : tierMargin(pt.buyKrw, tiers)))) * num(pt.qty)
+    }
+    if (labor > 0) krw += labor / (1 - (fixed != null ? fixed : laborMarg))
+  } else if (fixed != null) {
+    krw = (mat + labor) / (1 - fixed)
   } else {
-    const parts = Array.isArray(line.parts)
-      ? line.parts.filter((p) => !p.excluded && p.buyKrw != null)
-      : []
-    const partsSum = parts.reduce((a, p) => a + num(p.buyKrw) * num(p.qty), 0)
-    // 자재비를 100원 단위로 반올림해 두므로 부품합과 최대 50원 차이가 난다. 그 안이면 같은 것으로 본다.
-    const usable = line.kind === 'assy' && parts.length > 0 && Math.abs(partsSum - mat) <= 50.0001
-
     if (usable) {
       for (const pt of parts) {
         krw += (num(pt.buyKrw) / (1 - tierMargin(pt.buyKrw, tiers))) * num(pt.qty)
@@ -121,7 +134,7 @@ function linePrice(line, currency, sellRate, mcfg) {
     if (labor > 0) krw += labor / (1 - laborMarg)
   }
 
-  return roundPrice(currency === 'KRW' ? krw : krw / (num(sellRate) || 1), currency)
+  return roundPrice(currency === 'KRW' ? krw : krw / rate, currency)
 }
 
 // 지난 견적 리비전 번호 — S261001-001 → S261001-001-R1 → -R2 … (2026-10-12)
@@ -311,6 +324,29 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     })
     return () => { alive = false }
   }, [codeKey, quoteKind])
+
+  // 판매 실적가 (v4.162.0 · lib/salePrice) — 같은 고객사 · 같은 통화로 전에 낸 단가를 줄 · 부품에 붙인다
+  //   붙인 값이 바뀐 줄만 단가를 다시 뽑는다 (손으로 고친 다른 줄 단가는 그대로) · 지난 견적에서 불러온 줄은 제출 단가 그대로
+  const saleCustKey = !isSales ? null : revOf ? (revOf.customer_id || etcKey(issuedTo)) : (custIdForSave || etcKey(etcCust || issuedTo))
+  const saleKeyStr = isSales ? saleKeys(lines).join('|') : ''
+  const saleLineStr = isSales ? lines.map((l) => l.key).join(',') : ''   // 이미 부품으로 받은 코드를 단품 줄로 넣어도 붙게
+  const [saleMissing, setSaleMissing] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const keys = saleKeyStr ? saleKeyStr.split('|') : []
+    ;(saleCustKey && keys.length ? fetchSalePrev(saleCustKey, currency, keys) : Promise.resolve({ map: {}, missing: false }))
+      .then(({ map, missing }) => {
+        if (!alive) return
+        setSaleMissing(missing)
+        setLines((ls) => attachSalePrev(ls, map).map((l) => {
+          if (!l._prevChanged) return l
+          const { _prevChanged, ...r } = l
+          return r.fromQuote || !isSales ? r : { ...r, unitPrice: linePrice(r, currency, sellRate, mcfg) }
+        }))
+      })
+      .catch((e) => { if (alive) toastError('판매 실적가를 못 불러왔습니다 — ' + (e?.message || e)) })
+    return () => { alive = false }
+  }, [saleCustKey, currency, saleKeyStr, saleLineStr, isSales])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── 라인 추가: 어셈블리면 BOM 전개 원가 + 최신 작업비, 아니면 단품 매입가 ──
   // codeArg · qtyArg — 견적 접수에서 「견적 작성 →」으로 품목을 한꺼번에 넣을 때 (v4.92.0). 없으면 입력칸 값
@@ -887,6 +923,22 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           .upsert(labor, { onConflict: 'std_code,effective_date,source,quote_no' })
         if (lErr) toastError('작업비 이력 저장 실패: ' + lErr.message)
       }
+
+      // 판매 실적가 기록 (v4.162.0) — 단품 · ASSY 단가 + ASSY 세부 부품 판매가 (세부견적을 안 켰어도 계산값으로 · 켰으면 「세부견적 제출」 표시)
+      //   실패해도 견적은 이미 저장됐으니 막지 않고 알리기만
+      if (isSales && saleCustKey) {
+        try {
+          const rowsS = saleRows(lines, buildDetails(lines, { currency, sellRate, mcfg }), {
+            custKey: saleCustKey, customerId: qRow.customer_id, customerName: qRow.issued_to, currency,
+            quote: { id: q.id, quote_no: no, quote_date: quoteDate }, detailOn, by: (me?.name || '').trim() || me?.email || null,
+          })
+          await recordSalePrices(rowsS)
+        } catch (e) {
+          toastError(isMissingSaleFn(e)
+            ? '판매 실적가 표가 아직 없습니다 — Supabase 에서 「판매실적가_반영_261109.sql」을 먼저 실행해 주세요 (견적은 저장됨)'
+            : '판매 실적가 기록 실패 (견적은 저장됨) — ' + (e?.message || e))
+        }
+      }
       return no
     },
     onSuccess: (no) => {
@@ -1205,6 +1257,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         </div>
       )}
       {err && <div className="no-print rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">{err}</div>}
+      {isSales && saleMissing && lines.length > 0 && (
+        <div className="no-print rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800" data-sale-missing>
+          판매 실적가 표가 아직 없습니다 — Supabase 에서 「판매실적가_반영_261109.sql」을 실행하면 같은 고객사에 전에 낸 부품 · 품목 단가를 불러오고, 저장할 때 기록합니다.
+        </div>
+      )}
       {simFor && (() => {
         if (simFor === 'all') {
           const ruleAmt = lines.reduce((a2, l) => a2 + num(l.qty) * linePrice(l, currency, sellRate, mcfg), 0)
@@ -1459,6 +1516,22 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                         {num(h.labor_krw) > 0 && ` · 작업비 ${won(h.labor_krw)}`}
                       </div>
                     )}
+                    {isSales && l.kind !== 'assy' && l.salePrev && <SalePrevTag x={l} buyKrw={l.materialKrw} currency={currency} sellRate={sellRate} tiers={mcfg.tiers}
+                      onToggle={() => patchCost(l.key, { usePrev: l.usePrev === false })} />}
+                    {isSales && l.kind === 'assy' && (() => {
+                      const ps = (l.parts || []).filter((x) => prevEligible(x) && x.salePrev)
+                      if (!ps.length) return null
+                      const used = ps.filter((x) => prevOf(x, currency) != null)
+                      const warn = used.filter((x) => prevWarn(x.buyKrw, prevOf(x, currency), currency, sellRate, mcfg.tiers)).length
+                      return (
+                        <button type="button" onClick={() => setOpenParts((o) => ({ ...o, [l.key]: true }))} data-sale-assy={l.key}
+                          title="같은 고객사에 전에 낸 부품 판매가를 그대로 씁니다 — ▼ 부품에서 부품마다 「지금 계산가로」 바꿀 수 있습니다"
+                          className="no-print block text-left text-[10px] text-emerald-700 mt-0.5 hover:underline">
+                          🏷 판매 실적가 부품 {used.length}/{ps.length}
+                          {warn > 0 && <span className="ml-1 font-bold text-rose-600">⚠ 마진 낮음 {warn}</span>}
+                        </button>
+                      )
+                    })()}
                   </td>
                   <td className="py-1.5"><input value={l.rev} onChange={(e) => patch(l.key, { rev: e.target.value })} className="qi w-full text-center" /></td>
                   <td className="py-1.5"><input value={l.unit} onChange={(e) => patch(l.key, { unit: e.target.value })} className="qi w-full text-center" /></td>
@@ -1564,6 +1637,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                               <th className="px-2 py-1.5 w-16 text-right" title="발주 후 입고까지 걸리는 주 수">L/T(주)</th>
                               <th className="px-2 py-1.5 w-16 text-right" title="최소 주문수량">MOQ</th>
                               <th className="px-2 py-1.5 w-24 text-right">소계(원)</th>
+                              {isSales && <th className="px-2 py-1.5 w-36 text-right" title="같은 고객사 · 같은 통화로 전에 낸 이 부품 판매가 — 있으면 그 값을 씁니다">판매 실적가</th>}
                               <th className="px-2 py-1.5 w-14 text-center">구분</th>
                               <th className="px-2 py-1.5 w-28 text-left">구매처</th>
                             </tr>
@@ -1624,6 +1698,14 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                 <td className="px-2 py-1 text-right font-semibold">
                                   {pt.excluded || pt.buyKrw == null ? '—' : won(num(pt.buyKrw) * num(pt.qty))}
                                 </td>
+                                {isSales && (
+                                  <td className="px-2 py-1 text-right" data-sale-part={pt.std_code || pt.manufacturer_code || ''}>
+                                    {pt.salePrev && prevEligible(pt)
+                                      ? <SalePrevTag x={pt} buyKrw={pt.buyKrw} currency={currency} sellRate={sellRate} tiers={mcfg.tiers} compact parent={l.std_code}
+                                          onToggle={() => patchPart(l.key, pt.uid, { usePrev: pt.usePrev === false })} />
+                                      : <span className="text-slate-300">—</span>}
+                                  </td>
+                                )}
                                 <td className="px-2 py-1 text-center">
                                   {pt.origin === 'imp'
                                     ? <span className="text-blue-500">수입</span>
@@ -1831,6 +1913,32 @@ function Mini({ label, value, accent }) {
     <div className="bg-white rounded-xl border border-slate-200 p-2.5">
       <div className="text-[11px] font-semibold text-slate-400">{label}</div>
       <div className={`text-base font-bold ${ac}`}>{value}</div>
+    </div>
+  )
+}
+
+// 판매 실적가 표시 (v4.162.0) — 값 · 견적번호 · 날짜 · 지금 매입가 기준 마진 경고 · 「지금 계산가로 / 실적가로」
+function SalePrevTag({ x, buyKrw, currency, sellRate, tiers, compact, parent, onToggle }) {
+  const sp = x.salePrev
+  if (!sp) return null
+  const same = sp.currency === currency
+  const on = same && x.usePrev !== false
+  const warn = same ? prevWarn(buyKrw, sp.price, currency, sellRate, tiers) : null
+  const m = same ? prevMargin(buyKrw, sp.price, currency, sellRate) : null
+  const otherAssy = sp.parent_code && parent && String(sp.parent_code).toUpperCase() !== String(parent).toUpperCase()
+  const tip = `${sp.quote_no || ''} · ${sp.quote_date || ''}${sp.parent_code ? ` · ${sp.parent_code} 세부` : ''}${sp.detail_sent ? ' · 세부견적 제출' : ''}${m != null ? ` · 지금 매입가 기준 마진 ${(m * 100).toFixed(1)}%` : ''}`
+  return (
+    <div className={`no-print text-[10px] mt-0.5 ${compact ? 'text-right' : ''}`} data-sale-prev={on ? 'on' : 'off'} title={tip}>
+      <span className={on ? 'font-bold text-emerald-700' : 'text-slate-400 line-through'}>
+        🏷 {money(sp.price, sp.currency)} {sp.currency !== 'KRW' ? sp.currency : '원'}
+      </span>
+      {!compact && <span className="text-slate-400"> · {sp.quote_date} ({sp.quote_no})</span>}
+      {compact && <div className="text-slate-400 whitespace-nowrap">{sp.quote_date}{otherAssy ? ` · ${String(sp.parent_code).replace(/^AX-/i, '')}` : ''}</div>}
+      {on && warn && <span className={`ml-1 font-bold ${warn === 'loss' ? 'text-rose-600' : 'text-amber-600'}`} data-sale-warn={warn}>
+        ⚠ {warn === 'loss' ? '적자' : '마진 낮음'}{m != null ? ` ${(m * 100).toFixed(0)}%` : ''}</span>}
+      {same && <button type="button" onClick={onToggle} data-sale-toggle
+        className="ml-1 underline text-indigo-500 hover:text-indigo-700">{on ? '지금 계산가로' : '실적가로'}</button>}
+      {!same && <span className="ml-1 text-slate-400">(다른 통화 — 안 씀)</span>}
     </div>
   )
 }

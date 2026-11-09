@@ -6,9 +6,11 @@
 //   ⚠ 합계는 항상 견적서 단가와 같다
 //     · 계산 그대로의 단가면(견적 단가 = 계산값을 100원 미만 절삭한 값) → 부품 · 조립비를 계산 그대로 두고 그 차이가 절삭 줄
 //     · 단가를 손으로 고쳤으면(네고) → 부품 · 조립비를 같은 비율로 맞춤 (절삭 줄은 반올림 몇 원만 남거나 없음)
+//   판매 실적가 (v4.162.0): 같은 고객사에 전에 낸 부품 판매가가 있으면 그 값 그대로 (네고로 맞출 때도 고정) — 나머지 부품 · 조립비가 맞춤
 //   빠지는 줄: 체크 해제 · 단가 제외(문서 · 소요량 0) · 구매 조립품의 하위 · 매입가 없음(→ missing 으로 센다)
 import { tierMargin } from './costAnalysis'
 import { roundPrice } from './marginSim'
+import { prevOf, partKey, prevEligible } from './salePrice'
 
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 // 통화 끝자리 반올림 — 원 · 센트
@@ -31,23 +33,28 @@ export function buildDetail(line, opt = {}) {
   if (!line || line.kind !== 'assy' || !Array.isArray(line.parts)) return null
   const target = n(line.unitPrice)
   if (target <= 0) return null
-  const parts = line.parts.filter(detailPart)
+  const parts = line.parts.filter((p) => detailPart(p) || (prevEligible(p) && prevOf(p, cur) != null))   // 매입가가 없어도 실적가가 있으면 넣는다
   if (!parts.length) return null
   const rate = cur === 'KRW' ? 1 : (n(opt.sellRate) || 1)
   const fixed = line.marginPct != null ? n(line.marginPct) : null
   const tiers = opt.mcfg?.tiers
   const laborMarg = fixed != null ? fixed : n(opt.mcfg?.laborMarg)
-  const rawUnit = parts.map((p) => n(p.buyKrw) / (1 - (fixed != null ? fixed : tierMargin(p.buyKrw, tiers))) / rate)
+  const prev = parts.map((p) => prevOf(p, cur))
+  const rawUnit = parts.map((p, i) => (prev[i] != null ? prev[i] : n(p.buyKrw) / (1 - (fixed != null ? fixed : tierMargin(p.buyKrw, tiers))) / rate))
   const rawLabor = n(line.laborKrw) > 0 ? n(line.laborKrw) / (1 - laborMarg) / rate : 0
   const rawTotal = rawUnit.reduce((a, u, i) => a + u * n(parts[i].qty), 0) + rawLabor
   if (rawTotal <= 0) return null
   // 계산 그대로의 단가인가 — 그러면 비율을 건드리지 않는다 (절삭 줄이 실제 잘라낸 금액)
+  //   실적가 부품은 고정 — 네고 차이는 나머지 부품 · 조립비가 나눠 맡는다 (나머지가 없으면 조정 줄)
   const scaled = roundPrice(rawTotal, cur) !== target
-  const f = scaled ? target / rawTotal : 1
+  const fixedSum = rawUnit.reduce((a, u, i) => a + (prev[i] != null ? u * n(parts[i].qty) : 0), 0)
+  const flex = rawTotal - fixedSum
+  const f = scaled ? (flex > 0 ? Math.max(0, (target - fixedSum) / flex) : 1) : 1
   const rows = parts.map((p, i) => {
-    const price = cents(rawUnit[i] * f, cur)
+    const price = prev[i] != null ? cents(prev[i], cur) : cents(rawUnit[i] * f, cur)
     return { no: i + 1, std_code: p.std_code || p.manufacturer_code || '',   // 부품표로 만든 줄(코드 없음)은 제조사품번 (v4.148.0)
-       name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur) }
+       name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur),
+       key: partKey(p), buyKrw: p.buyKrw ?? null, prev: prev[i] != null }
   })
   const partsSum = cents(rows.reduce((a, r) => a + r.amount, 0), cur)
   let labor = rawLabor > 0 ? cents(rawLabor * f, cur) : 0   // 조립비도 계산 그대로 (부품 반올림 몇 원은 절삭 줄에 같이)
@@ -55,7 +62,7 @@ export function buildDetail(line, opt = {}) {
   if (scaled && labor > 0) labor = Math.max(0, cents(target - partsSum, cur))
   const subtotal = cents(partsSum + labor, cur)
   const adjust = cents(target - subtotal, cur)
-  return { rows, partsSum, labor, subtotal, adjust, total: target, missing: line.parts.filter(missingPart).length, scaled }
+  return { rows, partsSum, labor, subtotal, adjust, total: target, missing: line.parts.filter((p) => missingPart(p) && prevOf(p, cur) == null).length, scaled }
 }
 
 // 견적 전체 — 세부를 낼 수 있는 줄만 [{ idx, line, detail }]
