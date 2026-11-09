@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.163.0'
+export const APP_VERSION = 'v4.163.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.163.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.163.1',
+    date: '2026-11-09',
+    changes: [
+      '자료 요청 — 이력 시각이 9시간 이르게(UTC 그대로) 보이던 것 고침 → 한국 시각으로 (요청 시각 · 처리 이력)',
+    ],
+  },
   {
     version: 'v4.163.0',
     date: '2026-11-09',
