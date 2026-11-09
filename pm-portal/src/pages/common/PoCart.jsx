@@ -11,6 +11,7 @@ import VendorPicker from '../../components/VendorPicker'
 import { SkelBar } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import { useCustomers } from '../../hooks/useCustomers'
 
 // 발주 담기함 (장바구니) — 자재요청에서 담아 둔 것을 모아 한꺼번에 발주로 등록한다.
 //
@@ -45,7 +46,7 @@ export async function addToCart(rows) {
   // 품목 기본 구매처와 최근 매입가를 채워 둔다 (나중에 담기함에서 바꿀 수 있다)
   //   최근 매입가 = items.purchase_price — 입고할 때마다 그 입고 단가로 갱신된다
   const ids = [...new Set(items.map((r) => r.item_id))]
-  const master = must(await supabase.from('items').select('id,vendor_id,purchase_price').in('id', ids), '품목 조회') || []
+  const master = must(await supabase.from('items').select('id,std_code,vendor_id,purchase_price').in('id', ids), '품목 조회') || []
   const vOf = new Map(master.map((m) => [m.id, m.vendor_id]))
   const pOf = new Map(master.map((m) => [m.id, m.purchase_price]))
   // 고객사 — 요청에 있으면 그것, 없으면 고객사 코드로, 그것도 없으면 품목이 속한 BOM 기준
@@ -61,9 +62,19 @@ export async function addToCart(rows) {
     const bs = must(await supabase.from('bom').select('item_id,customer_id').in('item_id', [...new Set(needBom)]), 'BOM 조회') || []
     bs.forEach((b) => { if (!bomOf.has(b.item_id)) bomOf.set(b.item_id, b.customer_id) })
   }
+  // 그래도 없으면 기준코드 접두(AX- · ED- · CS- · VM-)로 (v4.161.0)
+  const codeOf = new Map(master.map((m) => [m.id, m.std_code]))
+  const PFX = [['AX-', 'ax'], ['ED-', 'ed'], ['CS-', 'csk'], ['VM-', 'vm']]
+  const pfxCs = (code) => { const hit = PFX.find(([p]) => String(code || '').toUpperCase().startsWith(p)); return hit ? hit[1] : null }
+  const pfxCodes = [...new Set(items.filter((r) => !r.customer_id && !csOf.get(r.customer_code) && !bomOf.get(r.item_id)).map((r) => pfxCs(codeOf.get(r.item_id))).filter(Boolean))]
+  const pfxOf = new Map()
+  if (pfxCodes.length) {
+    const cs = must(await supabase.from('customers').select('id,code').in('code', pfxCodes), '고객사 조회') || []
+    cs.forEach((c) => pfxOf.set(c.code, c.id))
+  }
   const payload = items.map((r) => ({
     request_id: r.id, item_id: r.item_id,
-    customer_id: r.customer_id || csOf.get(r.customer_code) || bomOf.get(r.item_id) || null,
+    customer_id: r.customer_id || csOf.get(r.customer_code) || bomOf.get(r.item_id) || pfxOf.get(pfxCs(codeOf.get(r.item_id))) || null,
     vendor_id: vOf.get(r.item_id) || null,
     // 일부 불출된 요청은 남은 수량만 담는다 (v4.123.0 부분 불출)
     qty: (Number(r.qty) || 0) - (Number(r.issued_qty) || 0) > 0 ? (Number(r.qty) || 0) - (Number(r.issued_qty) || 0) : (Number(r.qty) || 0),
@@ -107,6 +118,8 @@ export default function PoCart({ open, onClose }) {
   const [bulkDate, setBulkDate] = useState('')
   const [ask, confirmEl] = useConfirm()   // 브라우저 기본 확인 창 대신 포털 확인 창 (v4.104.0)
   const { data: cart = [], isLoading } = useQuery({ queryKey: ['poCart'], queryFn: fetchCart, enabled: !!open })
+  const { data: customers = [] } = useCustomers()   // 담기함에서 고객사 고르기 (v4.161.0)
+  const [bulkCs, setBulkCs] = useState('')
 
   // 발주서 묶음 (구매처별) — 등록할 때 · 요약 칩에만 쓴다. 목록은 담은 순서 그대로 한 표 (v4.78.1)
   //   예전엔 구매처별로 표를 나눠, 구매처를 바꿀 때마다 줄이 다른 묶음으로 튀어 위치가 바뀌었다.
@@ -139,9 +152,11 @@ export default function PoCart({ open, onClose }) {
   async function applyBulk(field, value) {
     if (!cart.length || !value) return
     try {
+      const ids = (field === 'customer_id' ? cart.filter((c) => !c.customer_id) : cart).map((c) => c.id)   // 고객사는 빈 줄만
+      if (!ids.length) return
       must(await supabase.from('pm_po_cart').update({ [field]: value, updated_at: new Date().toISOString() })
-        .in('id', cart.map((c) => c.id)), '일괄 수정')
-      reload(); toastSuccess(field === 'vendor_id' ? '구매처를 모두 바꿨습니다' : '납기를 모두 바꿨습니다')
+        .in('id', ids), '일괄 수정')
+      reload(); toastSuccess(field === 'vendor_id' ? '구매처를 모두 바꿨습니다' : field === 'customer_id' ? `고객사가 없던 ${ids.length}줄에 고객사를 넣었습니다` : '납기를 모두 바꿨습니다')
     } catch (e) { toastError(e.message) }
   }
 
@@ -151,7 +166,7 @@ export default function PoCart({ open, onClose }) {
     const noQty = cart.filter((c) => !(Number(c.qty) > 0))
     if (noQty.length) { toastError(`수량이 없는 줄이 ${noQty.length}개 있습니다`); return }
     const noCs = cart.filter((c) => !c.customer_id)
-    if (noCs.length) { toastError(`고객사가 없는 줄이 ${noCs.length}개 있습니다 — 줄을 빼거나 자재요청에서 고객사를 채워주세요`); return }
+    if (noCs.length) { toastError(`고객사가 없는 줄이 ${noCs.length}개 있습니다 — 줄마다 빨간 「고객사」 칸에서 고르거나 위 「고객사 없는 줄 일괄」에서 골라 주세요`); return }
     if (!(await ask({ title: `${cart.length}줄을 발주로 등록할까요?`,
       desc: `구매처별로 발주번호 ${groups.length}장이 만들어지고 담기함은 비워집니다. 자재요청에서 담은 줄은 그 요청이 「처리중 · 발주」로 바뀝니다.`,
       items: groups.slice(0, 5).map((g) => `${g.no}장 · ${g.name} · ${g.rows.length}줄`), more: Math.max(0, groups.length - 5),
@@ -230,6 +245,14 @@ export default function PoCart({ open, onClose }) {
                 onChange={(e) => { setBulkDate(e.target.value); if (e.target.value) applyBulk('promise_date', e.target.value) }}
                 className="px-3 py-2 text-sm border border-slate-200 rounded-lg" />
             </div>
+            {cart.some((c) => !c.customer_id) && <div>
+              <label className="block text-[11px] font-bold text-rose-600 mb-1">고객사 없는 줄 일괄 ({cart.filter((c) => !c.customer_id).length})</label>
+              <select value={bulkCs} onChange={(e) => { setBulkCs(e.target.value); if (e.target.value) applyBulk('customer_id', e.target.value).then(() => setBulkCs('')) }} data-cart-bulk-cs
+                className="px-3 py-2 text-sm border border-rose-300 bg-rose-50/40 rounded-lg">
+                <option value="">고객사 고르기</option>
+                {customers.map((cu) => <option key={cu.id} value={cu.id}>{cu.name}</option>)}
+              </select>
+            </div>}
             <span className="text-xs text-slate-400 ml-auto">
               {cart.length.toLocaleString('ko-KR')}줄 · 발주서 {groups.length}장으로 묶임 (같은 번호끼리 한 장)
             </span>
@@ -296,6 +319,12 @@ export default function PoCart({ open, onClose }) {
                             <div className="text-[10px] text-slate-400 truncate">
                               {[c.items?.manufacturer, c.items?.manufacturer_code].filter(Boolean).join(' ')}
                             </div>
+                            <select value={c.customer_id || ''} onChange={(e) => patch(c.id, { customer_id: e.target.value || null })} data-cart-cs={c.id}
+                              title="이 줄의 고객사 — 발주 등록에 필요 (자재요청에 고객사가 비어 있으면 여기서 고름)"
+                              className={`mt-1 max-w-[140px] px-1.5 py-0.5 text-[11px] rounded border ${c.customer_id ? 'border-slate-200 text-slate-500' : 'border-rose-300 bg-rose-50 text-rose-600 font-bold'}`}>
+                              <option value="">고객사 고르기</option>
+                              {customers.map((cu) => <option key={cu.id} value={cu.id}>{cu.name}</option>)}
+                            </select>
                           </td>
                           <td className="px-3 py-2">
                             <VendorPicker value={c.vendor_id || ''} onChange={(id) => patch(c.id, { vendor_id: id || null })} />
