@@ -8,6 +8,7 @@ import { DEFAULT_CFG } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import QuoteHistory from './QuoteHistory'
 import RfqBoard from './RfqBoard'
+import SalePriceBoard from './SalePriceBoard'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { useCoach } from '../../components/ux/CoachMarks'
 
@@ -19,7 +20,7 @@ const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 export default function SalesQuote() {
   const { data: profile } = useMyProfile()
   const custList = orderedCustomers(profile)
-  const [tab, setTab] = useState('rfq')     // rfq=견적 접수 현황(v4.92.0) / write=견적 작성 / history=견적 이력
+  const [tab, setTab] = useState('rfq')     // rfq=견적 접수 현황(v4.92.0) / write=견적 작성 / history=견적 이력 / price=판매 실적가(v4.163.0)
   const [prefill, setPrefill] = useState(null)   // 견적 접수 → 견적 작성으로 넘길 품목
   const [csCode, setCsCode] = useState(null)
   // 견적 이력 「✏ 수정」 → 작성 탭으로 넘어가 그 견적을 불러온다 (n: 같은 견적을 다시 눌러도 다시 불러오게)
@@ -73,7 +74,7 @@ export default function SalesQuote() {
         </div>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
-            {[['rfq', '📥 견적 접수 현황'], ['write', '✍ 견적 작성'], ['history', '📋 견적 이력']].map(([k, l]) => (
+            {[['rfq', '📥 견적 접수 현황'], ['write', '✍ 견적 작성'], ['history', '📋 견적 이력'], ['price', '🏷 판매 실적가']].map(([k, l]) => (
               <button key={k} data-sq-tab={k} onClick={() => { setTab(k); if (k === 'history') setReviseReq(null) }}
                 className={`px-3 py-1.5 text-xs font-bold rounded-md ${tab === k ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}>
                 {l}
@@ -118,7 +119,8 @@ export default function SalesQuote() {
           setPrefill({ n: Date.now(), customerId: etc ? null : (r.customer_id || null), etcName: etc ? r.customer_code : null, title: r.title, lines: (r.lines || []).map((l) => ({ pn: l.std_code || l.pn, qty: l.qty, name: l.name || '', paste: !l.project_id && l.paste_parts?.parts?.length ? l.paste_parts : null })) })
           setTab('write')
         }} />
-      ) : tab === 'history' ? <QuoteHistory customer={histAll ? null : (cs ? { id: cs.id, code: cs.code, name: custList.find((c) => c.id === code)?.name || cs.name } : null)} onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
+      ) : tab === 'price' ? <SalePriceBoard custList={custList} defaultCode={code} />
+        : tab === 'history' ? <QuoteHistory customer={histAll ? null : (cs ? { id: cs.id, code: cs.code, name: custList.find((c) => c.id === code)?.name || cs.name } : null)} onRevise={(q) => { setReviseReq({ id: q.id, n: Date.now() }); setTab('write') }} /> : (
       <QuoteSheet
         fixedKind="sales"
         reviseReq={reviseReq}

@@ -69,6 +69,7 @@ export const TARGET_LABEL = {
   items: '품목',
   vendors: '협력사',
   pm_quotes: '견적',
+  pm_sale_price_hist: '판매 실적가',
   pm_payment_plan: '결제계획',
   weekly_items: '주간보고',
   pm_ecount_purchases: '확정매입',
