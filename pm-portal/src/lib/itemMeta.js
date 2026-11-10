@@ -43,19 +43,25 @@ export async function syncItemMeta(rows, src) {
 }
 
 // 화면에 보이는 품목들의 승인 제조사 · 최신 REV
-//   → { mfr: { itemId: [{mfr, mfr_pn, status, active}] }, rev: { itemId: { ver, n } } }
+//   → { mfr: { itemId: [{mfr, mfr_pn, status, active}] }, rev: { itemId: { ver, n } }, cps: { itemId: 'Sole'|'Limited'|'Generic' } }
 export async function fetchItemMeta(itemIds) {
   const ids = [...new Set((itemIds || []).filter(Boolean))]
-  const mfr = {}, rev = {}
-  if (!ids.length) return { mfr, rev }
+  const mfr = {}, rev = {}, cps = {}
+  if (!ids.length) return { mfr, rev, cps }
+  // CPS 구분 (v4.173.0) — 표가 없으면(SQL 전) 조용히 건너뜀
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('pm_item_cps').select('item_id,kind').in('item_id', ids.slice(i, i + 200)).not('kind', 'is', null)
+    if (error) break
+    for (const r of data || []) cps[r.item_id] = r.kind
+  }
   for (let i = 0; i < ids.length; i += 200) {
     const part = ids.slice(i, i + 200)
     const [a, b] = await Promise.all([
       supabase.from('pm_item_mfr').select('item_id,mfr,mfr_pn,status,active').in('item_id', part).eq('active', true).limit(5000),
       supabase.from('pm_item_rev').select('item_id,ver,vkey').in('item_id', part).limit(5000),
     ])
-    if (a.error) { if (isMissing(a.error)) return { mfr, rev, missingTable: true }; throw a.error }
-    if (b.error) { if (isMissing(b.error)) return { mfr, rev, missingTable: true }; throw b.error }
+    if (a.error) { if (isMissing(a.error)) return { mfr, rev, cps, missingTable: true }; throw a.error }
+    if (b.error) { if (isMissing(b.error)) return { mfr, rev, cps, missingTable: true }; throw b.error }
     for (const r of a.data || []) (mfr[r.item_id] = mfr[r.item_id] || []).push(r)
     for (const r of b.data || []) {
       const c = rev[r.item_id]
@@ -64,7 +70,7 @@ export async function fetchItemMeta(itemIds) {
     }
   }
   for (const k of Object.keys(mfr)) mfr[k].sort(byMfrRank)
-  return { mfr, rev }
+  return { mfr, rev, cps }
 }
 
 // 한 품목 자세히 — 승인 제조사(빠진 것 포함) · REV 이력 · 같은 제조사품번을 쓰는 다른 품번
@@ -77,6 +83,8 @@ export async function fetchItemMetaDetail(itemId) {
   if (a.error) { if (isMissing(a.error)) return { missingTable: true, mfrs: [], revs: [], same: [] }; throw a.error }
   if (b.error) { if (isMissing(b.error)) return { missingTable: true, mfrs: [], revs: [], same: [] }; throw b.error }
   const mfrs = (a.data || []).sort((x, y) => (y.active - x.active) || byMfrRank(x, y))
+  const { data: cpsRow } = await supabase.from('pm_item_cps').select('kind,why,ver,file_name,prev_kind,changed_on,last_seen').eq('item_id', itemId).maybeSingle()
+    .then(r => r, () => ({ data: null }))
   // 같은 제조사품번(ORDER BY DESCRIPTION 같은 자리표시 빼고)을 승인 목록에 가진 다른 품번
   const pns = [...new Set(mfrs.filter(m => m.active && realPn(m.mfr_pn)).map(m => m.mfr_pn))]
   let same = []
@@ -85,7 +93,7 @@ export async function fetchItemMetaDetail(itemId) {
       .in('mfr_pn', pns.slice(0, 50)).eq('active', true).neq('item_id', itemId).limit(50)
     same = (data || []).filter(r => r.items).map(r => ({ code: r.items.std_code, name: r.items.name, mfr: r.mfr, mfr_pn: r.mfr_pn }))
   }
-  return { mfrs, revs: b.data || [], same }
+  return { mfrs, revs: b.data || [], same, cps: cpsRow || null }
 }
 
 // 검색 — 승인 제조사품번 · 제조사명으로 품목 찾기 (기준코드 DB 검색에 보탬)
@@ -138,8 +146,8 @@ export async function mfrSearchCond(q) {
 export async function attachMfrs(items) {
   if (!items?.length) return items || []
   try {
-    const { mfr } = await fetchItemMeta(items.map(i => i.id))
-    return items.map(i => ({ ...i, mfrs: mfr[i.id] || [] }))
+    const { mfr, cps } = await fetchItemMeta(items.map(i => i.id))
+    return items.map(i => ({ ...i, mfrs: mfr[i.id] || [], cps: cps?.[i.id] || null }))
   } catch { return items }
 }
 
@@ -164,3 +172,10 @@ export function splitMfrs(item, list) {
   }
 }
 export const mfrHit = (m, q) => { const t = normPn(q); return t.length >= 2 && normPn(m.mfr_pn).includes(t) }
+
+// CPS 구분 → 화면 표시 (v4.173.0)
+export const CPS_INFO = {
+  Sole:    { label: 'Sole', ko: '단독 지정', desc: '목록의 제조사 품번 하나만 — 다른 품번 구매 불가', cls: 'border-rose-200 text-rose-600' },
+  Limited: { label: 'Limited', ko: '목록 내만', desc: '승인 목록에 있는 제조사 품번만 — 목록 밖 구매 불가', cls: 'border-amber-200 text-amber-700' },
+  Generic: { label: 'Generic', ko: '조건부 대체', desc: '목록 외 제조사도 CPS 조건(Acceptability Criteria)을 맞으면 가능', cls: 'border-slate-300 text-slate-500' },
+}

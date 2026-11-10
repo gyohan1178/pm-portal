@@ -16,7 +16,7 @@ import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 import { isTempCode, promoteTempCode } from '../../lib/tempCode'
 import { checkRfq } from './rfq'
-import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn } from '../../lib/itemMeta'
+import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn, CPS_INFO } from '../../lib/itemMeta'
 import ItemMetaPanel from '../../components/ItemMetaPanel'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
@@ -801,6 +801,8 @@ export default function Items() {
                     </td>
                     {/* 9. 규격 */}
                     <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">
+                      {meta.cps?.[item.id] && <span data-item-cps={meta.cps[item.id]} title={`고객사 CPS: ${CPS_INFO[meta.cps[item.id]]?.desc}`}
+                        className={`mr-1 inline-block px-1 rounded border text-[9.5px] font-semibold align-middle ${CPS_INFO[meta.cps[item.id]]?.cls}`}>{meta.cps[item.id]}</span>}
                       {(() => {
                         const L = meta.mfr?.[item.id] || []
                         if (!L.length) return null

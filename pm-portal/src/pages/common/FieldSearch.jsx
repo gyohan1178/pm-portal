@@ -509,7 +509,7 @@ export default function FieldSearch() {
                   <p className="text-xs font-bold text-slate-500 mb-0.5">제조사품번</p>
                   <p className="font-mono text-slate-700 break-all">{detail.manufacturer_code || '-'}</p>
                 </div>
-                {detail.mfrs?.length > 0 && <div className="col-span-2">
+                {(detail.mfrs?.length > 0 || detail.cps) && <div className="col-span-2">
                   <p className="text-xs font-bold text-slate-500 mb-0.5">고객사 승인 제조사</p>
                   <MfrAltList item={detail} list={detail.mfrs} max={20} />
                 </div>}

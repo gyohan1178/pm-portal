@@ -1,7 +1,7 @@
 // 품목 하나의 고객사 승인 제조사 · REV 이력 (v4.171.0) — 기준코드 DB 「품목 수정」 아래
 //   AXCELIS Part Report 를 BOM 에 올릴 때 쌓인다 (pm_item_mfr · pm_item_rev)
 import { useQuery } from '@tanstack/react-query'
-import { fetchItemMetaDetail, mfrTone, inApproved, realPn } from '../lib/itemMeta'
+import { fetchItemMetaDetail, mfrTone, inApproved, realPn, CPS_INFO } from '../lib/itemMeta'
 
 const d = (s) => s ? String(s).slice(2, 10).replace(/-/g, '/') : ''
 
@@ -26,8 +26,17 @@ export default function ItemMetaPanel({ item }) {
       <div className={box + ' lg:col-span-2'}>
         <div className="flex items-center gap-2 mb-2">
           <p className="text-xs font-bold text-slate-700">🏷 고객사 승인 제조사</p>
-          <span className="text-[11px] text-slate-400">AXCELIS 리포트(BOM 올리기) 기준 · 여기 있는 제조사품번은 모두 써도 되는 것</span>
+          <span className="text-[11px] text-slate-400">AXCELIS 리포트 기준 · 사용 금지 · 단종이 아니면 써도 되는 것</span>
         </div>
+        {data?.cps && (
+          <p className="mb-2 text-[11px] text-slate-500" data-item-cps={data.cps.kind || ''}>
+            <span className="font-semibold text-slate-600">CPS 구분 — </span>
+            {data.cps.kind
+              ? <><span className={`inline-block px-1.5 rounded border text-[10px] font-semibold ${CPS_INFO[data.cps.kind]?.cls}`}>{data.cps.kind} · {CPS_INFO[data.cps.kind]?.ko}</span> <span className="text-slate-400">{CPS_INFO[data.cps.kind]?.desc}</span></>
+              : <span className="text-slate-400">문서는 있는데 체크를 못 읽음 ({data.cps.why || '-'})</span>}
+            <span className="ml-1 text-slate-400">· {data.cps.file_name}{data.cps.prev_kind ? ` · 예전 ${data.cps.prev_kind}` : ''}</span>
+          </p>
+        )}
         {act.length === 0
           ? <p className="text-xs text-slate-400">기록 없음 — 이 품번이 들어 있는 AXCELIS 리포트(HTM)를 BOM 에 올리면 채워집니다.</p>
           : (

@@ -1,51 +1,53 @@
-// 검색 결과 한 줄 아래 — 고객사 승인 제조사 (v4.172.0)
-//   ✅ 대체 가능(우선 · 승인)  /  ⚠ 제조사 단종  /  ⛔ 사용 금지 를 나눠 보여 준다.
-//   AXCELIS Part Report 의 상태(Approved · Preferred · Approved - OBS by Mfr · Do Not Use)를 그대로 따른다.
-//   우리 대표 제조사품번이 사용 금지 · 단종이면 맨 앞에 크게 알린다.
-import { splitMfrs, mfrHit, realPn } from '../lib/itemMeta'
+// 검색 결과 한 줄 아래 — 고객사 승인 제조사 (v4.173.0)
+//   메인은 품목에 등록된 제조사 · 품번(위에 이미 보임). 여기는 보조 정보라 눈에 덜 띄게:
+//     ↳ 대체 승인 · ↳ 단종 · ↳ 사용 금지 를 회색 글자 한 줄씩, 이름표만 상태 색
+//   CPS 구분(Sole · Limited · Generic)은 테두리만 있는 작은 표
+//   우리 메인 품번 자체가 사용 금지 · 단종 · 승인목록 밖이면 그건 메인 문제라 진하게 알린다.
+import { splitMfrs, mfrHit, realPn, CPS_INFO } from '../lib/itemMeta'
 import { isDnu, isMfrObs } from '../lib/axcelisBomReport'
 
 const pn = (m) => realPn(m.mfr_pn) ? m.mfr_pn : '품명대로'
 
-function Chip({ m, q, tone }) {
-  const cls = {
-    ok: 'bg-emerald-50 text-emerald-700 border-emerald-100',
-    pr: 'bg-violet-50 text-violet-700 border-violet-100',
-    obs: 'bg-amber-50 text-amber-700 border-amber-100',
-    dnu: 'bg-rose-50 text-rose-600 border-rose-200 line-through decoration-rose-300',
-  }[tone]
+function Part({ m, q, strike }) {
   return (
-    <span data-mfr-chip={tone} title={`${m.mfr} ${m.mfr_pn} — 고객사 상태: ${m.status || '-'}`}
-      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border text-[10px] font-semibold whitespace-nowrap ${cls} ${mfrHit(m, q) ? 'ring-2 ring-indigo-300' : ''}`}>
-      <span className="font-normal opacity-80">{m.mfr}</span><span className="font-mono">{pn(m)}</span>
+    <span data-mfr-chip={strike ? 'dnu' : 'x'} title={`${m.mfr} ${m.mfr_pn} — 고객사 상태: ${m.status || '-'}`}
+      className={`whitespace-nowrap ${strike ? 'line-through decoration-slate-300' : ''} ${mfrHit(m, q) ? 'bg-yellow-100 rounded px-0.5' : ''}`}>
+      <span>{m.mfr}</span> <span className="font-mono">{pn(m)}</span>{/prefer/i.test(m.status || '') && <span className="ml-0.5 text-[9px] text-slate-400">(우선)</span>}
     </span>
   )
 }
 
-export default function MfrAltList({ item, list, q = '', max = 4, className = '' }) {
-  if (!list?.length) return null
-  const { mine, alts, obs, dnu } = splitMfrs(item, list)
+export default function MfrAltList({ item, list, cps, q = '', max = 4, className = '' }) {
+  const kind = cps ?? item?.cps ?? null
+  const L = list || []
+  const { mine, alts, obs, dnu } = splitMfrs(item, L)
   const mineBad = mine && (isDnu(mine.status) ? 'dnu' : isMfrObs(mine.status) ? 'obs' : null)
-  const noMine = !mine && item?.manufacturer_code && list.some(m => realPn(m.mfr_pn))
-  if (!alts.length && !obs.length && !dnu.length && !mineBad && !noMine) return null
-  // 상태별로 한 줄씩 — 이름표와 칩이 줄바꿈으로 갈라지지 않게 (v4.172.1)
-  const Row = ({ label, cls, children, data }) => (
-    <div data-mfr-row={data} className="flex items-start gap-1.5">
-      <span className={`shrink-0 w-[68px] pt-0.5 text-[10px] font-bold whitespace-nowrap ${cls}`}>{label}</span>
-      <div className="flex flex-wrap gap-1 min-w-0">{children}</div>
+  const noMine = !mine && item?.manufacturer_code && L.some(m => realPn(m.mfr_pn))
+  if (!kind && !alts.length && !obs.length && !dnu.length && !mineBad && !noMine) return null
+  const ci = kind && CPS_INFO[kind]
+  const Row = ({ label, lc, data, children }) => (
+    <div data-mfr-row={data} className="flex items-baseline gap-1.5 text-[10.5px] text-slate-400 leading-snug">
+      <span className={`shrink-0 w-[52px] whitespace-nowrap ${lc}`}>↳ {label}</span>
+      <span className="flex flex-wrap gap-x-2 min-w-0">{children}</span>
     </div>
   )
   return (
-    <div data-mfr-alt className={`mt-1 flex flex-col gap-0.5 whitespace-normal ${className}`}>
-      {mineBad === 'dnu' && <div><span data-mfr-mine="dnu" className="inline-block px-1.5 py-0.5 rounded bg-rose-600 text-white text-[10px] font-bold">⛔ 지금 품번 고객사 사용 금지</span></div>}
-      {mineBad === 'obs' && <div><span data-mfr-mine="obs" className="inline-block px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">⚠ 지금 품번 제조사 단종</span></div>}
-      {noMine && <div><span data-mfr-mine="none" className="inline-block px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 text-[10px] font-bold" title="품목에 적힌 제조사품번이 고객사 승인 목록에 없습니다">⚠ 지금 품번 승인목록 밖</span></div>}
-      {alts.length > 0 && <Row data="ok" label="✅ 대체 가능" cls="text-emerald-700">
-        {alts.slice(0, max).map((m, i) => <Chip key={'a' + i} m={m} q={q} tone={/prefer/i.test(m.status || '') ? 'pr' : 'ok'} />)}
-        {alts.length > max && <span className="text-[10px] text-slate-400 pt-0.5" title={alts.slice(max).map(m => `${m.mfr} ${m.mfr_pn}`).join('\n')}>+{alts.length - max}</span>}
+    <div data-mfr-alt className={`mt-0.5 flex flex-col gap-0.5 whitespace-normal ${className}`}>
+      {(ci || mineBad || noMine) && (
+        <div className="flex flex-wrap items-center gap-1">
+          {ci && <span data-cps={kind} title={`고객사 CPS: ${kind} Manufacturer — ${ci.desc}`}
+            className={`inline-block px-1.5 rounded border text-[9.5px] font-semibold leading-[16px] ${ci.cls}`}>{ci.label} · {ci.ko}</span>}
+          {mineBad === 'dnu' && <span data-mfr-mine="dnu" className="inline-block px-1.5 rounded bg-rose-600 text-white text-[10px] font-bold leading-[16px]">⛔ 이 품번 고객사 사용 금지</span>}
+          {mineBad === 'obs' && <span data-mfr-mine="obs" className="inline-block px-1.5 rounded bg-amber-100 text-amber-800 text-[10px] font-bold leading-[16px]">⚠ 이 품번 제조사 단종</span>}
+          {noMine && <span data-mfr-mine="none" className="inline-block px-1.5 rounded bg-amber-50 text-amber-700 text-[10px] font-bold leading-[16px]" title="품목에 적힌 제조사품번이 고객사 승인 목록에 없습니다">⚠ 이 품번 승인목록 밖</span>}
+        </div>
+      )}
+      {alts.length > 0 && <Row data="ok" label="대체 승인" lc="text-slate-500">
+        {alts.slice(0, max).map((m, i) => <Part key={'a' + i} m={m} q={q} />)}
+        {alts.length > max && <span title={alts.slice(max).map(m => `${m.mfr} ${m.mfr_pn}`).join('\n')}>+{alts.length - max}</span>}
       </Row>}
-      {obs.length > 0 && <Row data="obs" label="⚠ 제조사 단종" cls="text-amber-700">{obs.map((m, i) => <Chip key={'o' + i} m={m} q={q} tone="obs" />)}</Row>}
-      {dnu.length > 0 && <Row data="dnu" label="⛔ 사용 금지" cls="text-rose-600">{dnu.map((m, i) => <Chip key={'d' + i} m={m} q={q} tone="dnu" />)}</Row>}
+      {obs.length > 0 && <Row data="obs" label="단종" lc="text-amber-600">{obs.map((m, i) => <Part key={'o' + i} m={m} q={q} />)}</Row>}
+      {dnu.length > 0 && <Row data="dnu" label="사용 금지" lc="text-rose-500">{dnu.map((m, i) => <Part key={'d' + i} m={m} q={q} strike />)}</Row>}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.172.1'
+export const APP_VERSION = 'v4.173.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,16 @@ export const APP_VERSION = 'v4.172.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.173.0',
+    date: '2026-11-10',
+    changes: [
+      '🔎 검색 — 등록된 제조사 · 품번이 메인, 고객사 승인 대체품은 그 아래 회색 한 줄 「↳ 대체 승인」 (단종 · 사용 금지도 같은 모양, 이름표만 색)',
+      '🏷 CPS 구분 — NAS CPS 문서(.doc · .docx)의 Sole · Limited · Generic 체크를 매일 읽어 품목에 표시 (테두리만 있는 작은 표)',
+      '  Sole = 단독 지정(다른 품번 불가) · Limited = 승인 목록 내만 · Generic = 조건 맞으면 목록 밖도 가능',
+      '  통합 검색 · 현장 검색 · 기준코드 DB(목록 · 품목 상세)에 같이. 사무실 PC 도면 적재 v4.2 가 읽어 보냄',
+    ],
+  },
   {
     version: 'v4.172.1',
     date: '2026-11-10',
