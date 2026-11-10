@@ -81,3 +81,49 @@ export function collectMissing(rows) {
   }
   return [...g.values()].sort((a, b) => b.hogis.length - a.hogis.length || a.pn.localeCompare(b.pn))
 }
+
+// ── 일부만 불출 (v4.169.0) ──────────────────────────────────────────
+//   「4대 × 대당 2개 = 8개 필요한데 5개만 있다」 → 앞 호기부터 채우고 모자란 3개를 뒤 호기에 미불출로
+//   호기 순서: 납기(req_date) 빠른 순 → 호기 번호 순. 같은 납기면 #3 이 #12 보다 먼저.
+const hogiNum = (h) => { const m = String(h || '').match(/\d+/); return m ? Number(m[0]) : Number.MAX_SAFE_INTEGER }
+export function orderHogis(rows) {
+  return [...(rows || [])].sort((a, b) =>
+    String(a.req_date || '9999').localeCompare(String(b.req_date || '9999'))
+    || hogiNum(a.hogi) - hogiNum(b.hogi)
+    || String(a.hogi || '').localeCompare(String(b.hogi || '')))
+}
+
+// 대당 소요 per · 있는 수량 have → 호기별 모자란 수 { [id]: n } (0 이면 그 호기는 다 받음)
+//   have 가 비었으면(null) 예전처럼 「대당 모자란 수」 — 모든 호기에 per 개씩
+export function distributeShort(rows, per, have) {
+  const q = Math.max(0, Number(per) || 0)
+  const out = {}
+  const list = orderHogis(rows)
+  if (have === null || have === undefined || have === '') { list.forEach((r) => { out[r.id] = q }); return out }
+  let left = Math.max(0, Number(have) || 0)
+  for (const r of list) {
+    const give = Math.min(q, left); left -= give
+    out[r.id] = q - give
+  }
+  return out
+}
+
+// 일부 해제 — 들어와 불출한 수량만큼 앞 호기부터 미불출을 줄인다 (0 이 되면 그 줄을 지운다)
+//   rows: 고른 호기들 · key: 접두 뗀 품번 · qty: 불출한 수량 → { [id]: 줄인 뒤 missing_parts } · 실제로 줄인 수
+export function reduceAcross(rows, key, qty) {
+  let left = Math.max(0, Number(qty) || 0)
+  const K = String(key).toUpperCase()
+  const out = {}
+  for (const r of orderHogis(rows)) {
+    if (left <= 0) break
+    const arr = (Array.isArray(r.missing_parts) ? r.missing_parts : []).filter(Boolean)
+    const i = arr.findIndex((m) => missKey(m) === K)
+    if (i < 0) continue
+    const cur = Number(arr[i].qty) || 1
+    const use = Math.min(cur, left); left -= use
+    const next = arr.map((m) => ({ ...m }))
+    if (cur - use > 0) next[i].qty = cur - use; else next.splice(i, 1)
+    out[r.id] = next
+  }
+  return { byId: out, used: Math.max(0, Number(qty) || 0) - left }
+}

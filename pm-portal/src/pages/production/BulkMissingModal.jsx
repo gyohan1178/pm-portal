@@ -4,11 +4,14 @@
 //   · 넣기: 붙여넣기 → 품명 · 제조사 자동 조회 → 고른 호기 전부에 저장 (이미 있으면 수량 바꾸기 / 더하기)
 //   · 해제: 고른 호기에 걸린 미불출을 품목으로 모아 체크한 것만 지운다
 //   · 저장 직전에 호기의 미불출을 다시 읽어 합친다 — 창을 연 사이 출고 작업이 넣은 결품이 지워지지 않게
+//   · (v4.169.0) 일부만 불출 — 「있는 수량」을 적으면 납기 빠른 호기부터 채우고 모자란 만큼만 뒤 호기에 미불출
+//     예) 4대 × 대당 2 = 8개 필요 · 5개 있음 → #1 0 · #2 0 · #3 1 · #4 2 (합 3개 미불출)
+//   · (v4.169.0) 일부 해제 — 들어와 불출한 수량만 적으면 앞 호기부터 미불출 수량을 줄인다
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
-import { parseMissingPaste, mergeMissing, clearMissing, collectMissing, missKey } from '../../lib/missingBulk'
+import { parseMissingPaste, mergeMissing, clearMissing, collectMissing, missKey, distributeShort, reduceAcross, orderHogis } from '../../lib/missingBulk'
 import { useDebounced } from '../../hooks/useDebounced'
 import { toastError, toastSuccess } from '../../lib/toast'
 import Spin from '../../components/ux/Spin'
@@ -24,6 +27,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
   const [mode, setMode] = useState('set')
   const [ov, setOv] = useState({})          // 품목별로 고친 수량 · 날짜 { KEY: { qty, date } }
   const [clearSel, setClearSel] = useState(() => new Set())
+  const [clearQty, setClearQty] = useState({})   // 일부 해제 — 품목별 불출한 수량 { KEY: n } (비우면 전부)
 
   const parsed = useMemo(() => parseMissingPaste(text), [text])
   const pq = useDebounced(parsed.map((p) => p.pn).join('|'), 300)
@@ -60,12 +64,17 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
       std_code: it?.std_code || '', item_id: it?.id || '',
       pn: it ? stripPrefix(it.std_code) : stripPrefix(p.pn),
       name: it?.name || '', maker: it?.manufacturer || '', makerPn: it?.manufacturer_code || '',
-      qty: o.qty ?? p.qty, date: o.date ?? date,
+      qty: o.qty ?? p.qty, date: o.date ?? date, have: o.have ?? '',
     }
   }), [parsed, found, ov, date])
 
   const n = rows.length
   const okParts = parts.filter((p) => Number(p.qty) > 0)
+  // 품목별 · 호기별 모자란 수 — 「있는 수량」이 비었으면 모든 호기에 대당 수량 그대로
+  const dist = useMemo(() => Object.fromEntries(okParts.map((p) => [p.key, distributeShort(rows, p.qty, p.have === '' ? null : p.have)])), [okParts, rows])
+  const sumShort = (k) => Object.values(dist[k] || {}).reduce((a, x) => a + x, 0)
+  const hogiById = useMemo(() => Object.fromEntries(rows.map((r) => [r.id, r.hogi || '-'])), [rows])
+  const ordered = useMemo(() => orderHogis(rows), [rows])
   const missingLookup = !isFetching && parts.some((p) => !p.found)
   const hasOf = (p) => rows.filter((r) => (r.missing_parts || []).some((m) => missKey(m) === p.key))
   const bundle = useMemo(() => collectMissing(rows), [rows])
@@ -77,17 +86,42 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
       if (error) throw error
       const now = new Date().toISOString()
       let touched = 0, lines = 0
-      for (const r of data || []) {
+      // 일부 해제 — 품목마다 납기 빠른 호기부터 불출한 수량만큼 줄인다 (줄인 결과를 아래 저장에 넘김)
+      const fresh = (data || []).map((r) => ({ ...r, req_date: rows.find((x) => x.id === r.id)?.req_date }))
+      const partMsg = {}
+      if (kind === 'clear') {
+        for (const k of clearSel) {
+          const q = Number(clearQty[k]) || 0
+          if (!(q > 0)) continue
+          const { byId } = reduceAcross(fresh, k, q)
+          for (const [id, mp] of Object.entries(byId)) {
+            const r = fresh.find((x) => String(x.id) === String(id))
+            const before = (r.missing_parts || []).find((m) => missKey(m) === k)
+            const after = mp.find((m) => missKey(m) === k)
+            r.missing_parts = mp
+            ;(partMsg[id] ??= []).push(`${k} ${Number(before?.qty) || 1}→${after ? after.qty : 0}`)
+          }
+        }
+      }
+      for (const r of fresh) {
         let next, msg, cnt
         if (kind === 'add') {
-          const res = mergeMissing(r.missing_parts, okParts, mode)
+          // 이 호기에 모자란 수 — 「있는 수량」으로 앞 호기가 다 받았으면 0
+          const mine = okParts.map((p) => ({ ...p, qty: dist[p.key]?.[r.id] ?? Number(p.qty) }))
+          const res = mergeMissing(r.missing_parts, mine.filter((p) => p.qty > 0), mode)
           next = res.next; cnt = res.added.length + res.updated.length
-          msg = `미불출 일괄 입력 ${cnt}품목 — ` + okParts.map((p) => `${p.pn}×${p.qty}`).join(', ')
+          // 「수량 바꾸기」인데 이 호기는 다 받았다 → 예전에 적힌 같은 품목 미불출을 지운다
+          const full = mode === 'set' ? mine.filter((p) => p.qty === 0 && p.have !== '').map((p) => p.key) : []
+          if (full.length) { const c = clearMissing(next, full); next = c.next; cnt += c.removed }
+          msg = `미불출 일괄 입력 ${cnt}품목 — ` + mine.map((p) => `${p.pn}×${p.qty}`).join(', ')
         } else {
-          const res = clearMissing(r.missing_parts, clearSel)
+          // 전부 해제할 품목만 여기서 — 일부 해제는 아래에서 호기를 가로질러 줄인다
+          const whole = [...clearSel].filter((k) => !(Number(clearQty[k]) > 0))
+          const res = clearMissing(r.missing_parts, whole)
           next = res.next; cnt = res.removed
-          msg = `미불출 일괄 해제 ${cnt}품목 — ` + [...clearSel].join(', ')
+          msg = `미불출 일괄 해제 ${cnt}품목 — ` + whole.join(', ')
         }
+        if (kind === 'clear' && partMsg[r.id]) { cnt += partMsg[r.id].length; msg = [msg.replace(/ — $/, ''), `일부 불출 ${partMsg[r.id].join(', ')}`].filter((x) => !/해제 0품목/.test(x)).join(' · ') }
         if (!cnt) continue
         const changes = [...(Array.isArray(r.changes) ? r.changes : []), { type: kind === 'add' ? '미불출입력' : '미불출해제', msg, at: now, by: by || null }]
         const { error: e2 } = await supabase.from('production').update({ missing_parts: next, changes, updated_at: now }).eq('id', r.id)
@@ -140,7 +174,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                 <textarea id="bm-paste" value={text} onChange={(e) => setText(e.target.value)} rows={4} autoFocus data-bulk-missing-paste
                   placeholder={'5102060\t2\nCN-23-110\t4'}
                   className="mt-1 w-full px-2.5 py-2 text-xs font-mono border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-400" />
-                <p className="text-[11px] text-slate-400 mt-0.5">엑셀에서 「품번 / 수량」 두 칸을 복사해 붙여 넣거나 한 줄씩 칩니다. 고객사 접두(AX- 등)는 안 붙여도 됩니다. 수량은 <b>호기 1대에 모자란 수</b>이고, 비우면 1입니다.</p>
+                <p className="text-[11px] text-slate-400 mt-0.5">엑셀에서 「품번 / 수량」 두 칸을 복사해 붙여 넣거나 한 줄씩 칩니다. 고객사 접두(AX- 등)는 안 붙여도 됩니다. 수량은 <b>호기 1대 기준</b>이고, 비우면 1입니다. 아래 표 「있는 수량」을 적으면 있는 만큼 앞 호기부터 채우고 모자란 수만 미불출로 넣습니다.</p>
               </div>
               <div>
                 <label className="text-xs font-bold text-slate-700" htmlFor="bm-date">입고 예정</label>
@@ -160,10 +194,12 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
 
             {parts.length > 0 && (
               <div className="overflow-x-auto border border-slate-100 rounded-lg">
-                <table className="w-full text-xs min-w-[640px]">
+                <table className="w-full text-xs min-w-[780px]">
                   <thead><tr className="bg-slate-50 text-slate-400">
                     <th className="px-2 py-1.5 text-left">품번</th><th className="px-2 py-1.5 text-left">품명</th><th className="px-2 py-1.5 text-left">제조사</th>
                     <th className="px-2 py-1.5 text-right">대당</th><th className="px-2 py-1.5 text-right">× {n}대</th>
+                    <th className="px-2 py-1.5 text-right" title="지금 불출할 수 있는 수량 (합계). 비우면 전부 모자란 것으로 봅니다">있는 수량</th>
+                    <th className="px-2 py-1.5 text-right">미불출</th>
                     <th className="px-2 py-1.5 text-left">입고 예정</th><th className="px-2 py-1.5 text-left">호기</th>
                   </tr></thead>
                   <tbody>
@@ -183,12 +219,26 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                               className="w-14 px-1 py-0.5 text-right font-bold border border-slate-200 rounded" />
                           </td>
                           <td className="px-2 py-1.5 text-right text-slate-500 tabular-nums">{(Number(p.qty) || 0) * n}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input type="number" min="0" value={p.have} placeholder="없음" data-bulk-missing-have={p.key}
+                              onChange={(e) => setO(p.key, { have: e.target.value === '' ? '' : Math.max(0, Number(e.target.value)) })}
+                              className="w-16 px-1 py-0.5 text-right border border-slate-200 rounded placeholder:text-slate-300" />
+                          </td>
+                          <td className="px-2 py-1.5 text-right whitespace-nowrap" data-bulk-missing-short={p.key}>
+                            <span className={`font-bold tabular-nums ${sumShort(p.key) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>{sumShort(p.key)}</span>
+                            {p.have !== '' && Number(p.qty) > 0 && (
+                              <div className="text-[10px] text-slate-400 font-normal">
+                                {ordered.filter((r) => (dist[p.key]?.[r.id] || 0) > 0).map((r) => `${hogiById[r.id]} ${dist[p.key][r.id]}`).join(' · ') || '모두 불출'}
+                              </div>)}
+                          </td>
                           <td className="px-2 py-1.5">
                             <input type="date" value={p.date || ''} onChange={(e) => setO(p.key, { date: e.target.value })}
                               className="px-1 py-0.5 text-[11px] border border-slate-200 rounded" />
                           </td>
                           <td className="px-2 py-1.5 whitespace-nowrap">
-                            {has.length === 0
+                            {p.have !== '' && Number(p.qty) > 0
+                              ? <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-600">{rows.filter((r) => (dist[p.key]?.[r.id] || 0) > 0).length}대에 넣음{mode === 'set' && rows.some((r) => (dist[p.key]?.[r.id] || 0) === 0 && has.includes(r)) ? ' · 다 받은 호기는 지움' : ''}</span>
+                              : has.length === 0
                               ? <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-600">{n}대 새로</span>
                               : <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700" title={has.map((r) => r.hogi).join(', ')}>
                                   {has.length}대 있음 → {mode === 'add' ? '더함' : '바꿈'}{has.length < n ? ` · ${n - has.length}대 새로` : ''}</span>}
@@ -216,6 +266,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                     <thead><tr className="bg-slate-50 text-slate-400">
                       <th className="px-2 py-1.5 w-8"></th><th className="px-2 py-1.5 text-left">품번</th><th className="px-2 py-1.5 text-left">품명</th>
                       <th className="px-2 py-1.5 text-left">걸린 호기</th><th className="px-2 py-1.5 text-right">합계</th>
+                      <th className="px-2 py-1.5 text-right" title="들어와서 불출한 수량. 비우면 전부 해제">불출한 수량</th>
                     </tr></thead>
                     <tbody>
                       {bundle.map((b) => (
@@ -227,12 +278,19 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                           <td className="px-2 py-1.5 text-slate-600 max-w-[200px] truncate">{b.name || '—'}</td>
                           <td className="px-2 py-1.5 text-slate-500">{b.hogis.join(' ')}{b.hogis.length < n && <span className="text-slate-300"> · {b.hogis.length}/{n}대</span>}</td>
                           <td className="px-2 py-1.5 text-right font-bold tabular-nums">{b.total}</td>
+                          <td className="px-2 py-1.5 text-right">
+                            <input type="number" min="0" max={b.total} value={clearQty[b.key] ?? ''} placeholder={`전부 ${b.total}`} data-bulk-clear-qty={b.key}
+                              onChange={(e) => { const v = e.target.value === '' ? '' : Math.max(0, Number(e.target.value)); setClearQty((s) => ({ ...s, [b.key]: v }))
+                                if (v !== '' && v > 0) setClearSel((s) => new Set(s).add(b.key)) }}
+                              className="w-20 px-1 py-0.5 text-right border border-slate-200 rounded placeholder:text-slate-300" />
+                            {Number(clearQty[b.key]) > 0 && Number(clearQty[b.key]) < b.total && <div className="text-[10px] text-rose-500">남는 미불출 {b.total - Number(clearQty[b.key])}</div>}
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
-                <p className="text-[11px] text-slate-400">체크한 품목을 고른 호기에서 지웁니다. 다른 미불출은 그대로 둡니다.</p>
+                <p className="text-[11px] text-slate-400">체크한 품목을 고른 호기에서 지웁니다. 「불출한 수량」을 적으면 그만큼만 납기 빠른 호기부터 줄이고 나머지는 미불출로 남깁니다. 다른 미불출은 그대로 둡니다.</p>
               </>
             )}
           </div>
