@@ -35,6 +35,7 @@ import Spin from '../../components/ux/Spin'
 import { useCoach } from '../../components/ux/CoachMarks'
 import OrderUpload from './OrderUpload'
 const OrderMrModal = lazy(() => import('./OrderMrModal'))
+import { mrTagOf, fetchOrderMrMap } from '../../lib/orderMr'
 import OrderEntry, { downloadTemplate } from './OrderEntry'
 import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, setSlipNo } from '../../lib/orderEntry'
 // AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
@@ -187,7 +188,8 @@ const ISS_CUST = ['AX', 'ETC']
 function ProdLink({ ps }) {
   if (!ps) return null
   const hs = ps.hogiList || []
-  if (!hs.length && !ps.issued) return null
+  const mr = ps.mr
+  if (!hs.length && !ps.issued && !mr) return null
   return (
     <div className="mt-0.5 flex flex-wrap items-center gap-1">
       {hs.length > 0 && (
@@ -199,6 +201,13 @@ function ProdLink({ ps }) {
       {ps.issued && (
         <span className="px-1.5 py-[1px] rounded bg-emerald-50 text-emerald-700 text-[10px] font-bold whitespace-nowrap" data-issued={ps.issued_src || '1'}
           title={`자재불출 끝 — ${ps.issued_src || ''}`}>📦 불출 ✔</span>
+      )}
+      {mr && (
+        <span data-mr-tag={mr.done === mr.n ? 'done' : mr.partial ? 'partial' : 'req'}
+          className={`px-1.5 py-[1px] rounded text-[10px] font-bold whitespace-nowrap ${mr.done === mr.n ? 'bg-emerald-50 text-emerald-700' : mr.partial ? 'bg-amber-50 text-amber-700' : 'bg-violet-50 text-violet-700'}`}
+          title={`이 줄로 자재 요청 ${mr.n}건${mr.reqNos.length ? ` — ${mr.reqNos.join(', ')}` : ''} · 완료 ${mr.done}${mr.partial ? ` · 일부 불출 ${mr.partial}` : ''}`}>
+          {mr.done === mr.n ? '🙋 요청 불출완료' : mr.partial ? '🙋 요청 일부 불출' : '🙋 자재요청됨'}{mr.n > 1 ? ` ${mr.n}` : ''}
+        </span>
       )}
     </div>
   )
@@ -355,6 +364,8 @@ export default function OrderIntake() {
   const refresh = () => { qc.invalidateQueries({ queryKey: ['orderIntake'] }); qc.invalidateQueries({ queryKey: ['orderMoney'] }) }
   // 생산관리 연결 — 수주 줄 id → 호기 · 자재불출 여부 (SQL 전이면 빈 목록)
   const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000 })
+  // 수주 줄에서 만든 자재 요청 (v4.170.0) — 「🙋 자재요청됨 / 요청 불출완료」 표시용
+  const { data: mrByTag } = useQuery({ queryKey: ['orderMrMap'], queryFn: fetchOrderMrMap, staleTime: 60 * 1000 })
   // 자재불출 끝난 줄 → 회신이 비어 있으면 「가능」 자동 (v4.117.0) — 화면 열 때 한 번, 편집 권한 있는 사람만
   //   함수가 없으면(SQL 전) 조용히 넘어감
   const issReplyRan = useRef(false)
@@ -411,6 +422,16 @@ export default function OrderIntake() {
     return () => { alive = false }
   }, [poOpen, openFull]) // eslint-disable-line react-hooks/exhaustive-deps
   // 코드 없는 고객사 품번 수 (진행 중 줄) — 「코드 · BOM 정리」 탭 숫자
+  // 생산관리 연결 + 자재 요청 표시를 한 지도로 — 줄 표시(ProdLink)가 같이 그린다 (v4.170.0)
+  const linkMap = useMemo(() => {
+    if (!mrByTag?.size) return prodMap
+    const m = new Map(prodMap || [])
+    for (const l of allLines) {
+      const mr = mrByTag.get(mrTagOf(l))
+      if (mr) m.set(l.id, { ...(m.get(l.id) || {}), mr })
+    }
+    return m
+  }, [prodMap, mrByTag, allLines])
   const unregCount = useMemo(() => new Set(allLines.filter((l) => l.st.live && !l.item_id && String(l.raw_pn || '').trim()).map((l) => `${l.o.customer_code}|${String(l.raw_pn).trim().toUpperCase()}`)).size, [allLines])
   const hit = (l) => !k || [l.o.po_no, l.o.customer_name, l.o.file_name, l.o.ship_to, l.o.note, l.items?.std_code, l.items?.name, l.raw_pn, l.raw_desc, l.note, l.plnd_no, l.prod_no].some((v) => String(v || '').toUpperCase().includes(k))
   const scoped = useMemo(() => allLines.filter((l) => (cust === 'all' || l.o.customer_code === cust) && hit(l)), [allLines, cust, k]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -970,7 +991,7 @@ export default function OrderIntake() {
             {liveVisible.length > 0 && (
               <label className="flex items-center gap-2 px-1 text-[11px] font-bold text-slate-500"><input type="checkbox" checked={allOn} onChange={() => setChecked(allOn ? new Set() : new Set(liveVisible.map((l) => l.id)))} data-check-all-m />보이는 품목 전체 선택</label>
             )}
-            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} prodMap={prodMap} />)}
+            {shownLines.map((l) => <LineCard key={l.id} l={l} isBuy={isBuy} checked={checked.has(l.id)} onToggle={() => toggle(l.id)} onOpen={() => setPoOpen(l.order_id)} onOddOk={editable ? () => oddMut.mutate({ ls: [l] }) : null} prodMap={linkMap} />)}
           </>}
           {mode === 'po' && <>
             {!isLoading && !poRows.length && <div className="p-8 text-center text-xs text-slate-400 bg-white border border-slate-200 rounded-xl">조건에 맞는 PO 가 없습니다</div>}
@@ -1027,7 +1048,7 @@ export default function OrderIntake() {
                     </td>
                     <td className="px-3 py-3 whitespace-nowrap">
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${stCls}`} data-status title={l.cancel_reason || ''}>{stLabel}</span>
-                      <ProdLink ps={prodMap?.get(l.id)} />
+                      <ProdLink ps={linkMap?.get(l.id)} />
                       {late && <div className="text-[10.5px] text-red-500 mt-0.5">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
                       {l.st.cancelled && l.cancel_reason && <div className="text-[10.5px] text-slate-500 mt-0.5 whitespace-normal" data-cancel-reason>{l.cancel_reason}</div>}
                     </td>
@@ -1084,11 +1105,11 @@ export default function OrderIntake() {
 
       {mrOpen && checkedLines.length > 0 && (
         <Suspense fallback={null}>
-          <OrderMrModal lines={checkedLines} meName={meName} onClose={() => setMrOpen(false)} onDone={() => { setMrOpen(false); setChecked(new Set()) }} />
+          <OrderMrModal lines={checkedLines} meName={meName} onClose={() => setMrOpen(false)} onDone={() => { setMrOpen(false); setChecked(new Set()); qc.invalidateQueries({ queryKey: ['orderMrMap'] }) }} />
         </Suspense>
       )}
       {poOpen && byOrder.get(poOpen) && (
-        <PoDrawer key={poOpen} o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={prodMap} histLoading={!openFull} onClose={() => setPoOpen(null)}
+        <PoDrawer key={poOpen} o={byOrder.get(poOpen)} isBuy={isBuy} editable={editable} fx={fx} oddMap={oddMap} prodMap={linkMap} histLoading={!openFull} onClose={() => setPoOpen(null)}
           onOddOk={(ls, on) => oddMut.mutate({ ls, on })}
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}

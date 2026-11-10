@@ -68,3 +68,28 @@ export async function createMrFromOrder(head, rows) {
   if (error) throw error
   return Number(data) || valid.length
 }
+
+// 수주대장 목록 「📦 요청」 표시 (v4.170.0) — 수주 줄에서 만든 자재 요청을 사유(태그)로 모은다 (반려 · 취소 빼고)
+//   같은 줄을 여러 번 요청했으면 건수 · 다 끝났는지 · 일부 불출인지를 같이
+export async function fetchOrderMrMap() {
+  const rows = []
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await supabase.from('pm_material_request')
+      .select('req_no,status,reason,qty,issued_qty,created_at').like('reason', '수주 PO %')
+      .order('created_at', { ascending: false }).range(from, from + 999)
+    if (error) throw error
+    rows.push(...(data || []))
+    if (!data || data.length < 1000) break
+  }
+  const m = new Map()
+  for (const r of rows) {
+    if (['반려', '취소'].includes(r.status)) continue
+    const e = m.get(r.reason) || { n: 0, done: 0, partial: 0, reqNos: [], last: r.created_at }
+    e.n++
+    if (r.status === '완료') e.done++
+    else if ((Number(r.issued_qty) || 0) > 0) e.partial++
+    if (r.req_no && !e.reqNos.includes(r.req_no)) e.reqNos.push(r.req_no)
+    m.set(r.reason, e)
+  }
+  return m
+}
