@@ -1,6 +1,7 @@
 import { useUndo } from '../../components/UndoBar'
 import Spin from '../../components/ux/Spin'
 import PageHead from '../../components/PageHead'
+import { EmptyState, EmptyRow } from '../../components/ui/EmptyState'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { refreshProcurement } from '../../lib/refresh'
 import { useState, useEffect, useMemo, useCallback } from 'react'
@@ -591,10 +592,9 @@ export default function Outbound() {
           onPrint={(range) => sendOutLabels(
             range ? labelConfirm.labels.slice(range.a - 1, range.b) : labelConfirm.labels)} />
       )}
-      <div className="flex items-center justify-between flex-wrap gap-2">
-        <PageHead crumb="자재" title="📤 ASSY 출고" desc="고객사 · 프로젝트를 고르면 BOM 단위로 필요한 부품을 한 번에 출고합니다. 고객사 PO 를 고르면 대수가 자동으로 채워집니다." />
+      <PageHead crumb="자재" title="ASSY 출고" desc="고객사 · 프로젝트를 고르면 BOM 단위로 필요한 부품을 한 번에 출고합니다. 고객사 PO 를 고르면 대수가 자동으로 채워집니다.">
         <Link to="/outbound-history" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📋 출고 현황 보기 →</Link>
-      </div>
+      </PageHead>
 
       {tab==='process' && (
         <div className="space-y-4">
@@ -763,7 +763,11 @@ export default function Outbound() {
                 {() => (
                   <tbody>
                     {outItems.length===0
-                      ? <tr><td colSpan={14} className="text-center py-8 text-slate-400">{!selProject?'프로젝트를 선택하면 BOM이 자동으로 불러와집니다':bomItems.length?'이 보기 · 검색에 맞는 줄이 없습니다':'BOM 데이터가 없습니다'}</td></tr>
+                      ? (!selProject
+                          ? <EmptyRow cols={14} icon="👆" title="프로젝트를 고르세요" desc="프로젝트를 고르면 BOM 이 자동으로 불러와집니다." />
+                          : bomItems.length
+                            ? <EmptyRow cols={14} icon="🔎" title="이 보기 · 검색에 맞는 줄이 없습니다" desc="검색어나 보기 조건을 풀어 보세요." />
+                            : <EmptyRow cols={14} icon="🧬" title="BOM 데이터가 없습니다" desc="이 프로젝트의 BOM 이 등록돼 있지 않습니다. 기초자료 › BOM 에서 확인하세요." />)
                       : outItems.map((item,idx)=>{
                         const mt = mtOf(item.item_id)
                         const dim = mt !== 'normal'
@@ -885,10 +889,7 @@ export default function Outbound() {
             </div>
           )}
           {!selCustomer&&(
-            <div className="text-center py-16 text-slate-400">
-              <p className="text-2xl mb-2">📤</p>
-              <p className="text-sm">고객사를 선택하세요</p>
-            </div>
+            <EmptyState icon="📤" title="고객사를 고르세요" desc="위에서 고객사를 고르면 프로젝트 · BOM 을 불러옵니다." className="py-16" />
           )}
         </div>
       )}

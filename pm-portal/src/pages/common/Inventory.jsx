@@ -1,5 +1,8 @@
 import { refreshProcurement } from '../../lib/refresh'
 import PageHead from '../../components/PageHead'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import { EmptyRow, ErrorRow } from '../../components/ui/EmptyState'
+import { BTN } from '../../lib/uiText'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
@@ -104,6 +107,7 @@ export default function Inventory() {
   })
   const navTo = useNavigate()
   const [showNeg, setShowNeg] = useState(false)
+  const [kpiF, setKpiF] = useState(null)   // 지표 눌러 거르기 — 'zero' | 'low' (v4.167.0)
   const [hideExcluded, setHideExcluded] = useState(true)   // 재고관리 제외 품목 숨김(기본)
   const [checked, setChecked] = useState({})
   // 행을 눌러 고르고 끌어서 여러 줄을 한 번에
@@ -311,7 +315,7 @@ export default function Inventory() {
     onSettled: () => setAuditProg(null),
   })
 
-  const { data: invAll, isLoading, error } = useQuery({
+  const { data: invAll, isLoading, error, refetch } = useQuery({
     queryKey:['inventory','all'], queryFn:()=>fetchInventory(),
   })
   const [cartOpen, setCartOpen] = useState(false)
@@ -325,12 +329,15 @@ export default function Inventory() {
     .filter(r => hideExcluded ? (r.items?.stock_managed !== false) : true), [allRows, typeFilter, hideExcluded])
   const brandCounts = {}; baseRows.forEach(r=>{ const b=r.items?.manufacturer; if(b) brandCounts[b]=(brandCounts[b]||0)+1 })
   const brands = Object.keys(brandCounts).sort()
-  const rows = useMemo(() => brandFilter==='전체' ? baseRows : baseRows.filter(r => (r.items?.manufacturer||'') === brandFilter), [baseRows, brandFilter])
+  const condRows = useMemo(() => brandFilter==='전체' ? baseRows : baseRows.filter(r => (r.items?.manufacturer||'') === brandFilter), [baseRows, brandFilter])
+  const isZero = r => r.qty===0
+  const isLow = r => r.qty<(r.items?.safety_stock||0)&&r.items?.safety_stock>0
+  const rows = useMemo(() => kpiF==='zero' ? condRows.filter(isZero) : kpiF==='low' ? condRows.filter(isLow) : condRows, [condRows, kpiF])
   // 수천 줄을 한 번에 그리면 체크 · 입력이 밀린다. 300줄씩 그리고 「더 보기」로 늘린다.
-  const vis = useVisibleRows(rows, 300, [appliedSearch, typeFilter, brandFilter, hideExcluded])
-  const zeroStock=rows.filter(r=>r.qty===0).length
-  const belowSafety=rows.filter(r=>r.qty<(r.items?.safety_stock||0)&&r.items?.safety_stock>0).length
-  const totalValue=rows.reduce((a,r)=>a+(r.qty*(r.items?.purchase_price||0)),0)
+  const vis = useVisibleRows(rows, 300, [appliedSearch, typeFilter, brandFilter, hideExcluded, kpiF])
+  const zeroStock=condRows.filter(isZero).length
+  const belowSafety=condRows.filter(isLow).length
+  const totalValue=condRows.reduce((a,r)=>a+(r.qty*(r.items?.purchase_price||0)),0)
   const negRows=allRows.filter(r=>r.qty<0)
   const checkedIds=Object.keys(checked).filter(k=>checked[k])
   // 지표 기준 (v4.104.0) — 위 계산식 그대로
@@ -381,34 +388,25 @@ export default function Inventory() {
       {/* 화면 머리 — 자주 쓰는 QR 스캔 · 보고용 추출은 오른쪽 끝 (v4.96.0) */}
       <PageHead crumb="자재" title="재고현황"
         desc="품목별 현재고 · 위치 · 안전재고를 봅니다. 숫자가 맞지 않으면 실사(붙여넣기 · QR 칸 실사 · 엑셀 업로드)로 바로잡습니다.">
-            <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 보고용 추출</button>
+            <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">{BTN.excel}</button>
             <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
               📷 QR 스캔
             </button>
       </PageHead>
 
-      {/* 지표 — 노트북 화면이면 한 줄 칩으로 얇게 (v4.64.0) */}
-      {compact ? (
-        <div data-kpi-compact className="flex flex-wrap gap-1.5 text-xs">
-          <span className="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-500">전체 품목 <b className="text-slate-900 text-sm">{rows.length}</b> <InfoTip text={KPI_TIP.all} /></span>
-          <span className="px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 text-red-400">재고 없음 <b className="text-red-600 text-sm">{zeroStock}</b> <InfoTip text={KPI_TIP.zero} /></span>
-          <button onClick={()=>setShowNeg(v=>!v)} title="클릭해서 정리" className={`px-2.5 py-1 rounded-lg border text-rose-500 ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>⚠ 음수 재고 <b className="text-rose-600 text-sm">{negRows.length}</b> <InfoTip text={KPI_TIP.neg} /></button>
-          <span className="px-2.5 py-1 rounded-lg border border-amber-200 bg-amber-50 text-amber-500">안전재고 미달 <b className="text-amber-700 text-sm">{belowSafety}</b> <InfoTip text={KPI_TIP.low} /></span>
-          <span className="px-2.5 py-1 rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-400" title={`${totalValue.toLocaleString()}원`}>재고 금액 <b className="text-indigo-700 text-sm">{(totalValue/1000000).toFixed(1)}M</b> <InfoTip text={KPI_TIP.value} align="right" /></span>
-        </div>
-      ) : (
-      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3" data-inv-kpi>
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">전체 품목 <InfoTip text={KPI_TIP.all} /></p><p className="text-xl font-bold text-slate-900">{rows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">지금 조건(검색 · 구분 · 브랜드) 기준</p></div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">재고 없음 <InfoTip text={KPI_TIP.zero} /></p><p className="text-xl font-bold text-red-600">{zeroStock.toLocaleString()}</p><p className="text-[11px] text-red-400 mt-0.5">현재고 0 인 품목</p></div>
-        <button onClick={()=>setShowNeg(v=>!v)} className={`text-left rounded-xl border p-3 transition-all ${showNeg?'border-rose-400 bg-rose-100':'border-rose-200 bg-rose-50 hover:bg-rose-100'}`}>
-          <p className="text-xs font-bold text-rose-500 uppercase tracking-wide mb-1 flex items-center gap-1">⚠ 음수 재고 <InfoTip text={KPI_TIP.neg} /></p><p className="text-xl font-bold text-rose-600">{negRows.length}</p>
-          <p className="text-[10px] text-rose-400 mt-0.5">클릭해서 정리</p>
-        </button>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">안전재고 미달 <InfoTip text={KPI_TIP.low} /></p><p className="text-xl font-bold text-amber-700">{belowSafety.toLocaleString()}</p><p className="text-[11px] text-amber-600/80 mt-0.5">안전재고보다 적음 · 발주 검토</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">재고 금액 <InfoTip text={KPI_TIP.value} align="right" /></p><p className="text-xl font-bold text-indigo-700">{(totalValue/1000000).toFixed(1)}M</p><p className="text-xs text-indigo-400 mt-1">{totalValue.toLocaleString()}원</p></div>
-      </div>
-      )}
+      {/* 지표 — 공용 지표 카드 (v4.167.0). 노트북 화면이면 index.css 규칙으로 한 줄 칩. 누르면 그 조건으로 거른다 */}
+      <KpiRow cols={5} data="inv">
+        <KpiCard label="전체 품목" value={condRows.length} note="지금 조건(검색 · 구분 · 브랜드) 기준" tip={KPI_TIP.all}
+          onClick={()=>setKpiF(null)} on={!kpiF && !showNeg} loading={isLoading} />
+        <KpiCard tone="red" label="재고 없음" value={zeroStock} note="현재고 0 인 품목" tip={KPI_TIP.zero}
+          onClick={()=>setKpiF(f=>f==='zero'?null:'zero')} on={kpiF==='zero'} loading={isLoading} />
+        <KpiCard tone="red" label="⚠ 음수 재고" value={negRows.length} note="눌러서 0 으로 정리" tip={KPI_TIP.neg}
+          onClick={()=>setShowNeg(v=>!v)} on={showNeg} loading={isLoading} data="neg" />
+        <KpiCard tone="amber" label="안전재고 미달" value={belowSafety} note="안전재고보다 적음 · 발주 검토" tip={KPI_TIP.low}
+          onClick={()=>setKpiF(f=>f==='low'?null:'low')} on={kpiF==='low'} loading={isLoading} />
+        <KpiCard tone="pr" label="재고 금액" value={`${(totalValue/1000000).toFixed(1)}M`} note={`${totalValue.toLocaleString()}원`} tip={KPI_TIP.value} loading={isLoading} />
+      </KpiRow>
 
       {/* 재고금액은 어디에 · 안전재고 미달 발주 여부 (v4.133.0) */}
       <InventoryInsight rows={rows} same={same} brandFilter={brandFilter} onBrand={setBrandFilter} onOpenCart={() => setCartOpen(true)} />
@@ -577,7 +575,9 @@ export default function Inventory() {
         <ResizableTable cols={COLS} storageKey="inventory_cols" fill fillMin={360} after={<MoreRows {...vis} />}>
           {() => (
             <tbody>
-              {rows.length===0 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">재고 데이터가 없습니다</td></tr>
+              {error ? <ErrorRow cols={COLS.length} error={error} onRetry={refetch} />
+              : rows.length===0 ? <EmptyRow cols={COLS.length} icon="📦" title={kpiF ? '이 조건의 품목이 없습니다' : '재고 데이터가 없습니다'}
+                  desc={kpiF ? '지표를 한 번 더 누르면 거르기가 풀립니다.' : (appliedSearch || brandFilter!=='전체' || typeFilter!=='전체') ? '검색어 · 구분 · 브랜드 조건을 풀어 보세요.' : undefined} />
               : vis.shown.map(r=>{
                 const safety=r.items?.safety_stock||0
                 const status=r.qty===0?'zero':r.qty<safety&&safety>0?'low':'ok'

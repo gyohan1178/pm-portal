@@ -11,6 +11,8 @@ import { addPoQty, partDemand, PO_SPANS } from '../../lib/whereUsedPo'
 import ReqBOM from '../customer/ReqBOM'
 import { ilikeAny } from '../../lib/pgFilter'
 import { SkeletonRows, SkelBar } from '../../components/ux/Skeleton'
+import PageHead from '../../components/PageHead'
+import { EmptyState, ErrorState } from '../../components/ui/EmptyState'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -120,10 +122,8 @@ export default function CommonSearch() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">통합 검색</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">전 고객사 품목·BOM 통합 조회 — 기준코드 기준으로 고객사코드·사용처를 함께 확인</p>
-      </div>
+      <PageHead crumb="자재" title="통합 검색"
+        desc="전 고객사 품목 · BOM 을 한 번에 찾습니다. 기준코드로 고객사코드 · 위치 · 사용처(역전개) · 소요량을 함께 확인합니다." />
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['product', '🔎 제품 검색'], ['where', '🔍 역전개 (사용처)'], ['reqbom', '📊 소요량 조회']].map(([k, l]) => (
@@ -148,9 +148,9 @@ export default function CommonSearch() {
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={6} two={[0, 3]} /></tbody></table>
               </div>
             : pErr
-              ? <div className="text-center py-10 text-rose-600 text-sm">검색 실패 — {pErr.message}</div>
+              ? <ErrorState error={pErr} title="검색하지 못했습니다" />
             : items.length === 0
-              ? <div className="text-center py-12 text-slate-300 text-sm">결과가 없습니다</div>
+              ? <EmptyState icon="🔎" title={`「${pSubmitted}」 결과가 없습니다`} desc="기준코드 · 품명 · 제조사품번 일부만 넣어 보세요. 띄어쓰기나 하이픈(-)을 빼면 찾아지는 경우가 많습니다." />
               : <div className="rounded-xl border border-slate-200 overflow-x-auto">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
@@ -235,9 +235,9 @@ export default function CommonSearch() {
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={4} /></tbody></table>
               </div>
             : rErr
-              ? <div className="text-center py-10 text-rose-600 text-sm">조회 실패 — {rErr.message}</div>
+              ? <ErrorState error={rErr} />
             : grouped.length === 0
-              ? <div className="text-center py-12 text-slate-300 text-sm">사용처가 없습니다</div>
+              ? <EmptyState icon="🔍" title="사용처가 없습니다" desc="이 품번을 쓰는 상위 BOM 이 등록돼 있지 않습니다. 고객사 BOM 이 최신인지 확인해 보세요." />
               : <div className="space-y-3">
                   {grouped.map((g, gi) => (
                     <div key={gi} className="rounded-xl border border-slate-200 overflow-x-auto">

@@ -18,6 +18,8 @@ import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove
 import { must } from '../../lib/db'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import PageHead from '../../components/PageHead'
+import { EmptyState } from '../../components/ui/EmptyState'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -728,12 +730,13 @@ export default function Issue() {
   const shortCnt = cart.filter(c => shortQ(c) > 0).length
 
   return (
-    <div className={compact ? 'space-y-2.5' : 'p-4 max-w-5xl mx-auto space-y-4'}>
+    <div className={compact ? 'space-y-2.5' : 'space-y-4'}>   {/* 다른 화면처럼 왼쪽 정렬 · 전체 폭 (v4.167.0) */}
       {confirmEl}
       {labelConfirm && (
         <LabelConfirmModal data={labelConfirm} onCancel={() => setLabelConfirm(null)} onPrint={() => sendLabels(labelConfirm.labels)} />
       )}
-      <h1 className="text-lg font-bold text-slate-800">🧺 다품목 출고 <span className="text-xs font-normal text-slate-400">· 여러 품목을 담아 한 번에 · ASSY 는 하위로 전개</span></h1>
+      <PageHead crumb="자재" title="다품목 출고"
+        desc="여러 품목을 장바구니에 담아 한 번에 출고합니다. ASSY 를 담으면 하위 부품이 수량에 맞춰 전개되고, 불출표 · 라벨도 여기서 뽑습니다." />
 
       {/* 고객사 — 담은 것이 섞이지 않도록 고객사마다 따로 담긴다 */}
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
@@ -914,7 +917,7 @@ export default function Issue() {
           </div>
         </div>
         {cart.length === 0 ? (
-          <p className="px-3 py-8 text-center text-sm text-slate-400">담긴 품목이 없습니다</p>
+          <EmptyState icon="🧺" title="담긴 품목이 없습니다" desc="위에서 품번 · ASSY 를 찾아 담거나, 엑셀에서 품번 · 수량을 복사해 붙여넣으세요." />
         ) : cartView === 'item' ? (
           <div className="flex-1 min-h-0 overflow-auto">
           <table className="w-full text-xs min-w-[900px]">

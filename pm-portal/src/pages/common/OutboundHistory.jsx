@@ -11,6 +11,10 @@ import { todayISO, ymdKST } from '../../lib/utils'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { useCompact } from '../../hooks/useCompact'
 import { SkeletonRows } from '../../components/ux/Skeleton'
+import PageHead from '../../components/PageHead'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import { EmptyRow, ErrorRow } from '../../components/ui/EmptyState'
+import { BTN } from '../../lib/uiText'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -136,7 +140,7 @@ export default function OutboundHistory() {
   const [hKind, setHKind] = useState('')            // 경로 — 화면에서만 거른다
   const [hQuery, setHQuery] = useState({ from: monthAgoStr(), to: todayISO(), customerId:'' })
   const { data: customers=[] } = useCustomers()
-  const { data: history=[], isLoading: histLoading } = useQuery({
+  const { data: history=[], isLoading: histLoading, error: histErr, refetch: histRefetch } = useQuery({
     queryKey:['outboundHistory', hQuery],
     queryFn:()=>fetchOutboundHistory({ from:hQuery.from, to:hQuery.to, customerId:hQuery.customerId }),
   })
@@ -165,16 +169,19 @@ export default function OutboundHistory() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-2 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-lg font-bold text-slate-900">📋 출고 현황</h1>
-          {!compact && <p className="text-xs text-slate-400 mt-0.5">ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 — 어느 고객사·프로젝트로, 누가 뺐는지</p>}
-        </div>
-        <div className="flex gap-1.5">
-          <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📤 ASSY 출고</Link>
-          <Link to="/issue" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">🧺 다품목 출고</Link>
-        </div>
-      </div>
+      <PageHead crumb="자재" title="출고 현황"
+        desc="ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 이력을 봅니다. 어느 고객사 · 프로젝트로, 누가 뺐는지 확인합니다.">
+        <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📤 ASSY 출고</Link>
+        <Link to="/issue" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">🧺 다품목 출고</Link>
+        <button onClick={exportHistory} disabled={!histRows.length}
+          className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{BTN.excel}</button>
+      </PageHead>
+
+      <KpiRow cols={3} data="outhist">
+        <KpiCard label="총 출고 건수" value={histRows.length} note="조회 기간 · 조건 기준" loading={histLoading} />
+        <KpiCard tone="blue" label="총 출고 수량" value={histTotal} note="빠져나간 수량 합계" loading={histLoading} />
+        <KpiCard tone="pr" label="품목 수" value={new Set(histRows.map(r=>r.item_id)).size} note="출고된 품목 종류" loading={histLoading} />
+      </KpiRow>
     <div className="space-y-4">
       <div className={`flex ${compact ? 'items-center gap-2 p-2' : 'items-end gap-3 p-4'} rounded-xl border border-slate-200 bg-slate-50 flex-wrap`}>
         <div>
@@ -206,18 +213,9 @@ export default function OutboundHistory() {
         </div>
         <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer})}
           className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
-        {histRows.length>0&&(
-          <button onClick={exportHistory}
-            className="px-3 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
-        )}
         <div className="ml-auto text-xs text-slate-400 self-center">총 {histRows.length}건</div>
       </div>
 
-      <div className="kpi-grid grid grid-cols-3 gap-3">
-        <div className="rounded-xl border border-slate-200 p-3"><p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 출고 건수</p><p className="text-xl font-bold text-slate-900">{histRows.length.toLocaleString()}</p><p className="text-[11px] text-slate-400 mt-0.5">조회 기간 · 조건 기준</p></div>
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3"><p className="text-xs font-bold text-rose-400 uppercase tracking-wide mb-1">총 출고 수량</p><p className="text-xl font-bold text-rose-700">{histTotal.toLocaleString()}</p><p className="text-[11px] text-rose-400 mt-0.5">빠져나간 수량 합계</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p><p className="text-xl font-bold text-indigo-700">{new Set(histRows.map(r=>r.item_id)).size.toLocaleString()}</p><p className="text-[11px] text-indigo-400 mt-0.5">출고된 품목 종류</p></div>
-      </div>
 
       {histLoading ? (
         <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
@@ -234,7 +232,8 @@ export default function OutboundHistory() {
               </tr></thead>
               <tbody>
                 {histRows.length===0
-                  ? <tr><td colSpan={11} className="text-center py-10 text-slate-400">출고 이력이 없습니다</td></tr>
+                  ? (histErr ? <ErrorRow cols={11} error={histErr} onRetry={histRefetch} />
+                    : <EmptyRow cols={11} icon="📋" title="출고 이력이 없습니다" desc="조회 기간 · 고객사 · 구분 조건을 바꿔 다시 조회해 보세요." />)
                   : histView.shown.map(g => {
                     const r = g.rows[0], n = g.rows.length, open = !!openGroup[g.key]
                     const line = (r, sub, head) => (

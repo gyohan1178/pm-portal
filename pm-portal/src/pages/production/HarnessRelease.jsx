@@ -1,4 +1,7 @@
 import { useState, useMemo } from 'react'
+import PageHead from '../../components/PageHead'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import { BTN } from '../../lib/uiText'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -123,18 +126,6 @@ function DBadge({ d }) {
   if (d === 0) return <Badge tone="red">오늘</Badge>
   return <Badge tone={d <= 7 ? 'red' : d <= 14 ? 'orange' : d <= 21 ? 'yellow' : 'green'}>D-{d}</Badge>
 }
-function Kpi({ tone, label, value, note, onClick, on, loading }) {
-  const T = { amber: 'bg-amber-50 border-amber-200 text-amber-700', blue: 'bg-sky-50 border-sky-200 text-sky-700', red: 'bg-rose-50 border-rose-200 text-rose-600', green: 'bg-emerald-50 border-emerald-200 text-emerald-700' }[tone]
-  return (
-    <button type="button" onClick={onClick} className={`text-left rounded-xl border px-4 py-3 ${T} ${on ? 'ring-2 ring-offset-1 ring-slate-300' : ''}`}>
-      <div className="text-[12px] font-bold opacity-70">{label}</div>
-      {loading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={48} h={20} /></div>
-        : <div className="text-2xl font-extrabold leading-tight">{value}</div>}
-      {note && <div className="text-[11px] text-slate-400">{note}</div>}
-    </button>
-  )
-}
-
 export default function HarnessRelease() {
   const qc = useQueryClient()
   const nav = useNavigate()
@@ -391,14 +382,10 @@ export default function HarnessRelease() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <p className="text-[11px] font-semibold text-slate-400">📦 자재 · AXCELIS 수주대장 진행 중 줄 (생산관리에 들어간 줄 빼고 전부 — 하네스 · 구매품 · 전장 단품)</p>
-        <h1 className="text-xl font-extrabold text-slate-900">🧵 하네스 출도 · 불출</h1>
-        <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-          아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다.
-          불출 처리 = 수주대장 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).
-        </p>
-      </div>
+      <PageHead crumb="자재" title="하네스 출도 · 불출"
+        desc="대상: AXCELIS 수주대장 진행 중 줄 중 생산관리에 들어가지 않은 하네스 · 구매품 · 전장 단품. 아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다. 불출 처리 = 수주대장 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).">
+        <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">{BTN.excel}</button>
+      </PageHead>
 
       {(error || hErr) && (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
@@ -406,12 +393,12 @@ export default function HarnessRelease() {
         </div>
       )}
 
-      <div className="kpi-grid grid grid-cols-2 md:grid-cols-4 gap-3" data-hr-kpi>
-        <Kpi tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} loading={isLoading} />
-        <Kpi tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} loading={isLoading} />
-        <Kpi tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} loading={isLoading} />
-        <Kpi tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} loading={isLoading} />
-      </div>
+      <KpiRow cols={4} data="hr">
+        <KpiCard tone="amber" label="출력 전" value={n(cnt.todo)} note="미불출 · 공정관리 출력 기록 없음" onClick={() => go('todo')} on={tab === 'todo'} loading={isLoading} />
+        <KpiCard tone="blue" label="출력됨 · 불출 대기" value={n(cnt.wait)} note="공정관리에서 출력함 → 현장에 넘기면 불출 처리" onClick={() => go('wait')} on={tab === 'wait'} loading={isLoading} />
+        <KpiCard tone="red" label="2주 안 납기 · 출력 전" value={n(cnt.urgent)} note="먼저 뽑아야 할 것" onClick={() => go('urgent')} on={tab === 'urgent'} loading={isLoading} />
+        <KpiCard tone="green" label="불출됨" value={n(cnt.done)} note="진행 중 하네스 PO 중" onClick={() => go('done')} on={tab === 'done'} loading={isLoading} />
+      </KpiRow>
 
       {/* 일 순서 안내 — 노트북 화면에선 숨겨 표에 자리를 준다 (v4.65.0) */}
       <div className={`${compact ? 'hidden' : 'grid'} grid-cols-1 md:grid-cols-4 gap-2 text-[12px]`}>
@@ -461,7 +448,6 @@ export default function HarnessRelease() {
               style={{ width: 170 }} className="py-1.5 text-xs font-bold rounded-lg border border-teal-300 text-teal-700 bg-white hover:bg-teal-50">📋 출도 기록 붙여넣어 불출</button>}
             <button data-hr-cart-open onClick={() => setCartOpen(true)} style={{ width: 96 }}
               className="py-1.5 text-xs font-bold rounded-lg border border-indigo-200 text-indigo-700 bg-white hover:bg-indigo-50">🛒 담기함 <span className="font-mono">{n(cartRows.length)}</span></button>
-            <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} style={{ width: 72 }} className="py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2 mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2" data-hr-actbar>

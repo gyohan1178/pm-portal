@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from 'react'
+import PageHead from '../../components/PageHead'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import QRCode from 'qrcode'
@@ -477,14 +478,9 @@ export default function RackLayout() {
         .print-title { display: none; }
       `}</style>
 
-      <div className="no-print flex items-start justify-between gap-2 flex-wrap">
-        <div className="min-w-0">
-          <h1 className="text-base sm:text-lg font-bold text-slate-900">🗺 창고 배치도</h1>
-          <p className="page-desc text-[11px] sm:text-xs text-slate-400">
-            랙 {racks.length}면 · {n(total)}칸 중 {n(used)}칸 ({total ? Math.round(used / total * 100) : 0}%)
-          </p>
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
+      <div className="no-print">
+      <PageHead crumb="자재" title="창고 배치도"
+        desc={`랙 칸마다 들어 있는 품목과 사용률을 봅니다. 칸 QR 을 찍으면 그 칸 재고를 바로 실사합니다. 지금 랙 ${racks.length}면 · ${n(total)}칸 중 ${n(used)}칸 사용 (${total ? Math.round(used / total * 100) : 0}%)`}>
           <button onClick={() => setScanOpen(true)}
             className="px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg bg-slate-900 text-white hover:bg-slate-800 whitespace-nowrap">
             📷<span className="hidden sm:inline"> QR 스캔</span>
@@ -502,7 +498,7 @@ export default function RackLayout() {
             <button onClick={exportLayout}
               title="랙 목록과 배치 좌표를 엑셀로"
               className="no-print px-2.5 sm:px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 whitespace-nowrap">
-              📊<span className="hidden sm:inline"> 엑셀</span>
+              📥<span className="hidden sm:inline"> 엑셀</span>
             </button>
           )}
           {tab === 'map' && !editing && (
@@ -532,7 +528,7 @@ export default function RackLayout() {
               ✏️<span className="hidden sm:inline"> 배치 편집</span>
             </button>
           ))}
-        </div>
+      </PageHead>
       </div>
 
       {snapOpen && (
