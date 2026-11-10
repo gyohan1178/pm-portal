@@ -155,7 +155,7 @@ export default function Items() {
     })
   }, [])
   const { rowProps } = useRowSelect(setSelObj)
-  const [bulkForm, setBulkForm] = useState({ lt_weeks:'', safety_stock:'', dept:'', prod_managed:'', stock_managed:'' })
+  const [bulkForm, setBulkForm] = useState({ lt_weeks:'', safety_stock:'', dept:'', prod_managed:'', stock_managed:'', vendor_id:'' })
 
   const { data: items=[], isLoading } = useQuery({
     queryKey:['items',query], queryFn:()=>fetchItems(query.search, query.type, query.field)
@@ -256,6 +256,8 @@ export default function Items() {
       if (bulkForm.dept.trim() !== '') patch.dept = bulkForm.dept.trim()
       if (bulkForm.prod_managed !== '') patch.prod_managed = bulkForm.prod_managed === 'true'
       if (bulkForm.stock_managed !== '') patch.stock_managed = bulkForm.stock_managed === 'true'
+      // 구매처 일괄변경 (v4.167.1) — '__none' 은 구매처 비우기
+      if (bulkForm.vendor_id !== '') patch.vendor_id = bulkForm.vendor_id === '__none' ? null : bulkForm.vendor_id
       if (Object.keys(patch).length === 0 || selected.size === 0) return
       const ids = [...selected]
       for (let i = 0; i < ids.length; i += 200) {
@@ -263,7 +265,8 @@ export default function Items() {
         if (error) throw error
       }
     },
-    onSuccess: () => { qc.invalidateQueries(['items']); setSelected(new Set()); setBulkForm({ lt_weeks:'', safety_stock:'', dept:'', prod_managed:'', stock_managed:'' }) },
+    onError: (e) => toastError('일괄수정 실패: ' + e.message),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['items'] }); toastSuccess(`${selected.size}건 일괄수정 완료`); setSelected(new Set()); setBulkForm({ lt_weeks:'', safety_stock:'', dept:'', prod_managed:'', stock_managed:'', vendor_id:'' }) },
   })
 
   function toggleSel(id) {
@@ -477,7 +480,16 @@ export default function Items() {
               className="px-2 py-1 text-xs font-semibold rounded border border-slate-200 text-slate-500 bg-white hover:bg-slate-50">해제</button>
             <span className="text-[11px] text-slate-400">· 값 입력한 항목만 변경 (빈칸은 유지) · 행 체크로 선택</span>
           </div>
-          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-6 gap-3">
+            <div data-bulk-vendor>
+              <label className="block text-xs font-bold text-slate-500 mb-1">구매처 🏢</label>
+              <select value={bulkForm.vendor_id} onChange={e=>setBulkForm(f=>({...f,vendor_id:e.target.value}))}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-500 bg-white">
+                <option value="">변경 안 함</option>
+                <option value="__none">구매처 비우기</option>
+                {vendorList.map(v=><option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
             <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">LT (주)</label>
               <input type="number" value={bulkForm.lt_weeks} onChange={e=>setBulkForm(f=>({...f,lt_weeks:e.target.value}))} placeholder="변경 안 함"
@@ -513,8 +525,20 @@ export default function Items() {
             </div>
           </div>
           <div className="flex justify-end">
-            <button onClick={()=>bulkMut.mutate()}
-              disabled={selected.size===0 || (bulkForm.lt_weeks===''&&bulkForm.safety_stock===''&&bulkForm.dept.trim()===''&&bulkForm.prod_managed===''&&bulkForm.stock_managed==='') || bulkMut.isPending}
+            <button onClick={async ()=>{
+                // 구매처를 바꿀 때는 지금 구매처가 무엇인지 보여 주고 한 번 묻는다 (발주 기본 구매처가 바뀜)
+                if (bulkForm.vendor_id !== '') {
+                  const to = bulkForm.vendor_id === '__none' ? '(비움)' : (vendorList.find(v=>v.id===bulkForm.vendor_id)?.name || '')
+                  const sel = items.filter(i=>selected.has(i.id))
+                  const cnt = {}; sel.forEach(i=>{ const k=i.vendors?.name||'(없음)'; cnt[k]=(cnt[k]||0)+1 })
+                  if (!(await ask({ title: `선택 ${selected.size}건의 구매처를 「${to}」(으)로 바꿀까요?`,
+                    desc: '품목의 기본 구매처만 바뀝니다. 이미 만든 발주의 구매처는 그대로이고, 새로 발주할 때 이 구매처가 기본으로 채워집니다.',
+                    items: Object.entries(cnt).sort((a,b)=>b[1]-a[1]).slice(0,6).map(([k,n])=>`지금 ${k} · ${n}건`),
+                    okText: '바꾸기' }))) return
+                }
+                bulkMut.mutate()
+              }}
+              disabled={selected.size===0 || (bulkForm.lt_weeks===''&&bulkForm.safety_stock===''&&bulkForm.dept.trim()===''&&bulkForm.prod_managed===''&&bulkForm.stock_managed===''&&bulkForm.vendor_id==='') || bulkMut.isPending}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-amber-500 text-white hover:bg-amber-600 disabled:opacity-40">
               {bulkMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />수정 중...</span> : `선택 ${selected.size}건 일괄수정`}
             </button>
