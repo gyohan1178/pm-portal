@@ -1,6 +1,7 @@
 import { useUndo } from '../../components/UndoBar'
 import Spin from '../../components/ux/Spin'
 import PageHead from '../../components/PageHead'
+import { downloadSheet } from '../../lib/exportSheet'
 import { EmptyState, EmptyRow } from '../../components/ui/EmptyState'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { refreshProcurement } from '../../lib/refresh'
@@ -18,7 +19,7 @@ import { supabase } from '../../lib/supabase'
 import { invIn, repId } from '../../lib/sameItem'
 import { fetchAll } from '../../lib/paginate'
 import { buildLabelZpl } from '../../lib/labelZpl'
-import { catOf } from '../../lib/utils'
+import { catOf, todayISO } from '../../lib/utils'
 import { useDebounced } from '../../hooks/useDebounced'
 import { matcher } from '../../lib/searchMatch'
 import { withNetRetry, isNetErr } from '../../lib/netStatus'
@@ -577,6 +578,44 @@ export default function Outbound() {
     }
     openPrint(buildSheet('자재 불출표', rows, qtyFn, `${outUnits}대`))
   }
+  // 박스 불출표 엑셀 (v4.167.2) — 지금 화면에 보이는 줄 그대로 (보기 · 제조사 · 검색 필터 반영)
+  //   No · 불출수량은 종이 불출표와 같은 값 (불출 미대상 · 소요 0 줄은 No 가 비고 불출수량 0)
+  async function exportBoxSheet() {
+    const rows = outItems
+    if (!rows.length) { toastError('내보낼 줄이 없습니다'); return }
+    const sheetQty = r => { const out = Number(outQtys[r.item_id]) || 0; return out > 0 ? out : (Number(r.bom_qty) || 0) * (outUnits || 1) }
+    const csName = selCustomer ? (customers.find(c => c.id === selCustomer)?.name || '') : ''
+    const pjCode = selProject ? (projects.find(p => p.id === selProject)?.code || '') : ''
+    const VIEW_LABEL = { target: '출고 대상', normal: '전장', field_stock: '현장재고', harness: '하네스', zero: '소요 0', exclude: '불출 미대상', all: '전체' }
+    const filters = [
+      `보기: ${VIEW_LABEL[view] || view}`,
+      makerFilter === '__none__' ? '제조사: 없음' : makerFilter ? `제조사: ${makerFilter}` : '',
+      bomQ.trim() ? `검색: ${bomQ.trim()}` : '',
+    ].filter(Boolean).join(' · ')
+    try {
+      await downloadSheet({
+        rows: rows.map(r => ({
+          'No': sheetNo.get(r.item_id) || '',
+          '위치': r.location || '',
+          '카테고리': r.cat || '',
+          '제조사': r.maker || '',
+          '제조사품번': r.makerPn || '',
+          '기준코드': r.std_code || '',
+          '품명': r.name || '',
+          '단위': r.unit || 'EA',
+          'BOM/대': Number(r.bom_qty) || 0,
+          '불출수량': onSheet(r) ? sheetQty(r) : 0,
+          '출고수량': Number(outQtys[r.item_id]) || 0,
+          '제작구분': MT_LABEL[mtOf(r.item_id)] || '',
+          '비고': noteOf(r.item_id) || '',
+        })),
+        sheetName: '박스불출표',
+        title: `박스 불출표 — ${[csName, pjCode].filter(Boolean).join(' ')}`,
+        meta: [['대수', `${outUnits}대`], ...(revTxt ? [['BOM', revTxt]] : []), ['조건', filters], ['줄 수', `${rows.length}줄`]],
+        fileName: `박스불출표_${pjCode || csName || 'ASSY'}_${todayISO()}.xlsx`,
+      })
+    } catch (e) { toastError('엑셀 실패: ' + (e.message || e)) }
+  }
   // 하네스 불출표 — 하네스만, 대수(harnessUnits) × BOM/대
   function printHarnessSheet() {
     const rows = outOrder.filter(r => mtOf(r.item_id) === 'harness')
@@ -701,6 +740,7 @@ export default function Outbound() {
                     )}
                     <button onClick={()=>autoFillFromBOM(outUnits)} className="text-xs text-indigo-500 hover:text-indigo-700 font-semibold">🔄 재계산</button>
                     <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
+                    <button onClick={exportBoxSheet} data-out-excel title="지금 화면에 보이는 줄 그대로 (보기 · 제조사 · 검색 조건 반영) — No · 불출수량은 박스 불출표와 같은 값" className="text-xs font-bold text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded hover:bg-slate-50">📥 엑셀</button>
                     <button onClick={printOutLabels} title="전장 자재를 ZM400 라벨로 출력 (수량 입력된 것만, 라벨류·현장재고·하네스 제외)" className="text-xs font-bold text-white bg-teal-600 px-2.5 py-1 rounded hover:bg-teal-700">🏷 라벨 출력</button>
                     <span className="inline-flex items-center gap-1 text-xs">
                       <input type="number" min={1} value={harnessUnits} onChange={e=>setHarnessUnits(Number(e.target.value)||1)}
