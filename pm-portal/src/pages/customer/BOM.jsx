@@ -25,6 +25,7 @@ import { refreshProcurement } from '../../lib/refresh'
 import { ilikeAny } from '../../lib/pgFilter'
 import { archiveBoms, revChanges, fetchBomVersions, fetchBomVersionRows, revCmp, normRev } from '../../lib/bomVersion'
 import { buildSubBomsFor } from '../../lib/bomSubExpand'
+import { buildMetaRows, syncItemMeta } from '../../lib/itemMeta'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
@@ -869,6 +870,15 @@ export default function BOM() {
           res.mfrFilled = r.filled
         } catch { /* 채우기 실패는 BOM 저장 결과에 영향 주지 않음 */ }
       }
+      // 품목별 승인 제조사 · REV 남기기 (v4.171.0) — 엑셀은 제조사 줄이 없어 REV 만
+      if (htmInfo) {
+        setProgress('품목 승인 제조사 · REV 기록 중...')
+        try {
+          const root = htmInfo.header?.rootPn || htmInfo.header?.rootCode || ''
+          res.meta = await syncItemMeta(buildMetaRows(htmInfo), `${root} ${htmInfo.header?.rev || ''}.${htmInfo.header?.edition ?? ''}`.trim())
+          res.meta.source = htmInfo.source
+        } catch (e) { res.meta = { error: e.message } }
+      }
       return res
     },
     onSuccess: (res) => {
@@ -1049,6 +1059,7 @@ export default function BOM() {
             <span>어셈블리 <b>{htmInfo.stats.assemblies}</b></span>
             <span>최대 레벨 <b>{htmInfo.stats.maxLevel}</b></span>
             {htmInfo.source !== 'xlsx' && <span>제조사 확보 <b>{htmInfo.stats.withMfr}/{htmInfo.stats.total}</b></span>}
+            {htmInfo.source !== 'xlsx' && htmInfo.stats.multiMfr > 0 && <span data-multi-mfr title="고객사가 제조사를 2곳 이상 승인한 품목 — 저장하면 기준코드 DB 에 전부 남습니다">승인 제조사 2곳 이상 <b>{htmInfo.stats.multiMfr}</b></span>}
             {htmInfo.stats.zeroQty > 0 && <span className="text-amber-600">수량 0 (as needed) <b>{htmInfo.stats.zeroQty}</b></span>}
             {htmInfo.stats.vmSkipped > 0 && <span className="text-rose-600">VM 품번 제외 <b>{htmInfo.stats.vmSkipped}</b></span>}
             {htmInfo.stats.obsDropped > 0 && <span data-obs-count className="text-rose-600">단종(OBS) 제외 <b>{htmInfo.stats.obsDropped}</b></span>}
@@ -1156,6 +1167,23 @@ export default function BOM() {
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center gap-3">
           {result.failed > 0 ? '⚠ 일부만 저장' : '✅ 저장 완료'} — 어셈블리 {result.asmCount}개 · 품목 {result.saved}개 등록{result.newItems>0 && ` (신규 ${result.newItems}개)`}{result.mfrFilled>0 && ` · 제조사 ${result.mfrFilled}건 보완`}{result.skipped>0 && ` · ${result.skipped}개 건너뜀`}{result.sub?.made?.length > 0 && <span data-bom-sub-auto> · 하위 ASSY BOM {result.sub.made.length}개 자동 생성 (부품 {result.sub.total.toLocaleString()}행)</span>}
           <button onClick={() => setResult(null)} className="ml-auto text-emerald-400">✕</button>
+        </div>
+      )}
+      {result?.meta && (
+        <div data-bom-itemmeta className={`rounded-xl border px-4 py-3 text-xs ${result.meta.error || result.meta.missingTable ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-violet-100 bg-violet-50/60 text-violet-900'}`}>
+          {result.meta.error ? <p className="font-bold">⚠ 품목 승인 제조사 · REV 기록 실패 — {result.meta.error} (BOM 은 저장됐습니다)</p>
+            : result.meta.missingTable ? <p className="font-bold">ℹ 품목 승인 제조사 · REV 표가 아직 없습니다 — 「품목승인제조사_REV_반영」 SQL 을 실행한 뒤 이 리포트를 다시 올리면 기록됩니다 (BOM 은 저장됐습니다)</p>
+            : <>
+              <p className="font-bold">🏷 품목 정보 기록 — {result.meta.items.toLocaleString()}품목
+                {result.meta.source !== 'xlsx'
+                  ? <> · 승인 제조사 새로 <b>{result.meta.mfr_new}</b>건{result.meta.mfr_off > 0 && <> · 승인 목록에서 빠짐 <b className="text-rose-600">{result.meta.mfr_off}</b>건</>}</>
+                  : <span className="font-normal text-violet-600"> · 엑셀이라 제조사 목록은 그대로 (REV 만)</span>}
+                {result.meta.rev_up.length > 0 && <> · REV 올라간 품목 <b>{result.meta.rev_up.length}</b>개</>}
+                {result.meta.older > 0 && <span className="font-normal text-violet-600"> · 예전 버전으로 본 품목 {result.meta.older}개 (최신 목록은 그대로)</span>}
+              </p>
+              {result.meta.rev_up.length > 0 && <p className="mt-1 font-mono" data-bom-revup>{result.meta.rev_up.slice(0, 15).map(m => `${m.code} ${m.from} → ${m.to}`).join('  ·  ')}{result.meta.rev_up.length > 15 ? `  … 외 ${result.meta.rev_up.length - 15}개` : ''}</p>}
+              <p className="mt-1 text-[11px] text-violet-500">기준코드 DB 에서 품목마다 승인 제조사 · REV 이력을 볼 수 있습니다.</p>
+            </>}
         </div>
       )}
       {result?.olderKept?.length > 0 && (

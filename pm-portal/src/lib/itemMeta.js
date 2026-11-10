@@ -1,0 +1,123 @@
+// 품목별 고객사 승인 제조사 · REV (v4.171.0)
+//   AXCELIS Part Report 를 BOM 에 올릴 때 품목마다
+//     · 승인 제조사(Mfr Part) 전부 → pm_item_mfr   (예: 500001491 = EYECAP INTERNATIONAL + EYECAP KOREA)
+//     · 품목 버전(A.23)          → pm_item_rev   (올라가면 「REV 바뀜」)
+//   items.manufacturer · manufacturer_code 는 「우리가 실제로 사는 대표 제조사」로 그대로 두고, 이 목록은 따로 보여 준다.
+//   표가 아직 없으면(SQL 전) 조회는 빈 값, 저장은 { missingTable:true } — 화면은 예전처럼 동작한다.
+import { supabase } from './supabase'
+import { isDnu, isMfrObs } from './axcelisBomReport'
+
+const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST202' || e.code === 'PGRST205' || /does not exist|could not find/i.test(e.message || ''))
+
+// 리포트 → 품목별 한 줄 (같은 품번이 여러 자리에 나오면 처음 것 · 제조사는 합침)
+export function buildMetaRows(parsed) {
+  const by = new Map()
+  for (const p of parsed?.parts || []) {
+    if (!p.code || p.isVM) continue
+    const cur = by.get(p.code)
+    if (!cur) {
+      by.set(p.code, {
+        code: p.code, ver: p.ver || (p.revRaw ? `${p.revRaw}.${p.edition || 0}` : ''),
+        rev: p.rev || '', edition: p.edition ?? null, state: p.state || '',
+        mfrs: Array.isArray(p.mfrs) ? p.mfrs.map(m => ({ mfr: m.mfr || '', mfr_pn: m.mfrPn || '', status: m.status || '' })) : null,
+      })
+    } else if (Array.isArray(p.mfrs) && cur.mfrs) {
+      for (const m of p.mfrs) if (!cur.mfrs.some(x => x.mfr === (m.mfr || '') && x.mfr_pn === (m.mfrPn || ''))) cur.mfrs.push({ mfr: m.mfr || '', mfr_pn: m.mfrPn || '', status: m.status || '' })
+    }
+  }
+  return [...by.values()].filter(r => r.ver || r.mfrs)
+}
+
+// 저장 — 300품목씩. 결과를 합쳐 돌려준다
+export async function syncItemMeta(rows, src) {
+  const out = { items: 0, missing: 0, missing_codes: [], rev_new: 0, rev_up: [], older: 0, mfr_new: 0, mfr_off: 0 }
+  for (let i = 0; i < rows.length; i += 300) {
+    const { data, error } = await supabase.rpc('pm_item_meta_sync', { p_rows: rows.slice(i, i + 300), p_src: src || null })
+    if (error) { if (isMissing(error)) return { ...out, missingTable: true }; throw error }
+    const d = data || {}
+    for (const k of ['items', 'missing', 'rev_new', 'older', 'mfr_new', 'mfr_off']) out[k] += Number(d[k]) || 0
+    out.rev_up.push(...(d.rev_up || [])); out.missing_codes.push(...(d.missing_codes || []))
+  }
+  return out
+}
+
+// 화면에 보이는 품목들의 승인 제조사 · 최신 REV
+//   → { mfr: { itemId: [{mfr, mfr_pn, status, active}] }, rev: { itemId: { ver, n } } }
+export async function fetchItemMeta(itemIds) {
+  const ids = [...new Set((itemIds || []).filter(Boolean))]
+  const mfr = {}, rev = {}
+  if (!ids.length) return { mfr, rev }
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = ids.slice(i, i + 200)
+    const [a, b] = await Promise.all([
+      supabase.from('pm_item_mfr').select('item_id,mfr,mfr_pn,status,active').in('item_id', part).eq('active', true).limit(5000),
+      supabase.from('pm_item_rev').select('item_id,ver,vkey').in('item_id', part).limit(5000),
+    ])
+    if (a.error) { if (isMissing(a.error)) return { mfr, rev, missingTable: true }; throw a.error }
+    if (b.error) { if (isMissing(b.error)) return { mfr, rev, missingTable: true }; throw b.error }
+    for (const r of a.data || []) (mfr[r.item_id] = mfr[r.item_id] || []).push(r)
+    for (const r of b.data || []) {
+      const c = rev[r.item_id]
+      if (!c) rev[r.item_id] = { ver: r.ver, vkey: r.vkey, n: 1 }
+      else { c.n++; if (r.vkey > c.vkey) { c.ver = r.ver; c.vkey = r.vkey } }
+    }
+  }
+  for (const k of Object.keys(mfr)) mfr[k].sort(byMfrRank)
+  return { mfr, rev }
+}
+
+// 한 품목 자세히 — 승인 제조사(빠진 것 포함) · REV 이력 · 같은 제조사품번을 쓰는 다른 품번
+export async function fetchItemMetaDetail(itemId) {
+  if (!itemId) return null
+  const [a, b] = await Promise.all([
+    supabase.from('pm_item_mfr').select('mfr,mfr_pn,status,active,src_code,src_ver,first_seen,last_seen,off_on').eq('item_id', itemId),
+    supabase.from('pm_item_rev').select('ver,vkey,state,src_code,first_seen,last_seen').eq('item_id', itemId).order('vkey', { ascending: false }),
+  ])
+  if (a.error) { if (isMissing(a.error)) return { missingTable: true, mfrs: [], revs: [], same: [] }; throw a.error }
+  if (b.error) { if (isMissing(b.error)) return { missingTable: true, mfrs: [], revs: [], same: [] }; throw b.error }
+  const mfrs = (a.data || []).sort((x, y) => (y.active - x.active) || byMfrRank(x, y))
+  // 같은 제조사품번(ORDER BY DESCRIPTION 같은 자리표시 빼고)을 승인 목록에 가진 다른 품번
+  const pns = [...new Set(mfrs.filter(m => m.active && realPn(m.mfr_pn)).map(m => m.mfr_pn))]
+  let same = []
+  if (pns.length) {
+    const { data } = await supabase.from('pm_item_mfr').select('mfr,mfr_pn,items(id,std_code,name)')
+      .in('mfr_pn', pns.slice(0, 50)).eq('active', true).neq('item_id', itemId).limit(50)
+    same = (data || []).filter(r => r.items).map(r => ({ code: r.items.std_code, name: r.items.name, mfr: r.mfr, mfr_pn: r.mfr_pn }))
+  }
+  return { mfrs, revs: b.data || [], same }
+}
+
+// 검색 — 승인 제조사품번 · 제조사명으로 품목 찾기 (기준코드 DB 검색에 보탬)
+export async function searchItemIdsByMfr(pattern) {
+  const { data, error } = await supabase.from('pm_item_mfr').select('item_id')
+    .or(`mfr_pn.ilike.${pattern},mfr.ilike.${pattern}`).eq('active', true).limit(300)
+  if (error) return []
+  return [...new Set((data || []).map(r => r.item_id))]
+}
+
+export const realPn = (pn) => !!pn && !/^order by description$/i.test(String(pn).trim())
+
+// 상태 → 화면 표시
+export function mfrTone(status) {
+  if (isDnu(status)) return { label: '사용 금지', cls: 'bg-rose-50 text-rose-600 border-rose-100' }
+  if (isMfrObs(status)) return { label: '제조사 단종', cls: 'bg-amber-50 text-amber-700 border-amber-100' }
+  if (/prefer/i.test(status || '')) return { label: '우선', cls: 'bg-violet-50 text-violet-700 border-violet-100' }
+  if (/approv/i.test(status || '')) return { label: '승인', cls: 'bg-emerald-50 text-emerald-700 border-emerald-100' }
+  return { label: status || '—', cls: 'bg-slate-50 text-slate-500 border-slate-200' }
+}
+const rank = (s) => isDnu(s) ? 4 : isMfrObs(s) ? 3 : /prefer/i.test(s || '') ? 0 : /approv/i.test(s || '') ? 1 : 2
+function byMfrRank(a, b) { return rank(a.status) - rank(b.status) || String(a.mfr).localeCompare(String(b.mfr)) }
+
+// 쓸 수 있는 승인 제조사 (사용 금지 · 제조사 단종 빼고)
+export const usableMfrs = (list) => (list || []).filter(m => !isDnu(m.status) && !isMfrObs(m.status))
+
+// 우리 대표 제조사품번이 승인 목록에 있는지 — 목록이 없으면 null (판단 안 함)
+export function inApproved(item, list) {
+  const L = (list || []).filter(m => realPn(m.mfr_pn))
+  if (!L.length || !item?.manufacturer_code) return null
+  const norm = (s) => String(s || '').toUpperCase().replace(/[\s\-_/.]/g, '')
+  const me = norm(item.manufacturer_code)
+  const hit = L.find(m => norm(m.mfr_pn) === me)
+  if (!hit) return 'none'
+  return isDnu(hit.status) ? 'dnu' : isMfrObs(hit.status) ? 'obs' : 'ok'
+}

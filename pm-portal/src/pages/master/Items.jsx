@@ -16,6 +16,8 @@ import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 import { isTempCode, promoteTempCode } from '../../lib/tempCode'
 import { checkRfq } from './rfq'
+import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn } from '../../lib/itemMeta'
+import ItemMetaPanel from '../../components/ItemMetaPanel'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
@@ -39,11 +41,16 @@ async function fetchItems(search, type, field = '전체') {
     vendorIds = (vs || []).map(v => v.id)
   }
 
+  // 고객사 승인 제조사품번 · 제조사명으로도 (v4.171.0) — 대표 제조사가 아닌 다른 승인 제조사 품번으로 찾아도 나오게
+  let mfrItemIds = []
+  if (search && (field === '전체' || field === '규격')) mfrItemIds = await searchItemIdsByMfr(pattern)
+  const mfrCond = () => mfrItemIds.length ? [`id.in.(${mfrItemIds.join(',')})`] : []
+
   // 필드별 검색 조건 구성
   function buildOr() {
     if (field === '코드') return `std_code.ilike.${pattern}`
     if (field === '품명') return `name.ilike.${pattern}`
-    if (field === '규격') return `spec.ilike.${pattern},manufacturer.ilike.${pattern},manufacturer_code.ilike.${pattern}`
+    if (field === '규격') return [`spec.ilike.${pattern}`, `manufacturer.ilike.${pattern}`, `manufacturer_code.ilike.${pattern}`, ...mfrCond()].join(',')
     if (field === '구매처') return vendorIds.length ? `vendor_id.in.(${vendorIds.join(',')})` : 'id.eq.00000000-0000-0000-0000-000000000000'
     // 전체
     const conds = [
@@ -54,6 +61,7 @@ async function fetchItems(search, type, field = '전체') {
       `spec.ilike.${pattern}`,
     ]
     if (vendorIds.length) conds.push(`vendor_id.in.(${vendorIds.join(',')})`)
+    conds.push(...mfrCond())
     return conds.join(',')
   }
 
@@ -167,6 +175,16 @@ export default function Items() {
 
   // 세부 분류(구분) 필터 — js_code 기준 클라이언트 필터
   const shown = catFilter === '전체' ? items : items.filter(i => catOf(i) === catFilter)
+
+  // 보이는 품목의 고객사 승인 제조사 · 최신 REV (v4.171.0) — 표가 없으면 빈 값
+  const metaIds = shown.slice(0, visibleCount).map(i => i.id)
+  const { data: meta = { mfr: {}, rev: {} } } = useQuery({
+    queryKey: ['itemMeta', metaIds.length, metaIds[0], metaIds[metaIds.length - 1]],
+    queryFn: () => fetchItemMeta(metaIds),
+    enabled: metaIds.length > 0,
+    staleTime: 60_000,
+  })
+  const editItem = editId ? items.find(i => i.id === editId) : null
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
@@ -657,6 +675,7 @@ export default function Items() {
               </label>
             </div>
           </div>
+          {editItem && <ItemMetaPanel item={editItem} />}
           <div className="flex gap-2 justify-end">
             <button onClick={()=>{ setShowForm(false); setForm(EMPTY); setEditId(null) }}
               className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
@@ -747,7 +766,10 @@ export default function Items() {
                       {item.prod_managed && <span title="생산관리 대상" className="ml-1">🏭</span>}{item.stock_managed === false && <span title="재고관리 제외" className="ml-1 text-[10px] px-1 rounded bg-slate-100 text-slate-400 font-bold">재고X</span>}
                     </td>
                     {/* 2. 품명 */}
-                    <td className="px-3 py-2 font-semibold text-slate-800 overflow-hidden truncate">{item.name}</td>
+                    <td className="px-3 py-2 font-semibold text-slate-800 overflow-hidden truncate">
+                      {meta.rev?.[item.id] && <span data-item-rev={meta.rev[item.id].ver} title={`고객사 품목 REV ${meta.rev[item.id].ver}${meta.rev[item.id].n > 1 ? ` · 이력 ${meta.rev[item.id].n}개 (더블클릭해서 보기)` : ''}`}
+                        className="mr-1.5 inline-flex px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-bold font-mono align-middle">{meta.rev[item.id].ver}</span>}
+                      {item.name}</td>
                     {/* 3. 구분 */}
                     <td className="px-3 py-2">
                       <span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold
@@ -778,7 +800,17 @@ export default function Items() {
                         : <span className="px-1.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-100 text-slate-400">제외</span>}
                     </td>
                     {/* 9. 규격 */}
-                    <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">{item.spec||'-'}</td>
+                    <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">
+                      {(() => {
+                        const L = meta.mfr?.[item.id] || []
+                        if (!L.length) return null
+                        const use = usableMfrs(L), chk = inApproved(item, L)
+                        const tip = '고객사 승인 제조사\n' + L.map(m => `· ${mfrTone(m.status).label}  ${m.mfr}  ${realPn(m.mfr_pn) ? m.mfr_pn : '(품명대로)'}`).join('\n')
+                        return <span data-item-mfrs={L.length} title={tip}
+                          className={`mr-1.5 inline-flex px-1.5 py-0.5 rounded text-[10px] font-bold align-middle ${chk === 'none' || chk === 'dnu' ? 'bg-amber-50 text-amber-700' : use.length > 1 ? 'bg-violet-50 text-violet-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {chk === 'none' ? '⚠ 승인목록 밖' : chk === 'dnu' ? '⚠ 사용 금지' : `승인 ${use.length}`}</span>
+                      })()}
+                      {item.spec||'-'}</td>
                     {/* 10. 구매처 */}
                     <td className="px-3 py-2 text-slate-500 overflow-hidden truncate">
                       {item.vendors?.name

@@ -57,6 +57,17 @@ const decode = (s) =>
     .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(+d))
     .trim()
 
+// 'EYECAP-SIT(A)10R (Approved)' → { mfrPn:'EYECAP-SIT(A)10R', status:'Approved' }
+//   품번 안에도 괄호가 있을 수 있어 「마지막 괄호」만 상태로 본다 (Approved · Preferred · Do Not Use …)
+export function splitMfrStatus(raw) {
+  const t = String(raw ?? '').trim()
+  const m = t.match(/^(.*\S)\s+\(([^()]*)\)\s*$/)
+  return m ? { mfrPn: m[1].trim(), status: m[2].trim() } : { mfrPn: t, status: '' }
+}
+export const isDnu = (status) => /do\s*not\s*use|disapprov|inactive/i.test(String(status || ''))
+// 'Approved - OBS by Mfr' — 승인은 돼 있지만 제조사가 단종한 것
+export const isMfrObs = (status) => /\bOBS\b|obsolete/i.test(String(status || ''))
+
 const levelOf = (s) => {
   const t = String(s ?? '').trim()
   if (!t) return 0
@@ -66,7 +77,7 @@ const levelOf = (s) => {
 
 /**
  * HTM 원문 → { header, parts, groups, stats }
- *   parts  : [{ level, code, rawPn, name, qty, unit, rev, edition, state, mfr, mfrPn, alternates[] }]
+ *   parts  : [{ level, code, rawPn, name, qty, unit, rev, edition, ver, state, mfr, mfrPn, mfrs[], alternates[] }]
  *   groups : [{ parentCode, parentName, children:[part] }]  — 어셈블리 단위 (bom 테이블 구조와 동일)
  */
 export function parseAxcelisReport(text) {
@@ -111,18 +122,23 @@ export function parseAxcelisReport(text) {
 
     // 제조사: 다음 품목이 나오기 전까지, 정확히 level+1 인 Mfr Part 만.
     // (범위를 안 끊으면 상위 품목이 하위의 제조사까지 통째로 흡수한다)
+    //   한 품번에 승인 제조사가 여럿일 수 있다 (예: EYECAP INTERNATIONAL · EYECAP KOREA) — 전부 mfrs 에 담는다 (v4.171.0)
     const mfrs = []
     for (let j = i + 1; j < rows.length; j++) {
       const d = rows[j]
       const dl = levelOf(d[0])
       if (d[1] === 'Part' || dl <= level) break
       if (d[1] === 'Mfr Part' && dl === level + 1) {
-        mfrs.push({
-          mfrPn: String(d[2] || '').replace(/\s*\(Approved\)\s*$/i, '').trim(),
-          mfr: String(d[3] || '').trim(),
-        })
+        const { mfrPn, status } = splitMfrStatus(d[2])
+        const mfr = String(d[3] || '').trim()
+        if (!mfrPn && !mfr) continue
+        if (mfrs.some(x => x.mfrPn === mfrPn && x.mfr === mfr)) continue
+        mfrs.push({ mfrPn, mfr, status })
       }
     }
+    // 대표 제조사 = Preferred → 그 밖의 승인 → 첫 줄 (Do Not Use · 제조사 단종은 대표로 안 씀)
+    const usable = mfrs.filter(x => !isDnu(x.status) && !isMfrObs(x.status))
+    const primary = usable.find(x => /prefer/i.test(x.status)) || usable[0] || mfrs.find(x => !isDnu(x.status)) || mfrs[0]
 
     const ver = String(c[6] || '')
     const dot = ver.indexOf('.')
@@ -151,9 +167,11 @@ export function parseAxcelisReport(text) {
       revRaw,
       edition: /^\d+$/.test(edRaw) ? Number(edRaw) : 0,
       state: String(c[7] || '').trim(),
-      mfr: mfrs[0]?.mfr || '',
-      mfrPn: mfrs[0]?.mfrPn || '',
-      alternates: mfrs.slice(1),
+      ver: ver.trim(),
+      mfr: primary?.mfr || '',
+      mfrPn: primary?.mfrPn || '',
+      mfrs,                                   // 승인 제조사 전체 (상태 포함)
+      alternates: mfrs.filter(x => x !== primary),
     })
   }
 
@@ -215,6 +233,7 @@ function buildParsed(header, allParts, source = 'htm') {
       total: parts.length,
       uniqueCodes: codes.length,
       withMfr: parts.filter((p) => p.mfr).length,
+      multiMfr: new Set(parts.filter((p) => (p.mfrs || []).filter((x) => !isDnu(x.status) && !isMfrObs(x.status)).length > 1).map((p) => p.code)).size,
       zeroQty: parts.filter((p) => p.level > 0 && p.qty === 0).length,
       vmSkipped: parts.filter((p) => p.isVM).length,
       obsDropped: obsDropped.length,
@@ -288,7 +307,8 @@ export function parseAxcelisBomSheet(grid) {
       revRaw,
       edition: /^\d+$/.test(edRaw) ? Number(edRaw) : 0,
       state: cS >= 0 ? String(r[cS] ?? '').trim() : '',
-      mfr: '', mfrPn: '', alternates: [],
+      ver,
+      mfr: '', mfrPn: '', mfrs: null, alternates: [],     // 엑셀에는 제조사 줄이 없다 — null = 「모름」(빈 목록과 다름)
     })
   }
   const root = parts.find(p => p.level === 0) || parts[0] || {}
