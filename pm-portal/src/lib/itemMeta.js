@@ -6,6 +6,7 @@
 //   표가 아직 없으면(SQL 전) 조회는 빈 값, 저장은 { missingTable:true } — 화면은 예전처럼 동작한다.
 import { supabase } from './supabase'
 import { isDnu, isMfrObs } from './axcelisBomReport'
+import { pgQuote, ilikeAny } from './pgFilter'
 
 const isMissing = (e) => e && (e.code === '42P01' || e.code === 'PGRST202' || e.code === 'PGRST205' || /does not exist|could not find/i.test(e.message || ''))
 
@@ -88,9 +89,11 @@ export async function fetchItemMetaDetail(itemId) {
 }
 
 // 검색 — 승인 제조사품번 · 제조사명으로 품목 찾기 (기준코드 DB 검색에 보탬)
+//   사용 금지 품번으로 찾아도 품목은 나온다 — 화면이 「사용 금지」로 따로 보여 준다
 export async function searchItemIdsByMfr(pattern) {
+  const v = pgQuote(pattern)
   const { data, error } = await supabase.from('pm_item_mfr').select('item_id')
-    .or(`mfr_pn.ilike.${pattern},mfr.ilike.${pattern}`).eq('active', true).limit(300)
+    .or(`mfr_pn.ilike.${v},mfr.ilike.${v}`).eq('active', true).limit(300)
   if (error) return []
   return [...new Set((data || []).map(r => r.item_id))]
 }
@@ -121,3 +124,43 @@ export function inApproved(item, list) {
   if (!hit) return 'none'
   return isDnu(hit.status) ? 'dnu' : isMfrObs(hit.status) ? 'obs' : 'ok'
 }
+
+// 검색 화면용 — 검색어(q)가 승인 제조사품번에 걸리는 품목 id → items 조회 .or() 에 덧붙일 조건
+export async function mfrSearchCond(q) {
+  const t = String(q || '').trim()
+  if (t.length < 2) return ''
+  const { data, error } = await supabase.from('pm_item_mfr').select('item_id').or(ilikeAny(['mfr_pn'], t)).eq('active', true).limit(200)
+  if (error || !data?.length) return ''
+  return `id.in.(${[...new Set(data.map(r => r.item_id))].join(',')})`
+}
+
+// 검색 결과에 승인 제조사 붙이기 — it.mfrs = [...] (표가 없거나 실패하면 그대로)
+export async function attachMfrs(items) {
+  if (!items?.length) return items || []
+  try {
+    const { mfr } = await fetchItemMeta(items.map(i => i.id))
+    return items.map(i => ({ ...i, mfrs: mfr[i.id] || [] }))
+  } catch { return items }
+}
+
+const normPn = (s) => String(s || '').toUpperCase().replace(/[\s\-_/.]/g, '')
+// 품목 하나의 승인 제조사를 화면용으로 나누기
+//   mine  : 우리 대표 제조사품번에 해당하는 줄 (없으면 null)
+//   alts  : 그 밖에 써도 되는 것 (우선 · 승인)
+//   obs   : 승인은 돼 있지만 제조사 단종
+//   dnu   : 고객사 사용 금지
+//   hit(q): 검색어가 걸린 줄인지
+export function splitMfrs(item, list) {
+  const L = (list || []).filter(m => realPn(m.mfr_pn) || m.mfr)
+  const me = normPn(item?.manufacturer_code)
+  const mine = me ? L.find(m => normPn(m.mfr_pn) === me) || null : null
+  const rest = L.filter(m => m !== mine)
+  return {
+    mine,
+    alts: rest.filter(m => !isDnu(m.status) && !isMfrObs(m.status)),
+    obs: rest.filter(m => isMfrObs(m.status) && !isDnu(m.status)),
+    dnu: rest.filter(m => isDnu(m.status)),
+    total: L.length,
+  }
+}
+export const mfrHit = (m, q) => { const t = normPn(q); return t.length >= 2 && normPn(m.mfr_pn).includes(t) }

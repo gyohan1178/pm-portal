@@ -13,6 +13,8 @@ import { fetchAll } from '../../lib/paginate'
 import { levelCls, catStyle, indentOf, deptStyle, deptShort } from '../../lib/bomStyle'
 import AutoInput from '../../components/AutoInput'
 import { ilikeAny } from '../../lib/pgFilter'
+import { mfrSearchCond, attachMfrs } from '../../lib/itemMeta'
+import MfrAltList from '../../components/MfrAltList'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
 import { useCoach } from '../../components/ux/CoachMarks'
 import { downloadBomExcel, downloadBomCsv } from '../../lib/bomExport'
@@ -26,9 +28,11 @@ const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
 // ── 제품 검색 (위치 포함, 재고·구매처 제외) ──
 async function searchItems(q) {
   if (!q.trim()) return []
+  // 고객사 승인 제조사품번(대체품 · 사용 금지 포함)으로 쳐도 품목이 나오게 (v4.172.0)
+  const alt = await mfrSearchCond(q).catch(() => '')
   const { data, error } = await supabase.from('items')
     .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec')
-    .or(ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q))
+    .or([ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q), alt].filter(Boolean).join(','))
     .limit(200)
   if (error) throw error
   const ids = (data || []).map(d => d.id)
@@ -48,12 +52,12 @@ async function searchItems(q) {
   // 보조 칸(넘쳐 보관) — v4.79.0
   let aux = new Map()
   try { aux = await fetchAuxByItems(ids) } catch { /* 보조 칸 없이 */ }
-  return (data || []).map(d => ({
+  return attachMfrs((data || []).map(d => ({
     ...d,
     location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
     qty: qtyMap[d.id] ?? null,
     aux: aux.get(d.id) || [],
-  }))
+  })))
 }
 
 // ── 자동완성 (2글자↑, 상위 8건) ──
@@ -221,6 +225,7 @@ export default function FieldSearch() {
                       </div>
                       <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
                       <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono">{it.manufacturer_code || '-'}</span></div>
+                      <MfrAltList item={it} list={it.mfrs} q={pSubmitted} max={3} />
                       {it.spec && <div className="text-[11px] text-slate-400 truncate">{it.spec}</div>}
                       <button onClick={() => openBOM(it.std_code)} data-fs-card-bom className="mt-2 text-[11px] text-indigo-500 font-semibold">📋 BOM 전개 ↗</button>
                     </div>
@@ -241,7 +246,8 @@ export default function FieldSearch() {
                             <td className="px-3 py-2 text-slate-700 max-w-[240px] truncate">{it.name}</td>
                             <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span></td>
                             <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
-                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}</td>
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}
+                              <MfrAltList item={it} list={it.mfrs} q={pSubmitted} className="font-sans max-w-[360px]" /></td>
                             <td className="px-3 py-2 text-slate-500 max-w-[200px] truncate" title={it.spec}>{it.spec || '-'}</td>
                             <td className={`px-3 py-2 text-right font-mono font-bold ${
                               it.qty > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>
@@ -503,6 +509,10 @@ export default function FieldSearch() {
                   <p className="text-xs font-bold text-slate-500 mb-0.5">제조사품번</p>
                   <p className="font-mono text-slate-700 break-all">{detail.manufacturer_code || '-'}</p>
                 </div>
+                {detail.mfrs?.length > 0 && <div className="col-span-2">
+                  <p className="text-xs font-bold text-slate-500 mb-0.5">고객사 승인 제조사</p>
+                  <MfrAltList item={detail} list={detail.mfrs} max={20} />
+                </div>}
                 <div>
                   <p className="text-xs font-bold text-slate-500 mb-0.5">단위</p>
                   <p className="text-slate-700">{detail.unit || 'EA'}</p>

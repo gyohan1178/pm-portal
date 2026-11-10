@@ -13,6 +13,8 @@ import { ilikeAny } from '../../lib/pgFilter'
 import { SkeletonRows, SkelBar } from '../../components/ux/Skeleton'
 import PageHead from '../../components/PageHead'
 import { EmptyState, ErrorState } from '../../components/ui/EmptyState'
+import { mfrSearchCond, attachMfrs } from '../../lib/itemMeta'
+import MfrAltList from '../../components/MfrAltList'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -20,11 +22,13 @@ const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
 // ── 제품 검색 (items 전체 페이징) ──
 async function searchItems(q) {
   if (!q.trim()) return []
+  // 고객사 승인 제조사품번(대체품 · 사용 금지 포함)으로 쳐도 품목이 나오게 (v4.172.0)
+  const alt = await mfrSearchCond(q).catch(() => '')
   const { data, error } = await supabase.from('items')
     // ⚠ 구매처(vendors)는 가져오지 않는다. 화면에서 지워도 조회로 넘어오면
     //   개발자도구에서 보인다. 아예 받지 않는다.
     .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, customer_item_codes(customer_code,customers(code,name))')
-    .or(ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q))
+    .or([ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q), alt].filter(Boolean).join(','))
     .limit(200)
   if (error) throw error
   // 보관위치만 모은다. 수량은 받지 않는다 — 현장에서 물건을 찾는 화면이다.
@@ -42,11 +46,11 @@ async function searchItems(q) {
   // 보조 칸(넘쳐 보관) — 위치만 (수량은 받지 않는 화면) · v4.79.0
   let aux = new Map()
   try { aux = await fetchAuxByItems(ids) } catch { /* 보조 칸 없이 */ }
-  return (data || []).map(d => ({
+  return attachMfrs((data || []).map(d => ({
     ...d,
     location: locMap[d.id] ? [...locMap[d.id]].join(', ') : '',
     aux: aux.get(d.id) || [],
-  }))
+  })))
 }
 
 // 위치 A1-05-1 → 랙 이름 A1 (앞뒤 공백이 섞여 있어도 읽는다)
@@ -137,7 +141,7 @@ export default function CommonSearch() {
         <>
           <div className="flex gap-2">
             <input value={pq} onChange={e => setPq(e.target.value)} onKeyDown={e => e.key === 'Enter' && setPSubmitted(pq)}
-              placeholder="기준코드·품명·제조사·제조사품번·규격 검색"
+              placeholder="기준코드·품명·제조사·제조사품번(승인 대체품 포함)·규격 검색"
               className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <button onClick={() => setPSubmitted(pq)} disabled={!pq.trim()}
               className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
@@ -181,6 +185,7 @@ export default function CommonSearch() {
                             <td className="px-3 py-2">
                               <div className="text-slate-700">{it.manufacturer || '-'}</div>
                               <div className="font-mono text-[11px] text-slate-400">{it.manufacturer_code || ''}</div>
+                              <MfrAltList item={it} list={it.mfrs} q={pSubmitted} className="max-w-[420px]" />
                             </td>
                             <td className="px-3 py-2 text-slate-500">
                               {/* 위치를 누르면 창고 배치도의 그 랙 시트로 (자재 위치 찾기에서 옮김 — 예전 링크는 ?code= 라 랙이 안 열렸다) */}
