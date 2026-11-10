@@ -646,7 +646,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
             {isAdmin && (
               <NavLink to="/admin" onClick={onNavigate}
                 className={({isActive})=>`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${isActive?'text-indigo-600 bg-indigo-50':'text-slate-400 hover:text-slate-700 hover:bg-slate-100'}`}>
-                <span>⚙️</span> 관리자
+                <span>📋</span> 관리자 할 일
               </NavLink>
             )}
             {isAdmin && (

@@ -1,7 +1,7 @@
 import ItemLink from '../../components/ItemLink'
 import PageHead from '../../components/PageHead'
 import { DocRequestButton } from '../../components/DocRequestModal'
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomer } from '../../hooks/useCustomers'
 import { useParams, useSearchParams } from 'react-router-dom'
@@ -18,6 +18,7 @@ import { planExcOf, isHot, dueSort, planSince, planSinceText, planSinceTitle } f
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import ItemPicker from '../../components/ItemPicker'
 
 // 요약 카드 색. Tailwind 는 문자열을 조립하면 클래스를 못 찾아 전체를 적는다.
 const CARD_CLS = {
@@ -117,7 +118,7 @@ const COLS = [
   {key:'actions', label:'', defaultWidth:150},
 ]
 
-const EMPTY = { po_number:'', ccn:'', order_line:'', del_line:'', item_rev:'', item_brev:'', division:'전장', type:'자재', qty_ordered:'', required_date:'', promise_date:'', memo:'' }
+const EMPTY = { item_id:null, item_q:'', po_number:'', ccn:'', order_line:'', del_line:'', item_rev:'', item_brev:'', division:'전장', type:'자재', qty_ordered:'', required_date:'', promise_date:'', memo:'' }
 
 export default function CustomerPO() {
   const { customerId: csCode } = useParams()
@@ -237,16 +238,18 @@ export default function CustomerPO() {
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
-      const payload = { ...data, qty_ordered: Number(data.qty_ordered) }
+      const { item_q, ...rest } = data
+      const payload = { ...rest, qty_ordered: Number(data.qty_ordered) }
+      if (!payload.item_id) delete payload.item_id
       if (editId) { const{error}=await supabase.from('purchase_orders').update(payload).eq('id',editId); if(error) throw error }
       else { const{error}=await supabase.from('purchase_orders').insert({...payload, customer_id:cs?.id, order_type:'customer_po', qty_received:0, status:'진행중'}); if(error) throw error }
     },
-    onSuccess: () => { qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage']); setForm(EMPTY); setShowForm(false); setEditId(null) },
+    onSuccess: () => { qc.invalidateQueries({queryKey:['cpo']}); qc.invalidateQueries({queryKey:['shortage']}); toastSuccess(editId ? 'PO를 수정했습니다' : 'PO를 추가했습니다'); setForm(EMPTY); setShowForm(false); setEditId(null) },
     onError: (e) => toastError('오류: '+e.message),
   })
   const deleteMut = useMutation({
     mutationFn: async (id) => { const{error}=await supabase.from('purchase_orders').delete().eq('id',id); if(error) throw error },
-    onSuccess: () => qc.invalidateQueries(['cpo']),
+    onSuccess: () => qc.invalidateQueries({queryKey:['cpo']}),
   })
   const issueMut = useMutation({
     mutationFn: async (id) => {
@@ -303,7 +306,7 @@ export default function CustomerPO() {
   })
 
   function handleEdit(p) {
-    setForm({po_number:p.po_number||'',ccn:p.ccn||'',order_line:p.order_line||'',del_line:p.del_line||'',item_rev:p.item_rev||'',item_brev:p.item_brev||'',division:p.division||'전장',type:p.type,qty_ordered:p.qty_ordered,required_date:p.required_date||'',promise_date:p.promise_date||'',memo:p.memo||''})
+    setForm({item_id:p.item_id||null,item_q:p.items?[p.items.std_code,p.items.name].filter(Boolean).join(' · '):'',po_number:p.po_number||'',ccn:p.ccn||'',order_line:p.order_line||'',del_line:p.del_line||'',item_rev:p.item_rev||'',item_brev:p.item_brev||'',division:p.division||'전장',type:p.type,qty_ordered:p.qty_ordered,required_date:p.required_date||'',promise_date:p.promise_date||'',memo:p.memo||''})
     setEditId(p.id); setShowForm(true)
   }
 
@@ -400,6 +403,7 @@ export default function CustomerPO() {
 
   const today = todayISO()
   const f = k => e => setForm(prev=>({...prev,[k]:e.target.value}))
+  const pickRef = useRef(null)
 
   if (error) return <div className="text-center py-12 text-red-500 text-sm">오류: {error.message}</div>
 
@@ -497,6 +501,13 @@ export default function CustomerPO() {
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-700">{editId?'PO 수정':'고객사 PO 추가'}</p>
           <div className="grid grid-cols-4 gap-3">
+            <div className="col-span-2"><label className="block text-xs font-bold text-slate-500 mb-1">품번 <span className="text-rose-500">*</span></label>
+              <ItemPicker value={form.item_q}
+                onChange={v=>{ if (pickRef.current && v === pickRef.current) { pickRef.current = null; return }   // 고른 직후 ItemPicker 가 이름을 한 번 더 보낸다
+                  setForm(prev=>({...prev,item_q:v,item_id:null})) }}
+                onSelect={it=>{ pickRef.current = it.name || it.std_code || ''; setForm(prev=>({...prev,item_id:it.id,item_q:[it.std_code,it.name].filter(Boolean).join(' · ')})) }}
+                placeholder="🔍 품번·품명·제조사품번으로 찾기" />
+              <p className="mt-1 text-[11px] text-slate-400">{form.item_id ? '✓ 품목 선택됨 — 부족 계산·BOM에 연결됩니다' : '목록에서 품목을 골라야 저장됩니다'}</p></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">PO 번호</label><input value={form.po_number} onChange={f('po_number')} placeholder="PO 번호" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">전장/하네스</label>
               <select value={form.division} onChange={f('division')} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500">
@@ -513,7 +524,7 @@ export default function CustomerPO() {
           </div>
           <div className="flex gap-2 justify-end">
             <button onClick={()=>{setShowForm(false);setEditId(null)}} className="px-4 py-2 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">취소</button>
-            <button onClick={()=>saveMut.mutate(form)} disabled={!form.qty_ordered||saveMut.isPending} className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span>:editId?'수정 완료':'저장'}</button>
+            <button onClick={()=>saveMut.mutate(form)} disabled={!form.qty_ordered||(!editId&&!form.item_id)||saveMut.isPending} className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">{saveMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />저장 중...</span>:editId?'수정 완료':'저장'}</button>
           </div>
         </div>
       )}

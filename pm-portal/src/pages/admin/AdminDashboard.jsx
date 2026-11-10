@@ -125,8 +125,8 @@ export default function AdminDashboard() {
       {confirmEl}
       <div className="flex items-center gap-2 flex-wrap">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
-          <p className="page-desc text-xs text-slate-400">주간회의에서 다룰 내용과 처리할 항목</p>
+          <h1 className="text-lg font-bold text-slate-900">📋 관리자 할 일</h1>
+          <p className="page-desc text-xs text-slate-400">관리자만 보는 목록 — 주간회의에서 다룰 내용과 처리할 항목. 개인 할 일은 사이드바 「할 일」에 있습니다.</p>
         </div>
         <button onClick={() => setDraft({ status: '대기', priority: '보통', due_date: '' })}
           className="ml-auto px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">

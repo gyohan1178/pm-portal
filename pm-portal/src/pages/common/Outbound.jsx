@@ -592,7 +592,7 @@ export default function Outbound() {
             range ? labelConfirm.labels.slice(range.a - 1, range.b) : labelConfirm.labels)} />
       )}
       <div className="flex items-center justify-between flex-wrap gap-2">
-        <PageHead crumb="자재 · 일일 업무" title="📤 ASSY 출고" desc="고객사 · 프로젝트를 고르면 BOM 단위로 필요한 부품을 한 번에 출고합니다. 고객사 PO 를 고르면 대수가 자동으로 채워집니다." />
+        <PageHead crumb="자재" title="📤 ASSY 출고" desc="고객사 · 프로젝트를 고르면 BOM 단위로 필요한 부품을 한 번에 출고합니다. 고객사 PO 를 고르면 대수가 자동으로 채워집니다." />
         <Link to="/outbound-history" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📋 출고 현황 보기 →</Link>
       </div>
 

@@ -201,7 +201,7 @@ export default function ScheduleChanges() {
                             : 'border-slate-200 bg-slate-50 text-slate-500'}`}>
                         🔁 {r.chg_count}회
                         {r.total_shift != null && (
-                          <span className={r.total_shift > 0 ? 'text-rose-600' : 'text-sky-600'}>
+                          <span className={r.total_shift < 0 ? 'text-rose-600' : 'text-sky-600'}>
                             {r.total_shift > 0 ? '+' : ''}{r.total_shift}일
                           </span>
                         )}
@@ -271,10 +271,10 @@ function HistoryRows({ po, code, order, del }) {
           const sh = Number(h.shift_days)
           return (
             <span key={k} className="inline-flex items-center gap-1.5">
-              <span className={`text-xs ${sh > 0 ? 'text-rose-400' : 'text-sky-400'}`}>→</span>
+              <span className={`text-xs ${sh < 0 ? 'text-rose-400' : 'text-sky-400'}`}>→</span>
               <span title={`${h.changed_at} 변경`}
                 className={`px-2 py-1 rounded border text-[11px] font-mono font-bold ${
-                  sh > 0 ? 'border-rose-200 bg-rose-50 text-rose-700'
+                  sh < 0 ? 'border-rose-200 bg-rose-50 text-rose-700'
                          : 'border-sky-200 bg-sky-50 text-sky-700'}`}>
                 {h.to_date}
                 {!isNaN(sh) && <span className="ml-1 opacity-70">{sh > 0 ? '+' : ''}{sh}</span>}

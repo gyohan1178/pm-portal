@@ -42,7 +42,7 @@ export default function PriceHistory() {
 
   return (
     <div className="space-y-4">
-      <PageHead crumb="기초자료" title="단가변동이력"
+      <PageHead crumb="기타" title="단가변동이력"
         desc="품목별 견적 · 구매 단가가 언제 얼마로 바뀌었는지 봅니다. 견적을 입력하면 자동으로 쌓입니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품명 또는 기준코드 검색"

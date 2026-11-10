@@ -440,7 +440,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
       {confirmEl}
       {/* 통합검색 안에서는 고객사 탭이 어울리지 않아 숨긴다 */}
       {!embedded && <>
-        <PageHead crumb="소요 · 부족" title="소요량 조회"
+        <PageHead crumb="구매" title="소요량 조회"
           desc="상위 품번과 수량을 넣으면 BOM 을 전개해 필요한 부품 수량을 계산합니다. 역전개로 이 부품이 어디에 쓰이는지도 찾습니다." />
         <CustomerTabs /><ShortageTabs cs={csCode} />
       </>}

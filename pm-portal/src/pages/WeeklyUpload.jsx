@@ -320,7 +320,7 @@ export default function WeeklyUpload() {
   return (
     <div className="space-y-4 max-w-4xl mx-auto">
       {confirmEl}
-      <PageHead crumb="주간 / 분석" title="주간업무보고 올리기"
+      <PageHead crumb="분석" title="주간업무보고 올리기"
         desc="담당자별 발주입고내역 엑셀과 자재 불출 현황을 올려 주간업무보고에 반영합니다. 확정매입(ecount) 파일도 여기서 올립니다."></PageHead>
       {/* 담당자 엑셀(예상) / ecount(확정) */}
       <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">

@@ -95,7 +95,7 @@ export default function DocRequest() {
 
   return (
     <div className="space-y-4" data-doc-page>
-      <PageHead crumb="공통" title="📎 자료 요청"
+      <PageHead crumb="현장" title="📎 자료 요청"
         desc="도면 · BOM · 사양서 · 그 밖의 자료(「직접 입력」 — 예: CN 내역)가 필요하면 영업에 요청하세요. 영업이 고객사에 받아 올리면 요청한 부서로 알림이 갑니다. 같은 자료를 다른 부서가 이미 요청했으면 「같이 기다리기」로 붙습니다.">
         <button type="button" onClick={coach.start} data-coach-again className="px-2.5 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>
         <span data-doc-new className="inline-flex"><DocRequestButton label="+ 자료 요청" className="px-3 py-2 text-xs font-bold rounded-lg bg-[#6c5ce7] text-white" /></span>

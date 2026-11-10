@@ -379,7 +379,7 @@ export default function Inventory() {
           onScan={(loc)=>{ setScanOpen(false); navTo(`/cell/${loc}`) }} />
       )}
       {/* 화면 머리 — 자주 쓰는 QR 스캔 · 보고용 추출은 오른쪽 끝 (v4.96.0) */}
-      <PageHead crumb="자재 · 일일 업무" title="재고현황"
+      <PageHead crumb="자재" title="재고현황"
         desc="품목별 현재고 · 위치 · 안전재고를 봅니다. 숫자가 맞지 않으면 실사(붙여넣기 · QR 칸 실사 · 엑셀 업로드)로 바로잡습니다.">
             <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 보고용 추출</button>
             <button onClick={()=>setScanOpen(true)} title="랙 위치 태그를 스캔해 그 칸의 재고를 확인·실사합니다"

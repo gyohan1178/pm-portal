@@ -9,32 +9,36 @@ import NetBanner from '../NetBanner'
 import { getSidebarCollapsed, setSidebarCollapsed } from '../../lib/viewPrefs'
 
 const CUSTOMER_NAMES = { ax:'AXCELIS', ed:'Edwards', vm:'VM', csk:'CSK' }
+// 머리글 이름 — 사이드바 그룹 이름(자재 · 구매 · 영업 · 현장 · 품질 · 분석 · 기초자료 · 기타)과 맞춘다 (v4.166.0)
 const PAGE_LABELS = {
   '':         ['', '관제탑'],
-  // 일일 업무
-  inbound:    ['일일 업무', '입고'],
-  outbound:   ['일일 업무', 'ASSY 출고'],
-  issue:      ['일일 업무', '다품목 출고'],
-  inventory:  ['일일 업무', '재고현황'],
-  search:     ['일일 업무', '통합 검색'],
-  // 고객사 업무
-  'po-upload':['고객사 업무', '통합 PO'],
-  'forecast-shortage': ['소요·부족', '소요 예측'],
-  // 생산
+  // 자재
+  search:     ['자재', '통합 검색'],
+  inventory:  ['자재', '재고현황'],
+  outbound:   ['자재', 'ASSY 출고'],
+  issue:      ['자재', '다품목 출고'],
+  rack:       ['자재', '창고 배치도'],
+  cell:       ['자재', '위치 실사'],
+  // 구매
+  inbound:    ['구매', '입고'],
+  quote:      ['구매', '품목 단가 등록'],
+  missing:    ['구매', '결품 현황'],
+  'forecast-shortage': ['구매', '소요 예측'],
+  // 현장
   production: ['현장', '공정 현황판'],
-  missing:    ['생산', '결품 현황'],
-  // 주간 / 분석
-  weekly:     ['주간 / 분석', '주간업무보고'],
-  'purchase-dashboard': ['주간 / 분석', '매입 대시보드'],
-  'control-tower': ['주간 / 분석', '마스터 관제탑'],
-  'what-if':  ['주간 / 분석', 'What-if 시뮬레이터'],
-  insights:   ['주간 / 분석', '인사이트 (관리자)'],
+  // 분석
+  weekly:     ['분석', '주간업무보고'],
+  'purchase-dashboard': ['분석', '매입 대시보드'],
+  'what-if':  ['분석', 'What-if 시뮬레이터'],
+  insights:   ['분석', '인사이트 (관리자)'],
+  'control-tower': ['', '관제탑'],
   // 기초자료
   items:      ['기초자료', '기준코드 DB'],
   vendors:    ['기초자료', '협력사'],
-  price:      ['기초자료', '단가변동이력'],
-  erp:        ['기초자료', 'ERP 연동'],
-  quote:      ['기초자료', '품목 단가 등록'],
+  // 기타
+  price:      ['기타', '단가변동이력'],
+  codemap:    ['기타', '기준코드 매핑'],
+  erp:        ['기타', 'ERP 연동'],
   help:       ['', '도움말'],
   // 고객사 work 탭 (section = 고객사명)
   cpo:        [null, '고객사 PO'],
@@ -49,12 +53,14 @@ const PAGE_LABELS = {
 const PATH_LABELS = {
   'outbound-history': ['자재', '출고 현황'],
   'rack-layout':      ['자재', '창고 배치도'],
-  'payment-plan':     ['구매', '결제 계획'],
   'production/harness-release': ['자재', '하네스 출도·불출'],
+  'payment-plan':     ['구매', '결제 계획'],
+  ecount:             ['구매', '확정매입 (ecount)'],
   'sales-quote':      ['영업', '매출견적'],
   orders:             ['영업', '수주대장'],
+  'quote-history':    ['영업', '견적 이력'],
   'material-request': ['현장', '자재 요청'],
-  'doc-request':      ['공통', '자료 요청'],
+  'doc-request':      ['현장', '자료 요청'],
   'field-search':     ['현장', '현장 검색'],
   drawings:           ['현장', '도면 조회'],
   board:              ['현장', '공정 현황판'],
@@ -67,21 +73,19 @@ const PATH_LABELS = {
   'quality/lot':      ['품질', '로트 관리'],
   'cost-saving':      ['분석', '원가절감 실적'],
   sales:              ['분석', '매출 대시보드'],
+  'sales/upload':     ['분석', '매출 실적 올리기'],
   cost:               ['분석', '원가분석'],
   'request-load':     ['분석', '자재요청 업무량'],
   'schedule-changes': ['분석', '납품 일정 변경'],
-  'master/codemap':   ['기초자료', '기준코드 매핑'],
+  'weekly/upload':    ['분석', '주간업무보고 올리기'],
   activity:           ['기타', '활동 이력 · 용량'],
   backup:             ['기타', '데이터 백업'],
   todo:               ['', '할 일'],
-  'quote-history':    ['영업', '견적 이력'],
-  ecount:             ['구매', '확정매입 (ecount)'],
-  'sales/upload':     ['분석', '매출 실적 올리기'],
   flow:               ['', '업무 흐름'],
   upload:             ['', '파일 올리기'],
-  admin:              ['', '관리자'],
-  users:              ['', '사용자 관리'],
-  restore:            ['', '복구'],
+  admin:              ['관리', '관리자 할 일'],
+  users:              ['관리', '회원 관리'],
+  restore:            ['', '삭제 기록'],
 }
 
 export default function Layout({ profile }) {
@@ -100,6 +104,9 @@ export default function Layout({ profile }) {
   } else if (segments[0] === 'customer' && segments[1]) {
     section = CUSTOMER_NAMES[segments[1]] || segments[1]
     title = PAGE_LABELS[segments[2] || '']?.[1] || segments[2] || ''
+  } else if (segments[0] === 'production' && segments[1]) {
+    // /production/AX 등 고객사별 생산관리 — 공정 현황판(/production)과 다른 화면
+    section = '현장'; title = '생산 관리'
   } else if (segments[0] === 'master' && segments[1]) {
     const info = PAGE_LABELS[segments[1]]
     section = info?.[0] || ''; title = info?.[1] || segments[1]

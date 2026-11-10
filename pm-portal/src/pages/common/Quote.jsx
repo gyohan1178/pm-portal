@@ -44,7 +44,7 @@ export default function Quote() {
   const [pick, setPick] = useState(null)      // { item, rfqs, n }
   return (
     <div className="space-y-4">
-      <PageHead crumb="기초자료" title="품목 단가 등록"
+      <PageHead crumb="구매" title="품목 단가 등록"
         desc="협력사 견적 단가를 등록합니다. 한 품목씩 넣거나, 견적서 표를 붙여넣어 여러 품목을 한 번에 등록합니다. 저장하면 견적 이력이 남고, 고른 품목은 「최근 매입가」도 바뀝니다."></PageHead>
 
       <QuotePriceReqs onPick={(item, rfqs) => { setMode('one'); setPick({ item, rfqs, n: Date.now() }) }} />

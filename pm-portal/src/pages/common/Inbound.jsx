@@ -595,7 +595,7 @@ export default function Inbound() {
       {tab !== 'direct' && undoDialog}
       {lotAsk && <LotInboundModal rows={lotAsk.rows} date={lotAsk.date} onClose={() => setLotAsk(null)}
         onDone={() => { qc.invalidateQueries({ queryKey: ['lotSummary'] }); qc.invalidateQueries({ queryKey: ['lotList'], exact: false }) }} />}
-      <PageHead crumb="자재 · 일일 업무" title="입고"
+      <PageHead crumb="구매" title="입고"
         desc="들어온 물건을 발주에 맞춰 입고합니다. 발주를 체크하고 수량을 확인한 뒤 맨 아래 「입고 처리」를 누르면 재고와 입고 현황에 바로 반영됩니다.">
         <div className="flex gap-1 bg-slate-100 rounded-xl p-1 w-fit">
           {[['process','📥 입고 처리'],['direct','✍️ 발주외 입고'],['history','📋 입고 현황']].map(([k,l])=>(

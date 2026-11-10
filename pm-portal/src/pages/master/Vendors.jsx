@@ -11,6 +11,7 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
+import { fetchAll } from '../../lib/paginate'
 
 // 품의서 결제방식과 값이 같아야 자동으로 이어진다
 export const PAY_TERMS = ['정기 결제', '선급 결제', '카드 결제', '해외 송금']
@@ -50,6 +51,7 @@ export default function Vendors() {
   const fileRef = useRef(null)
   const [importMsg, setImportMsg] = useState('')
   const [impProg, setImpProg] = useState(null)   // 업로드 반영 진행 { done, total } — 화면 표시용
+  const [impPrev, setImpPrev] = useState(null)   // 업로드 미리보기 { fresh, upd, same } (v4.166.0)
 
   const { data: vendors = [], isLoading } = useQuery({
     queryKey: ['vendors', dq], queryFn: () => fetchVendors(dq),
@@ -158,21 +160,27 @@ export default function Vendors() {
 
   // 이카운트 거래처정보 업로드 → vendors upsert (ecount_code 기준)
   const importMut = useMutation({
-    mutationFn: async (rows) => {
-      // ecount_code 기준 50건씩 upsert
+    // 신규는 분류 '자재'로 넣고, 기존 거래처는 분류를 건드리지 않는다 (v4.166.0)
+    // 두 묶음의 열 구성이 달라 따로 보낸다 (한 묶음에 섞으면 빠진 열이 null 로 덮인다)
+    mutationFn: async ({ fresh, upd }) => {
       const chunk = 100
-      setImpProg({ done: 0, total: rows.length })
+      const total = fresh.length + upd.length
+      let done = 0
+      setImpProg({ done: 0, total })
       try {
-        for (let i=0; i<rows.length; i+=chunk) {
-          const { error } = await supabase.from('vendors')
-            .upsert(rows.slice(i,i+chunk), { onConflict:'ecount_code' })
-          if (error) throw error
-          setImpProg({ done: Math.min(rows.length, i + chunk), total: rows.length })
+        for (const rows of [upd.map(x => x.row), fresh]) {
+          for (let i=0; i<rows.length; i+=chunk) {
+            const { error } = await supabase.from('vendors')
+              .upsert(rows.slice(i,i+chunk), { onConflict:'ecount_code' })
+            if (error) throw error
+            done += Math.min(chunk, rows.length - i)
+            setImpProg({ done, total })
+          }
         }
       } finally { setImpProg(null) }
-      return rows.length
+      return { fresh: fresh.length, upd: upd.length }
     },
-    onSuccess: (n) => { qc.invalidateQueries(['vendors']); setImportMsg(`✅ ${n}개 반영 완료`) },
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ['vendors'] }); setImpPrev(null); setImportMsg(`✅ 신규 ${r.fresh}곳 · 변경 ${r.upd}곳 반영 완료`) },
     onError: (e) => setImportMsg('❌ 오류: '+e.message),
   })
 
@@ -217,13 +225,30 @@ export default function Vendors() {
           contact: pick(row, ['담당자1']),
           phone:   pick(row, ['전화','모바일']) || phoneFromHp,
           email:   pick(row, ['Email','email']) || emailFromHp,
-          category: '자재',
         })
       }
       if (rows.length === 0) { setImportMsg('❌ 인식된 행이 없습니다'); return }
       // 중복 코드 제거(마지막 우선)
       const dedup = [...new Map(rows.map(r=>[r.ecount_code, r])).values()]
-      importMut.mutate(dedup)
+      // 지금 등록된 거래처와 비교 — 빈 칸은 기존 값을 지우지 않는다
+      const cur = await fetchAll(() => supabase.from('vendors')
+        .select('id,ecount_code,name,contact,phone,email').not('ecount_code', 'is', null).order('id'))
+      const byCode = new Map(cur.map(v => [v.ecount_code, v]))
+      const F = ['name', 'contact', 'phone', 'email']
+      const fresh = [], upd = [], same = []
+      for (const r of dedup) {
+        const old = byCode.get(r.ecount_code)
+        if (!old) { fresh.push({ ...r, category: '자재' }); continue }
+        const merged = { ecount_code: r.ecount_code }
+        const diff = []
+        for (const k of F) {
+          merged[k] = r[k] || old[k] || null
+          if ((merged[k] || '') !== (old[k] || '')) diff.push({ k, from: old[k] || '', to: merged[k] || '' })
+        }
+        if (diff.length) upd.push({ row: merged, diff }); else same.push(r)
+      }
+      setImportMsg('')
+      setImpPrev({ fresh, upd, same: same.length })
     } catch (err) {
       setImportMsg('❌ 읽기 오류: '+err.message)
     } finally {
@@ -307,6 +332,44 @@ export default function Vendors() {
         </button>
       </div>
 
+      {impPrev && (
+        <div data-vendor-import-preview className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+          <div className="flex items-center gap-3 flex-wrap">
+            <p className="text-sm font-bold text-slate-700">📤 거래처정보 업로드 미리보기</p>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">신규 {impPrev.fresh.length}곳</span>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-50 text-amber-700 border border-amber-200">변경 {impPrev.upd.length}곳</span>
+            <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-slate-50 text-slate-500 border border-slate-200">같음 {impPrev.same}곳</span>
+            <div className="flex-1" />
+            <button onClick={() => setImpPrev(null)} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">취소</button>
+            <button onClick={() => importMut.mutate(impPrev)} disabled={importMut.isPending || !(impPrev.fresh.length + impPrev.upd.length)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
+              {importMut.isPending && <Spin />}반영 ({impPrev.fresh.length + impPrev.upd.length}곳)</button>
+          </div>
+          <p className="text-[11px] text-slate-500">신규 거래처는 분류 「자재」로 등록됩니다. 기존 거래처의 분류 · 결제조건 · 메모는 바꾸지 않고, 파일에 빈 칸인 연락처는 기존 값을 그대로 둡니다.</p>
+          <div className="max-h-72 overflow-auto rounded-lg border border-slate-200 bg-white">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr>
+                <th className="px-2 py-1.5 text-left w-14">구분</th><th className="px-2 py-1.5 text-left">거래처코드</th>
+                <th className="px-2 py-1.5 text-left">거래처명</th><th className="px-2 py-1.5 text-left">바뀌는 내용</th></tr></thead>
+              <tbody>
+                {impPrev.upd.slice(0, 200).map(({ row, diff }) => (
+                  <tr key={'u' + row.ecount_code} className="border-t border-slate-100">
+                    <td className="px-2 py-1"><span className="text-amber-700 font-bold">변경</span></td>
+                    <td className="px-2 py-1 font-mono">{row.ecount_code}</td><td className="px-2 py-1">{row.name}</td>
+                    <td className="px-2 py-1 text-slate-500">{diff.map(d => `${({ name: '이름', contact: '담당자', phone: '전화', email: '메일' })[d.k]}: ${d.from || '(빈칸)'} → ${d.to}`).join(' · ')}</td>
+                  </tr>))}
+                {impPrev.fresh.slice(0, 200).map(r => (
+                  <tr key={'n' + r.ecount_code} className="border-t border-slate-100">
+                    <td className="px-2 py-1"><span className="text-emerald-700 font-bold">신규</span></td>
+                    <td className="px-2 py-1 font-mono">{r.ecount_code}</td><td className="px-2 py-1">{r.name}</td>
+                    <td className="px-2 py-1 text-slate-500">{[r.contact, r.phone, r.email].filter(Boolean).join(' · ') || '—'}</td>
+                  </tr>))}
+                {!(impPrev.fresh.length + impPrev.upd.length) && <tr><td colSpan={4} className="px-2 py-6 text-center text-slate-400">바뀌는 거래처가 없습니다</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
       {showForm && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <p className="text-xs font-bold text-slate-700">{editId ? '협력사 수정' : '협력사 추가'}</p>

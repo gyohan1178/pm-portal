@@ -847,6 +847,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     onError: (e) => toastError('마진 구간 저장 실패: ' + e.message),
   })
 
+  // 이미 저장한 화면에서 💾 를 또 누르면 새 번호로 한 건 더 생긴다 — 확인을 받는다 (v4.166.0)
+  async function saveClick() {
+    if (savedNo) {
+      const ok = await ask({
+        title: '이미 저장한 견적입니다',
+        desc: revOf
+          ? `${savedNo} 로 저장됐습니다. 한 번 더 저장하면 ${revOf.nextNo} 로 리비전이 하나 더 생깁니다.`
+          : `${savedNo} 로 저장됐습니다. 한 번 더 저장하면 새 견적번호로 한 건이 더 생깁니다. 고친 내용을 원본에 반영하려면 견적이력에서 불러와 수정하세요.`,
+        okText: '새로 한 건 더 저장', cancelText: '그만두기',
+      })
+      if (!ok) return
+    }
+    saveMut.mutate()
+  }
+
   const saveMut = useMutation({
     mutationFn: async () => {
       if (!lines.length) throw new Error('품목이 없습니다.')
@@ -1204,7 +1219,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">
             📂 보관함{drafts.length ? ` ${drafts.length}` : ''}
           </button>
-          <button onClick={() => saveMut.mutate()} disabled={saveMut.isPending || !lines.length}
+          <button onClick={saveClick} disabled={saveMut.isPending || !lines.length}
             style={{ minWidth: '5.5rem' }} className={`px-3 py-1.5 text-xs font-bold rounded-lg text-white disabled:opacity-40 ${isSales ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-amber-500 hover:bg-amber-600'}`}>
             {saveMut.isPending ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '💾 저장'}
           </button>
@@ -1295,6 +1310,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         <div className="no-print rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 font-semibold">
           ✅ 저장 완료 — {isSales ? '매출' : '매입'}견적 <b>{savedNo}</b>
           {isSales && totals.laborKrw > 0 && ' · 작업비가 이력에 기록되어 다음 견적에서 자동으로 불러옵니다.'}
+          <button data-quote-new onClick={() => { snack.hide(); setLines([]); setRevOf(null); setSavedNo(''); setErr('') }}
+            className="ml-2 px-2 py-0.5 rounded-md border border-emerald-300 bg-white text-emerald-700 hover:bg-emerald-100">🆕 새 견적 시작</button>
         </div>
       )}
 

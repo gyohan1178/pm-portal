@@ -130,6 +130,16 @@ export default function Issue() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['picking', csId] }),
     onError: e => toastError('삭제 오류: ' + e.message),
   })
+  // 품목 한 줄 빼기 — 그 품목으로 담긴 줄(여러 호기)만 지운다 (v4.166.0)
+  const removeItemMut = useMutation({
+    mutationFn: async (ids) => {
+      for (let i = 0; i < ids.length; i += 200) {
+        const { error } = await supabase.from('pm_picking').delete().in('id', ids.slice(i, i + 200)); if (error) throw error
+      }
+    },
+    onSuccess: (_d, ids) => { qc.invalidateQueries({ queryKey: ['picking', csId] }); toastSuccess(`장바구니에서 ${ids.length}줄을 뺐습니다`) },
+    onError: e => toastError('빼기 오류: ' + e.message),
+  })
   const clearMut = useMutation({
     // 담기함은 같은 고객사를 보는 사람끼리 공유된다. 고객사 전체를 지우면
     // 그 사이 다른 사람이 담은 줄까지 날아가므로, 지금 화면에 보이는 줄만 지운다.
@@ -918,6 +928,7 @@ export default function Issue() {
               <th className="px-2 py-1.5 text-right">총소요</th><th className="px-2 py-1.5 text-right">총불출</th><th className="px-2 py-1.5 text-right">총결품</th>
               <th className="px-2 py-1.5 text-center w-36" title="라벨 출력 단위 — 바꾸면 품목에 저장되어 다음에도 유지됩니다">라벨</th>
               <th className="px-2 py-1.5 text-center w-10" title="체크 = 불출표에서 제외">제외</th>
+              <th className="px-2 py-1.5 text-center w-10" title="장바구니에서 이 품목 빼기">빼기</th>
             </tr></thead>
             <tbody>
               {(() => {
@@ -990,6 +1001,19 @@ export default function Issue() {
                     <input type="checkbox" checked={ex}
                       onChange={() => saveExclude(a, !ex)}
                       title="불출표에서 제외 — 품목에 저장되어 다음에도 유지됩니다" />
+                  </td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button data-cart-remove={a.std_code} disabled={removeItemMut.isPending}
+                      onClick={async () => {
+                        const ls = cart.filter(l => (l.std_code || l.item_id) === a.std_code)
+                        if (!ls.length) return
+                        if (ls.length > 1 && !(await ask({ title: `${a.std_code} 을(를) 장바구니에서 뺄까요?`,
+                          desc: `이 품목은 호기 ${ls.length}곳에서 담겼습니다. 모두 뺍니다. 다시 담으려면 위에서 다시 담기를 하세요.`,
+                          items: ls.slice(0, 5).map(l => `${l.source === 'hogi' ? `${l.pn} ${l.hogi}` : '직접'} · ${l.qty}${l.unit || ''}`), more: Math.max(0, ls.length - 5),
+                          okText: '빼기' }))) return
+                        removeItemMut.mutate(ls.map(l => l.id))
+                      }}
+                      title="장바구니에서 이 품목 빼기" className="text-slate-300 hover:text-red-500 disabled:opacity-40">✕</button>
                   </td>
                 </tr>
               )})

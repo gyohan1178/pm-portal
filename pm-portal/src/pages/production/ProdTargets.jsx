@@ -95,7 +95,7 @@ export default function ProdTargets() {
 
   return (
     <div className="space-y-4" data-prod-targets data-cust={cust}>
-      <PageHead crumb="현장 · 생산" title="생산관리 대상"
+      <PageHead crumb="현장" title="생산관리 대상"
         desc="고객사마다 생산관리에서 운영할 품번을 그룹으로 정하고, 수주대장 PO 와 생산관리 호기가 제대로 이어졌는지 봅니다. 연결은 저장하지 않고 늘 지금 데이터로 계산합니다." />
 
       <div className="flex flex-wrap items-center gap-2">

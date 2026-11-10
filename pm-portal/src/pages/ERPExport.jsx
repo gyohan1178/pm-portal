@@ -113,7 +113,7 @@ export default function ERPExport() {
 
   return (
     <div className="space-y-5 max-w-2xl">
-      <PageHead crumb="기초자료" title="ERP 연동"
+      <PageHead crumb="기타" title="ERP 연동"
         desc="포털 데이터를 이카운트(ERP) 업로드용 엑셀로 추출합니다. 추출 유형과 고객사를 고른 뒤 「엑셀 추출」을 누르세요."></PageHead>
 
 

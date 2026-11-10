@@ -285,7 +285,7 @@ export default function Shortage() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <PageHead crumb="소요 · 부족" title="부족자재"
+      <PageHead crumb="구매" title="부족자재"
         desc="고객사 PO 에 BOM 을 전개해 재고 · 입고예정으로 모자라는 부품을 찾습니다. 체크해서 바로 구매발주를 만들 수 있습니다."></PageHead>
       <CustomerTabs />
       <ShortageTabs cs={csCode} />

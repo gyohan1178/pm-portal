@@ -18,7 +18,8 @@ const USER_COLS = [
   { key:'_act',       label:'관리',   defaultWidth:130, style:{textAlign:'center'}, sortable:false },
 ]
 
-const ROLES = ['admin', 'editor', 'viewer']
+// 현장 계정(field_edit · field_view)은 현장 메뉴만 보인다 — useProfile 참고 (v4.166.0)
+const ROLES = ['admin', 'editor', 'viewer', 'field_edit', 'field_view']
 
 async function fetchProfiles() {
   const { data, error } = await supabase
