@@ -1,3 +1,5 @@
+import { EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchInsightsData } from '../../lib/insightsData'
@@ -37,12 +39,10 @@ export default function Insights() {
 
   return (
     <div className="space-y-4">
-      <AnalysisTabs />
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">📊 인사이트 (관리자)</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">North Star · 단가 이상 · 공급처 평가 · 시스템 활동 — 데이터로 증명하는 구매자재</p>
-      </div>
+      <PageHead crumb="분석" title="인사이트 (관리자)"
+        desc="North Star · 단가 이상 · 공급처 평가 · 시스템 활동 — 데이터로 증명하는 구매자재" />
 
+      <AnalysisTabs />
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit flex-wrap">
         {TABS.map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)}
@@ -90,7 +90,7 @@ export default function Insights() {
           {tab === 'ppv' && (
             <div className="space-y-3">
               <p className="text-xs text-slate-400">단가 급변동(±10%↑) 또는 거래처 간 가격차(5%↑)를 감지합니다 — 협상·검토 대상</p>
-              {ppv.length === 0 ? <div className="text-center py-12 text-slate-300 text-sm">감지된 단가 이상이 없습니다 👍</div> : (
+              {ppv.length === 0 ? <EmptyState title="감지된 단가 이상이 없습니다 👍" /> : (
                 <div className="rounded-xl border border-slate-200 overflow-hidden">
                   {ppv.slice(0, 30).map((a, i) => (
                     <div key={i} className="flex items-center gap-3 px-4 py-2.5 border-b border-slate-50 last:border-0">

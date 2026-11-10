@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -358,26 +360,19 @@ function ExternalDist() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] font-semibold text-slate-400">🧾 품질</p>
-          <h1 className="text-xl font-extrabold text-slate-900">도면 배포이력대장</h1>
-          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-            외주 가공처·협력사에 도면을 보낼 때마다 한 줄 남깁니다. 누가 적었는지는 로그인 계정으로 자동 기록됩니다.
-            설계변경 때는 도면번호로 기존 배포처를 뽑아 폐기통보를 남기세요.
-          </p>
-        </div>
+      <PageHead crumb="품질" title="도면 배포이력대장"
+        desc="외주 가공처·협력사에 도면을 보낼 때마다 한 줄 남깁니다. 누가 적었는지는 로그인 계정으로 자동 기록됩니다. 설계변경 때는 도면번호로 기존 배포처를 뽑아 폐기통보를 남기세요.">
         <div className="flex items-center gap-2">
           <button onClick={copyMailNote} title="배포 메일 본문 하단에 넣는 문구 (지침 7항)"
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">📋 기밀 문구</button>
           <button onClick={exportXlsx}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📑 엑셀</button>
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 엑셀</button>
           {canEdit && (
             <button onClick={() => { setForm({ ...EMPTY, drawings: [EMPTY_DWG()], requester: me?.name || '' }); setNewContact(null) }}
               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">＋ 배포 기록</button>
           )}
         </div>
-      </div>
+      </PageHead>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">대장을 못 불러왔습니다 — {error.message}</div>}
       {profile && !canEdit && (
@@ -455,7 +450,7 @@ function ExternalDist() {
           </thead>
           <tbody>
             {isLoading && <SkeletonRows cols={12} rows={8} two={[4]} />}
-            {!isLoading && !view.length && <tr><td colSpan={12} className="py-10 text-center text-slate-400">해당하는 줄이 없습니다.</td></tr>}
+            {!isLoading && !view.length && <EmptyRow cols={12} title="해당하는 줄이 없습니다" />}
             {view.map((r) => (
               <tr key={r.id} className="border-t border-slate-100 hover:bg-slate-50/60">
                 {canApprove && <td className="px-2 py-2"><input type="checkbox" checked={sel.has(r.id)} onChange={() => toggle(r.id)} /></td>}

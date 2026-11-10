@@ -1,3 +1,5 @@
+import { EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { SkelBar } from '../../components/ux/Skeleton'
@@ -69,12 +71,8 @@ export default function WhatIfSim() {
 
   return (
     <div className="space-y-5">
-      <AnalysisTabs />
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">🔬 What-if 시뮬레이터</h1>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">변수를 바꿔 "만약 이러면 어디가 터지나"를 미리 실험 — 실제 데이터는 안 바뀝니다</p>
-        </div>
+      <PageHead crumb="분석" title="What-if 시뮬레이터"
+        desc={<>변수를 바꿔 "만약 이러면 어디가 터지나"를 미리 실험 — 실제 데이터는 안 바뀝니다</>}>
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
           {CUST.map(c => (
             <button key={c.code} onClick={() => nav(`/what-if/${c.code}`)}
@@ -83,7 +81,8 @@ export default function WhatIfSim() {
             </button>
           ))}
         </div>
-      </div>
+      </PageHead>
+      <AnalysisTabs />
 
       {/* 변수 조정 */}
       <div className="rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50/50 to-violet-50/30 p-5">
@@ -141,9 +140,7 @@ export default function WhatIfSim() {
       )}
 
       {!changed && (
-        <div className="text-center py-8 text-slate-300 text-sm">
-          위 슬라이더를 움직여 시나리오를 실험해보세요 — 변화가 실시간으로 계산됩니다
-        </div>
+        <EmptyState title="위 슬라이더를 움직여 시나리오를 실험해보세요 — 변화가 실시간으로 계산됩니다" />
       )}
     </div>
   )

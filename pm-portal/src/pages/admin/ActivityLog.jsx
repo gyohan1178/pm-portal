@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -99,12 +101,8 @@ export default function ActivityLog() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">🗂 활동 이력 · 용량</h1>
-        <p className="page-desc text-xs text-slate-400">
-          주요 작업 기록과 데이터베이스 사용량입니다. 조회·검색은 기록하지 않습니다. (관리자 전용)
-        </p>
-      </div>
+      <PageHead crumb="기타" title="활동 이력 · 용량"
+        desc="주요 작업 기록과 데이터베이스 사용량입니다. 조회·검색은 기록하지 않습니다. (관리자 전용)" />
 
       {/* 용량 */}
       {usage && (
@@ -205,7 +203,7 @@ export default function ActivityLog() {
               </tr>
             ))}
             {!isLoading && !rows.length && (
-              <tr><td colSpan={6} className="py-10 text-center text-slate-400">기록이 없습니다.</td></tr>
+              <EmptyRow cols={6} title="기록이 없습니다" />
             )}
           </tbody>
         </table>

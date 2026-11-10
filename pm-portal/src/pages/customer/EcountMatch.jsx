@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 // 수주대장 › 이카운트 대조 (v4.94.0)
 //   ① 판매입력 파일 만들기 — 납품했는데 판매입력 안 된 줄 → 이카운트 판매입력 업로드 양식
 //   ② 판매 자료 올려 대조 — PO No. · 품목코드로 맞추고, 맞은 줄은 「판매입력 마감」 + 명세서번호
@@ -172,7 +173,7 @@ export default function EcountMatch({ orders, editable, meName, onChanged }) {
                   <th className="px-3 font-bold text-right">수주대장 수량 · 금액</th><th className="px-3 font-bold text-right">이카운트 수량 · 금액</th><th className="px-3 font-bold">확인할 것</th>
                 </tr></thead>
                 <tbody>
-                  {!shown.length && <tr><td colSpan={7} className="p-8 text-center text-slate-400">해당하는 줄이 없습니다</td></tr>}
+                  {!shown.length && <EmptyRow cols={7} title="해당하는 줄이 없습니다" />}
                   {shown.map((x, i) => {
                     const o = x.o, l = x.l, r = x.r
                     const q = l ? (+l.delivered_qty > 0 ? +l.delivered_qty : +l.qty) : null

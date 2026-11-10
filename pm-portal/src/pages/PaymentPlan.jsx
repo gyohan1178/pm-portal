@@ -1,3 +1,5 @@
+import { EmptyRow } from '../components/ui/EmptyState'
+import PageHead from '../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useDebounced } from '../hooks/useDebounced'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -204,14 +206,8 @@ export default function PaymentPlan() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">💳 결제 계획</h1>
-        <p className="page-desc text-xs text-slate-400">
-          발주는 한 번, 결제는 나눠 하는 건을 기록합니다.
-          매입 금액은 입고 시점 기준이라 <b>매입 대시보드는 바뀌지 않습니다</b> —
-          대금이 언제 얼마씩 나가는지 보여주기 위한 자료입니다.
-        </p>
-      </div>
+      <PageHead crumb="구매" title="결제 계획"
+        desc={<>발주는 한 번, 결제는 나눠 하는 건을 기록합니다. 매입 금액은 입고 시점 기준이라 <b>매입 대시보드는 바뀌지 않습니다</b> — 대금이 언제 얼마씩 나가는지 보여주기 위한 자료입니다.</>} />
 
       {/* 월별 요약 */}
       {!!monthly.length && (
@@ -291,7 +287,7 @@ export default function PaymentPlan() {
               )
             })}
             {!isLoading && !shown.length && (
-              <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">발주가 없습니다.</td></tr>
+              <EmptyRow cols={COLS.length} title="발주가 없습니다" />
             )}
           </tbody>
           )}

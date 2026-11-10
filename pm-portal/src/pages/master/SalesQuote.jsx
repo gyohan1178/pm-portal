@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -65,13 +66,8 @@ export default function SalesQuote() {
   return (
     <div className="space-y-4">
       {coach.el}
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">📤 매출견적</h1>
-          <p className="page-desc text-xs text-slate-400">
-고객사 견적 요청을 접수해 BOM · 단가를 확인하고, 견적서를 작성해 고객사에 보내면 「📤 발송 완료」로 끝냅니다 (진행 중 · 발송 완료만 봅니다). 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.
-          </p>
-        </div>
+      <PageHead crumb="영업" title="매출견적"
+        desc={<>고객사 견적 요청을 접수해 BOM · 단가를 확인하고, 견적서를 작성해 고객사에 보내면 「📤 발송 완료」로 끝냅니다 (진행 중 · 발송 완료만 봅니다). 업체 매입단가는 구매 → <b>품목 단가 등록</b>에서 관리합니다.</>}>
         <div className="flex items-center gap-2">
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {[['rfq', '📥 견적 접수 현황'], ['write', '✍ 견적 작성'], ['history', '📋 견적 이력'], ['price', '🏷 판매 실적가']].map(([k, l]) => (
@@ -109,7 +105,7 @@ export default function SalesQuote() {
             <span data-rate-base className="self-end mb-1.5 text-[10px] text-slate-400" title="기준 환율은 견적서의 ⚙ 마진구간에서 고정합니다 (모든 PC 공통)">📌 기준 환율</span>
           ))}
         </div>
-      </div>
+      </PageHead>
 
       {tab === 'rfq' ? (
         <RfqBoard customers={custList} onWrite={(r) => {

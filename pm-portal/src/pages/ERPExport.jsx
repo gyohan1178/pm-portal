@@ -164,7 +164,7 @@ export default function ERPExport() {
 
       <button onClick={handleExport} disabled={exporting}
         className="w-full py-3 text-sm font-700 rounded-xl bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 flex items-center justify-center gap-2">
-        {exporting ? <><Spin />추출 중...</> : '📥 엑셀 추출'}
+        {exporting ? <><Spin />추출 중...</> : '📥 엑셀'}
       </button>
     </div>
   )

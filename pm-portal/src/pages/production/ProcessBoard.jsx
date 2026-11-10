@@ -1,3 +1,4 @@
+import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useState, useMemo, useEffect } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { todayISO, kstDT, kst } from '../../lib/utils'
@@ -138,7 +139,7 @@ export default function ProcessBoard({ tv: tvProp }) {
           </tr>
         </thead>
         <tbody>
-          {isLoading && <tr><td colSpan={7} className="pb-empty">불러오는 중…</td></tr>}
+          {isLoading && <SkeletonRows cols={7} rows={6} />}
           {!isLoading && !list.length && <tr><td colSpan={7} className="pb-empty">조건에 맞는 호기가 없습니다</td></tr>}
           {list.map((r) => <Row key={r.id} r={r} tv={tv} sel={!!sel[r.id]} onSel={(v) => setSel((o) => ({ ...o, [r.id]: v }))}
             open={open === r.id} onOpen={() => setOpen(open === r.id ? null : r.id)} />)}

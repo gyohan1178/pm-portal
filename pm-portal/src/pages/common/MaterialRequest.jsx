@@ -1,3 +1,4 @@
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import { useState, useRef, useCallback, useMemo } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -1068,7 +1069,7 @@ export default function MaterialRequest() {
   return (
     <div className="space-y-4">
       {confirmEl}{snack.el}{coach.el}
-      <PageHead crumb="현장" title="🙋 자재 요청"
+      <PageHead crumb="현장" title="자재 요청"
         desc={canEdit
           ? '요청을 확인하고 불출 또는 발주로 처리합니다. 행을 눌러 여러 건을 함께 처리할 수 있습니다.'
           : '필요한 자재를 요청하면 구매자재팀에 전달됩니다. 처리 상황은 이 목록에서 확인할 수 있습니다.'}>
@@ -1655,21 +1656,19 @@ export default function MaterialRequest() {
         <>
           {/* 요약 지표 — 누르면 그 조건만 본다 (진행 중 목록) */}
           {liveTab && (
-            <div className="kpi-grid grid grid-cols-2 lg:grid-cols-4 gap-2.5" data-req-kpi>
+            <KpiRow cols={4} data="req" data-req-kpi>
               {[
                 ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400', '아직 처리 안 끝난 품목이 있는 요청 중, 요청서의 필요일이 오늘보다 앞인 것 (요청서 단위로 셉니다).'],
                 ['readyLate',  '📦 불출 예정일 지남', '주겠다고 한 날이 지났는데 아직 안 나감', 'border-amber-200 bg-amber-50 text-amber-800',  'ring-amber-400', '구매자재가 「📅 불출 가능일」로 회신한 날이 지났는데 아직 불출 · 발주가 안 된 품목이 있는 요청.'],
                 ['unassigned', '🙅 미배정',           '처리자가 아직 없는 요청',                'border-sky-200 bg-sky-50 text-sky-800',        'ring-sky-400', '진행 중인데 품목 어느 줄에도 처리자가 정해지지 않은 요청. 「👤 처리자 배정」으로 나눠 맡으세요.'],
                 ['urgent',     '🚨 긴급',             '요청자가 긴급으로 올린 것',              'border-slate-200 bg-white text-slate-700',     'ring-slate-400', '요청자가 긴급도를 「긴급」으로 고른 진행 중 요청. 필요일과 상관없이 맨 앞 구간에 나옵니다.'],
               ].map(([k, label, note, cls, ring, tip]) => (
-                <button key={k} data-kpi={k} onClick={() => { setKpi(v => (v === k ? null : k)); setSel({}) }}
-                  className={`text-left rounded-2xl border px-4 py-3 transition-shadow ${cls} ${kpi === k ? `ring-2 ${ring} shadow-sm` : 'hover:shadow-sm'}`}>
-                  <p className="text-xs font-bold flex items-center gap-1">{label}<InfoTip text={tip} align={k === 'urgent' || k === 'unassigned' ? 'right' : 'left'} /></p>
-                  <p className="text-2xl font-extrabold leading-tight">{n(reqView.counts[k])}<span className="text-xs font-bold ml-1">건</span></p>
-                  <p className="text-[11px] opacity-80">{note}{kpi === k ? ' · 보는 중' : ''}</p>
-                </button>
+                <KpiCard key={k} data={k} tone={/rose/.test(cls) ? 'red' : /amber/.test(cls) ? 'amber' : /sky/.test(cls) ? 'blue' : ''}
+                  label={label} value={reqView.counts[k] || 0} unit="건" tip={tip}
+                  note={`${note}${kpi === k ? ' · 보는 중' : ''}`} on={kpi === k}
+                  onClick={() => { setKpi(v => (v === k ? null : k)); setSel({}) }} />
               ))}
-            </div>
+            </KpiRow>
           )}
 
           <div className="flex items-center gap-2 flex-wrap">

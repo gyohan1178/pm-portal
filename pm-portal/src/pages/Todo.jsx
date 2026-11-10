@@ -1,3 +1,4 @@
+import PageHead from '../components/PageHead'
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
@@ -380,18 +381,15 @@ export default function Todo() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">📋 할 일</h1>
-          <p className="page-desc text-xs text-slate-400">내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만</p>
-        </div>
+      <PageHead title="할 일"
+        desc="내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만">
         <button onClick={coach.start} data-coach-again
           className="ml-auto px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>
         <button onClick={newDraft} data-todo-add
           className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
           + 추가
         </button>
-      </div>
+      </PageHead>
       {snack.el}{confirmEl}{coach.el}
 
       {/* 사람 칩 — 들어오면 「나」 */}

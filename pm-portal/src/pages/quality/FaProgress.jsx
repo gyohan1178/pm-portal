@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useCallback, useEffect } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -323,18 +324,11 @@ export default function FaProgress() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] font-semibold text-slate-400">🔬 품질</p>
-          <h1 className="text-xl font-extrabold text-slate-900">초도품(FA) 진행관리</h1>
-          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-            초도품 PO 를 받은 뒤 PO 접수 → 자재 → 제작 → 품질 인계 · 성적서 → 고객사 제출 · 승인까지, 단계마다 예정일과 실적일로 봅니다.
-            카드를 누르면 그 건의 단계 · 세부 항목 · 이슈 기록이 열립니다.
-          </p>
-        </div>
+      <PageHead crumb="품질" title="초도품(FA) 진행관리"
+        desc="초도품 PO 를 받은 뒤 PO 접수 → 자재 → 제작 → 품질 인계 · 성적서 → 고객사 제출 · 승인까지, 단계마다 예정일과 실적일로 봅니다. 카드를 누르면 그 건의 단계 · 세부 항목 · 이슈 기록이 열립니다.">
         <div className="flex items-center gap-2">
           <button onClick={exportList} title="사내용 — 단계별 예정 · 실적, 비고 · 문의까지"
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📑 엑셀 (사내)</button>
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 엑셀 (사내)</button>
           <button onClick={() => setCustOut(true)} title="고객사에 보낼 영문 진행 보고 — 사내 비고 · 이슈 · 담당자는 빠집니다"
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">📤 고객사 제출용</button>
           {canEdit && (
@@ -342,7 +336,7 @@ export default function FaProgress() {
               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">📋 FA 목록 붙여넣기</button>
           )}
         </div>
-      </div>
+      </PageHead>
 
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">목록을 못 불러왔습니다 — {error.message}</div>}
 
@@ -862,7 +856,7 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
           <button onClick={() => next && go(next.id)} disabled={!next} title={next ? `${next.item_code} ${next.item_desc || ''}` : ''}
             className="px-3 py-1.5 text-sm font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-30">다음 건 ▶</button>
           <button onClick={exportOne}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📑 이 건 엑셀</button>
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 이 건 엑셀</button>
         </div>
       </div>
 

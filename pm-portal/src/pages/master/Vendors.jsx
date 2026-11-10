@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { useState, useRef } from 'react'
 import PageHead from '../../components/PageHead'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -420,7 +421,7 @@ export default function Vendors() {
             {isLoading ? (
               <SkeletonRows cols={COLS.length} rows={8} first={1} />
             ) : vendors.length === 0 ? (
-              <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">협력사를 추가해주세요</td></tr>
+              <EmptyRow cols={COLS.length} title="협력사를 추가해주세요" />
             ) : vendors.map(v => (
               <tr key={v.id} className={`border-b border-slate-100 hover:bg-slate-50 group ${checked[v.id] ? 'bg-rose-50/50' : ''}`}>
                 <td className="px-2 py-2 text-center">

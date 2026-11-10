@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { useState, useEffect, useMemo, useCallback, useRef, memo, Fragment } from 'react'
 import PageHead from '../../components/PageHead'
 import { DocRequestButton } from '../../components/DocRequestModal'
@@ -1270,7 +1271,7 @@ export default function BOM() {
               {asmLoading ? (
                 <SkeletonRows cols={6} rows={8} />
               ) : assemblies.length === 0 ? (
-                <tr><td colSpan={6} className="text-center py-10 text-slate-400">등록된 BOM이 없습니다. CSV를 업로드해주세요.</td></tr>
+                <EmptyRow cols={6} title="등록된 BOM이 없습니다. CSV를 업로드해주세요" />
               ) : assemblies.filter(a=>{
                   const q=asmSearch.trim().toLowerCase(); if(!q) return true
                   return (a.code||'').toLowerCase().includes(q)||(a.name||'').toLowerCase().includes(q)
@@ -1362,7 +1363,7 @@ export default function BOM() {
                   </button>
                   )}
                   <button onClick={()=>exportDetailCSV(bomDetail, verObj ? { ...selAssembly, code: `${selAssembly.code}_REV${verObj.rev}` } : selAssembly)} disabled={!bomDetail.length}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 CSV 추출</button>
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📥 CSV</button>
                   <button data-bom-img-open onClick={()=>setImgOpen(true)} disabled={!bomDetail.length}
                     title="도면에 붙일 BOM 을 흑백 이미지로 — 클립보드 복사 · PNG 저장"
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40">📐 도면용 이미지</button>
@@ -1483,7 +1484,7 @@ export default function BOM() {
                         {detailLoading ? (
                           <SkeletonRows cols={11} rows={10} first={1} two={[3]} />
                         ) : bomDetail.length === 0 ? (
-                          <tr><td colSpan={11} className="text-center py-10 text-slate-400">품목이 없습니다</td></tr>
+                          <EmptyRow cols={11} title="품목이 없습니다" />
                         ) : detailVis.shown.map(b => { const st = supTree.get(b.id); const open = openSubs.has(b.id); return (
                           <Fragment key={b.id}>
                             <BomDetailRow b={b} st={st} dw={dwMap[b.items?.std_code]}

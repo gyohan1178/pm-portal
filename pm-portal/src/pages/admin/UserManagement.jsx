@@ -1,3 +1,5 @@
+import { EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -84,10 +86,8 @@ export default function UserManagement() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">👥 회원 관리</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">가입 신청 승인 · 부서 · 권한 설정 (관리자 / 편집 / 조회). 부서는 수주대장 화면 구분 · 알림 · 할 일 담당에 쓰고, 메뉴 권한은 보이는 메뉴만 정합니다. 「팀장급」은 첫 화면 업무 흐름에서 모든 부서를 봅니다 (그 밖은 내 부서 · 제조만).</p>
-      </div>
+      <PageHead crumb="관리" title="회원 관리"
+        desc="가입 신청 승인 · 부서 · 권한 설정 (관리자 / 편집 / 조회). 부서는 수주대장 화면 구분 · 알림 · 할 일 담당에 쓰고, 메뉴 권한은 보이는 메뉴만 정합니다. 「팀장급」은 첫 화면 업무 흐름에서 모든 부서를 봅니다 (그 밖은 내 부서 · 제조만)." />
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
         {[['pending', `승인 대기 ${pending.length}`], ['active', `활성 ${active.length}`], ['rejected', `거절 ${rejected.length}`]].map(([k, label]) => (
@@ -102,7 +102,7 @@ export default function UserManagement() {
           <div className="hidden sm:block rounded-xl border border-slate-200 bg-white overflow-hidden"><table className="w-full"><tbody><SkeletonRows cols={USER_COLS.length} rows={6} /></tbody></table></div>
         </div>
       ) :
-        list.length === 0 ? <div className="text-center py-12 text-slate-300 text-sm">해당 회원이 없습니다</div> : (
+        list.length === 0 ? <EmptyState title="해당 회원이 없습니다" /> : (
         <>
           {/* 모바일: 카드 */}
           <div className="sm:hidden space-y-2">

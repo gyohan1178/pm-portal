@@ -1,3 +1,5 @@
+import { KpiCard } from '../../components/ui/Kpi'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useEffect } from 'react'
 import { DocRequestButton } from '../../components/DocRequestModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -59,19 +61,9 @@ const CLS2TONE = { 'b-blue': 'blue', 'b-red': 'red', 'b-amber': 'amber', 'b-gree
 function Badge({ tone = 'gray', children, title }) {
   return <span title={title} className={`inline-block px-2 py-0.5 rounded-full border text-[11px] font-bold whitespace-nowrap ${BADGE[tone]}`}>{children}</span>
 }
+// 공용 지표 카드로 (v4.168.0)
 function Kpi({ tone, label, value, note }) {
-  const T = {
-    pr: 'bg-violet-50 border-violet-200 text-violet-700', blue: 'bg-sky-50 border-sky-200 text-sky-700',
-    green: 'bg-emerald-50 border-emerald-200 text-emerald-700', red: 'bg-rose-50 border-rose-200 text-rose-600',
-    amber: 'bg-amber-50 border-amber-200 text-amber-700', '': 'bg-white border-slate-200 text-slate-900',
-  }[tone || '']
-  return (
-    <div className={`rounded-xl border px-4 py-3 ${T}`}>
-      <div className="text-[12px] font-bold text-slate-400">{label}</div>
-      <div className="text-2xl font-extrabold leading-tight">{value}</div>
-      {note && <div className="text-[11px] text-slate-400">{note}</div>}
-    </div>
-  )
+  return <KpiCard tone={tone || ''} label={label} value={value} note={note} />
 }
 const Card = ({ title, sub, right, children, className = '' }) => (
   <div className={`bg-white rounded-xl border border-slate-200 p-4 ${className}`}>
@@ -255,15 +247,8 @@ function CnList({ onOpen }) {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-start justify-between gap-4 flex-wrap">
-        <div>
-          <p className="text-[11px] font-semibold text-slate-400">🔬 품질 · AXCELIS</p>
-          <h1 className="text-xl font-extrabold text-slate-900">🔁 설계변경(CN) 이력</h1>
-          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-            Axcelis 에서 받은 CN Summary(HTML)를 올려 두는 곳입니다. 올리면 리비전 · BOM 추가/변경/삭제 · 신규/단종 품번을 뽑아 저장하고, 누구나 같은 내용을 다시 볼 수 있습니다.
-            생산기술팀은 「리뷰」(완료 / 불필요)를 고르고, 자사 품번을 몇 호기부터 적용할지 상세 화면에 적어 둡니다.
-          </p>
-        </div>
+      <PageHead crumb="품질" title="설계변경(CN) 이력"
+        desc="Axcelis 에서 받은 CN Summary(HTML)를 올려 두는 곳입니다. 올리면 리비전 · BOM 추가/변경/삭제 · 신규/단종 품번을 뽑아 저장하고, 누구나 같은 내용을 다시 볼 수 있습니다. 생산기술팀은 「리뷰」(완료 / 불필요)를 고르고, 자사 품번을 몇 호기부터 적용할지 상세 화면에 적어 둡니다.">
         <span className="ml-auto"><DocRequestButton preset={{ kind: '도면', customer_code: 'AX', source: 'cn', reason: '설계변경(CN) — 새 Rev 도면 필요' }} /></span>
         {canEdit && (
           <label data-cn-upload className={`px-3 py-2 text-xs font-bold rounded-lg text-white cursor-pointer ${busy ? 'bg-indigo-300' : 'bg-indigo-600 hover:bg-indigo-700'}`}>
@@ -272,7 +257,7 @@ function CnList({ onOpen }) {
               onChange={(e) => { const fl = e.target.files?.[0]; e.target.value = ''; upload(fl) }} />
           </label>
         )}
-      </div>
+      </PageHead>
 
       {upStep > 0 && (
         <div className="max-w-[640px]" data-cn-stepper>

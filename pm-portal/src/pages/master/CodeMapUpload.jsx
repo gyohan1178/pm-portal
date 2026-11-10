@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -140,13 +141,8 @@ export default function CodeMapUpload() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">🔢 기준코드 매핑</h1>
-        <p className="page-desc text-xs text-slate-400">
-          ecount <b>품목관계리스트</b>를 올려 기준코드(JS) ↔ 고객사코드 매핑을 갱신합니다.
-          <b>품목등록</b> 파일을 함께 올리면 품명·규격이 보강됩니다.
-        </p>
-      </div>
+      <PageHead crumb="기타" title="기준코드 매핑"
+        desc={<>ecount <b>품목관계리스트</b>를 올려 기준코드(JS) ↔ 고객사코드 매핑을 갱신합니다. <b>품목등록</b> 파일을 함께 올리면 품명·규격이 보강됩니다.</>} />
 
       {/* 현재 상태 */}
       {status && (

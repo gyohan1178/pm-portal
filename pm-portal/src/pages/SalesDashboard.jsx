@@ -1,3 +1,4 @@
+import PageHead from '../components/PageHead'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import AnalysisTabs from '../components/AnalysisTabs'
@@ -138,12 +139,8 @@ export default function SalesDashboard() {
           .print-root * { page-break-inside:avoid; }
         }
       `}</style>
-      <AnalysisTabs />
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">💼 매출 대시보드</h1>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</p>
-        </div>
+      <PageHead crumb="분석" title="매출 대시보드"
+        desc={<>고객사 PO 기준 · 납기월 집계 · {year}년 합계 <b className="text-slate-600">{fmtEok(d.total)}억</b> <span className="text-emerald-600">(완료 {fmtEok(d.doneTotal)} · 예정 {fmtEok(d.pendingTotal)})</span>{lastUpdated && <span className="text-slate-300 ml-1">· 실적 갱신 {String(lastUpdated).slice(0,10)}</span>}</>}>
         <div className="flex items-center gap-2 flex-wrap">
         <label className="flex items-center gap-1 text-xs whitespace-nowrap font-semibold text-slate-600 bg-white border border-slate-200 rounded-lg px-2 py-1.5">
           <span title="CCN=B(달러) PO에 적용">💱 USD</span>
@@ -158,7 +155,8 @@ export default function SalesDashboard() {
           {years.map(y=>(<option key={y} value={y}>{y}년</option>))}
         </select>
         </div>
-      </div>
+      </PageHead>
+      <AnalysisTabs />
 
       <div className="kpi-grid grid grid-cols-2 sm:grid-cols-3 gap-2 sm:gap-3">
         <div className="bg-white rounded-xl border border-slate-200 p-4">

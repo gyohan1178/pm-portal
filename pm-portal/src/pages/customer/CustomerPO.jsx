@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import ItemLink from '../../components/ItemLink'
 import PageHead from '../../components/PageHead'
 import { DocRequestButton } from '../../components/DocRequestModal'
@@ -530,23 +532,13 @@ export default function CustomerPO() {
       )}
 
       {/* 카드를 누르면 그 건만 따로 본다. 숫자만 보고는 무엇인지 알 수 없다. */}
-      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-5 gap-2">
-        {cardData.map(c => {
-          const st = CARD_CLS[c.color]
-          return (
-            <button key={c.label}
-              onClick={() => c.cnt > 0 && setDetail(c)}
-              disabled={!c.cnt}
-              className={`rounded-xl border p-3 text-left ${st.box} ${
-                c.cnt > 0 ? 'hover:shadow-sm cursor-pointer' : 'cursor-default'}`}>
-              <p className={`text-xs font-bold uppercase tracking-wide mb-1 ${st.lab}`}>{c.label}</p>
-              {isLoading ? <div className="h-7 flex items-center" data-skeleton><SkelBar w={44} h={18} /></div>
-                : <p className={`text-xl font-bold ${st.val}`}>{c.cnt.toLocaleString()}</p>}
-              {c.note && <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">{c.note}</p>}
-            </button>
-          )
-        })}
-      </div>
+      <KpiRow cols={5}>
+        {cardData.map(c => (
+          <KpiCard key={c.label} tone={{ red: 'red', amber: 'amber', violet: 'pr', orange: 'amber', slate: '' }[c.color] ?? ''}
+            label={c.label} value={c.cnt} note={c.note} loading={isLoading}
+            onClick={c.cnt > 0 ? () => setDetail(c) : undefined} />
+        ))}
+      </KpiRow>
 
 
       <div className="rounded-xl border border-slate-200 bg-white px-3 py-2.5 flex items-center gap-2 flex-wrap" data-cpo-toolbar>
@@ -595,7 +587,7 @@ export default function CustomerPO() {
         <ResizableTable cols={COLS} storageKey="cpo_cols" fill fillMin={360}>
           {()=>(
             <tbody>
-              {filtered.length===0 ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">고객사 PO가 없습니다</td></tr>
+              {filtered.length===0 ? <EmptyRow cols={COLS.length} title="고객사 PO가 없습니다" />
               : filtered.map(p=>(
                 <tr key={p.id} className={`border-b border-slate-100 hover:bg-slate-50 group ${p.isDelayed?'bg-red-50/30':''}`}>
                   <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{(p.item_id||p.project_id) && <input type="checkbox" checked={!!picked[p.id]} onChange={()=>setPicked(s=>({...s,[p.id]:!s[p.id]}))} onClick={e=>e.stopPropagation()} className="mr-1.5 align-middle accent-indigo-600"/>}{p.po_number||'-'}</td>

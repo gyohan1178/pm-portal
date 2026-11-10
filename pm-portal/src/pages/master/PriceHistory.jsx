@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { useState } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery } from '@tanstack/react-query'
@@ -70,7 +71,7 @@ export default function PriceHistory() {
             {isLoading ? (
               <SkeletonRows cols={3 + years.length + (years.length >= 2 ? 1 : 0)} rows={8} />
             ) : Object.keys(grouped).length === 0 ? (
-              <tr><td colSpan={10} className="text-center py-10 text-slate-400">단가 이력이 없습니다</td></tr>
+              <EmptyRow cols={10} title="단가 이력이 없습니다" />
             ) : Object.entries(grouped).map(([itemId, g]) => {
               const latestPrice = g.years[years[0]]
               const prevPrice = years.length >= 2 ? g.years[years[1]] : null

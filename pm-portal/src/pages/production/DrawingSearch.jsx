@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -373,19 +374,14 @@ export default function DrawingSearch() {
   return (
     <div className="p-4 md:p-6 space-y-4">
       {/* 헤더 */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-bold text-slate-800">📐 도면 조회</h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            NAS 도면의 최신 REV를 조회합니다. 파일은 이동·수정하지 않고 읽기만 합니다.
-          </p>
-        </div>
+      <PageHead crumb="현장" title="도면 조회"
+        desc="NAS 도면의 최신 REV 를 조회합니다. 파일은 이동 · 수정하지 않고 읽기만 합니다.">
         {lastScan && (
           <div className="text-xs text-slate-500">
             마지막 스캔 <span className="font-semibold text-slate-700">{new Date(lastScan).toLocaleString('ko-KR')}</span>
           </div>
         )}
-      </div>
+      </PageHead>
 
       {/* 소실 배너 */}
       {!!missingAll?.length && (

@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { missingOf } from '../../lib/prodFlow'
@@ -82,7 +83,7 @@ export default function MissingList({ rows, cust, q }) {
               </tr>
             </thead>
             <tbody>
-              {!shown.length && <tr><td colSpan={9} className="py-10 text-center text-slate-400">미불출로 적힌 파트가 없습니다</td></tr>}
+              {!shown.length && <EmptyRow cols={9} title="미불출로 적힌 파트가 없습니다" />}
               {shown.map(({ key, r, m }) => (
                 <tr key={key} className="border-b border-slate-100 h-[46px] hover:bg-slate-50/70" data-miss-row={key}>
                   <td className="px-2 text-[11.5px] font-bold text-slate-500">{CUST_NAME[r.customer_code] || r.customer_code}</td>
@@ -110,7 +111,7 @@ export default function MissingList({ rows, cust, q }) {
               </tr>
             </thead>
             <tbody>
-              {!parts.length && <tr><td colSpan={7} className="py-10 text-center text-slate-400">미불출로 적힌 파트가 없습니다</td></tr>}
+              {!parts.length && <EmptyRow cols={7} title="미불출로 적힌 파트가 없습니다" />}
               {parts.map((p) => (
                 <tr key={p.k} className="border-b border-slate-100 h-[46px] hover:bg-slate-50/70 align-middle" data-miss-part={normPn(p.pn) || p.k}>
                   <td className="px-2 font-mono font-bold text-red-600 whitespace-nowrap">{p.pn || '—'}</td>

@@ -1,3 +1,5 @@
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useCallback, useRef, memo } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -505,13 +507,8 @@ export default function ShortageForecast() {
       <div className="-mb-4"><CustomerTabs active={csCode} onPick={(c) => { setCsCode(c); setExcluded(new Set()) }} /></div>
       <ShortageTabs cs={csCode} />
       {made && <PoMadeBanner made={made.made} skipped={made.skipped} csCode={csCode} onClose={()=>setMade(null)} />}
-      <div className="flex items-start justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">🔮 소요 예측</h1>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">{csCode === 'ed'
-            ? 'Edwards = 생산관리 불출 예정(포캐스트로 만든 호기 포함) × 연결된 BOM − 재고 − 입고예정 · 「↻ 재계산」 때 생산관리 기준으로 다시 만듭니다'
-            : '포캐스트 × BOM 전개 − 재고 − 입고예정 · 약속일 1개월 전 재고 확보 기준'}</p>
-        </div>
+      <PageHead crumb="구매" title="소요 예측"
+        desc={<>{csCode === 'ed' ? 'Edwards = 생산관리 불출 예정(포캐스트로 만든 호기 포함) × 연결된 BOM − 재고 − 입고예정 · 「↻ 재계산」 때 생산관리 기준으로 다시 만듭니다' : '포캐스트 × BOM 전개 − 재고 − 입고예정 · 약속일 1개월 전 재고 확보 기준'}</>}>
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-slate-400">
             {cache.computedAt ? `계산: ${new Date(cache.computedAt).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}` : '미계산'}
@@ -540,7 +537,7 @@ export default function ShortageForecast() {
             )
           })()}
         </div>
-      </div>
+      </PageHead>
 
       {/* 고객사 탭은 맨 위(CustomerTabs)로 옮김 — 부족자재 · 소요량 조회와 같은 자리 */}
 
@@ -552,23 +549,11 @@ export default function ShortageForecast() {
       )}
 
       {/* 요약 카드 */}
-      <div className="kpi-grid grid grid-cols-3 gap-2">
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
-          <p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">🚨 지금 발주 필요 <InfoTip text={`「3개월 내 쇼티지」 품목 중, 첫 부족월에서 LT 를 뺀 달(LT 주 ÷ 4 를 올림한 개월 수)이 이번 달이거나 이미 지난 품목 수. ${FC_TIP_BASE}`} /></p>
-          <p className="text-2xl font-bold text-red-600">{summary.urgent}</p>
-          <p className="text-[11px] text-red-400 mt-0.5">LT 고려 시 이미 늦거나 임박</p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">⚠️ 3개월 내 쇼티지 <InfoTip text={`첫 부족월이 ${monthsAhead(3)} 까지인 품목 수 (이번 달부터 3개월 뒤 달까지 · 이미 지난 달 포함). ${FC_TIP_BASE}`} /></p>
-          <p className="text-2xl font-bold text-amber-700">{summary.within3}</p>
-          <p className="text-[11px] text-amber-500 mt-0.5">~{monthsAhead(3)}</p>
-        </div>
-        <div className="rounded-xl border border-slate-200 p-3">
-          <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1 flex items-center gap-1">전체 쇼티지 예상 <InfoTip align="right" text={`계산된 기간 안에 월말 예상재고가 한 번이라도 마이너스가 되는 품목 수. ${FC_TIP_BASE}`} /></p>
-          <p className="text-2xl font-bold text-slate-700">{summary.risk}</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">예측 기간 내</p>
-        </div>
-      </div>
+      <KpiRow cols={3}>
+        <KpiCard tone="red" label="🚨 지금 발주 필요" value={summary.urgent} note="LT 고려 시 이미 늦거나 임박" tip={`「3개월 내 쇼티지」 품목 중, 첫 부족월에서 LT 를 뺀 달(LT 주 ÷ 4 를 올림한 개월 수)이 이번 달이거나 이미 지난 품목 수. ${FC_TIP_BASE}`} />
+        <KpiCard tone="amber" label="⚠️ 3개월 내 쇼티지" value={summary.within3} note={<>~{monthsAhead(3)}</>} tip={`첫 부족월이 ${monthsAhead(3)} 까지인 품목 수 (이번 달부터 3개월 뒤 달까지 · 이미 지난 달 포함). ${FC_TIP_BASE}`} />
+        <KpiCard tone="" label="전체 쇼티지 예상" value={summary.risk} note="예측 기간 내" tip={`계산된 기간 안에 월말 예상재고가 한 번이라도 마이너스가 되는 품목 수. ${FC_TIP_BASE}`} />
+      </KpiRow>
 
       <div className="flex items-center gap-2 flex-wrap">
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="품번·품명·제조사품번 검색"

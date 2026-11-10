@@ -1,3 +1,4 @@
+import { EmptyState } from '../../components/ui/EmptyState'
 import { useState, useMemo, useRef, useEffect, useCallback, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -545,7 +546,7 @@ export default function RackLayout() {
             </div>
             <div className="overflow-y-auto p-3 space-y-2">
               {!snaps.length && (
-                <p className="text-center py-10 text-sm text-slate-400">기록이 없습니다</p>
+                <EmptyState title="기록이 없습니다" />
               )}
               {snaps.map(sp => (
                 <div key={sp.id}

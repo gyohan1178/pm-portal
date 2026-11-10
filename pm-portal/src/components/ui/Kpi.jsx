@@ -16,11 +16,11 @@ const TONE = {
 
 const fmt = (v) => typeof v === 'number' ? v.toLocaleString('ko-KR') : (v ?? '—')
 
-export function KpiCard({ tone = '', label, value, note, tip, onClick, on, loading, unit, data }) {
+export function KpiCard({ tone = '', label, value, note, tip, onClick, on, loading, unit, data, ...rest }) {   // rest = data-* 표시 (테스트 · 링크용)
   const [box, num] = TONE[tone] || TONE['']
   const Tag = onClick ? 'button' : 'div'
   return (
-    <Tag type={onClick ? 'button' : undefined} onClick={onClick} data-kpi={data || label} data-kpi-on={on ? '1' : undefined}
+    <Tag {...rest} type={onClick ? 'button' : undefined} onClick={onClick} data-kpi={data || label} data-kpi-on={on ? '1' : undefined}
       aria-pressed={onClick ? !!on : undefined}
       title={onClick ? (on ? '다시 누르면 거르기 해제' : '누르면 이 조건으로 거릅니다') : undefined}
       className={`min-w-0 text-left rounded-xl border px-4 py-3 transition ${box} ${
@@ -35,7 +35,7 @@ export function KpiCard({ tone = '', label, value, note, tip, onClick, on, loadi
 }
 
 // 지표 한 줄 — 4~6개. 그 이상이면 줄을 나눈다.
-export function KpiRow({ children, cols = 4, className = '', data }) {
+export function KpiRow({ children, cols = 4, className = '', data, ...rest }) {
   const g = { 2: 'sm:grid-cols-2', 3: 'sm:grid-cols-3', 4: 'sm:grid-cols-2 lg:grid-cols-4', 5: 'sm:grid-cols-3 lg:grid-cols-5', 6: 'sm:grid-cols-3 lg:grid-cols-6' }[cols] || 'sm:grid-cols-4'
-  return <div data-kpi-row={data || ''} className={`kpi-grid grid grid-cols-2 ${g} gap-3 ${className}`}>{children}</div>
+  return <div {...rest} data-kpi-row={data || ''} className={`kpi-grid grid grid-cols-2 ${g} gap-3 ${className}`}>{children}</div>
 }

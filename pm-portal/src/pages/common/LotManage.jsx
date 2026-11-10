@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useRef, useCallback } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -264,13 +265,8 @@ export default function LotManage() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">🏷 로트 관리</h1>
-          <p className="page-desc text-xs text-slate-400">
-            보증기간이 있는 품목입니다. 오래 있은 것부터 내보내세요. 급한 것이 맨 위에 옵니다.
-          </p>
-        </div>
+      <PageHead crumb="품질" title="로트 관리"
+        desc="보증기간이 있는 품목입니다. 오래 있은 것부터 내보내세요. 급한 것이 맨 위에 옵니다.">
         {/* 매일 쓰는 건 「로트 등록」 하나다. 나머지는 눈에 덜 띄게 둔다. */}
         <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={downloadAudit} disabled={auditBusy}
@@ -304,7 +300,7 @@ export default function LotManage() {
             </button>
           )}
         </div>
-      </div>
+      </PageHead>
 
       {/* 지표 — 0이어도 늘 보인다. 아무것도 없으면 「문제없음」인지 「자료가 없는지」 알 수 없다. */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2">

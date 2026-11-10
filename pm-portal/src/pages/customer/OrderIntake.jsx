@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import { KpiCard } from '../../components/ui/Kpi'
 // 📨 수주대장 — 전장 고객사 PO 를 접수부터 확인 · 회신 · 납품까지
 //
 //   v4.87.0  PDF 접수 · 변경 이력 · 회신 · AX PO 파일 반영
@@ -117,17 +119,9 @@ function useNarrow() {
   return n
 }
 
+// 공용 지표 카드로 (v4.168.0)
 function Kpi({ tone, label, value, sub, on, onClick, tip, loading }) {
-  const [box, num] = KPI_TONE[tone]
-  return (
-    <button type="button" onClick={onClick} data-kpi={label}
-      className={`min-w-0 text-left rounded-xl border px-3 md:px-4 py-3 transition ${box} ${on ? 'ring-2 ring-violet-400' : 'hover:shadow-sm'}`}>
-      <div className="text-[12px] text-slate-500 flex items-center gap-1">{label}{tip && <InfoTip text={tip} />}</div>
-      {loading ? <div className="h-[32px] md:h-[35px] flex items-center"><SkelBar w={54} h={20} /></div>
-        : <div className={`text-[24px] md:text-[28px] font-extrabold leading-tight tabular-nums ${num}`}>{value.toLocaleString('ko-KR')}</div>}
-      <div className="text-[11px] text-slate-500 truncate">{sub}</div>
-    </button>
-  )
+  return <KpiCard tone={tone === 'violet' ? 'pr' : tone} label={label} value={value} note={sub} on={on} onClick={onClick} tip={tip} loading={loading} />
 }
 
 function DueCell({ l, noRelease = false }) {
@@ -1052,7 +1046,7 @@ export default function OrderIntake() {
             </tr></thead>
             <tbody>
               {isLoading && <SkeletonRows cols={7} rows={8} two={[1, 2]} />}
-              {!isLoading && !poRows.length && <tr><td colSpan={7} className="p-10 text-center text-slate-400">조건에 맞는 PO 가 없습니다</td></tr>}
+              {!isLoading && !poRows.length && <EmptyRow cols={7} title="조건에 맞는 PO 가 없습니다" />}
               {shownPos.map(({ o, ls, amount }) => {
                 const rp = ls.filter((l) => !l.st.cancelled)
                 const replied = rp.filter((l) => l.reply).length

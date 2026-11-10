@@ -1,3 +1,4 @@
+import { KpiCard } from '../../components/ui/Kpi'
 // 📥 견적 접수 현황 — 영업 › 매출견적 첫 탭 (v4.92.0)
 //   고객사 견적 요청을 접수해 두고 BOM 확인 → 단가(구매자재) → 견적 작성 → 📤 발송 완료까지 한 줄로 따라간다 (v4.119.0 — 수주 · 실주는 안 물음)
 //   BOM 이 없는 품목은 영업이 고객 BOM 을 먼저 올린다 (기초자료 › BOM). 단가 없는 부품은 구매자재에 요청한다.
@@ -236,12 +237,9 @@ export default function RfqBoard({ customers = [], onWrite }) {
     return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">견적 접수 표가 아직 없습니다. Supabase SQL Editor 에서 <b>견적접수_반영_261023.sql</b> 을 먼저 실행해 주세요.<div className="text-xs mt-1 text-amber-600">{error.message}</div></div>
   }
 
+  // 공용 지표 카드로 (v4.168.0)
   const Kpi = ({ tone, label, v, sub }) => (
-    <div className={`rounded-xl border px-4 py-3 ${tone}`}>
-      <div className="text-[12px] text-slate-500">{label}</div>
-      <div className="text-[26px] font-extrabold leading-tight tabular-nums">{n(v)}</div>
-      <div className="text-[11px] text-slate-500 truncate">{sub}</div>
-    </div>
+    <KpiCard tone={/red/.test(tone) ? 'red' : /amber/.test(tone) ? 'amber' : /violet/.test(tone) ? 'pr' : ''} label={label} value={Number(v) || 0} note={sub} />
   )
   const pill = (k, label, cnt, tone) => (
     <button key={k} type="button" onClick={() => setStage(stage === k ? 'live' : k)} data-rfq-stage={k}

@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 // 생산관리 · Edwards 화면 (호기별 자재 준비)
 //
 //   작업자가 따로 쓰던 「Forecast 자재 준비 현황」 HTML 을 옮긴 것.
@@ -408,7 +409,7 @@ export function EdTable({ list, sel, setSel, rowSel, onField, onEdit, onMissing,
           ? groups.flatMap((g) => [<GroupRow key={'g' + g.key} g={g} open={isOpen(g)} onToggle={() => flip(g)} sel={sel} setSel={setSel} statusOpts={statusOpts} statusColor={statusColor} partColor={partColor} orderIdx={orderIdx} orderSetup={orderSetup} />,
               ...(isOpen(g) ? g.rows.map((r) => partRow(r, true)) : [])])
           : list.map((r, i) => (r._month ? monthRow(r, i) : partRow(r)))}
-        {!ids.length && <tr><td colSpan={ED_COLS} className="py-10 text-center text-slate-400">보여줄 줄이 없습니다</td></tr>}
+        {!ids.length && <EmptyRow cols={ED_COLS} title="보여줄 줄이 없습니다" />}
       </tbody>
     </table>
     </>

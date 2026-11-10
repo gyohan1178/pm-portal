@@ -1,3 +1,5 @@
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import PageHead from '../../components/PageHead'
 import { useState, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -84,13 +86,8 @@ export default function ScheduleChanges() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">📅 납품 일정 변경</h1>
-          <p className="page-desc text-xs text-slate-400">
-            전주 월요일 시점과 비교해 납기가 바뀐 건입니다. 매주 월요일에 기준이 갱신됩니다.{pdOnly && ' (PD BOX 만)'}
-          </p>
-        </div>
+      <PageHead crumb="분석" title="납품 일정 변경"
+        desc={<>전주 월요일 시점과 비교해 납기가 바뀐 건입니다. 매주 월요일에 기준이 갱신됩니다.{pdOnly && ' (PD BOX 만)'}</>}>
         <div className="flex items-center gap-2">
           <button onClick={() => setPdOnly(v => !v)}
             title="생산관리 대상 PD BOX 품번만 (16종)"
@@ -112,35 +109,15 @@ export default function ScheduleChanges() {
             📥 엑셀
           </button>
         </div>
-      </div>
+      </PageHead>
 
       {/* 요약 */}
-      <div className="kpi-grid grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <div className="rounded-xl border border-slate-200 bg-white p-3">
-          <p className="text-[11px] font-bold text-slate-400 flex items-center gap-1">전체<InfoTip text="전주 월요일 시점의 납기와 지금 납기가 다른 납품 예정 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
-          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
-  <p className="text-2xl font-bold text-slate-800">{n(rows.length)}</p>)}
-          <p className="text-[10px] text-slate-400">지난주 대비 납기가 바뀐 줄</p>
-        </div>
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-3">
-          <p className="text-[11px] font-bold text-rose-500 flex items-center gap-1">당겨짐<InfoTip text="지금 납기가 전주 월요일 납기보다 앞선 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
-          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
-  <p className="text-2xl font-bold text-rose-700">{n(earlier.length)}</p>)}
-          <p className="text-[10px] text-rose-400">제조 일정 확인 필요</p>
-        </div>
-        <div className="rounded-xl border border-sky-200 bg-sky-50 p-3">
-          <p className="text-[11px] font-bold text-sky-500 flex items-center gap-1">밀림<InfoTip text="지금 납기가 전주 월요일 납기보다 뒤인 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
-          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
-  <p className="text-2xl font-bold text-sky-700">{n(later.length)}</p>)}
-          <p className="text-[10px] text-sky-500">납기가 뒤로 미뤄진 줄</p>
-        </div>
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-3">
-          <p className="text-[11px] font-bold text-amber-600 flex items-center gap-1">이번 주 3회+<InfoTip align="right" text="표의 「이번 주 변경」 횟수가 3회 이상인 줄 수. 당겨짐 · 밀림과 겹쳐 셀 수 있습니다. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." /></p>
-          {isLoading ? <div className="h-8 flex items-center" data-skeleton><SkelBar w={44} h={20} /></div> : (
-  <p className="text-2xl font-bold text-amber-700">{n(repeated.length)}</p>)}
-          <p className="text-[10px] text-amber-500">3회 이상</p>
-        </div>
-      </div>
+      <KpiRow cols={4}>
+        <KpiCard tone="" label="전체" value={n(rows.length)} note="지난주 대비 납기가 바뀐 줄" tip="전주 월요일 시점의 납기와 지금 납기가 다른 납품 예정 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." loading={isLoading} />
+        <KpiCard tone="red" label="당겨짐" value={n(earlier.length)} note="제조 일정 확인 필요" tip="지금 납기가 전주 월요일 납기보다 앞선 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." loading={isLoading} />
+        <KpiCard tone="blue" label="밀림" value={n(later.length)} note="납기가 뒤로 미뤄진 줄" tip="지금 납기가 전주 월요일 납기보다 뒤인 줄 수. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." loading={isLoading} />
+        <KpiCard tone="amber" label="이번 주 3회+" value={n(repeated.length)} note="3회 이상" tip="표의 「이번 주 변경」 횟수가 3회 이상인 줄 수. 당겨짐 · 밀림과 겹쳐 셀 수 있습니다. 위에서 고른 기간(1 · 2 · 3개월) 기준이며, 「PD BOX만」을 켜면 PD BOX 품번만 셉니다." loading={isLoading} />
+      </KpiRow>
 
       {/* 목록 */}
       <div className="bg-white rounded-xl border border-slate-200 overflow-x-auto">

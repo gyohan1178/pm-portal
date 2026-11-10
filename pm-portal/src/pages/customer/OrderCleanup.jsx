@@ -1,3 +1,5 @@
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { EmptyRow } from '../../components/ui/EmptyState'
 // 수주대장 › 코드 · BOM 정리 (v4.94.0)
 //   ① 코드 부여 — 포털 코드가 없는 고객사 품번을 고객사별로 → 코드 · 분류(기준코드) 제안 → 체크해서 한 번에 등록
 //   ② BOM 없는 품목 — 진행 중 수주 품목 중 BOM 이 없는 것 → BOM 필요 / 단품 · 영업에 BOM 요청
@@ -92,7 +94,7 @@ export default function OrderCleanup({ orders, editable, meName, onChanged }) {
                 <th className="px-2 font-bold">고객사 품번 · 품명</th><th className="px-2 font-bold">포털 코드 (제안)</th><th className="px-2 font-bold">분류 → 기준코드</th><th className="px-2 font-bold text-right">진행 중</th><th className="px-2" />
               </tr></thead>
               <tbody>
-                {!rows.length && <tr><td colSpan={6} className="p-8 text-center text-slate-400">코드 없는 품번이 없습니다</td></tr>}
+                {!rows.length && <EmptyRow cols={6} title="코드 없는 품번이 없습니다" />}
                 {rows.map((x) => (
                   <tr key={x.key} className={`border-t border-slate-100 align-top ${x.guessNon ? 'bg-amber-50/40' : ''}`} data-cl-row={x.pn}>
                     <td className="pl-3 py-2">{editable && <input type="checkbox" checked={pick.has(x.key)} onChange={() => togglePick(x.key)} data-cl-pick={x.pn} />}</td>
@@ -197,7 +199,7 @@ function BomPanel({ cust, editable, meName }) {
                 <th className="px-2 font-bold">품목</th><th className="px-2 font-bold">가장 빠른 납기</th><th className="px-2 font-bold">{st === 'req' ? '요청' : 'BOM 필요?'}</th>
               </tr></thead>
               <tbody>
-                {isLoading && <tr><td colSpan={4} className="p-6 text-center text-slate-400">불러오는 중…</td></tr>}
+                {isLoading && <SkeletonRows cols={4} rows={6} />}
                 {!isLoading && !shown.length && <tr><td colSpan={4} className="p-6 text-center text-slate-400">해당 품목이 없습니다</td></tr>}
                 {shown.map((r) => {
                   const d = daysTo(r.due_min)

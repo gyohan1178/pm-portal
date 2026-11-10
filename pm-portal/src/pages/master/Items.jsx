@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { useState, useRef, useCallback } from 'react'
 import PageHead from '../../components/PageHead'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -731,7 +732,7 @@ export default function Items() {
           {() => (
             <tbody>
               {shown.length===0
-                ? <tr><td colSpan={COLS.length} className="text-center py-10 text-slate-400">품목을 추가해주세요</td></tr>
+                ? <EmptyRow cols={COLS.length} title="품목을 추가해주세요" />
                 : shown.slice(0, visibleCount).map(item=>(
                   <tr key={item.id} onDoubleClick={()=>handleEdit(item)}
                     {...(bulkMode ? rowProps(item.id, selected.has(item.id)) : {})}

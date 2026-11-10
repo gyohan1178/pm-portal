@@ -1,3 +1,5 @@
+import { EmptyRow, EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -390,18 +392,14 @@ export default function Forecast() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <CustomerTabs />
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">{cs?.name || csCode} 포캐스트</h1>
-          <Link to={`/forecast-shortage?cs=${String(csCode || 'ax').toLowerCase()}`} className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-indigo-600 hover:underline">🔍 이 포캐스트로 소요 예측(쇼티지 분석) 보기 →</Link>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">고객사 수요 예측 — 프로젝트/품번별 월별 수량 · 직전 접수 대비 변화 추적</p>
-        </div>
+      <PageHead crumb="영업" title={`${cs?.name || csCode} 포캐스트`}
+        desc={<>고객사 수요 예측 — 프로젝트/품번별 월별 수량 · 직전 접수 대비 변화 추적 · <Link to={`/forecast-shortage?cs=${String(csCode || 'ax').toLowerCase()}`} className="inline-flex items-center gap-1 mt-1 text-xs font-bold text-indigo-600 hover:underline">🔍 이 포캐스트로 소요 예측(쇼티지 분석) 보기 →</Link></>}>
         <label className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 cursor-pointer">
           📤 포캐스트 업로드
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
-      </div>
+      </PageHead>
+      <CustomerTabs />
 
       {/* 지금 어디쯤인지 — 엑셀 고르기 → 미리보기 확인 → 접수 → 완료 (v4.104.0) */}
       {(preview || result) && (
@@ -463,7 +461,7 @@ export default function Forecast() {
         </div>
       )
         : fc.latest.length === 0
-          ? <div className="text-center py-16 text-slate-300 text-sm">접수된 포캐스트가 없습니다. 엑셀을 업로드해주세요.</div>
+          ? <EmptyState title="접수된 포캐스트가 없습니다. 엑셀을 업로드해주세요" />
           : <div ref={fillRef} className="rounded-xl border border-slate-200 overflow-hidden flex flex-col" style={fillH ? { height: fillH + 'px' } : undefined}>
               {/* 표가 화면에 남은 높이를 다 쓴다 (노트북, v4.65.0) */}
               <div className={`overflow-auto ${fillH ? 'flex-1 min-h-0' : 'max-h-[65vh]'}`}>
@@ -501,7 +499,7 @@ export default function Forecast() {
                         })}
                       </tr>
                     ))}
-                    {filtered.length === 0 && <tr><td colSpan={cols.length + 1} className="px-3 py-8 text-center text-slate-300">조건에 맞는 품목이 없습니다</td></tr>}
+                    {filtered.length === 0 && <EmptyRow cols={cols.length + 1} title="조건에 맞는 품목이 없습니다" />}
                   </tbody>
                 </table>
                 <MoreRows {...vis} />

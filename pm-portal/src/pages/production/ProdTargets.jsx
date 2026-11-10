@@ -1,3 +1,4 @@
+import { KpiCard } from '../../components/ui/Kpi'
 // 🎯 생산관리 대상 (v4.102.0)
 //   ① 수주대장 ↔ 생산관리 연결 — 고객사마다 정한 규칙으로 늘 지금 데이터 기준 (pm_prod_order_v)
 //   ② 대상 품번 · 그룹 — 생산관리에서 운영할 품번을 그룹(주요품목 · Sub 품목 · 추가)으로 나눈다
@@ -20,17 +21,9 @@ const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '—')
 const DONE = (st) => st === '완료'
 const isReal = (gid) => gid !== 'all' && gid !== 'none'   // 진짜 그룹 (전체 · 미분류가 아닌 것)
 
+// 공용 지표 카드로 (v4.168.0) — data-pt-kpi 는 테스트 · 링크용으로 둔다
 function Kpi({ tone = '', label, value, sub, data, loading }) {
-  const T = { green: 'bg-emerald-50 border-emerald-200 text-emerald-600', amber: 'bg-amber-50 border-amber-200 text-amber-600', red: 'bg-red-50 border-red-200 text-red-500', '': 'bg-white border-slate-200 text-slate-800' }[tone]
-  return (
-    <div className={`rounded-xl border px-4 py-3 ${T}`} data-pt-kpi={data}>
-      <div className="text-[12px] text-slate-500">{label}</div>
-      {loading ? <div className="py-1.5 space-y-2" data-skeleton><SkelBar w={56} h={24} /><SkelBar w="70%" h={9} /></div> : <>
-        <div className="text-[26px] font-extrabold leading-tight tabular-nums">{value}</div>
-        {sub && <div className="text-[11px] text-slate-400">{sub}</div>}
-      </>}
-    </div>
-  )
+  return <KpiCard data-pt-kpi={data} tone={tone} label={label} value={value} note={sub} loading={loading} />
 }
 
 export default function ProdTargets() {

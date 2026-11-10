@@ -1,3 +1,4 @@
+import { EmptyRow, EmptyState } from '../../components/ui/EmptyState'
 import { useState, useEffect } from 'react'
 import PageHead from '../../components/PageHead'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
@@ -608,7 +609,7 @@ export default function ReqBOM({ csCodeProp = null, embedded = false }) {
                   </thead>
                   <tbody>
                     {filtered.length===0 ? (
-                      <tr><td colSpan={COLS.length+1} className="text-center py-10 text-slate-400">데이터가 없습니다</td></tr>
+                      <EmptyRow cols={COLS.length+1} title="데이터가 없습니다" />
                     ) : vis.shown.map(r=>(
                       <tr key={r.item_id} className={`border-b border-slate-100 hover:bg-slate-50 ${r.order_need>0?'bg-red-50/10':''}`}>
                         <td className="px-3 py-2">
@@ -707,7 +708,7 @@ function ReverseExplode({ csId, csCode }) {
           </div>
         )
         : rows.length === 0
-          ? <div className="text-center py-12 text-slate-400 text-sm">이 부품을 쓰는 상위 어셈블리가 없습니다</div>
+          ? <EmptyState title="이 부품을 쓰는 상위 어셈블리가 없습니다" />
           : (
             <div className="rounded-xl border border-slate-200 overflow-x-auto">
               <div className="overflow-x-auto">

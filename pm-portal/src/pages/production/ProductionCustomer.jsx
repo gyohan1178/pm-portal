@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
@@ -199,24 +200,10 @@ function ProductionCustomerInner() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <div className="flex items-center gap-1 mb-1.5">
-            {[['AX','AXCELIS','#8b5cf6'],['CSK','CSK','#f59e0b'],['ED','Edwards','#3b82f6'],['VM','VM','#10b981']].map(([code,name,color])=>(
-              <button key={code} onClick={()=>nav(`/production/${code}`)}
-                className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${cs===code?'bg-indigo-600 text-white':'bg-slate-100 text-slate-500 hover:text-slate-700'}`}>
-                <span className="w-1.5 h-1.5 rounded-full" style={{background:cs===code?'#fff':color}} />{name}
-              </button>
-            ))}
-          </div>
-          <h1 className="text-lg font-bold text-slate-900">{CUST_NAME[cs] || cs} 생산관리</h1>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">
-            {isAx
+      <PageHead crumb="현장" title={`${CUST_NAME[cs] || cs} 생산관리`}
+        desc={<>{isAx
               ? '11번대 PO 연동 — 품번 기준 호기 매칭, 부족분 자동 생성, 납기·REV 동기화'
-              : '프로젝트 · 호기 · 구분별 진행 상황'}
-          </p>
-          <AutoSyncNote cs={cs} />
-        </div>
+              : '프로젝트 · 호기 · 구분별 진행 상황'}</>}>
         <div className="flex items-center gap-2">
           {/* PO 연동은 AXCELIS 만. 11번대 품번 기준이라 다른 고객사엔 걸리지 않는다.
               Edwards 는 생산관리 안의 '월간 실적 올리기' 를 쓴다. */}
@@ -238,6 +225,16 @@ function ProductionCustomerInner() {
             ))}
           </div>
         </div>
+      </PageHead>
+      <AutoSyncNote cs={cs} />
+      {/* 고객사 — 머리 아래 (v4.168.0 · 다른 화면과 같은 자리) */}
+      <div className="flex items-center gap-1">
+        {[['AX','AXCELIS','#8b5cf6'],['CSK','CSK','#f59e0b'],['ED','Edwards','#3b82f6'],['VM','VM','#10b981']].map(([code,name,color])=>(
+          <button key={code} onClick={()=>nav(`/production/${code}`)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-md transition-all ${cs===code?'bg-indigo-600 text-white':'bg-slate-100 text-slate-500 hover:text-slate-700'}`}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{background:cs===code?'#fff':color}} />{name}
+          </button>
+        ))}
       </div>
 
       {tab === 'cal' && <ProductionCalendar rows={rows} />}

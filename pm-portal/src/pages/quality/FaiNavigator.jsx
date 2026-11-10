@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo, useCallback, useRef, useEffect, Fragment } from 'react'
 import { DocRequestButton } from '../../components/DocRequestModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -437,12 +439,8 @@ export default function FaiNavigator() {
       {/* 머리 */}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[11px] font-semibold text-slate-400">🔬 품질</p>
-          <h1 className="text-xl font-extrabold text-slate-900">초도품 자재 매칭 <span className="text-sm font-bold text-slate-400">FAI Navigator</span></h1>
-          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-            Axcelis Part Report 를 올리면 품목마다 <b className="text-slate-500">등록된 제조사</b>와 <b className="text-slate-500">실제로 구매한 제조사</b>를 맞대어 판정합니다.
-            초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.
-          </p>
+          <PageHead crumb="품질" title="초도품 자재 매칭 · FAI Navigator"
+            desc={<>Axcelis Part Report 를 올리면 품목마다 <b className="text-slate-500">등록된 제조사</b>와 <b className="text-slate-500">실제로 구매한 제조사</b>를 맞대어 판정합니다. 초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.</>} />
         </div>
         <DocRequestButton preset={{ kind: '사양서', customer_code: 'AX', source: 'fai', reason: '초도품 자재 매칭 — 등록 제조사 확인' }} />
         <p className="text-[10px] text-slate-400 text-right leading-relaxed">
@@ -668,7 +666,7 @@ export default function FaiNavigator() {
             )}
             <button onClick={exportXlsx} disabled={!view.length}
               className="ml-auto px-3 py-1.5 font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-              📑 엑셀 {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
+              📥 엑셀 {selRows.length ? `(선택 ${selRows.length}줄)` : '(보이는 것)'}
             </button>
             <button onClick={makePpt} disabled={!view.length || !!ppt}
               title="저장할 곳을 고른 뒤 품목마다 한 장씩 만듭니다 (Part Report 발췌 · 16·17번대 도면 · 구매전표 — 금액 칸 없음)"
@@ -803,7 +801,7 @@ export default function FaiNavigator() {
                   )
                 })}
                 {!judging && !view.length && (
-                  <tr><td colSpan={COLS.length} className="py-10 text-center text-slate-400">조건에 맞는 품목이 없습니다.</td></tr>
+                  <EmptyRow cols={COLS.length} title="조건에 맞는 품목이 없습니다" />
                 )}
               </tbody>
             )}

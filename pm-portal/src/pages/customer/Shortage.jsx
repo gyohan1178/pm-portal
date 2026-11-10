@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import ItemLink from '../../components/ItemLink'
 import PageHead from '../../components/PageHead'
 import { useState, useMemo, useCallback, useRef, memo } from 'react'
@@ -338,7 +340,7 @@ export default function Shortage() {
           className="inline-flex items-center justify-center gap-1.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:bg-slate-100 disabled:text-slate-300 disabled:cursor-not-allowed">
           📋 선택 구매발주
         </button>
-        <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀 추출</button>
+        <button onClick={exportExcel} className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
       </div>
 
       {/* 카테고리 다중선택 (JS- 코드 전환 후 자동 표시) */}
@@ -412,12 +414,12 @@ export default function Shortage() {
         </div>
       )}
 
-      <div className="kpi-grid grid grid-cols-4 gap-3">
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3"><p className="text-xs font-bold text-red-400 uppercase tracking-wide mb-1 flex items-center gap-1">발주필요 <InfoTip text="지금 보이는 목록(구분 · 부서 · 구매처 · 상위품목 · 카테고리 필터) 중 「발주필요」가 0 보다 큰 품목 수. 발주필요 = 부족 − 구매발주 미입고, 부족 = 총필요수량 − 현재고 (음수 재고는 0 으로 봄)." /></p><p className="text-xl font-bold text-red-600">{needOrder.length}</p></div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3"><p className="text-xs font-bold text-amber-500 uppercase tracking-wide mb-1 flex items-center gap-1">부족 품목 <InfoTip text="지금 보이는 목록 중 총필요수량이 현재고보다 많은 품목 수 (미입고 발주는 빼지 않은 값). 미입고로 메워지는 품목도 여기엔 들어갑니다." /></p><p className="text-xl font-bold text-amber-700">{filtered.filter(r=>r.lack>0).length}</p></div>
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3"><p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1 flex items-center gap-1">미입고 <InfoTip text="지금 보이는 목록 품목들의 구매발주 미입고 수량을 모두 더한 값 (품목 수가 아니라 수량 합 · 단위가 섞여 있음)." /></p><p className="text-xl font-bold text-emerald-700">{filtered.reduce((a,r)=>a+r.pending,0)}</p></div>
-        <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3"><p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1 flex items-center gap-1">선택됨 <InfoTip align="right" text="체크한 품목 중 지금 목록에 보이고 발주필요가 0 보다 큰 품목 수 — 「선택 N건 구매발주」에 들어가는 품목입니다." /></p><p className="text-xl font-bold text-indigo-600">{checkedItems.length}</p></div>
-      </div>
+      <KpiRow cols={4}>
+        <KpiCard tone="red" label="발주필요" value={needOrder.length} note="부족 − 미입고 발주 > 0" tip="지금 보이는 목록(구분 · 부서 · 구매처 · 상위품목 · 카테고리 필터) 중 「발주필요」가 0 보다 큰 품목 수. 발주필요 = 부족 − 구매발주 미입고, 부족 = 총필요수량 − 현재고 (음수 재고는 0 으로 봄)." />
+        <KpiCard tone="amber" label="부족 품목" value={filtered.filter(r=>r.lack>0).length} note="총필요 > 현재고" tip="지금 보이는 목록 중 총필요수량이 현재고보다 많은 품목 수 (미입고 발주는 빼지 않은 값). 미입고로 메워지는 품목도 여기엔 들어갑니다." />
+        <KpiCard tone="green" label="미입고" value={filtered.reduce((a,r)=>a+r.pending,0)} note="구매발주 미입고 수량 합" tip="지금 보이는 목록 품목들의 구매발주 미입고 수량을 모두 더한 값 (품목 수가 아니라 수량 합 · 단위가 섞여 있음)." />
+        <KpiCard tone="pr" label="선택됨" value={checkedItems.length} note="「선택 N건 구매발주」에 들어감" tip="체크한 품목 중 지금 목록에 보이고 발주필요가 0 보다 큰 품목 수 — 「선택 N건 구매발주」에 들어가는 품목입니다." />
+      </KpiRow>
 
       {/* 계산이 실패하면 빈 목록(「부족 없음」)처럼 보이던 것 → 실패라고 알린다 (v4.156.0) */}
       {shortErr && !isLoading && <CalcError err={shortErr} busy={shortFetching} onRetry={() => refetchShort()} />}
@@ -452,7 +454,7 @@ export default function Shortage() {
               </thead>
               <tbody>
                 {filtered.length===0 ? (
-                  <tr><td colSpan={COLS.length+1} className="text-center py-10 text-slate-400">BOM 또는 고객사 PO 데이터를 먼저 등록하세요</td></tr>
+                  <EmptyRow cols={COLS.length+1} title="BOM 또는 고객사 PO 데이터를 먼저 등록하세요" />
                 ) : filtered.map(r=>(
                   <ShortageRow key={r.item_id} r={r}
                     isExcluded={excluded.has(r.item_id)} isChecked={!!checked[r.item_id]}

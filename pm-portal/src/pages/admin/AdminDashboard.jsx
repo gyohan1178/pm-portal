@@ -1,3 +1,5 @@
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -123,34 +125,19 @@ export default function AdminDashboard() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-center gap-2 flex-wrap">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">📋 관리자 할 일</h1>
-          <p className="page-desc text-xs text-slate-400">관리자만 보는 목록 — 주간회의에서 다룰 내용과 처리할 항목. 개인 할 일은 사이드바 「할 일」에 있습니다.</p>
-        </div>
+      <PageHead crumb="관리" title="관리자 할 일"
+        desc="관리자만 보는 목록 — 주간회의에서 다룰 내용과 처리할 항목. 개인 할 일은 사이드바 「할 일」에 있습니다.">
         <button onClick={() => setDraft({ status: '대기', priority: '보통', due_date: '' })}
           className="ml-auto px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
           + 추가
         </button>
-      </div>
+      </PageHead>
 
-      <div className="kpi-grid grid grid-cols-3 gap-2">
-        <div className="rounded-xl border border-slate-200 p-3">
-          <p className="text-xs font-bold text-slate-400 mb-1">남은 일</p>
-          <p className="text-xl font-bold text-slate-900">{open.length}</p>
-          <p className="text-[11px] text-slate-400 mt-0.5">완료 안 된 항목</p>
-        </div>
-        <div className="rounded-xl border border-red-200 bg-red-50 p-3">
-          <p className="text-xs font-bold text-red-400 mb-1">기한 지남</p>
-          <p className="text-xl font-bold text-red-600">{overdue.length}</p>
-          <p className="text-[11px] text-red-400 mt-0.5">기한이 지났는데 남은 것</p>
-        </div>
-        <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <p className="text-xs font-bold text-amber-500 mb-1">우선순위 높음</p>
-          <p className="text-xl font-bold text-amber-700">{high.length}</p>
-          <p className="text-[11px] text-amber-600/80 mt-0.5">우선순위 높음으로 표시한 남은 일</p>
-        </div>
-      </div>
+      <KpiRow cols={3}>
+        <KpiCard tone="" label="남은 일" value={open.length} note="완료 안 된 항목" />
+        <KpiCard tone="red" label="기한 지남" value={overdue.length} note="기한이 지났는데 남은 것" />
+        <KpiCard tone="amber" label="우선순위 높음" value={high.length} note="우선순위 높음으로 표시한 남은 일" />
+      </KpiRow>
 
       <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-1 bg-slate-100 rounded-lg p-1">

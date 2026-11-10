@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -327,11 +329,8 @@ export default function QuoteHistory({ onRevise, customer = null } = {}) {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">📋 견적 이력</h1>
-          <p className="page-desc text-xs text-slate-400">저장된 견적을 품번별·견적별로 조회합니다. 매출과 매입은 절대 섞이지 않습니다.</p>
-        </div>
+      <PageHead crumb="영업" title="견적 이력"
+        desc="저장된 견적을 품번별·견적별로 조회합니다. 매출과 매입은 절대 섞이지 않습니다.">
         <div className="flex gap-2">
           <button onClick={exportCsv} disabled={!items.length}
             className="px-3 py-2 text-xs font-bold rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 disabled:opacity-40">
@@ -339,10 +338,10 @@ export default function QuoteHistory({ onRevise, customer = null } = {}) {
           </button>
           <button onClick={exportXlsx} disabled={!items.length}
             className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">
-            📑 엑셀 추출
+            📥 엑셀
           </button>
         </div>
-      </div>
+      </PageHead>
 
       {/* 매출/매입 + 보기 전환 */}
       <div className={`rounded-xl border-2 p-3 flex flex-wrap items-center gap-2 ${isSales ? 'border-indigo-300 bg-indigo-50/50' : 'border-amber-400 bg-amber-50/60'}`}>
@@ -406,7 +405,7 @@ export default function QuoteHistory({ onRevise, customer = null } = {}) {
                   onSavePrice={savePurchasePrice} onSaveLabor={saveLabor} onLoadLabor={loadLaborHistory} />
               ))}
               {!codeRows.length && (
-                <tr><td colSpan={ITEM_COLS.length} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
+                <EmptyRow cols={ITEM_COLS.length} title="이력이 없습니다" />
               )}
             </tbody>
             )}
@@ -507,7 +506,7 @@ export default function QuoteHistory({ onRevise, customer = null } = {}) {
                 )
               })}
               {!quoteRows.length && (
-                <tr><td colSpan={(isSales ? 8 : 7) + (canRevise ? 1 : 0)} className="py-10 text-center text-slate-400">이력이 없습니다.</td></tr>
+                <EmptyRow cols={(isSales ? 8 : 7) + (canRevise ? 1 : 0)} title="이력이 없습니다" />
               )}
             </tbody>
           </table>

@@ -1,3 +1,5 @@
+import { EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import AuxLocs from '../../components/AuxLocs'
 import { fetchAuxByItems } from '../../lib/cellAux'
 import { useState, useEffect } from 'react'
@@ -155,16 +157,13 @@ export default function FieldSearch() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <h1 className="text-lg font-bold text-slate-900">🏭 현장 검색</h1>
-          <p className="page-desc text-xs text-slate-400 mt-0.5">품목 정보·사용처·BOM 조회 (현장용)</p>
-        </div>
+      <PageHead crumb="현장" title="현장 검색"
+        desc="품목 정보·사용처·BOM 조회 (현장용)">
         {tab === 'product' && (
           <button type="button" onClick={coach.start} data-coach-again
             className="shrink-0 whitespace-nowrap px-3 py-2 rounded-full text-sm font-bold border bg-white text-slate-500 border-slate-200 hover:border-slate-300">💡 안내</button>
         )}
-      </div>
+      </PageHead>
       {coach.el}
 
       <div className="flex gap-1 bg-slate-100 rounded-lg p-1 w-fit">
@@ -199,7 +198,7 @@ export default function FieldSearch() {
                 </div>
               </div>
             : items.length === 0
-              ? <div className="text-center py-12 text-slate-300 text-sm">결과가 없습니다</div>
+              ? <EmptyState title="결과가 없습니다" />
               : <>
                 {/* 📱 모바일: 카드형 (QR→폰 조회 대비) */}
                 <div className="md:hidden space-y-2">
@@ -287,7 +286,7 @@ export default function FieldSearch() {
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={5} rows={4} /></tbody></table>
               </div>
             : grouped.length === 0
-              ? <div className="text-center py-12 text-slate-300 text-sm">사용처가 없습니다</div>
+              ? <EmptyState title="사용처가 없습니다" />
               : <div className="space-y-3">
                   {grouped.map((g, gi) => (
                     <div key={gi} className="rounded-xl border border-slate-200 overflow-x-auto">
@@ -353,9 +352,9 @@ export default function FieldSearch() {
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={8} /></tbody></table>
               </div>
             : !bom.assembly
-              ? <div className="text-center py-12 text-slate-300 text-sm">해당 어셈블리를 찾을 수 없습니다</div>
+              ? <EmptyState title="해당 어셈블리를 찾을 수 없습니다" />
               : bom.rows.length === 0
-                ? <div className="text-center py-12 text-slate-300 text-sm">등록된 BOM이 없습니다</div>
+                ? <EmptyState title="등록된 BOM이 없습니다" />
                 : <div className="rounded-xl border border-slate-200 overflow-x-auto">
                     <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-2 flex-wrap">
                       <span className="font-mono font-bold text-indigo-600 text-sm">{bom.assembly.code}</span>
@@ -363,7 +362,7 @@ export default function FieldSearch() {
                       <span className="ml-auto text-xs text-slate-400">{bom.rows.length}개 부품</span>
                       {/* 내려받기 (v4.145.0) — 엑셀은 제목 · 머리글 고정 · 필터 · 레벨 들여쓰기 · 인쇄 한 폭 / CSV 는 칸만 */}
                       <button type="button" data-fs-bom-xlsx onClick={() => downloadBomExcel(bom.assembly, bom.rows, dwMap).catch(e => toastError('엑셀 만들기 실패: ' + e.message))}
-                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📊 엑셀</button>
+                        className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 엑셀</button>
                       <button type="button" data-fs-bom-csv onClick={() => downloadBomCsv(bom.assembly, bom.rows, dwMap)}
                         className="px-2.5 py-1 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">CSV</button>
                     </div>

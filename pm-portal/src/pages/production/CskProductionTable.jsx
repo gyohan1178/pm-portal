@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 // CSK 생산관리 표 — 머리글을 CSK 생산 일정표 엑셀에 맞춘다 (2026-10-07)
 //   일정표 값은 production.csk 에 들어 있다 (lib/cskSchedule.js). 상태만 포털에서 바꾼다.
 //   일정표 없이 손으로 넣은 예전 CSK 줄도 같은 표에 보인다 (관리번호 = 호기 · 규격 = 품번).
@@ -87,7 +88,7 @@ export function CskTable({ list, sel, setSel, rowSel, onField, onEdit, statusOpt
         </thead>
         <tbody>
           {list.length === 0 ? (
-            <tr><td colSpan={CSK_COLSPAN + 1} className="text-center py-10 text-slate-400">등록된 호기가 없습니다 — 「📅 일정표 올리기」로 CSK 생산 일정표 엑셀을 올려 주세요</td></tr>
+            <EmptyRow cols={CSK_COLSPAN + 1} title="등록된 호기가 없습니다 — 「📅 일정표 올리기」로 CSK 생산 일정표 엑셀을 올려 주세요" />
           ) : list.map((r) => r._month ? (
             <tr key={'m' + r._month} className="bg-indigo-50/60 border-b border-indigo-100">
               <td colSpan={CSK_COLSPAN + 1} className="px-3 py-1.5 text-[11px] font-bold text-indigo-600">

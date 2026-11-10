@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import ItemLink from '../../components/ItemLink'
 import { codeCandidates } from '../../lib/custPrefix'
 import { useMemo } from 'react'
@@ -78,10 +79,8 @@ export default function MissingParts() {
 
   return (
     <div className="p-4 max-w-5xl mx-auto space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-800">결품 현황</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 재불출은 출고 작업 화면에서</p>
-      </div>
+      <PageHead crumb="구매" title="결품 현황"
+        desc="불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 재불출은 출고 작업 화면에서" />
 
       <div className="flex gap-2 flex-wrap">
         <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-600">결품 {rows.length}건</span>

@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -379,12 +381,8 @@ export default function CostSaving() {
       {confirmEl}
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
-          <p className="text-[11px] font-semibold text-slate-400">📊 분석</p>
-          <h1 className="text-xl font-extrabold text-slate-900">원가절감 실적</h1>
-          <p className="page-desc text-[13px] text-slate-400 mt-0.5">
-            입고 단가를 <b className="text-slate-500">표준단가(DB단가)</b>와 견주어 절감액을 계산합니다. 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 봅니다.
-            따로 인정할 건(업체변경·대체품 등)은 실적 대장에 남기세요.
-          </p>
+          <PageHead crumb="분석" title="원가절감 실적"
+            desc={<>입고 단가를 <b className="text-slate-500">표준단가(DB단가)</b>와 견주어 절감액을 계산합니다. 표준단가가 없는 품목은 직전 12개월 가중평균으로 대신 봅니다. 따로 인정할 건(업체변경·대체품 등)은 실적 대장에 남기세요.</>} />
           <p className="text-[11.5px] text-slate-400 mt-1">
             집계 기간 <b className="text-indigo-600">{start} ~ {end}</b>
             <span className="text-slate-300"> — 이 기간의 입고만 셉니다 </span>
@@ -419,7 +417,7 @@ export default function CostSaving() {
             className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white hover:bg-slate-50 tabular-nums">
             {start} ~ {end}
           </button>
-          <button onClick={exportXlsx} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📑 엑셀</button>
+          <button onClick={exportXlsx} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 엑셀</button>
         </div>
       </div>
 
@@ -629,7 +627,7 @@ export default function CostSaving() {
                   onChange={(e) => { uploadStd(e.target.files?.[0]); e.target.value = '' }} />
               </>
             )}
-            <button onClick={exportStd} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">📑 내려받기</button>
+            <button onClick={exportStd} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50">📥 엑셀</button>
           </div>
           <table className="w-full text-xs">
             <thead><tr className="text-slate-400 text-left">
@@ -656,7 +654,7 @@ export default function CostSaving() {
                   <td className="py-1.5 text-right">{canEdit && <button onClick={() => delStd(r.std_code)} className="text-slate-300 hover:text-rose-600">×</button>}</td>
                 </tr>
               ))}
-              {!stdView.length && <tr><td colSpan={6} className="py-8 text-center text-slate-400">표준단가가 없습니다. 엑셀로 올리거나 SQL 로 넣으세요.</td></tr>}
+              {!stdView.length && <EmptyRow cols={6} title="표준단가가 없습니다. 엑셀로 올리거나 SQL 로 넣으세요" />}
             </tbody>
           </table>
           {stdView.length > 200 && <p className="text-[11px] text-slate-400">… 200줄까지만 보입니다. 검색으로 좁혀 보세요.</p>}
@@ -724,7 +722,7 @@ export default function CostSaving() {
                     <td className="py-1.5 text-right">{canEdit && <button onClick={() => del(l.id)} className="text-slate-300 hover:text-rose-600">×</button>}</td>
                   </tr>
                 ))}
-                {!yLedger.length && <tr><td colSpan={9} className="py-8 text-center text-slate-400">등록된 실적이 없습니다. 위 후보에서 「등록」을 누르세요.</td></tr>}
+                {!yLedger.length && <EmptyRow cols={9} title="등록된 실적이 없습니다. 위 후보에서 「등록」을 누르세요" />}
               </tbody>
             </table>
           </div>

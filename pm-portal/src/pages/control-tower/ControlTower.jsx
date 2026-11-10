@@ -1,3 +1,5 @@
+import { EmptyState } from '../../components/ui/EmptyState'
+import PageHead from '../../components/PageHead'
 import { useMemo, useState } from 'react'
 import AnalysisTabs from '../../components/AnalysisTabs'
 import { useNavigate } from 'react-router-dom'
@@ -148,13 +150,12 @@ export default function ControlTower({ scope = 'ax' }) {
       <div className="rounded-xl border border-slate-200 bg-white">{[0, 1, 2, 3, 4, 5].map((i) => <div key={i} className="flex items-center gap-3 px-3 py-2.5 border-b border-slate-50 last:border-0" data-skeleton><SkelBar w={14} h={12} /><SkelBar w={44} h={14} /><SkelBar w={90} h={11} /><SkelBar w="40%" h={11} /></div>)}</div>
     </div>
   )
-  if (!ct) return <div className="text-center py-16 text-slate-300 text-sm">데이터가 없습니다</div>
+  if (!ct) return <EmptyState title="데이터가 없습니다" />
 
   const k = ct.kpi
 
   return (
     <div className="space-y-5">
-      <AnalysisTabs />
 
       {/* 업무 흐름은 「🧭 업무 흐름」 화면에서 본다 (v4.99.0) — 여기는 품번 단위 자재 위험만.
           예전엔 맨 위에 흐름 박스가 있어 구매자재 숫자(입고 지연 · 발주 필요)가 한 화면에 두 번 보였다 */}
@@ -162,10 +163,8 @@ export default function ControlTower({ scope = 'ax' }) {
       {/* 헤더 */}
       <div className="flex items-end justify-between flex-wrap gap-2">
         <div>
-          <h1 className="text-lg font-bold text-slate-900">
-            🎯 {isMaster ? '마스터 관제탑' : `${CUST.find(c => c.code === scope)?.name || scope} 관제탑`}
-          </h1>
-          <p className="text-xs text-slate-400 mt-0.5">품번 단위 자재 위험 — 무엇부터 처리할지 (부서별로 일이 어디 쌓였는지는 🧭 업무 흐름)</p>
+          <PageHead title={isMaster ? '마스터 관제탑' : `${CUST.find(c => c.code === scope)?.name || scope} 관제탑`}
+            desc="품번 단위 자재 위험 — 무엇부터 처리할지 (부서별로 일이 어디 쌓였는지는 🧭 업무 흐름)" />
         </div>
         <div className="flex items-center gap-2">
         {/* 부족자재는 캐시라 오래되면 값이 어긋난다. 여기서 다시 계산한다. */}
@@ -194,6 +193,7 @@ export default function ControlTower({ scope = 'ax' }) {
         )}
         </div>
       </div>
+      <AnalysisTabs />
 
       {/* 마스터: 고객사별 위험도 비교 */}
       {/* 넷을 다 그린다. 담당자가 자기 고객사로 바로 들어가야 하기 때문이다. */}
@@ -256,7 +256,7 @@ export default function ControlTower({ scope = 'ax' }) {
         </div>
         <div className="rounded-xl border border-slate-200 bg-white overflow-hidden">
           {ct.top.length === 0
-            ? <div className="text-center py-8 text-slate-300 text-sm">긴급 항목이 없습니다 👍</div>
+            ? <EmptyState title="긴급 항목이 없습니다 👍" />
             : ct.top.slice(0, 12).map((item, i) => (
               <div key={i} onClick={() => goLink(item)}
                 className="flex items-center gap-2.5 px-3 py-2 border-b border-slate-50 last:border-0 hover:bg-slate-50 cursor-pointer text-xs">

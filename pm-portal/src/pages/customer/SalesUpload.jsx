@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState } from 'react'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
@@ -130,10 +131,8 @@ export default function SalesUpload() {
 
   return (
     <div className="p-4 max-w-3xl mx-auto space-y-4">
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">📥 매출 실적 업로드 (Received)</h1>
-        <p className="page-desc text-xs text-slate-400 mt-0.5">AXCELIS PO 관리 엑셀의 Received 시트 → 납품 완료 매출로 반영 · Promise Date 기준월</p>
-      </div>
+      <PageHead crumb="분석" title="매출 실적 업로드 (Received)"
+        desc="AXCELIS PO 관리 엑셀의 Received 시트 → 납품 완료 매출로 반영 · Promise Date 기준월" />
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
         <div className="max-w-[520px] pb-1" data-sales-stepper><Stepper steps={['엑셀 고르기', '점검 · 확인', '매출 반영']} cur={result?.saved != null ? 3 : saveMut.isPending ? 2 : result ? 1 : 0} /></div>

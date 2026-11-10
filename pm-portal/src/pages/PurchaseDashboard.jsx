@@ -1,3 +1,5 @@
+import { EmptyState } from '../components/ui/EmptyState'
+import PageHead from '../components/PageHead'
 import { useState, useMemo } from 'react'
 import { buildPurchaseReport } from '../lib/purchaseReport'
 import AnalysisTabs from '../components/AnalysisTabs'
@@ -158,9 +160,9 @@ export default function PurchaseDashboard({ embed = false }) {
         }
       `}</style>
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-lg font-bold text-slate-900">💰 매입 대시보드</h1>
+        <PageHead crumb="분석" title="매입 대시보드"
+          desc="올해 매입을 고객사 · 월별로 봅니다. 확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원" />
         <div className="flex items-center gap-2 flex-wrap">
-          <p className="page-desc text-xs text-slate-400 basis-full sm:basis-auto">확정=ecount 회계확정 · 예상=결제(명세서) 기준 · 억원</p>
           {!embed && (
             <button
               onClick={async () => {
@@ -377,7 +379,7 @@ function BreakdownModal({ month, cs, onClose }) {
             </div>
           ))}
           {!isLoading && !rows.length && (
-            <p className="text-center py-8 text-sm text-slate-400">해당 내역이 없습니다.</p>
+            <EmptyState title="해당 내역이 없습니다" />
           )}
 
           {Object.entries(bySource).map(([src, list]) => {

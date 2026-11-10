@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 // 생산관리 · Edwards · 📦 소요량 매칭
 //   작업자 도구 「재고 파악」 탭을 옮긴 것 (계산은 lib/edNeed.js)
 //   불출 예정 순으로 BOM 을 재고에서 차례로 빼 보고, 모자라는 품목과 들어올 발주를 보여 준다.
@@ -190,7 +191,7 @@ export default function EdNeedMatch({ rows, rules, onOpenRules, focus, onClearFo
                 </tr>
               )
             })}
-            {!(res?.periods || []).length && <tr><td colSpan={8} className="py-10 text-center text-slate-400">모자라는 품목이 없습니다 ✓</td></tr>}
+            {!(res?.periods || []).length && <EmptyRow cols={8} title="모자라는 품목이 없습니다 ✓" />}
           </tbody>
         </table>
       ) : (

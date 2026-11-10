@@ -888,7 +888,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
             }
           })
           exportPDBoxCSV(exportRows, csCode)
-        }} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 CSV 추출</button>
+        }} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 CSV</button>
         {isED && (
           <>
             {/* v4.118.1 — Edwards 는 수주대장에서 불러온다. 「📤 PO 업로드(월간 실적)」 · 「📅 포캐스트 반영」 단추는 뺌 (기능 코드는 남겨 둠) */}

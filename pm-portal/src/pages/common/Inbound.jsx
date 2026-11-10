@@ -1,3 +1,5 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
+import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import { useUndo } from '../../components/UndoBar'
 import PageHead from '../../components/PageHead'
 import { useFillHeight } from '../../hooks/useFillHeight'
@@ -1051,20 +1053,11 @@ export default function Inbound() {
           )}
           {histErr && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">입고 현황을 불러오지 못했습니다 — {histErr.message}</p>}
           {histCapped && <p data-hist-capped className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700">⚠ 조회 기간의 입고가 5,000건을 넘어 앞의 5,000건만 불러왔습니다 (최근 입고일 순). 합계 · 엑셀이 모자랄 수 있으니 기간을 좁혀 조회해 주세요.</p>}
-          <div className="kpi-grid grid grid-cols-3 gap-3">
-            <div className="rounded-xl border border-slate-200 p-3">
-              <p className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-1">총 입고 건수</p>
-              <p className="text-xl font-bold text-slate-900">{histShown.length}</p>
-            </div>
-            <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-              <p className="text-xs font-bold text-emerald-500 uppercase tracking-wide mb-1">총 입고 수량</p>
-              <p className="text-xl font-bold text-emerald-700">{histTotal.toLocaleString()}</p>
-            </div>
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3">
-              <p className="text-xs font-bold text-indigo-400 uppercase tracking-wide mb-1">품목 수</p>
-              <p className="text-xl font-bold text-indigo-700">{new Set(histShown.map(r=>r.item_id)).size}</p>
-            </div>
-          </div>
+          <KpiRow cols={3}>
+            <KpiCard tone="" label="총 입고 건수" value={histShown.length} note="조회 기간 · 조건 기준" />
+            <KpiCard tone="green" label="총 입고 수량" value={histTotal.toLocaleString()} note="들어온 수량 합계" />
+            <KpiCard tone="pr" label="품목 수" value={new Set(histShown.map(r=>r.item_id)).size} note="입고된 품목 종류" />
+          </KpiRow>
 
           {histLoading ? (
             <div data-hist-loading className="rounded-xl border border-slate-200 overflow-hidden">
@@ -1089,7 +1082,7 @@ export default function Inbound() {
                   </tr></thead>
                   <tbody>
                     {histShown.length===0
-                      ? <tr><td colSpan={14} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
+                      ? <EmptyRow cols={14} title="입고 이력이 없습니다" />
                       : hVis.shown.map(r=>(
                         <tr key={r.id} data-hist-row={r.id}
                           onMouseDown={e=>rowDown(e, r)} onMouseEnter={()=>rowEnter(r)} onClick={()=>rowClick(r)}

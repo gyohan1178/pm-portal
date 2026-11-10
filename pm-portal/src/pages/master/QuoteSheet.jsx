@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import { codeCandidates } from '../../lib/custPrefix'
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -1252,7 +1253,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             </div>
           )}
           <button onClick={doExcel} disabled={!lines.length}
-            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📑 엑셀</button>
+            className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📥 엑셀</button>
           <div className="flex-1" />
           {detailOn && (detailMissing > 0 || detailNoParts.length > 0) && (
             <span className="text-[11px] font-bold text-amber-600" data-quote-detail-count
@@ -1748,7 +1749,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
               )
             })}
             {!lines.length && (
-              <tr><td colSpan={14} className="py-8 text-center text-slate-400">품번을 추가하거나 원가분석에서 어셈블리를 가져오세요.</td></tr>
+              <EmptyRow cols={14} title="품번을 추가하거나 원가분석에서 어셈블리를 가져오세요" />
             )}
           </tbody>
           <tfoot>

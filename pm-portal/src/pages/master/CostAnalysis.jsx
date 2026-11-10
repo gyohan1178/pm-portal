@@ -1,3 +1,4 @@
+import PageHead from '../../components/PageHead'
 import { useState, useMemo } from 'react'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -147,15 +148,8 @@ export default function CostAnalysis() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-end justify-between flex-wrap gap-2">
-        <div>
-          <h1 className="text-lg font-bold text-slate-900">💵 원가분석</h1>
-          <p className="page-desc text-xs text-slate-400">
-            {tab === 'summary'
-              ? '고객사의 상위품번을 한 줄씩 놓고 분류별 원자재 원가를 봅니다. 상위품번을 누르면 세부 내역이 열립니다.'
-              : 'BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.'}
-          </p>
-        </div>
+      <PageHead crumb="분석" title="원가분석"
+        desc={<>{tab === 'summary' ? '고객사의 상위품번을 한 줄씩 놓고 분류별 원자재 원가를 봅니다. 상위품번을 누르면 세부 내역이 열립니다.' : 'BOM을 펼쳐 매입원가를 합산 → 매출가 적정성·마진 검토. 여기서 바로 매출견적을 만들 수도 있습니다.'}</>}>
         <div className="flex items-center gap-2">
           <select value={code} onChange={e => { setCsCode(e.target.value); setProjectId('') }}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
@@ -172,7 +166,7 @@ export default function CostAnalysis() {
           </select>
           </>)}
         </div>
-      </div>
+      </PageHead>
 
       {/* 탭 */}
       <div className="flex gap-1 bg-slate-100 p-1 rounded-xl w-fit">

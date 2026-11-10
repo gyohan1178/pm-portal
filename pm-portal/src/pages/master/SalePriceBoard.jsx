@@ -1,3 +1,5 @@
+import { SkeletonRows } from '../../components/ux/Skeleton'
+import { KpiCard } from '../../components/ui/Kpi'
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
@@ -169,7 +171,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
               className={`px-2.5 py-1 text-xs font-bold rounded-md ${cur === c ? 'bg-white text-indigo-700 shadow-sm' : 'text-slate-500'}`}>{c === 'KRW' ? '원화' : c}</button>)}
           </div>}
           <button onClick={exportXlsx} disabled={!filtered.length} data-sale-xlsx
-            className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40">📑 엑셀</button>
+            className="px-3 py-2 text-xs font-bold rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 disabled:opacity-40">📥 엑셀</button>
         </div>
       </div>
 
@@ -212,7 +214,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
             </tr>
           </thead>
           <tbody>
-            {isLoading && <tr><td colSpan={7} className="py-8 text-center text-slate-400">불러오는 중…</td></tr>}
+            {isLoading && <SkeletonRows cols={7} rows={6} />}
             {!isLoading && !filtered.length && <tr><td colSpan={7} className="py-8 text-center text-slate-400">{rows.length ? '조건에 맞는 실적가가 없습니다' : '이 고객사의 실적가가 아직 없습니다 — 매출견적을 저장하면 쌓입니다'}</td></tr>}
             {vis.shown.map((g) => {
               const s = g.show
@@ -294,13 +296,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
 
 function FragmentRow({ children }) { return <>{children}</> }
 
+// 공용 지표 카드로 (v4.168.0)
 function Kpi({ label, value, note, tone }) {
-  const t = { red: 'bg-rose-50 border-rose-200 text-rose-600', green: 'bg-emerald-50 border-emerald-200 text-emerald-600', blue: 'bg-sky-50 border-sky-200 text-sky-600', slate: 'bg-white border-slate-200 text-slate-700' }[tone] || 'bg-violet-50 border-violet-200 text-violet-700'
-  return (
-    <div className={`rounded-xl border px-4 py-3 ${t}`}>
-      <div className="text-[12px] text-slate-500">{label}</div>
-      <div className="text-2xl font-extrabold">{Number(value || 0).toLocaleString()}</div>
-      <div className="text-[11px] text-slate-400">{note}</div>
-    </div>
-  )
+  return <KpiCard label={label} value={Number(value || 0)} note={note} tone={{ red: 'red', green: 'green', blue: 'blue', slate: '' }[tone] ?? 'pr'} />
 }

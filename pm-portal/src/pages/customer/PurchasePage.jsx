@@ -1,3 +1,4 @@
+import { EmptyRow } from '../../components/ui/EmptyState'
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
@@ -1627,7 +1628,7 @@ export default function PurchasePage() {
               {()=>(
                 <tbody>
                   {filtered.length===0
-                    ? <tr><td colSpan={PO_COLS.length} className="text-center py-10 text-slate-400">구매 발주가 없습니다</td></tr>
+                    ? <EmptyRow cols={PO_COLS.length} title="구매 발주가 없습니다" />
                     : sorted.slice(0, visibleCount).map(p=>{
                       const due=dueOf(p)
                       const diff=due?Math.round((new Date(due)-new Date(today))/86400000):null
@@ -1719,7 +1720,7 @@ export default function PurchasePage() {
               {()=>(
                 <tbody>
                   {histShown.length===0
-                    ? <tr><td colSpan={HIST_COLS.length} className="text-center py-10 text-slate-400">입고 이력이 없습니다</td></tr>
+                    ? <EmptyRow cols={HIST_COLS.length} title="입고 이력이 없습니다" />
                     : histShown.map(r=>(
                       <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50">
                         <td className="px-3 py-2 font-semibold text-slate-700">{r.movement_date}</td>

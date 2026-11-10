@@ -1,3 +1,4 @@
+import PageHead from '../components/PageHead'
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
@@ -92,12 +93,8 @@ export default function SnapshotRestore() {
   return (
     <div className="space-y-4">
       {confirmEl}
-      <div>
-        <h1 className="text-lg font-bold text-slate-900">↩ 삭제 기록</h1>
-        <p className="page-desc text-xs text-slate-400">
-          대량 삭제 전에 남긴 기록입니다. 되돌릴 수 있습니다.
-        </p>
-      </div>
+      <PageHead crumb="기타" title="삭제 기록"
+        desc="대량 삭제 전에 남긴 기록입니다. 되돌릴 수 있습니다." />
 
       {live.length > 0 && (
         <div className="rounded-xl border-2 border-amber-200 bg-amber-50 px-4 py-3">
