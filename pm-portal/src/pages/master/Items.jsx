@@ -18,6 +18,7 @@ import { isTempCode, promoteTempCode } from '../../lib/tempCode'
 import { checkRfq } from './rfq'
 import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn, CPS_INFO } from '../../lib/itemMeta'
 import ItemMetaPanel from '../../components/ItemMetaPanel'
+import MfrCheckPanel from '../../components/MfrCheckPanel'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
@@ -150,6 +151,7 @@ export default function Items() {
   const [codeModal, setCodeModal] = useState(null)
   const [codeForm, setCodeForm] = useState({ customer_id:'', customer_code:'', customer_name:'' })
   const [bulkMode, setBulkMode] = useState(false)
+  const [showCheck, setShowCheck] = useState(false)   // 🏷 승인 제조사 점검 (v4.174.0)
   const [visibleCount, setVisibleCount] = useState(300)
   const [selected, setSelected] = useState(() => new Set())
 
@@ -184,7 +186,8 @@ export default function Items() {
     enabled: metaIds.length > 0,
     staleTime: 60_000,
   })
-  const editItem = editId ? items.find(i => i.id === editId) : null
+  const [editObj, setEditObj] = useState(null)   // 목록 밖에서 연 품목(승인 점검 「수정」)도 상세를 보이게
+  const editItem = editId ? (items.find(i => i.id === editId) || (editObj?.id === editId ? editObj : null)) : null
 
   const saveMut = useMutation({
     mutationFn: async (data) => {
@@ -303,7 +306,7 @@ export default function Items() {
       vendor_id: item.vendor_id||'', memo: item.memo||'', prod_managed: !!item.prod_managed, stock_managed: item.stock_managed !== false,
       unit_weight: item.unit_weight ?? '', _uw0: item.unit_weight ?? '',
     })
-    setEditId(item.id); setShowForm(true)
+    setEditId(item.id); setEditObj(item); setShowForm(true)
   }
 
   const [vendorImport, setVendorImport] = useState(null)
@@ -421,6 +424,10 @@ export default function Items() {
           📤 구매처 일괄매칭
         </button>
         <input ref={vendorFileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleVendorFile} />
+        <button data-mfr-check-open onClick={()=>setShowCheck(v=>!v)}
+          className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border ${showCheck?'bg-violet-600 text-white border-violet-600':'border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100'}`}>
+          🏷 승인 점검
+        </button>
         <button onClick={()=>{ setBulkMode(v=>!v); setSelected(new Set()) }}
           className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border ${bulkMode?'bg-amber-500 text-white border-amber-500':'border-slate-200 text-slate-600 bg-white hover:bg-slate-50'}`}>
           ✏️ 일괄수정
@@ -487,6 +494,12 @@ export default function Items() {
           )}
         </div>
       )}
+
+      {showCheck && <MfrCheckPanel onClose={()=>setShowCheck(false)} onEdit={async (id)=>{
+        const { data, error } = await supabase.from('items').select('*, vendors(id,name), customer_item_codes(id,customer_code,customer_id)').eq('id', id).maybeSingle()
+        if (error || !data) { toastError('품목을 불러오지 못했습니다'); return }
+        handleEdit(data); setTimeout(()=>document.querySelector('[data-item-meta]')?.scrollIntoView({ behavior:'smooth', block:'center' }), 400)
+      }} />}
 
       {bulkMode && (
         <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-3">

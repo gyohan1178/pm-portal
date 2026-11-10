@@ -23,6 +23,7 @@ import { isDwgPart, pickDwg, indexDwg, walkDir, saveHandle, loadHandle, saveList
 import {
   parseReport, buildRows, buildBuyIndex, normAx, V, CLS_LABEL, CLS_BADGE, qtyText, parentList,
 } from '../../lib/fai/partReport'
+import { repFromBom, fillClsFromDb } from '../../lib/fai/fromBom'
 
 // 초도품 자재 매칭 (FAI Navigator) — PM Portal 이식 1단계
 //
@@ -136,7 +137,7 @@ const KPI_NUM = { '': 'text-slate-800', ok: 'text-emerald-600', gen: 'text-sky-6
 export default function FaiNavigator() {
   const saved = lsGet(LS_REP, null)
   const [rep, setRep] = useState(() => {
-    if (!saved?.txt) return null
+    if (!saved?.txt) return null   // BOM 에서 불러온 것({bom})은 아래 useEffect 가 다시 불러온다
     try { return Object.assign(parseReport(saved.txt), { fileName: saved.name }) } catch { return null }
   })
   const [opt, setOpt] = useState(() => (({ uncls, ...o }) => o)(Object.assign({ mode: 'uniq', incAssy: true }, lsGet(LS_OPT, {}))))
@@ -166,6 +167,23 @@ export default function FaiNavigator() {
   const [faBusy, setFaBusy] = useState(false)
   const [ask, confirmEl] = useConfirm()   // v4.104.0 — PPT · 되살리기 확인 창
 
+  // ── 포털 BOM 에서 불러오기 (v4.174.0) — Part Report 를 찾아 올리지 않아도 된다
+  //   승인 제조사 · Class 는 NAS 리포트 · CPS 문서를 매일 읽어 쌓은 DB 값
+  const [bomCode, setBomCode] = useState('')
+  const [bomBusy, setBomBusy] = useState(false)
+  async function loadBom(code, quiet) {
+    const c = String(code || '').trim(); if (!c) return
+    setBomBusy(true)
+    try {
+      const r = await repFromBom(c)
+      setRep(r); setSel({}); setOpen({})
+      lsSet(LS_REP, { bom: c })
+      if (!quiet) toastSuccess(`${r.top.pn} REV ${r.top.rev || '-'} — 포털 BOM 에서 품번 ${r.parts.size.toLocaleString('ko-KR')}개를 불러왔습니다`)
+    } catch (e) { if (!quiet) toastError(e.message) }
+    finally { setBomBusy(false) }
+  }
+  useEffect(() => { if (saved?.bom && !rep) loadBom(saved.bom, true) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
+
   function loadFile(f) {
     if (!f) return
     const rd = new FileReader()
@@ -174,6 +192,8 @@ export default function FaiNavigator() {
         const r = parseReport(rd.result)
         r.fileName = f.name
         setRep(r); setSel({}); setOpen({})
+        // 리포트에 Class 칸이 없으면 DB(CPS 문서에서 읽은 값)로 채운다 (v4.174.0)
+        fillClsFromDb(r).then((n) => { if (n) setRep((x) => (x === r ? { ...r } : x)) }).catch(() => {})
         // 다음에 열 때 다시 안 올려도 되게. 용량이 크면 저장을 건너뛴다.
         lsSet(LS_REP, { name: f.name, txt: rd.result })
         toastSuccess(`${r.top.pn} Rev ${r.top.rev} — 품번 ${r.parts.size.toLocaleString('ko-KR')}개를 읽었습니다`)
@@ -440,7 +460,7 @@ export default function FaiNavigator() {
       <div className="flex items-start justify-between gap-4 flex-wrap">
         <div>
           <PageHead crumb="품질" title="초도품 자재 매칭 · FAI Navigator"
-            desc={<>Axcelis Part Report 를 올리면 품목마다 <b className="text-slate-500">등록된 제조사</b>와 <b className="text-slate-500">실제로 구매한 제조사</b>를 맞대어 판정합니다. 초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.</>} />
+            desc={<>Axcelis Part Report 를 올리거나 포털 BOM 에서 불러오면 품목마다 <b className="text-slate-500">등록된 제조사</b>와 <b className="text-slate-500">실제로 구매한 제조사</b>를 맞대어 판정합니다. 초도품 제출 전에 구매팀이 먼저 점검하는 용도입니다.</>} />
         </div>
         <DocRequestButton preset={{ kind: '사양서', customer_code: 'AX', source: 'fai', reason: '초도품 자재 매칭 — 등록 제조사 확인' }} />
         <p className="text-[10px] text-slate-400 text-right leading-relaxed">
@@ -456,10 +476,11 @@ export default function FaiNavigator() {
         className={`rounded-xl border-2 border-dashed p-4 flex items-center gap-4 flex-wrap transition-colors ${drag ? 'border-indigo-400 bg-indigo-50' : 'border-slate-200 bg-[#f9fafc]'}`}>
         <div className="text-2xl">📄</div>
         <div className="flex-1 min-w-[240px]">
-          <p className="text-sm font-bold text-slate-700">① Part Report (.htm)</p>
+          <p className="text-sm font-bold text-slate-700">① Part Report (.htm) 또는 포털 BOM</p>
           {rep ? (
-            <p className="text-xs text-emerald-700 mt-0.5">
+            <p className="text-xs text-emerald-700 mt-0.5" data-fai-src={rep.fromBom ? 'bom' : 'htm'}>
               ✔ {rep.fileName || '(지난번 파일)'} — <b>{rep.top.pn}</b> Rev {rep.top.rev} · {rep.top.name} · 품번 {rep.parts.size.toLocaleString('ko-KR')}개
+              {rep.fromBom && <span className="block text-[11px] text-slate-400 font-normal">BOM 에서 불러옴 — 승인 제조사 · Class 는 NAS 리포트 · CPS 문서에서 읽어 둔 값입니다. Acceptance Criteria · RoHS · 도면 문서 목록은 리포트에만 있어 비어 있습니다.{rep.noMfrTable ? ' ⚠ 승인 제조사 표가 아직 없습니다(SQL 전).' : ''}</span>}
             </p>
           ) : (
             <p className="text-xs text-slate-400 mt-0.5">Windchill 에서 받은 Part report 파일을 끌어다 놓거나 선택하세요. 한 번 올리면 이 PC 에 기억됩니다.</p>
@@ -471,16 +492,25 @@ export default function FaiNavigator() {
               className="px-2 py-0.5 text-[11px] font-bold rounded border border-indigo-200 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">📋 복사</button>
           </div>
         </div>
-        <button onClick={() => fileRef.current?.click()}
-          className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
-          {rep ? '다른 리포트' : '파일 선택'}
-        </button>
+        <div className="flex flex-col gap-1.5 items-stretch">
+          <button onClick={() => fileRef.current?.click()}
+            className="px-4 py-2 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">
+            {rep && !rep.fromBom ? '다른 리포트' : '리포트 파일 선택'}
+          </button>
+          <form data-fai-bom onSubmit={(e) => { e.preventDefault(); loadBom(bomCode) }} className="flex gap-1">
+            <input value={bomCode} onChange={(e) => setBomCode(e.target.value)} placeholder="또는 BOM 품번 (110153030)"
+              className="w-[170px] px-2 py-1.5 text-xs border border-slate-200 rounded-lg font-mono focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+            <button type="submit" disabled={!bomCode.trim() || bomBusy}
+              className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-indigo-200 bg-white text-indigo-700 hover:bg-indigo-50 disabled:opacity-40 whitespace-nowrap">
+              {bomBusy ? '불러오는 중…' : '📋 BOM 에서'}</button>
+          </form>
+        </div>
         <input ref={fileRef} type="file" accept=".htm,.html" className="hidden"
           onChange={(e) => { loadFile(e.target.files?.[0]); e.target.value = '' }} />
       </div>
       {/* 지금 어디쯤인지 — 리포트 올리기 → 발주 이력 맞대기 → 판정 확인 · 반영 (v4.104.0) */}
       <div className="max-w-[620px]" data-fai-stepper>
-        <Stepper steps={['Part Report 올리기', '발주 이력 맞대기', '판정 확인 · 반영']} cur={!rep ? 0 : judging ? 1 : 2} />
+        <Stepper steps={['Part Report · BOM 불러오기', '발주 이력 맞대기', '판정 확인 · 반영']} cur={!rep ? 0 : judging ? 1 : 2} />
       </div>
 
       {(faFrom || faMatch.length > 0) && (
@@ -488,7 +518,9 @@ export default function FaiNavigator() {
           <div className="text-xl">🚦</div>
           <div className="flex-1 min-w-[260px] text-xs space-y-0.5">
             <p className="text-sm font-bold text-slate-700">초도품 진행관리 연결 <span className="text-[11px] font-semibold text-slate-400">— 자재 매칭은 성적서 작성 단계의 세부 항목</span></p>
-            {!rep && faFrom && <p className="text-slate-600">「<b className="font-mono">{faFrom.item_code}</b>」 FA PO {faFrom.po_number} 에서 왔습니다 — 이 품번의 Part Report 를 올리세요.</p>}
+            {!rep && faFrom && <p className="text-slate-600">「<b className="font-mono">{faFrom.item_code}</b>」 FA PO {faFrom.po_number} 에서 왔습니다 — 이 품번의 Part Report 를 올리거나
+              <button type="button" data-fai-bom-fa onClick={() => loadBom(faFrom.item_code)} disabled={bomBusy}
+                className="ml-1 px-2 py-0.5 rounded border border-indigo-200 bg-white text-indigo-700 font-bold hover:bg-indigo-50 disabled:opacity-40">📋 포털 BOM 에서 불러오기</button></p>}
             {rep && faFrom && normAx(faFrom.item_code) !== topPn && (
               <p className="text-rose-600 font-bold">⚠ 올린 리포트({rep.top.pn})가 이 건 품번({faFrom.item_code})과 다릅니다 — 맞는 Part Report 를 올리세요</p>
             )}

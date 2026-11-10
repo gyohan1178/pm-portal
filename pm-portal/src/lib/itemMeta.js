@@ -179,3 +179,59 @@ export const CPS_INFO = {
   Limited: { label: 'Limited', ko: '목록 내만', desc: '승인 목록에 있는 제조사 품번만 — 목록 밖 구매 불가', cls: 'border-amber-200 text-amber-700' },
   Generic: { label: 'Generic', ko: '조건부 대체', desc: '목록 외 제조사도 CPS 조건(Acceptability Criteria)을 맞으면 가능', cls: 'border-slate-300 text-slate-500' },
 }
+
+// ── 승인 제조사 점검 목록 (v4.174.0) — 기준코드 DB 「🏷 승인 점검」 ─────────────
+//   NAS Part Report · CPS 문서에서 읽어 둔 승인 목록과 품목 DB 대표 제조사품번을 맞대어, 손볼 품목을 묶는다.
+export const CHECK_GROUPS = [
+  { k: 'dnu',     label: '대표 품번 사용 금지', tone: 'red',   note: '고객사가 Do Not Use 로 막은 품번이 대표로 등록됨' },
+  { k: 'soleRisk',label: 'Sole 위험',           tone: 'red',   note: 'Sole(단독 지정)인데 대표 품번이 안 맞거나 · 단종 · 쓸 수 있는 승인품이 없음' },
+  { k: 'nouse',   label: '쓸 승인품 없음',      tone: 'amber', note: '승인 목록이 전부 사용 금지 · 제조사 단종 — 대체 검토' },
+  { k: 'obs',     label: '대표 품번 단종',      tone: 'amber', note: '대표 품번이 제조사 단종(OBS) — 다른 승인품으로 바꿀지' },
+  { k: 'none',    label: '승인목록 밖',         tone: 'amber', note: '대표 제조사품번이 고객사 승인 목록에 없음 (표기만 다른 것 포함)' },
+  { k: 'blank',   label: '대표 품번 비어 있음', tone: 'blue',  note: '승인 목록은 있는데 품목에 제조사품번이 비어 있음 — 채우면 됨' },
+  { k: 'missing', label: '품목 DB 에 없는 품번', tone: 'pr',   note: 'NAS 리포트에는 있는데 기준코드 DB 에 없음 — 신규 등록 후보' },
+]
+export async function fetchMfrCheck() {
+  const { fetchAll } = await import('./paginate')
+  const mf = await fetchAll(() => supabase.from('pm_item_mfr').select('id,item_id,mfr,mfr_pn,status').eq('active', true).order('id'))
+  const byItem = {}
+  for (const m of mf) (byItem[m.item_id] = byItem[m.item_id] || []).push(m)
+  const ids = Object.keys(byItem)
+  const items = []
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('items').select('id,std_code,js_code,name,manufacturer,manufacturer_code').in('id', ids.slice(i, i + 200))
+    if (error) throw error
+    items.push(...(data || []))
+  }
+  const cps = {}
+  const { data: cr } = await supabase.from('pm_item_cps').select('item_id,kind').not('kind', 'is', null).limit(20000)
+  for (const r of cr || []) cps[r.item_id] = r.kind
+  const out = Object.fromEntries(CHECK_GROUPS.map(g => [g.k, []]))
+  for (const it of items) {
+    const L = (byItem[it.id] || []).sort(byMfrRank)
+    if (!L.some(m => realPn(m.mfr_pn))) continue          // 「품명대로 구매」만 있는 품목은 맞댈 품번이 없다
+    const chk = inApproved(it, L)
+    const use = usableMfrs(L)
+    const row = { ...it, mfrs: L, cps: cps[it.id] || null, chk, usable: use.length }
+    if (chk === 'dnu') out.dnu.push(row)
+    if (chk === 'obs') out.obs.push(row)
+    if (chk === 'none') out.none.push(row)
+    if (!String(it.manufacturer_code || '').trim()) out.blank.push(row)
+    if (!use.length) out.nouse.push(row)
+    if (row.cps === 'Sole' && (chk !== 'ok' || !use.length)) out.soleRisk.push(row)
+  }
+  // 리포트에만 있는 품번 — 그 사이 등록된 것은 뺀다
+  const { data: miss, error: me } = await supabase.from('pm_item_meta_missing').select('code,name,src_code,last_seen').order('code').limit(5000)
+  out.missingTable = !me
+  if (!me && miss?.length) {
+    const have = new Set()
+    for (let i = 0; i < miss.length; i += 200) {
+      const { data } = await supabase.from('items').select('std_code').in('std_code', miss.slice(i, i + 200).map(m => m.code))
+      for (const x of data || []) have.add(x.std_code)
+    }
+    out.missing = miss.filter(m => !have.has(m.code)).map(m => ({ id: 'm:' + m.code, std_code: m.code, name: m.name || '', src: m.src_code, last_seen: m.last_seen, mfrs: [] }))
+  }
+  for (const g of CHECK_GROUPS) if (g.k !== 'missing') out[g.k].sort((a, b) => String(a.std_code).localeCompare(String(b.std_code)))
+  out.total = items.length
+  return out
+}

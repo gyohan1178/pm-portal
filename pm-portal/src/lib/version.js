@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.173.0'
+export const APP_VERSION = 'v4.174.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,16 @@ export const APP_VERSION = 'v4.173.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.174.0',
+    date: '2026-11-10',
+    changes: [
+      '🏷 기준코드 DB 「🏷 승인 점검」 — NAS 리포트 · CPS 기준으로 손볼 품목을 한 곳에: 대표 품번 사용 금지 · Sole 위험 · 쓸 승인품 없음 · 대표 품번 단종 · 승인목록 밖 · 대표 품번 비어 있음 · 품목 DB 에 없는 품번',
+      '  칸을 누르면 그 목록 · 줄의 「수정」으로 바로 품목 수정 · 📥 엑셀',
+      '🧾 초도품 자재 매칭 — Part Report 없이 「📋 BOM 에서」 불러오기 (포털 BOM + 승인 제조사 DB + CPS Class). 초도품 건에서 오면 버튼 한 번',
+      '  리포트를 올려도 Class 칸이 비어 있으면 CPS 문서에서 읽은 Sole · Limited · Generic 으로 채움',
+    ],
+  },
   {
     version: 'v4.173.0',
     date: '2026-11-10',
