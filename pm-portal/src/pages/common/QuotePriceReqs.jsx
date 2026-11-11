@@ -8,17 +8,20 @@
 //              (v4.127.x 는 부품 하나에 품목 전체를 견적 불가로 만들어 다른 부품까지 목록에서 빠졌다)
 //   v4.176.0 — 부품마다 「견적 특이사항」(MOQ · 납기 · 단종 예정 …) — 품목에 붙어(pm_item_quote_note) 다음 견적에도 따라가고,
 //              영업이 견적 작성에서 품목을 넣으면 그 줄 「비고」에 자동으로 들어간다 (lib/quoteNote)
+//   v4.177.0 — 특이사항은 아래 「단가 넣기」 입력칸에서 단가와 같이 적는다 (단가를 넣으면 이 목록에서 줄이 빠져 못 적었다)
+//              여기서는 적어 둔 것만 보여 준다. 견적 불가 부품은 「🗑 목록에서 지우기」로 이 목록에서만 안 보이게
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { todayISO, kst } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
-import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqParts, savePastePrice } from '../master/rfq'
+import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, hidePartNoquote, missCodes, nqParts, savePastePrice } from '../master/rfq'
 import { isPasteKey, keyLabel, pasteKey } from '../../lib/quotePartsPaste'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
-import { fetchQuoteNotes, saveQuoteNote } from '../../lib/quoteNote'
+import { fetchQuoteNotes } from '../../lib/quoteNote'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
@@ -49,6 +52,7 @@ export async function fetchPriceReqs() {
       for (const x of nqParts(l)) {
         const k = String(x.code || '').trim()
         if (!k || !(l.noprice_codes || []).includes(k)) continue   // 그 사이 단가가 들어온 부품은 뺌
+        if (x.hidden) continue                                       // 구매자재가 목록에서 지운 것 (v4.177.0)
         if (!nqMap.has(k)) nqMap.set(k, { code: k, reason: x.reason, memo: x.memo, by: x.by, at: x.at, from: [] })
         nqMap.get(k).from.push({ rfq: r, line: l })
       }
@@ -93,20 +97,7 @@ export default function QuotePriceReqs({ onPick }) {
   const [nqBusy, setNqBusy] = useState(false)
   const [pin, setPin] = useState({})          // 부품표 부품 단가 입력 중 { 키: '1200' } (v4.149.0)
   const [pinBusy, setPinBusy] = useState(null)
-  const [memo, setMemo] = useState({})        // 견적 특이사항 고치는 중 { 품번: '글' } (v4.176.0)
-  const [memoBusy, setMemoBusy] = useState(null)
-
-  // 견적 특이사항 저장 — 품목에 붙는다 · 빈 글이면 지운다
-  async function saveMemo(p) {
-    if (!p.item?.id || !(p.code in memo)) return
-    setMemoBusy(p.code)
-    try {
-      await saveQuoteNote(p.item.id, memo[p.code], profile?.name || null)
-      setMemo((x) => { const y = { ...x }; delete y[p.code]; return y })
-      toastSuccess(String(memo[p.code] || '').trim() ? `${p.code} 견적 특이사항 저장 — 견적 작성에서 이 품목을 넣으면 줄 비고에 들어갑니다` : `${p.code} 견적 특이사항을 지웠습니다`)
-      await qc.invalidateQueries({ queryKey: PRICE_REQ_KEY })
-    } catch (e) { toastError('특이사항 저장 실패 — ' + (e?.message || e)) } finally { setMemoBusy(null) }
-  }
+  const [ask, confirmEl] = useConfirm()
 
   // 부품표 부품 — 포털에 품목이 없어 여기서 바로 단가를 적는다 (품목 등록 없이 그 견적 품목 안에만 저장)
   //   저장하면 그 부품이 든 견적 건을 다시 점검 → 부품이 다 차면 「단가 요청 끝」이 저절로
@@ -169,6 +160,21 @@ export default function QuotePriceReqs({ onPick }) {
       qc.invalidateQueries({ queryKey: PRICE_REQ_KEY }); qc.invalidateQueries({ queryKey: ['rfqs'] }); qc.invalidateQueries({ queryKey: ['flowCounts'] })
     }
   }
+  // 견적 불가 부품을 이 목록에서 지우기 (v4.177.0) — 견적 불가는 그대로 (단가 요청에 다시 안 들어감 · 영업 사유도 그대로)
+  async function hideNoquote(x) {
+    const ok = await ask({ title: `${keyLabel(x.code)} — 목록에서 지울까요?`, desc: '이 「견적 불가로 표시한 부품」 목록에서만 안 보이게 합니다. 견적 불가 표시는 그대로라 단가 요청 목록에 다시 들어가지 않고, 영업 견적 접수의 사유도 그대로 남습니다. 다시 단가를 받으려면 지우지 말고 「↩ 해제」를 누르세요.', okText: '🗑 목록에서 지우기' })
+    if (!ok) return
+    setNqBusy(true)
+    try {
+      for (const f of x.from) await hidePartNoquote(f.line.id, x.code)
+      toastSuccess(`${keyLabel(x.code)} — 견적 불가 목록에서 지웠습니다`)
+    } catch (e) {
+      toastError('지우기 실패 — ' + (e?.message || e))
+    } finally {
+      setNqBusy(false)
+      qc.invalidateQueries({ queryKey: PRICE_REQ_KEY })
+    }
+  }
   async function undoNoquote(x) {
     setNqBusy(true)
     try {
@@ -191,6 +197,7 @@ export default function QuotePriceReqs({ onPick }) {
 
   return (
     <div className="rounded-xl border border-amber-200 bg-white overflow-hidden" data-price-reqs>
+      {confirmEl}
       <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex flex-wrap items-center gap-2 px-4 py-3 bg-amber-50/60 text-left" data-price-reqs-toggle>
         <b className="text-sm text-slate-800">📥 영업 견적 단가 요청</b>
         {reqs.length ? <>
@@ -208,7 +215,7 @@ export default function QuotePriceReqs({ onPick }) {
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
             <b className="text-violet-700">📋 부품표</b> 부품(코드 부여 전 · 포털에 없는 품번)은 이 표에서 바로 단가를 적고 💲 저장 — 품목 등록 없이 그 견적에만 들어갑니다.
-            <b className="text-slate-700">📝 견적 특이사항</b>(MOQ · 납기 · 단종 예정 …)을 적으면 품목에 붙어, 영업이 견적 작성에서 그 품목을 넣을 때 줄 <b>비고</b>에 자동으로 들어갑니다 (고객사 견적서에 인쇄됨).
+            <b className="text-slate-700">📝 견적 특이사항</b>(MOQ · 납기 · 단종 예정 …)은 「단가 넣기」 입력칸에서 단가와 같이 적습니다 — 품목에 붙어, 영업이 견적 작성에서 그 품목을 넣을 때 줄 <b>비고</b>에 자동으로 들어갑니다 (고객사 견적서에 인쇄됨).
             수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품만 목록에서 빠지고(같은 품목의 다른 부품은 그대로), 영업 견적 접수에 사유가 보입니다.
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -225,7 +232,7 @@ export default function QuotePriceReqs({ onPick }) {
               <thead className="bg-slate-50 text-slate-500 sticky top-0"><tr className="text-left">
                 <th className="px-3 py-2 font-bold">품번 · 품명</th><th className="px-3 font-bold">제조사 · 제조사품번</th>
                 <th className="px-3 font-bold">견적 건 (고객사 · 회신 기한)</th><th className="px-3 font-bold text-right">현재 매입가</th>
-                <th className="px-3 font-bold" title="품목에 붙어 다음 견적에도 따라갑니다 · 견적 작성 줄 비고에 자동 입력">📝 견적 특이사항 <span className="font-normal text-slate-400">→ 견적서 비고</span></th><th className="px-3 font-bold"></th>
+                <th className="px-3 font-bold" title="「단가 넣기」에서 적습니다 · 품목에 붙어 견적 작성 줄 비고에 자동 입력">📝 견적 특이사항</th><th className="px-3 font-bold"></th>
               </tr></thead>
               <tbody>
                 {!shown.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">남은 부품이 없습니다 — 「🔍 다시 점검」을 눌러 견적 접수에 반영하세요</td></tr>}
@@ -250,21 +257,8 @@ export default function QuotePriceReqs({ onPick }) {
                         )
                       })}</td>
                       <td className="px-3 text-right font-mono">{p.priced ? <span className="text-emerald-700 font-bold">₩{n(p.item.purchase_price)} ✓</span> : <span className="text-slate-300">—</span>}</td>
-                      <td className="px-3 py-1.5" data-price-req-memo={p.code}>
-                        {p.item?.id && editable
-                          ? <span className="flex items-center gap-1">
-                              <input value={memo[p.code] ?? (p.note?.note || '')} onChange={(e) => setMemo((x) => ({ ...x, [p.code]: e.target.value }))}
-                                onKeyDown={(e) => { if (e.key === 'Enter') saveMemo(p) }} placeholder="예: MOQ 100 · 납기 12주 · 단종 예정" data-price-req-memo-input
-                                title={p.note ? `${p.note.by_name || ''} ${md(p.note.updated_at)} 저장` : ''}
-                                className={`w-full min-w-[180px] px-2 py-1 text-[11.5px] border rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-400 ${p.note && !(p.code in memo) ? 'border-violet-200 bg-violet-50/40' : 'border-slate-200'}`} />
-                              {p.code in memo && (memo[p.code] ?? '') !== (p.note?.note || '') && (
-                                <button type="button" onClick={() => saveMemo(p)} disabled={memoBusy === p.code} data-price-req-memo-ok
-                                  className="px-2 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{memoBusy === p.code ? <Spin /> : '📝 저장'}</button>
-                              )}
-                            </span>
-                          : p.note ? <span className="text-[11.5px] text-slate-600">{p.note.note}</span>
-                          : p.paste ? <span className="text-[11px] text-slate-300" title="부품표 부품은 포털 품목이 없어 특이사항을 붙일 수 없습니다">—</span>
-                          : <span className="text-slate-300">—</span>}
+                      <td className="px-3 py-1.5 max-w-[240px]" data-price-req-memo={p.code}>
+                        {p.note ? <span className="text-[11.5px] text-violet-700" title={`${p.note.by_name || ''} ${md(p.note.updated_at)} · 「단가 넣기」에서 고칩니다`}>{p.note.note}</span> : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-3 text-right">
                         {p.paste && editable
@@ -321,8 +315,12 @@ export default function QuotePriceReqs({ onPick }) {
                   <span className="px-1.5 py-[1px] rounded bg-rose-100 text-rose-700 font-bold">{x.reason}</span>
                   {x.memo && <span className="text-slate-600">{x.memo}</span>}
                   <span className="text-slate-400">{[x.by, md(x.at)].filter(Boolean).join(' · ')} · {[...new Set(x.from.map((f) => `${f.rfq.title} · ${f.line.pn}`))].join(' / ')}</span>
-                  {editable && <button type="button" disabled={nqBusy} onClick={() => undoNoquote(x)} data-price-req-nq-undo={x.code}
-                    className="ml-auto px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-40">↩ 해제</button>}
+                  {editable && <span className="ml-auto flex gap-1">
+                    <button type="button" disabled={nqBusy} onClick={() => undoNoquote(x)} data-price-req-nq-undo={x.code}
+                      className="px-2 py-0.5 rounded border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 disabled:opacity-40">↩ 해제</button>
+                    <button type="button" disabled={nqBusy} onClick={() => hideNoquote(x)} data-price-req-nq-hide={x.code} title="이 목록에서만 안 보이게 — 견적 불가 표시는 그대로"
+                      className="px-2 py-0.5 rounded border border-rose-200 bg-white text-rose-600 hover:bg-rose-50 disabled:opacity-40">🗑 목록에서 지우기</button>
+                  </span>}
                 </div>
               ))}
             </div>

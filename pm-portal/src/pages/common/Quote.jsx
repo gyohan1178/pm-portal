@@ -12,6 +12,8 @@ import QuoteBulk from './QuoteBulk'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
 import QuotePriceReqs, { PRICE_REQ_KEY } from './QuotePriceReqs'
+import { fetchQuoteNotes, saveQuoteNote } from '../../lib/quoteNote'
+import { useMyProfile } from '../../hooks/useProfile'
 
 async function searchItems(keyword) {
   if (!keyword || keyword.length < 1) return []
@@ -77,6 +79,19 @@ function QuoteOne({ pick }) {
   const [applyLt, setApplyLt] = useState(false)
   const [searching, setSearching] = useState(false)
   const [saved, setSaved] = useState(false)
+  // 견적 특이사항 (v4.177.0 · lib/quoteNote) — 품목에 붙어 영업 견적서 줄 비고로. 고른 품목의 지금 값을 불러와 고친다
+  const { data: me } = useMyProfile()
+  const [note, setNote] = useState('')
+  const [note0, setNote0] = useState('')
+  useEffect(() => {
+    let alive = true
+    setNote(''); setNote0('')
+    if (!selItem?.id) return
+    fetchQuoteNotes([selItem.id]).then((m) => { if (!alive) return; const v = m.get(selItem.id)?.note || ''; setNote(v); setNote0(v) })
+      .catch((e) => { if (alive) toastError('견적 특이사항을 못 불러왔습니다 — ' + (e?.message || e)) })
+    return () => { alive = false }
+  }, [selItem?.id])
+  const noteDirty = note.trim() !== note0.trim()
 
   const lt = ltWeeksOf(leadTime)
   const { data: history=[], refetch: refetchHistory, isLoading: histLoading } = useQuery({
@@ -86,9 +101,17 @@ function QuoteOne({ pick }) {
   })
 
   const saveMut = useMutation({
-    mutationFn: () => saveQuote({ itemId:selItem?.id, vendorId:selVendor, unitPrice, quoteDate, validUntil, memo, leadTime, moq, updatePrice, applyLt }),
+    mutationFn: async () => {
+      const r = await saveQuote({ itemId:selItem?.id, vendorId:selVendor, unitPrice, quoteDate, validUntil, memo, leadTime, moq, updatePrice, applyLt })
+      // 특이사항은 단가와 따로 — 실패해도 단가 저장은 그대로 두고 알린다
+      let noteErr = null, noteSaved = false
+      if (noteDirty) { try { await saveQuoteNote(selItem.id, note, me?.name || null); noteSaved = true } catch (e) { noteErr = e } }
+      return { ...(r || {}), noteErr, noteSaved }
+    },
     onSuccess: (r) => {
       setSaved(r || true)
+      if (r?.noteErr) toastError('단가는 저장했는데 견적 특이사항은 못 저장했습니다 — ' + (r.noteErr.message || r.noteErr))
+      if (r?.noteSaved) setNote0(note)
       if (r?.fallback) toast('납기 · MOQ 는 메모에 적었습니다 — DB 설정(품목단가등록_261023.sql) 뒤에는 따로 저장됩니다')
       refetchHistory()
       qc.invalidateQueries(['items'])
@@ -195,6 +218,12 @@ function QuoteOne({ pick }) {
                   <input data-quote-moq type="number" value={moq} onChange={e=>setMoq(e.target.value)} placeholder="최소 주문 수량"
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                 </div>
+                <div className="col-span-2" data-quote-note-box>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">📝 견적 특이사항 <span className="font-normal text-violet-600">→ 영업 견적서 비고</span></label>
+                  <input data-quote-note value={note} onChange={e=>setNote(e.target.value)} placeholder="예) MOQ 100 · 납기 12주 · 단종 예정"
+                    className={`w-full px-3 py-2 text-sm border rounded-lg focus:outline-none focus:ring-2 focus:ring-violet-400 ${noteDirty ? 'border-violet-400 bg-violet-50/40' : 'border-slate-200'}`}/>
+                  <p className="text-[10px] text-slate-400 mt-0.5">품목에 붙어 다음 견적에도 따라갑니다. 영업이 견적 작성에서 이 품목을 넣으면 줄 비고에 그대로 들어가고 <b>고객사 견적서에 인쇄</b>됩니다. 비우고 저장하면 지워집니다.</p>
+                </div>
                 <div className="col-span-2">
                   <label className="block text-xs font-bold text-slate-500 mb-1">메모</label>
                   <input value={memo} onChange={e=>setMemo(e.target.value)} placeholder="메모"
@@ -212,7 +241,7 @@ function QuoteOne({ pick }) {
 
               {saved && (
                 <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-700 font-semibold">
-                  ✅ 견적 저장 완료{saved.priced ? ' · 최근 매입가 갱신됨' : ''}{saved.lt ? ' · LT 반영됨' : ''}
+                  ✅ 견적 저장 완료{saved.priced ? ' · 최근 매입가 갱신됨' : ''}{saved.lt ? ' · LT 반영됨' : ''}{saved.noteSaved ? ' · 견적 특이사항 저장됨' : ''}
                 </div>
               )}
 

@@ -36,7 +36,7 @@ export function remarksFromNotes(kind, parts, notes) {
   const seen = new Set()
   const out = []
   for (const p of parts || []) {
-    if (!p?.item_id || p.excluded || p.skip || p.status === 'skip' || seen.has(p.item_id)) continue
+    if (!p?.item_id || p.excluded || p.skip || p.status === 'skip' || !(Number(p.qty) > 0) || seen.has(p.item_id)) continue
     const n = notes.get(p.item_id)?.note
     if (!n) continue
     seen.add(p.item_id)

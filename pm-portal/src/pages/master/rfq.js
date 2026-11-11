@@ -253,6 +253,18 @@ export async function setPartNoquote(r, lineId, code, entry) {
   if (entry) await syncPriceDone(r)
 }
 
+// 견적 불가 부품 목록에서 지우기 (v4.177.0) — 구매자재 목록에서만 안 보이게 (hidden: true)
+//   견적 불가 표시는 그대로 → 단가 요청에 다시 들어가지 않고, 영업 견적 접수에는 사유가 계속 보인다
+export async function hidePartNoquote(lineId, code) {
+  const { data: cur, error: e1 } = await supabase.from('pm_rfq_line').select('*').eq('id', lineId).maybeSingle()
+  if (e1) throw e1
+  if (!cur) return
+  if (!('nq_parts' in cur)) throw new Error(NQ_PART_SQL_HINT)
+  const next = nqParts(cur).map((x) => (String(x.code) === String(code) ? { ...x, hidden: true } : x))
+  const { error } = await supabase.from('pm_rfq_line').update({ nq_parts: next }).eq('id', lineId)
+  if (error) throw new Error(error.message)
+}
+
 // 모든 품목이 견적 불가 — 접수를 「불가」로 닫는다 (사유는 품목 사유를 모아서)
 export async function closeNoquote(r, memo) {
   const reasons = [...new Set((r.lines || []).filter((l) => l.noquote).map((l) => l.noquote))].join(' · ')

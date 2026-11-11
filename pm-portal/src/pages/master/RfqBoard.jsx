@@ -1,3 +1,4 @@
+import CustOptions from '../../components/CustOptions'
 import { KpiCard } from '../../components/ui/Kpi'
 // 📥 견적 접수 현황 — 영업 › 매출견적 첫 탭 (v4.92.0)
 //   고객사 견적 요청을 접수해 두고 BOM 확인 → 단가(구매자재) → 견적 작성 → 📤 발송 완료까지 한 줄로 따라간다 (v4.119.0 — 수주 · 실주는 안 물음)
@@ -303,7 +304,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
             className="flex-1 min-w-0 basis-full md:basis-auto md:min-w-[260px] px-3 py-2 text-xs border border-slate-200 rounded-lg" />
           <select value={cs} onChange={(e) => setCs(e.target.value)} className="text-xs font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-600">
             <option value="all">모든 고객사</option>
-            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <CustOptions list={customers} />
             {rfqs.some((r) => isEtc(r.customer_code)) && <option value="__etc">기타 (직접 입력)</option>}
           </select>
           {editable && <button type="button" onClick={() => { setFerr({}); setForm({ customer_code: customers[0]?.id || '', etc_name: '', title: '', cust_ref: '', due_date: '', owner_name: meName, memo: '', paste: '' }) }} data-rfq-new
@@ -316,7 +317,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
           <div className="flex items-center"><b className="text-sm">{form.id ? '✏ 접수 수정' : '＋ 견적 접수'}</b><button type="button" onClick={() => { setForm(null); setFerr({}) }} className="ml-auto text-xs font-bold text-slate-500">✕ 닫기</button></div>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 bg-slate-50/70 rounded-lg p-3">
             <label className="text-xs font-bold text-slate-600 space-y-1">고객사 <span className="text-red-500">*</span>
-              <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP} data-rfq-cs>{customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}<option value="__etc">기타 (직접 입력)</option></select>
+              <select value={form.customer_code} onChange={(e) => setForm({ ...form, customer_code: e.target.value })} className={INP} data-rfq-cs><CustOptions list={customers} /><option value="__etc">기타 (직접 입력)</option></select>
               {form.customer_code === '__etc' && <input value={form.etc_name} onChange={(e) => setF({ etc_name: e.target.value }, 'etc')} placeholder="고객사 이름 (예: 한화컨버전스)" className={`${INP} ${ferr.etc ? '!border-rose-400 ring-2 ring-rose-100' : ''}`} data-rfq-etc autoFocus />}
               {ferr.etc && <span className="block text-[11px] text-rose-600" data-field-error="etc">{ferr.etc}</span>}
               {form.customer_code === '__etc' && (

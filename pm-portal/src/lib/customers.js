@@ -23,3 +23,15 @@ export const orderedCustomers = (profile) => {
 
 // 1순위(기본) 고객사 코드
 export const primaryCsCode = (profile) => orderedCustomers(profile)[0]?.id || 'ax'
+
+// 기타 고객사 붙이기 (v4.177.0) — 주요 4곳 뒤에 DB customers 의 나머지(한화컨버전스 hc 등)를 붙인다
+//   all = useCustomers() 결과 [{id, code, name}]. 붙인 것은 etc: true (고르는 칸에서 「기타 고객사」 묶음으로)
+export const ETC_COLOR = '#94a3b8'
+export const withEtcCustomers = (main, all = []) => {
+  const has = new Set(main.map((c) => c.id))
+  const etc = (all || [])
+    .map((c) => ({ id: String(c.code || '').toLowerCase(), name: c.name || String(c.code || '').toUpperCase(), color: ETC_COLOR, etc: true }))
+    .filter((c) => c.id && !has.has(c.id))
+    .sort((a, b) => a.name.localeCompare(b.name, 'ko'))
+  return [...main, ...etc]
+}

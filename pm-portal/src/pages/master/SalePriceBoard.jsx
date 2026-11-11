@@ -14,6 +14,7 @@ import { logActivity } from '../../lib/activityLog'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
 import { prevWarn, prevMargin, isMissingSaleFn } from '../../lib/salePrice'
 import { todayISO, ymdKST } from '../../lib/utils'
+import CustOptions from '../../components/CustOptions'
 
 // 판매 실적가 (v4.163.0) — 고객사에 낸 판매단가를 품목별로 본다 · 고친다
 //   실적가 = 그 품목의 가장 최근 견적 단가 (단품 줄 단가 · 세부견적으로 나간 부품 단가)
@@ -164,7 +165,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
         <div className="flex flex-wrap items-center gap-2">
           <select value={code} onChange={(e) => { setCode(e.target.value); setOpen(null) }} data-sale-cust
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
-            {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <CustOptions list={custList} />
           </select>
           {curs.length > 1 && <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
             {curs.map((c) => <button key={c} onClick={() => setCur(c)} data-sale-cur={c}

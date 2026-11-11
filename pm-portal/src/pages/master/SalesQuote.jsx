@@ -1,10 +1,11 @@
 import PageHead from '../../components/PageHead'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile } from '../../hooks/useProfile'
-import { orderedCustomers, primaryCsCode } from '../../lib/customers'
-import { useCustomer } from '../../hooks/useCustomers'
+import { orderedCustomers, primaryCsCode, withEtcCustomers } from '../../lib/customers'
+import { useCustomer, useCustomers } from '../../hooks/useCustomers'
+import CustOptions from '../../components/CustOptions'
 import { DEFAULT_CFG } from '../../lib/costAnalysis'
 import QuoteSheet from './QuoteSheet'
 import QuoteHistory from './QuoteHistory'
@@ -20,7 +21,9 @@ const won = (v) => Math.round(Number(v) || 0).toLocaleString('ko-KR')
 // 탭마다 종류가 고정돼 있어 저장 단계에서 헷갈릴 여지가 없다.
 export default function SalesQuote() {
   const { data: profile } = useMyProfile()
-  const custList = orderedCustomers(profile)
+  // 주요 4곳 + 기타 고객사(DB 에 등록된 한화컨버전스 등 · v4.177.0) — 견적 작성 · 이력 · 판매 실적가 · 접수에서 같이 고른다
+  const { data: allCs = [] } = useCustomers()
+  const custList = useMemo(() => withEtcCustomers(orderedCustomers(profile), allCs), [profile, allCs])
   const [tab, setTab] = useState('rfq')     // rfq=견적 접수 현황(v4.92.0) / write=견적 작성 / history=견적 이력 / price=판매 실적가(v4.163.0)
   const [prefill, setPrefill] = useState(null)   // 견적 접수 → 견적 작성으로 넘길 품목
   const [csCode, setCsCode] = useState(null)
@@ -80,14 +83,14 @@ export default function SalesQuote() {
           {tab === 'rfq' && <button type="button" onClick={coach.start} data-coach-again className="px-2.5 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>}
           {tab === 'write' && <select value={code} onChange={(e) => setCsCode(e.target.value)}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
-            {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <CustOptions list={custList} />
           </select>}
           {/* 견적 이력 — 고객사로 거른다 · 「전체 고객사」도 고를 수 있다 (v4.139.0) */}
           {tab === 'history' && <select value={histAll ? '__all' : code} data-qh-cust-sel
             onChange={(e) => { if (e.target.value === '__all') setHistAll(true); else { setHistAll(false); setCsCode(e.target.value) } }}
             className="px-3 py-2 text-sm rounded-lg border border-slate-200 bg-white">
             <option value="__all">전체 고객사</option>
-            {custList.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+            <CustOptions list={custList} />
           </select>}
           {tab === 'write' && <Field label="매입환율">
             <input type="number" value={buyRate} onChange={(e) => setBuyRate(e.target.value)}
