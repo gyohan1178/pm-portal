@@ -15,18 +15,28 @@ import { todayISO, kst } from '../utils'
 const CH = 100
 
 // recs: [{ poId, doc(po_number), vendorId }] → Map(poId → 명세표 묶음)
+//   발주번호가 비어 있는 발주 줄(예전 등록분 · 가공품 등)도 그 줄 한 장으로 그린다 (v4.174.1)
+//   — 예전엔 발주번호 없는 줄을 통째로 걸러 화면엔 거래처 · 날짜가 보이는데 PPT 는 「No purchase record」였다
+const SEL = 'id,po_number,order_date,qty_ordered,status,mfr,mfr_code,vendor_id,vendors(name),items(std_code,name,unit,manufacturer,manufacturer_code)'
 export async function fetchPurchaseDocs(recs) {
-  const want = recs.filter((r) => r && r.poId && r.doc)
+  const want = recs.filter((r) => r && r.poId)
   const out = new Map()
   if (!want.length) return out
-  const numbers = [...new Set(want.map((r) => r.doc))]
+  const numbers = [...new Set(want.filter((r) => String(r.doc || '').trim()).map((r) => r.doc))]
   const lines = []
   for (let i = 0; i < numbers.length; i += CH) {
     const part = await fetchAll(() => supabase.from('purchase_orders')
-      .select('id,po_number,order_date,qty_ordered,status,mfr,mfr_code,vendor_id,vendors(name),items(std_code,name,unit,manufacturer,manufacturer_code)')
+      .select(SEL)
       .eq('order_type', 'purchase').in('po_number', numbers.slice(i, i + CH))
       .order('id'))
     lines.push(...part)
+  }
+  // 발주번호로 못 찾은 줄(번호 없음 · 다른 구분)은 id 로 직접
+  const got = new Set(lines.map((l) => l.id))
+  const rest = [...new Set(want.map((r) => r.poId).filter((id) => !got.has(id)))]
+  for (let i = 0; i < rest.length; i += CH) {
+    const { data } = await supabase.from('purchase_orders').select(SEL).in('id', rest.slice(i, i + CH))
+    lines.push(...(data || []))
   }
   const ids = lines.map((l) => l.id)
   const mv = []
@@ -48,10 +58,11 @@ export async function fetchPurchaseDocs(recs) {
   }
   // 발주번호 + 거래처 = 발주서 한 장
   const docs = new Map()
+  const keyOf = (l) => (String(l.po_number || '').trim() ? l.po_number + '|' + (l.vendor_id || '') : 'id:' + l.id)
   for (const l of lines) {
     if (l.status === '취소') continue
-    const key = l.po_number + '|' + (l.vendor_id || '')
-    if (!docs.has(key)) docs.set(key, { no: l.po_number, vendor: l.vendors?.name || '', date: l.order_date || '', lines: [] })
+    const key = keyOf(l)
+    if (!docs.has(key)) docs.set(key, { no: String(l.po_number || '').trim() || '(번호 없음)', vendor: l.vendors?.name || '', date: l.order_date || '', lines: [] })
     const d = docs.get(key)
     if (l.order_date && (!d.date || l.order_date < d.date)) d.date = l.order_date
     const it = l.items || {}
@@ -66,7 +77,7 @@ export async function fetchPurchaseDocs(recs) {
   }
   for (const d of docs.values()) d.lines.sort((a, b) => a.pn.localeCompare(b.pn))
   for (const l of lines) {
-    const key = l.po_number + '|' + (l.vendor_id || '')
+    const key = keyOf(l)
     if (docs.has(key)) out.set(l.id, docs.get(key))
   }
   return out
