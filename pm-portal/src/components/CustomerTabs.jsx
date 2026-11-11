@@ -1,6 +1,7 @@
-import { useParams, useNavigate } from 'react-router-dom'
-import { orderedCustomers } from '../lib/customers'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
+import { orderedCustomers, CUSTOMERS } from '../lib/customers'
 import { useMyProfile } from '../hooks/useProfile'
+import { useCustomers } from '../hooks/useCustomers'
 
 // 각 customer 페이지 상단 고객사 전환 탭 + 관제탑 바로가기. 주 고객사가 맨 앞.
 //   주소에 고객사가 없는 화면(소요예측 등)은 active · onPick 으로 같은 모양을 쓴다 (2026-10-01 탭 위치 통일)
@@ -10,7 +11,13 @@ export default function CustomerTabs({ active, onPick, flush = false } = {}) {
   const nav = useNavigate()
   const { data: profile } = useMyProfile()
   const customers = orderedCustomers(profile)
-  const work = window.location.pathname.split('/customer/')[1]?.split('/')[1] || 'cpo'
+  const loc = useLocation()
+  const work = loc.pathname.split('/customer/')[1]?.split('/')[1] || 'cpo'
+  // 기타 고객사 (v4.175.0) — 주요 4곳 밖에 DB 에 등록된 고객사(한화컨버전스 hc 등). 지금은 BOM 화면에서만 고른다
+  const { data: all = [] } = useCustomers()
+  const main = new Set(CUSTOMERS.map((c) => c.id))
+  const etc = work === 'bom' && !onPick ? all.filter((c) => !main.has(String(c.code || '').toLowerCase())) : []
+  const etcOn = etc.find((c) => String(c.code).toLowerCase() === customerId)
 
   return (
     <div className={`flex items-center gap-2 flex-wrap ${flush ? '' : 'mb-4'}`}>
@@ -22,11 +29,18 @@ export default function CustomerTabs({ active, onPick, flush = false } = {}) {
             {c.name}
           </button>
         ))}
+        {etc.length > 0 && (
+          <select data-customer-etc value={etcOn ? customerId : ''} onChange={(e) => e.target.value && nav(`/customer/${e.target.value}/${work}`)}
+            className={`px-3 py-1.5 text-xs font-bold rounded-full border-0 cursor-pointer ${etcOn ? 'bg-slate-800 text-white shadow-sm' : 'bg-white text-slate-600 shadow-[0_1px_2px_rgba(20,30,50,.06)]'}`}>
+            <option value="">기타 고객사 ▾</option>
+            {etc.map((c) => <option key={c.id} value={String(c.code).toLowerCase()}>{c.name}</option>)}
+          </select>
+        )}
       </div>
-      <button onClick={() => nav(`/control-tower/${customerId || 'ax'}`)}
+      {!etcOn && <button onClick={() => nav(`/control-tower/${customerId || 'ax'}`)}
         className="flex items-center gap-1 px-3 py-1.5 text-xs font-bold rounded-full text-indigo-600 bg-indigo-50 hover:bg-indigo-100">
         🎯 관제탑
-      </button>
+      </button>}
     </div>
   )
 }

@@ -2,8 +2,8 @@
 //   AXCELIS AX- · Edwards ED- · CSK CS- · VM VM-
 //   ⚠ 예전엔 여러 화면이 AX- 로 고정돼 있어 Edwards · VM · CSK 품번이 AX-ED-… 처럼 붙거나 못 찾았다 (v4.57.0)
 //   ⚠ Edwards 상위품번(ASML 9B 등)처럼 접두 없이 저장된 코드도 있다 → 찾을 때는 「접두 붙인 것 · 그대로」 둘 다 본다
-export const CUST_PREFIX = { AX: 'AX-', ED: 'ED-', CSK: 'CS-', CS: 'CS-', VM: 'VM-' }
-const ANY = /^(AX|ED|CS|VM)-/i
+export const CUST_PREFIX = { AX: 'AX-', ED: 'ED-', CSK: 'CS-', CS: 'CS-', VM: 'VM-', HC: 'HC-' }   // HC 한화컨버전스 (기타 고객사 · v4.175.0)
+const ANY = /^(AX|ED|CS|VM|HC)-/i
 export const prefixOf = (cs) => CUST_PREFIX[String(cs || '').toUpperCase()] || ''
 export const hasPrefix = (code) => ANY.test(String(code || '').trim())
 export const stripPrefix = (code) => String(code ?? '').trim().replace(ANY, '')

@@ -12,8 +12,8 @@ import { supabase } from './supabase'
 import { codeCandidates } from './custPrefix'
 
 export const REF_KEY = 'etc_customer_ref'
-export const REF_DEFAULTS = { 제스코: 'ax', 벨류엔지니어링: 'ax', 남일: 'ed', 두웰: 'ed' }   // 두웰 v4.134.0
-const ORDER = ['ax', 'ed', 'csk', 'vm']
+export const REF_DEFAULTS = { 제스코: 'ax', 벨류엔지니어링: 'ax', 남일: 'ed', 두웰: 'ed', 한화컨버전스: 'hc', 한화: 'hc' }   // 두웰 v4.134.0 · 한화 v4.175.0
+const ORDER = ['ax', 'ed', 'csk', 'vm', 'hc']
 
 // (주)벨류엔지니어링 · 벨류 엔지니어링 · ㈜제스코 → 벨류엔지니어링 · 제스코
 export const normName = (s) => String(s || '')

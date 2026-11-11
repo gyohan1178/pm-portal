@@ -114,7 +114,7 @@ async function deleteAssembly(customerId, projectId) {
 
 // 품번 앞에 고객사 접두를 붙인다.
 //   AX- 로 고정돼 있어 Edwards BOM 을 올려도 AX- 가 붙었다.
-const PREFIX = { ax: 'AX-', ed: 'ED-', csk: 'CS-', vm: 'VM-' }
+const PREFIX = { ax: 'AX-', ed: 'ED-', csk: 'CS-', vm: 'VM-', hc: 'HC-' }   // hc 한화컨버전스 (기타 고객사 · v4.175.0)
 // 상위품번(어셈블리)은 고객사마다 다르다.
 //   AXCELIS 는 AX-110158840 처럼 붙이고,
 //   Edwards 는 ASML 9B · H2D-HP 처럼 고객사가 쓰는 이름 그대로다.
