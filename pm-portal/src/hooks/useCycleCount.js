@@ -14,8 +14,9 @@ export async function fetchCycleBase() {
   if (e2) throw e2
   const checks = await fetchAll(() => supabase.from('pm_cell_check')
     .select('id,location,check_date,checked_by,item_cnt,diff_cnt,empty').order('id'))   // checked_by — 도우미가 센 칸 (v4.120.0)
-  // 예전 칸 실사(순환 실사 전) 날짜도 「센 날」로 친다
-  const legacy = await fetchAll(() => supabase.from('pm_stock_audit').select('id,location,audit_date').order('id'))
+  // 예전 재고 실사(pm_stock_audit) 날짜는 「센 날」로 치지 않는다 (v4.174.2)
+  //   예전엔 합쳐서, 8월 재고 실사 때 본 품목 있는 칸이 1바퀴째에서 빠지고 빈 칸만 띄엄띄엄 나왔다 (E2-12-2 → 13-1 → 14-1 …)
+  //   순환 실사는 담당 렉을 앞에서부터 한 칸도 안 빼고 차례로 돈다
   // 보류 칸 (v4.114.0) — 부를 때 저절로 풀 것(그 칸을 셈 · 음수 풀림)을 먼저 푼다. SQL 전이면 보류 없이
   const { data: holds, error: eh } = await supabase.rpc('pm_cell_hold_active')
   // 사람별 하루 목표 · 도우미 (v4.120.0) — 없으면 모두 5칸
@@ -23,7 +24,7 @@ export async function fetchCycleBase() {
   return {
     setup: true, racks: racks || [], owners: owners || [], people: ppl?.value || {},
     holds: eh ? [] : (holds || []), holdSetup: !eh,
-    checks: [...checks, ...legacy.map((a) => ({ location: a.location, check_date: a.audit_date }))],
+    checks,
   }
 }
 

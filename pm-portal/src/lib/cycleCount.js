@@ -107,7 +107,7 @@ export function mineByDate(checks, userId) {
 }
 
 // 센 기록 → 칸별 { last: 마지막 날, days: 센 날 수 }
-//   checks: [{location, check_date}] (pm_cell_check + 예전 칸 실사 pm_stock_audit 날짜를 합쳐 넣는다)
+//   checks: [{location, check_date}] (pm_cell_check — 순환 실사 기록만. 예전 재고 실사는 v4.174.2 부터 안 넣는다)
 export function checkMap(checks) {
   const m = new Map()
   for (const c of checks || []) {
