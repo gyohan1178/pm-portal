@@ -6,6 +6,8 @@
 //              같은 품목의 다른 부품은 계속 단가를 받는다 (견적은 못 내도 확인은 해 둔다)
 //              견적 품목은 「부품 견적 불가 — 영업 확인」 단계로 넘어가 영업이 정리한다. 접수는 저절로 닫지 않는다
 //              (v4.127.x 는 부품 하나에 품목 전체를 견적 불가로 만들어 다른 부품까지 목록에서 빠졌다)
+//   v4.176.0 — 부품마다 「견적 특이사항」(MOQ · 납기 · 단종 예정 …) — 품목에 붙어(pm_item_quote_note) 다음 견적에도 따라가고,
+//              영업이 견적 작성에서 품목을 넣으면 그 줄 「비고」에 자동으로 들어간다 (lib/quoteNote)
 import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -16,6 +18,7 @@ import { isOpenLine, checkRfq, dday, NOQUOTES, setPartNoquote, missCodes, nqPart
 import { isPasteKey, keyLabel, pasteKey } from '../../lib/quotePartsPaste'
 import { SkelBar } from '../../components/ux/Skeleton'
 import Spin from '../../components/ux/Spin'
+import { fetchQuoteNotes, saveQuoteNote } from '../../lib/quoteNote'
 
 const n = (v) => Number(v || 0).toLocaleString('ko-KR')
 const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '')
@@ -66,8 +69,11 @@ export async function fetchPriceReqs() {
     if (e3) throw e3
     ;(its || []).forEach((it) => { const p = map.get(it.std_code); if (p) p.item = it })
   }
+  // 견적 특이사항 (v4.176.0) — 표가 없으면(SQL 전) 비어 있다
+  const notes = await fetchQuoteNotes([...map.values()].map((p) => p.item?.id))
   const parts = [...map.values()].map((p) => ({
     ...p,
+    note: (p.item?.id && notes.get(p.item.id)) || null,
     priced: Number(p.item?.purchase_price) > 0,
     due: p.from.map((f) => f.rfq.due_date).filter(Boolean).sort()[0] || null,
   })).sort((a, b) => (a.priced - b.priced) || String(a.due || '9999').localeCompare(String(b.due || '9999')) || a.code.localeCompare(b.code))
@@ -87,6 +93,20 @@ export default function QuotePriceReqs({ onPick }) {
   const [nqBusy, setNqBusy] = useState(false)
   const [pin, setPin] = useState({})          // 부품표 부품 단가 입력 중 { 키: '1200' } (v4.149.0)
   const [pinBusy, setPinBusy] = useState(null)
+  const [memo, setMemo] = useState({})        // 견적 특이사항 고치는 중 { 품번: '글' } (v4.176.0)
+  const [memoBusy, setMemoBusy] = useState(null)
+
+  // 견적 특이사항 저장 — 품목에 붙는다 · 빈 글이면 지운다
+  async function saveMemo(p) {
+    if (!p.item?.id || !(p.code in memo)) return
+    setMemoBusy(p.code)
+    try {
+      await saveQuoteNote(p.item.id, memo[p.code], profile?.name || null)
+      setMemo((x) => { const y = { ...x }; delete y[p.code]; return y })
+      toastSuccess(String(memo[p.code] || '').trim() ? `${p.code} 견적 특이사항 저장 — 견적 작성에서 이 품목을 넣으면 줄 비고에 들어갑니다` : `${p.code} 견적 특이사항을 지웠습니다`)
+      await qc.invalidateQueries({ queryKey: PRICE_REQ_KEY })
+    } catch (e) { toastError('특이사항 저장 실패 — ' + (e?.message || e)) } finally { setMemoBusy(null) }
+  }
 
   // 부품표 부품 — 포털에 품목이 없어 여기서 바로 단가를 적는다 (품목 등록 없이 그 견적 품목 안에만 저장)
   //   저장하면 그 부품이 든 견적 건을 다시 점검 → 부품이 다 차면 「단가 요청 끝」이 저절로
@@ -188,6 +208,7 @@ export default function QuotePriceReqs({ onPick }) {
             영업이 견적 접수에서 「💲 구매자재에 단가 요청」한 건의 단가 없는 부품입니다. 「단가 넣기」를 누르면 아래 입력칸에 채워집니다.
             다 넣은 뒤 <b>🔍 다시 점검</b>을 누르면 견적 접수에 반영되고, 부품이 모두 준비된 건은 「단가 요청 끝」이 저절로 찍힙니다.
             <b className="text-violet-700">📋 부품표</b> 부품(코드 부여 전 · 포털에 없는 품번)은 이 표에서 바로 단가를 적고 💲 저장 — 품목 등록 없이 그 견적에만 들어갑니다.
+            <b className="text-slate-700">📝 견적 특이사항</b>(MOQ · 납기 · 단종 예정 …)을 적으면 품목에 붙어, 영업이 견적 작성에서 그 품목을 넣을 때 줄 <b>비고</b>에 자동으로 들어갑니다 (고객사 견적서에 인쇄됨).
             수급할 수 없는 부품은 <b className="text-rose-600">🚫 견적 불가</b> — 그 부품만 목록에서 빠지고(같은 품목의 다른 부품은 그대로), 영업 견적 접수에 사유가 보입니다.
           </p>
           <div className="flex flex-wrap items-center gap-2">
@@ -200,13 +221,14 @@ export default function QuotePriceReqs({ onPick }) {
             </div>
           </div>
           <div className="overflow-x-auto max-h-[360px] overflow-y-auto rounded-lg border border-slate-100" data-price-reqs-table>
-            <table className="w-full min-w-[860px] text-xs">
+            <table className="w-full min-w-[1080px] text-xs">
               <thead className="bg-slate-50 text-slate-500 sticky top-0"><tr className="text-left">
                 <th className="px-3 py-2 font-bold">품번 · 품명</th><th className="px-3 font-bold">제조사 · 제조사품번</th>
-                <th className="px-3 font-bold">견적 건 (고객사 · 회신 기한)</th><th className="px-3 font-bold text-right">현재 매입가</th><th className="px-3 font-bold"></th>
+                <th className="px-3 font-bold">견적 건 (고객사 · 회신 기한)</th><th className="px-3 font-bold text-right">현재 매입가</th>
+                <th className="px-3 font-bold" title="품목에 붙어 다음 견적에도 따라갑니다 · 견적 작성 줄 비고에 자동 입력">📝 견적 특이사항 <span className="font-normal text-slate-400">→ 견적서 비고</span></th><th className="px-3 font-bold"></th>
               </tr></thead>
               <tbody>
-                {!shown.length && <tr><td colSpan={5} className="px-3 py-6 text-center text-slate-400">남은 부품이 없습니다 — 「🔍 다시 점검」을 눌러 견적 접수에 반영하세요</td></tr>}
+                {!shown.length && <tr><td colSpan={6} className="px-3 py-6 text-center text-slate-400">남은 부품이 없습니다 — 「🔍 다시 점검」을 눌러 견적 접수에 반영하세요</td></tr>}
                 {shown.map((p) => {
                   const rfqs = [...new Map(p.from.map((f) => [f.rfq.id, f.rfq])).values()]
                   const lines = [...new Map(p.from.map((f) => [f.line.id, f])).values()]
@@ -228,6 +250,22 @@ export default function QuotePriceReqs({ onPick }) {
                         )
                       })}</td>
                       <td className="px-3 text-right font-mono">{p.priced ? <span className="text-emerald-700 font-bold">₩{n(p.item.purchase_price)} ✓</span> : <span className="text-slate-300">—</span>}</td>
+                      <td className="px-3 py-1.5" data-price-req-memo={p.code}>
+                        {p.item?.id && editable
+                          ? <span className="flex items-center gap-1">
+                              <input value={memo[p.code] ?? (p.note?.note || '')} onChange={(e) => setMemo((x) => ({ ...x, [p.code]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') saveMemo(p) }} placeholder="예: MOQ 100 · 납기 12주 · 단종 예정" data-price-req-memo-input
+                                title={p.note ? `${p.note.by_name || ''} ${md(p.note.updated_at)} 저장` : ''}
+                                className={`w-full min-w-[180px] px-2 py-1 text-[11.5px] border rounded-lg focus:outline-none focus:ring-1 focus:ring-violet-400 ${p.note && !(p.code in memo) ? 'border-violet-200 bg-violet-50/40' : 'border-slate-200'}`} />
+                              {p.code in memo && (memo[p.code] ?? '') !== (p.note?.note || '') && (
+                                <button type="button" onClick={() => saveMemo(p)} disabled={memoBusy === p.code} data-price-req-memo-ok
+                                  className="px-2 py-1 rounded-lg text-[11px] font-bold whitespace-nowrap bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{memoBusy === p.code ? <Spin /> : '📝 저장'}</button>
+                              )}
+                            </span>
+                          : p.note ? <span className="text-[11.5px] text-slate-600">{p.note.note}</span>
+                          : p.paste ? <span className="text-[11px] text-slate-300" title="부품표 부품은 포털 품목이 없어 특이사항을 붙일 수 없습니다">—</span>
+                          : <span className="text-slate-300">—</span>}
+                      </td>
                       <td className="px-3 text-right">
                         {p.paste && editable
                           ? <span className="inline-flex items-center gap-1" data-price-req-pin={keyLabel(p.code)}>
@@ -249,7 +287,7 @@ export default function QuotePriceReqs({ onPick }) {
                     </tr>,
                     nq?.code === p.code && (
                       <tr key={p.code + '-nq'} className="bg-rose-50/60" data-price-req-nq-form={p.code}>
-                        <td colSpan={5} className="px-3 py-2.5">
+                        <td colSpan={6} className="px-3 py-2.5">
                           <div className="flex flex-wrap items-center gap-2 text-[12px]">
                             <b className="text-rose-700">🚫 {keyLabel(p.code)} 견적 불가</b>
                             <select value={nq.reason} onChange={(e) => setNq({ ...nq, reason: e.target.value })} data-price-req-nq-reason

@@ -8,6 +8,7 @@ import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuoteP
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
 import QuotePartsModal from './QuotePartsModal'
 import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
+import { fetchQuoteNotes, remarksFromNotes } from '../../lib/quoteNote'
 import { saveRfq, patchRfq, checkRfq } from './rfq'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { prevOf, prevEligible, prevWarn, prevMargin, saleKeys, fetchSalePrev, attachSalePrev, saleRows, recordSalePrices, etcKey, isMissingSaleFn } from '../../lib/salePrice'
@@ -349,6 +350,12 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
     return () => { alive = false }
   }, [saleCustKey, currency, saleKeyStr, saleLineStr, isSales])   // eslint-disable-line react-hooks/exhaustive-deps
 
+  // 구매자재 견적 특이사항 → 줄 비고 (v4.176.0 · lib/quoteNote). 못 불러와도 줄 추가는 막지 않고 알린다
+  async function noteRemarks(kind, parts) {
+    try { return remarksFromNotes(kind, parts, await fetchQuoteNotes((parts || []).map((p) => p.item_id))) }
+    catch (e) { toastError('구매자재 견적 특이사항을 못 불러왔습니다 — 비고는 직접 확인해 주세요 (' + (e?.message || e) + ')'); return '' }
+  }
+
   // ── 라인 추가: 어셈블리면 BOM 전개 원가 + 최신 작업비, 아니면 단품 매입가 ──
   // codeArg · qtyArg — 견적 접수에서 「견적 작성 →」으로 품목을 한꺼번에 넣을 때 (v4.92.0). 없으면 입력칸 값
   async function addByCode(codeArg, qtyArg) {
@@ -444,6 +451,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           proto: !!pit?.is_prototype,
           // 세부견적용 부품 목록 — 화면에서 제외·단가 조정 가능
           parts,
+          remarks: await noteRemarks('assy', parts),
         })
         nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
         setLines((ls) => [...ls, nl])
@@ -452,7 +460,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       }
 
       const { data: its, error: iErr } = await supabase
-        .from('items').select('std_code, name, unit, purchase_price, lt_weeks, moq, is_prototype, vendors(name)')
+        .from('items').select('id, std_code, name, unit, purchase_price, lt_weeks, moq, is_prototype, vendors(name)')
         .in('std_code', cands)
       // 조회가 실패한 것과 정말 없는 것을 구분한다. 전에는 둘 다 「어디에도 없습니다」였다.
       if (iErr) throw new Error('품목 조회 — ' + iErr.message)
@@ -467,6 +475,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
         noPrice: mat > 0 ? 0 : 1, partCount: 1,
         lt: data.lt_weeks ?? null, moq: data.moq ?? null,
         proto: !!data.is_prototype,
+        remarks: await noteRemarks('item', [{ item_id: data.id }]),
       })
       nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
       setLines((ls) => [...ls, nl])
@@ -477,7 +486,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   }
 
   // 부품표 붙여넣기로 만든 ASSY 줄 (v4.148.0) — BOM 없이 이 견적 안에서만 (부품 단가 · 제외는 「▼ 부품」에서)
-  function addPastedAssy({ code, name, qty, labor, matched }) {
+  async function addPastedAssy({ code, name, qty, labor, matched }) {
     const parts = partsFromPaste(matched)
     const noPrice = parts.filter((x) => x.buyKrw == null).length
     const ltMax = parts.reduce((a, x) => (x.lt == null ? a : Math.max(a, num(x.lt))), 0)
@@ -485,6 +494,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       kind: 'assy', std_code: code, description: name, unit: 'EA', qty,
       materialKrw: round100(sumParts(parts)), laborKrw: labor, origin: 'dom',
       noPrice, partCount: parts.length, lt: ltMax || null, parts, tempBom: true,
+      remarks: await noteRemarks('assy', parts),
     })
     nl.unitPrice = isSales ? linePrice(nl, currency, sellRate, mcfg) : 0
     setLines((ls) => [...ls, nl])
@@ -806,7 +816,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
       if (prefill.etcName) setIssuedTo(prefill.etcName)
       for (const l of prefill.lines || []) {
         // 부품표 품목(코드 부여 전 · v4.149.0) — 구매자재가 채운 단가 그대로 부품표 ASSY 로
-        if (l.paste?.parts?.length) addPastedAssy({ code: l.pn, name: l.name || l.pn, qty: Number(l.qty) || 1, labor: Number(l.paste.labor) || 0, matched: pasteToMatched(l.paste) })
+        if (l.paste?.parts?.length) await addPastedAssy({ code: l.pn, name: l.name || l.pn, qty: Number(l.qty) || 1, labor: Number(l.paste.labor) || 0, matched: pasteToMatched(l.paste) })
         else await addByCode(l.pn, l.qty)
       }
       onPrefillDone?.()
@@ -1557,7 +1567,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                   <td className="py-1.5"><input type="number" step="0.01" value={l.unitPrice} onChange={(e) => patch(l.key, { unitPrice: e.target.value })} className="qi w-full text-right font-semibold" /></td>
                   <td className="py-1.5 text-right font-bold">{sym}{money(num(l.qty) * num(l.unitPrice), currency)}</td>
                   <td className="py-1.5"><input value={l.alternative} onChange={(e) => patch(l.key, { alternative: e.target.value })} className="qi w-full text-center" /></td>
-                  <td className="py-1.5"><input value={l.remarks} onChange={(e) => patch(l.key, { remarks: e.target.value })} className="qi w-full" /></td>
+                  <td className="py-1.5"><input value={l.remarks} onChange={(e) => patch(l.key, { remarks: e.target.value })} title={l.remarks || ''} className="qi w-full" /></td>
 
                   <td className="py-1.5 no-print text-right">
                     <input type="text" inputMode="numeric"
