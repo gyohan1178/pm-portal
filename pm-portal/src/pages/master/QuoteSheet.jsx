@@ -623,9 +623,18 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   function switchCurrency(next) {
     snack.hide()   // 뺀 줄을 옛 통화 단가로 되살리지 않게 (v4.104.0)
+    const prev = currency
     setCurrency(next)
     if (!isSales) return
-    setLines((ls) => ls.map((l) => ({ ...l, unitPrice: linePrice(l, next, sellRate, mcfg) })))
+    // 원가로 계산되지 않는 줄(판관비 · 기업이윤 · 인증비처럼 단가를 손으로 넣은 줄)은 0 이 되던 것 — 판매환율로 바꿔 옮긴다 (v4.179.1)
+    const carry = (l) => {
+      const np = linePrice(l, next, sellRate, mcfg)
+      const cur = num(l.unitPrice)
+      if (np || !(cur > 0) || prev === next) return np
+      const krw = prev === 'KRW' ? cur : cur * sellRate
+      return roundPrice(next === 'KRW' ? krw : krw / sellRate, next)
+    }
+    setLines((ls) => ls.map((l) => ({ ...l, unitPrice: carry(l) })))
   }
 
   function switchKind(next) {
