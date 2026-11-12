@@ -31,16 +31,49 @@ export const SUPPLIER_KO = {
   invoiceEmail: SUPPLIER.invoiceEmail,
 }
 
+// PDF 로 바로 보내도 되게 (v4.180.0) — 글꼴 하나로 · 줄바꿈 칸 높이 미리 계산 · 인쇄 영역 · 쪽 번호 · 내부 시트 숨김
+let FONT = 'Arial'
 const put = (ws, addr, value, opt = {}) => {
   const c = ws.getCell(addr)
   c.value = value
-  if (opt.bold || opt.size) c.font = { bold: !!opt.bold, size: opt.size || 11 }
+  c.font = { name: FONT, bold: !!opt.bold, size: opt.size || 11 }
   if (opt.align) c.alignment = { horizontal: opt.align, vertical: 'middle', wrapText: !!opt.wrap }
   else c.alignment = { vertical: 'middle', wrapText: !!opt.wrap }
   if (opt.fmt) c.numFmt = opt.fmt
   if (opt.border) c.border = BOX
   if (opt.fill) c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: opt.fill } }
   return c
+}
+
+// 줄바꿈되는 글이 몇 줄이 되는지 — 열 너비(엑셀 글자 단위) 기준, 한글 · 한자는 2칸
+//   엑셀은 병합 칸 높이를 스스로 맞추지 않아 PDF 에서 글이 잘린다 → 미리 높이를 잡아 둔다
+export function wrapLines(text, width) {
+  const w = Math.max(4, (Number(width) || 10) - 1)
+  let n = 0
+  for (const seg of String(text ?? '').split('\n')) {
+    let len = 0
+    for (const ch of seg) len += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(ch) ? 2 : 1.05
+    n += Math.max(1, Math.ceil(len / w))
+  }
+  return n
+}
+const fitRow = (ws, r, parts, { min = 18, size = 10 } = {}) => {
+  const lh = size <= 10 ? 13.5 : size <= 11 ? 15 : 17
+  const lines = Math.max(1, ...parts.map(([t, w]) => wrapLines(t, w)))
+  ws.getRow(r).height = Math.max(min, Math.ceil(lines * lh + 4))
+}
+const colW = (ws, from, to) => {
+  let s = 0
+  for (let c = from.charCodeAt(0); c <= to.charCodeAt(0); c++) s += ws.getColumn(String.fromCharCode(c)).width || 9
+  return s
+}
+const PRINT_OPTS = (ko) => ({
+  paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
+  horizontalCentered: true, showGridLines: false,
+  margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.6, header: 0.2, footer: 0.25 },
+})
+const pageFooter = (ws, ko) => {
+  ws.headerFooter = { oddFooter: `&L&8${ko ? '(주)진선테크' : 'Jinsun Tech Co., Ltd'}&C&8&P / &N` }
 }
 
 /**
@@ -57,18 +90,20 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   wb.creator = SUPPLIER.company
   wb.created = new Date()
 
+  const ko = head.lang === 'ko'   // 국문 견적서 (v4.100.0)
+  FONT = ko ? '맑은 고딕' : 'Arial'
   const ws = wb.addWorksheet('견적서', {
-    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+    pageSetup: PRINT_OPTS(ko),
+    views: [{ showGridLines: false }],
   })
+  pageFooter(ws, ko)
 
   // 열 너비 (양식 비율 유지, 11pt 기준으로 축소)
-  const widths = { A: 3, B: 13, C: 20, D: 42, E: 16, F: 8, G: 8, H: 10, I: 16, J: 13, K: 26 }
+  const widths = { A: 2, B: 9, C: 20, D: 42, E: 16, F: 7, G: 7, H: 9, I: 16, J: 11, K: 28 }
   Object.entries(widths).forEach(([col, w]) => { ws.getColumn(col).width = w })
 
   const cur = head.currency || 'USD'
   const money = cur === 'KRW' ? num0 : num2
-  const ko = head.lang === 'ko'   // 국문 견적서 (v4.100.0)
   const S = ko ? SUPPLIER_KO : SUPPLIER
 
   // ── 제목 ──
@@ -104,9 +139,11 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     ['H12', `Contact : ${head.contactName || ''}${head.contactPhone ? ` (${head.contactPhone})` : ''}`],
     ['H13', `Tel : ${SUPPLIER.tel}   Fax : ${SUPPLIER.fax}`],
   ]
+  const supW = colW(ws, 'H', 'K')
   sup.forEach(([addr, v], i) => {
     ws.mergeCells(`${addr}:K${7 + i}`)
     put(ws, addr, v, { size: 10, wrap: true })
+    fitRow(ws, 7 + i, [[v, supW]], { min: 16 })
   })
   put(ws, 'H14', ko ? '이메일 :' : 'E-Mail :', { bold: true, size: 10 })
   ws.mergeCells('I14:K14')
@@ -119,6 +156,8 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   put(ws, 'B13', ko ? `견적 유효기간 : 견적일로부터 ${head.validityDays || 15}일` : `Quotation Validity: ${head.validityDays || 15} days from the date of the quotation`, { size: 10 })
   ws.mergeCells('B15:E16')
   put(ws, 'B15', `${ko ? '건명' : 'Project Name'}: ${head.projectName || ''}`, { bold: true, size: 13, wrap: true })
+  { const n = wrapLines(`${ko ? '건명' : 'Project Name'}: ${head.projectName || ''}`, colW(ws, 'B', 'E') / 1.25)
+    if (n > 2) { ws.getRow(15).height = 9 * n + 4; ws.getRow(16).height = 9 * n + 4 } }
   put(ws, 'B17', `${ko ? '납품 일정' : 'Delivery Schedule'}: ${head.deliveryNote || ''}`, { size: 10 })
 
   // ── 품목 표 ──
@@ -138,7 +177,7 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   })
   ;['E'].forEach((c) => { ws.getCell(`${c}${HEAD_ROW}`).border = BOX })
   ws.getRow(HEAD_ROW).height = 30
-
+  ws.pageSetup.printTitlesRow = `${HEAD_ROW}:${HEAD_ROW}`   // 품목이 길어 다음 쪽으로 넘어가면 머리줄 다시
   const MIN_ROWS = 9
   const bodyCount = Math.max(lines.length, MIN_ROWS)
   for (let i = 0; i < bodyCount; i++) {
@@ -155,7 +194,7 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     put(ws, `I${r}`, l ? Number(l.unitPrice) || 0 : '', { align: 'right', border: true, size: 10, fmt: money })
     put(ws, `J${r}`, l?.alternative || '', { align: 'center', border: true, size: 10 })
     put(ws, `K${r}`, l?.remarks || '', { border: true, size: 10, wrap: true })
-    ws.getRow(r).height = 20
+    fitRow(ws, r, [[l?.description || '', colW(ws, 'D', 'E')], [l?.remarks || '', widths.K], [l?.std_code || '', widths.C]], { min: 20 })
   }
 
   // ── 합계 · 조건 ──
@@ -181,17 +220,21 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   conds.forEach((t, i) => {
     const r = condRow + 1 + i
     ws.mergeCells(`B${r}:D${r}`)
-    put(ws, `B${r}`, t, { size: 10 })
+    put(ws, `B${r}`, t, { size: 10, wrap: true })
+    if (i > 0) fitRow(ws, r, [[t, colW(ws, 'B', 'D')]], { min: 16 })
   })
-
+  ws.pageSetup.printArea = `B2:K${Math.max(condRow + conds.length, condRow + 1)}`
+  // 품목이 많지 않으면 한 장에 — 합계 · 조건이 다음 쪽으로 혼자 넘어가지 않게
+  if (lines.length <= 22) ws.pageSetup.fitToHeight = 1
   // ── 세부견적서 (v4.138.0) — 고객 제출용. 어셈블리마다 부품별 판매가 · 조립비 · 합계(= 견적 단가) ──
   const cd = extra.customerDetail
   if (cd?.details?.length) addDetailSheet(wb, cd, { ko, money, cur, head })
 
   // ── 내부 관리용 시트 (고객 제출 시 삭제해도 무방) ──
+  //   PDF 로 「전체 통합 문서」를 저장해도 안 나가게 숨겨 둔다 — 보려면 시트 탭 우클릭 → 숨기기 취소 (v4.180.0)
   const addPlain = (name, rows) => {
     if (!rows?.length) return
-    const s = wb.addWorksheet(name)
+    const s = wb.addWorksheet(name, { state: 'hidden' })
     const keys = Object.keys(rows[0])
     s.addRow(keys)
     s.getRow(1).font = { bold: true }
@@ -220,12 +263,13 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
 // 세부견적서 시트 — 어셈블리 블록을 위에서 아래로 (블록 사이 두 줄 띄움)
 function addDetailSheet(wb, cd, { ko, money, cur, head }) {
   const ws = wb.addWorksheet(ko ? '세부견적서' : 'Detail', {
-    pageSetup: { paperSize: 9, orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0,
-      margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.5, header: 0.2, footer: 0.2 } },
+    pageSetup: PRINT_OPTS(ko),
+    views: [{ showGridLines: false }],
   })
+  pageFooter(ws, ko)
   const mk = !!cd.showMaker
   const cols = mk
-    ? [['No', 5], [ko ? '품번' : 'Part no.', 16], [ko ? '품명' : 'Description', 40], [ko ? '제조사' : 'Maker', 16], [ko ? '제조사 품번' : 'Maker P/N', 22], [ko ? '대당 수량' : "Q'ty/Unit", 10], [ko ? '단위' : 'Unit', 7], [`${ko ? '단가' : 'Unit Price'}(${cur})`, 14], [`${ko ? '금액' : 'Amount'}(${cur})`, 15]]
+    ? [['No', 5], [ko ? '품번' : 'Part no.', 16], [ko ? '품명' : 'Description', 46], [ko ? '제조사' : 'Maker', 15], [ko ? '제조사 품번' : 'Maker P/N', 20], [ko ? '대당 수량' : "Q'ty/Unit", 10], [ko ? '단위' : 'Unit', 7], [`${ko ? '단가' : 'Unit Price'}(${cur})`, 14], [`${ko ? '금액' : 'Amount'}(${cur})`, 15]]
     : [['No', 5], [ko ? '품번' : 'Part no.', 16], [ko ? '품명' : 'Description', 48], [ko ? '대당 수량' : "Q'ty/Unit", 10], [ko ? '단위' : 'Unit', 7], [`${ko ? '단가' : 'Unit Price'}(${cur})`, 14], [`${ko ? '금액' : 'Amount'}(${cur})`, 15]]
   cols.forEach(([, w], i) => { ws.getColumn(i + 1).width = w })
   const L = (i) => String.fromCharCode(65 + i)
@@ -239,17 +283,19 @@ function addDetailSheet(wb, cd, { ko, money, cur, head }) {
   for (const { line: l, detail: d, idx } of cd.details) {
     ws.mergeCells(`A${r}:${last}${r}`)
     put(ws, `A${r}`, `${idx + 1}. ${l.std_code || ''}${l.rev ? ` Rev.${l.rev}` : ''}  ${l.description || ''}  —  ${ko ? '견적 단가' : 'Unit Price'} ${cur} ${Number(l.unitPrice || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} / ${l.unit || 'EA'} (${ko ? '수량' : "Q'ty"} ${Number(l.qty) || 0})`,
-      { bold: true, size: 11, fill: 'FFEEF2FF' })
+      { bold: true, size: 11, fill: 'FFEEF2FF', wrap: true })
     ws.getRow(r).height = 22; r++
     cols.forEach(([label], i) => put(ws, `${L(i)}${r}`, label, { bold: true, size: 10, align: 'center', border: true, fill: 'FFF1F5F9' }))
+    if (!ws.pageSetup.printTitlesRow) ws.pageSetup.printTitlesRow = `${r}:${r}`   // 부품이 많아 쪽이 넘어가도 열 이름이 다시 (블록마다 열 이름은 같다)
     r++
     for (const x of d.rows) {
       const nm = x.note ? `${x.name}\n※ ${x.note}` : x.name   // 구매자재 견적 특이사항 — 품명 아래 줄 (v4.179.2)
       const vals = mk ? [x.no, x.std_code, nm, x.maker, x.makerPn, x.qty, x.unit, x.price, x.amount] : [x.no, x.std_code, nm, x.qty, x.unit, x.price, x.amount]
       vals.forEach((v, i) => {
         const isMoney = i >= cols.length - 2
-        put(ws, `${L(i)}${r}`, v ?? '', { size: 10, border: true, align: i === 0 || i === cols.length - 3 ? 'center' : isMoney || i === cols.length - 4 ? 'right' : undefined, fmt: isMoney ? money : undefined, wrap: i === 2 })
+        put(ws, `${L(i)}${r}`, v ?? '', { size: 10, border: true, align: i === 0 || i === cols.length - 3 ? 'center' : isMoney || i === cols.length - 4 ? 'right' : undefined, fmt: isMoney ? money : undefined, wrap: i === 2 || (mk && (i === 3 || i === 4)) })
       })
+      fitRow(ws, r, [[nm, cols[2][1]], ...(mk ? [[x.maker, cols[3][1]], [x.makerPn, cols[4][1]]] : [])], { min: 18 })
       r++
     }
     ws.mergeCells(`A${r}:${prev}${r}`)
@@ -278,4 +324,5 @@ function addDetailSheet(wb, cd, { ko, money, cur, head }) {
     put(ws, `${last}${r}`, d.total, { bold: true, size: 11, align: 'right', border: true, fmt: money, fill: 'FFF1F5F9' })
     r += 3
   }
+  ws.pageSetup.printArea = `A1:${last}${Math.max(1, r - 3)}`
 }
