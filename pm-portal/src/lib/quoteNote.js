@@ -44,3 +44,23 @@ export function remarksFromNotes(kind, parts, notes) {
   }
   return out.join(' / ')
 }
+
+// 구매자재가 견적 접수 단가 요청에서 부품에 남긴 「견적 불가」 사유 (pm_rfq_line.nq_parts · v4.179.0)
+//   견적 작성에서 품번을 직접 넣어도 세부견적 부품 줄에 보이게 — 품번(std_code)마다 가장 최근 것
+//   목록에서 지운(hidden) 것도 사유는 그대로 보여 준다. 칸이 없으면(SQL 전) 빈 Map
+export async function fetchPartNq(codes) {
+  const want = new Set((codes || []).filter(Boolean).map(String))
+  const out = new Map()
+  if (!want.size) return out
+  const { data, error } = await supabase.from('pm_rfq_line').select('nq_parts').not('nq_parts', 'is', null).limit(5000)
+  if (error) { if (/nq_parts|schema cache|does not exist/i.test(error.message || '')) return out; throw error }
+  for (const l of data || []) {
+    for (const x of Array.isArray(l.nq_parts) ? l.nq_parts : []) {
+      const k = String(x?.code || '')
+      if (!want.has(k)) continue
+      const cur = out.get(k)
+      if (!cur || String(x.at || '') > String(cur.at || '')) out.set(k, x)
+    }
+  }
+  return out
+}

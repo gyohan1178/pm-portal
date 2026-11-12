@@ -397,6 +397,10 @@ export default function RfqBoard({ customers = [], onWrite }) {
               const held = ls.filter((l) => l.hold && !l.quoted_at)
               const quoted = ls.filter((l) => l.quoted_at)
               const ready = readyLines(r)
+              // 단가 없는 부품을 둔 채로도 견적 작성 (v4.179.0) — 사급 · 고객 지급 · 사양 미확정처럼 단가가 안 나오는 부품이 남아도
+              //   BOM 이 확인된 품목은 견적 작성으로 넘어갈 수 있게. 견적서에서 그 부품은 「단가 없음」으로 보이고 금액에 안 들어간다
+              const writable = openLs.filter((l) => !!l.checked_at && (l.kind || 'none') !== 'none')
+              const nqMiss = openLs.reduce((a, l) => a + nqBlockers(l).length, 0)
               const partial = ready.length > 0 && ready.length < ls.filter((l) => !l.quoted_at && !l.noquote).length
               const parts = ls.reduce((a, l) => a + (+l.part_count || 0), 0)
               const b = busy === r.id
@@ -481,7 +485,13 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         ? <Btn wide tone="amber" onClick={() => nav('/quote')} data="quote">💲 품목 단가 등록 →</Btn>
                         : <span className="col-span-3 py-1.5 rounded-lg bg-amber-50/60 text-center text-[11.5px] font-bold text-amber-700">⏳ 구매자재 처리 중</span>)}
                       {r.status === '진행' && ready.length > 0 && <Btn wide tone="primary" onClick={() => onWrite?.({ ...r, lines: ready })} data="write">{partial ? `✏ 준비된 ${ready.length}품목만 견적 작성 →` : '✏ 견적 작성 →'}</Btn>}
-                      {editable && ['bom', 'noprice', 'price', 'ready'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
+                      {r.status === '진행' && writable.length > ready.length && (miss + nqMiss) > 0 && <Btn wide tone={ready.length ? undefined : 'primary'} busy={b} data="write-anyway" onClick={async () => {
+                        const ok = await ask({ title: `${r.title} — 단가 없는 부품을 둔 채로 견적 작성할까요?`,
+                          desc: `단가 없는 부품 ${n(miss)}개${nqMiss ? ` · 견적 불가 표시 부품 ${n(nqMiss)}개` : ''}가 남아 있습니다. 사급 · 고객 지급처럼 단가가 안 나오는 부품이면 그대로 진행하세요. 견적서에서 이 부품들은 「단가 없음」으로 보이고 재료비에 안 들어갑니다 — 필요하면 견적서에서 단가를 넣거나 제외하세요.`,
+                          okText: '✏ 견적 작성으로' })
+                        if (ok) onWrite?.({ ...r, lines: writable })
+                      }}>{`✏ 단가 없는 부품 ${n(miss + nqMiss)}개 두고 견적 작성 →`}</Btn>}
+                      {editable && ['bom', 'noprice', 'price', 'ready', 'nqp'].includes(r.stage) && <Btn onClick={() => check(r)} busy={b} data="recheck">🔍 다시 점검</Btn>}
                       {r.stage === 'nqp' && <Btn wide tone="red" onClick={() => setOpen(r.id)} data="nqp-open">🚫 부품 견적 불가 — 품목 정리</Btn>}
                       {editable && r.stage === 'nq' && <Btn wide tone="red" onClick={async () => {
                         const m = await ask({ title: `${r.title} — 견적 불가로 닫을까요?`, desc: '접수가 「견적 불가」로 끝납니다. 고객사에 알린 내용 · 사유를 남기세요 (비우면 품목 사유를 모아 적음).', okText: '견적 불가로 닫기', danger: true,

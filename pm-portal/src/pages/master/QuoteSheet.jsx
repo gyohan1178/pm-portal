@@ -8,7 +8,7 @@ import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuoteP
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
 import QuotePartsModal from './QuotePartsModal'
 import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
-import { fetchQuoteNotes, remarksFromNotes } from '../../lib/quoteNote'
+import { fetchQuoteNotes, remarksFromNotes, fetchPartNq } from '../../lib/quoteNote'
 import { saveRfq, patchRfq, checkRfq } from './rfq'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
 import { prevOf, prevEligible, prevWarn, prevMargin, saleKeys, fetchSalePrev, attachSalePrev, saleRows, recordSalePrices, etcKey, isMissingSaleFn } from '../../lib/salePrice'
@@ -351,8 +351,21 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   }, [saleCustKey, currency, saleKeyStr, saleLineStr, isSales])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // 구매자재 견적 특이사항 → 줄 비고 (v4.176.0 · lib/quoteNote). 못 불러와도 줄 추가는 막지 않고 알린다
+  //   어셈블리면 부품 줄에도 붙인다 (v4.179.0) — pt.qnote 구매자재 견적 특이사항 · pt.nq 견적 접수에서 남긴 견적 불가 사유
   async function noteRemarks(kind, parts) {
-    try { return remarksFromNotes(kind, parts, await fetchQuoteNotes((parts || []).map((p) => p.item_id))) }
+    try {
+      const notes = await fetchQuoteNotes((parts || []).map((p) => p.item_id))
+      if (kind === 'assy' && parts?.length) {
+        const nq = await fetchPartNq(parts.map((p) => p.std_code))
+        for (const p of parts) {
+          const qn = p.item_id && notes.get(p.item_id)
+          if (qn) p.qnote = qn.note
+          const x = nq.get(String(p.std_code || ''))
+          if (x) p.nq = { reason: x.reason || '', memo: x.memo || '', by: x.by || '' }
+        }
+      }
+      return remarksFromNotes(kind, parts, notes)
+    }
     catch (e) { toastError('구매자재 견적 특이사항을 못 불러왔습니다 — 비고는 직접 확인해 주세요 (' + (e?.message || e) + ')'); return '' }
   }
 
@@ -1682,7 +1695,11 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
                                 <td className="px-2 py-1 text-slate-400">L{pt.level}</td>
                                 <td className="px-2 py-1 font-mono text-slate-700"
                                   style={{ paddingLeft: `${8 + (Number(pt.level) || 0) * 10}px` }}>{pt.std_code || '—'}</td>
-                                <td className="px-2 py-1 text-slate-600 max-w-[220px] truncate" title={pt.name}>{pt.name}</td>
+                                <td className="px-2 py-1 text-slate-600 max-w-[260px]" title={pt.name}>
+                                  <div className="truncate">{pt.name}</div>
+                                  {pt.nq && <div className="text-[10px] text-rose-600 leading-snug" data-part-nq={pt.std_code} title="견적 접수 단가 요청에서 구매자재가 남긴 사유">🚫 {pt.nq.reason}{pt.nq.memo ? ` — ${pt.nq.memo}` : ''}{pt.nq.by ? <span className="text-rose-400"> · {pt.nq.by}</span> : null}</div>}
+                                  {pt.qnote && <div className="text-[10px] text-violet-700 leading-snug" data-part-qnote={pt.std_code} title="구매자재 견적 특이사항 (품목 단가 등록)">📝 {pt.qnote}</div>}
+                                </td>
                                 <td className="px-2 py-1 whitespace-nowrap" data-part-supply={pt.supplyBuy ? 'buy' : pt.supplySkip ? 'skip' : pt.supply || ''}>
                                   {pt.supplyBuy ? <span className="px-1.5 py-[1px] rounded-full border border-indigo-200 bg-indigo-50 text-indigo-600 text-[10px] font-bold">🛒 구매 · 상위 단가</span>
                                     : pt.supplySkip ? <span className="px-1.5 py-[1px] rounded-full bg-slate-100 text-slate-500 text-[10px] font-bold" title="상위가 🛒 구매 — 상위 단가에 포함돼 단가가 필요 없습니다">구매품 하위</span>
