@@ -181,7 +181,7 @@ export default function ProcessBoard({ tv: tvProp }) {
         <div>
           <div className="pb-crumb">🏭 현장</div>
           <h1 className="pb-h1">공정 현황판</h1>
-          <p className="pb-desc">진행 중인 호기가 어느 팀 차례인지 봅니다. 위 단계를 누르면 그 팀 차례인 호기만 보입니다. 불출은 생산관리 체크(가공물 입고 · 파트 불출), 제조 · 검수는 현장에서 작업지시서 QR 을 폰으로 찍으면 켜집니다.</p>
+          <p className="pb-desc">진행 중인 호기가 어느 팀 차례인지 봅니다. 위 단계를 누르면 그 팀 차례인 호기만 보입니다. 불출은 생산관리 체크(가공물 입고 · 파트 불출), 제조 · 검수는 현장에서 작업지시서 QR 을 폰으로 찍으면 켜집니다. 납품한 호기는 빠지고, VM 은 「현장작업」으로 넘어가면 납품 완료로 보고 빠집니다.</p>
         </div>
         <div className="pb-top-r">
           <span className="pb-seg">
@@ -251,7 +251,7 @@ function Stepper({ p }) {
     mat: `불출 (구매팀) — ${p.mat.parts.map((x) => `${x.l} ${x.done ? '✓' : '대기'}`).join(' · ')}`,
     make: `제조 (전장팀)${p.make.startAt ? ` — 시작 ${who(p.make.startAt)}` : ''}${p.make.at ? ` · 완료 ${who(p.make.at)}` : p.make.done ? ' — 생산관리 체크' : ''}`,
     qc: `검수 (품질팀)${p.qc.at ? ` — ${who(p.qc.at)}` : p.qc.done ? ' — 생산관리 체크 · 검수 합격' : ''}`,
-    wait: '납품대기 (영업팀) — 수주대장에서 납품 처리하면 현황판에서 빠집니다',
+    wait: '납품대기 (영업팀) — 수주대장에서 납품 처리하면 현황판에서 빠집니다 (VM 은 생산관리에서 「현장작업」으로 넘기면 납품 완료로 보고 빠집니다)',
   }
   return (
     <div className="pb-stp" data-pb-bar>

@@ -24,10 +24,13 @@ export function dday(d) {
 export const ddTone = (n) => (n == null ? 'text-slate-400' : n < 0 ? 'text-red-600' : n <= 3 ? 'text-orange-600' : n <= 7 ? 'text-amber-600' : 'text-emerald-700')
 export const ddText = (n) => (n == null ? '' : n === 0 ? 'D-day' : n < 0 ? `D+${-n}` : `D-${n}`)
 
+// 납품 끝난 것으로 보는 상태 — 완료 · VM 「현장작업」(이미 납품하고 현장 설치 중 · v4.178.0)
+export const BOARD_DONE = ['완료', '현장작업']
 // 진행 중 호기 + PO 번호 + 스캔 기록 + VM · CSK 검수 기록
 export async function fetchBoard() {
   await fetchMainOverrides().catch(() => null)
-  const rows = await fetchAll(() => supabase.from('production').select(COLS).neq('status', '완료').order('id'))
+  const rows = (await fetchAll(() => supabase.from('production').select(COLS).neq('status', '완료').order('id')))
+    .filter((r) => !BOARD_DONE.includes(r.status))
   const lineIds = [...new Set(rows.map((r) => r.order_line_id).filter(Boolean))]
   const poIds = [...new Set(rows.filter((r) => !r.order_line_id && r.po_id).map((r) => r.po_id))]
   const lnPo = {}, cpo = {}
