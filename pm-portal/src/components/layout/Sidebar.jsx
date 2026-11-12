@@ -67,6 +67,7 @@ const MENU_META = {
   '/quality/fa-progress': ['🚦','초도품 진행관리'],
   '/quality/fai': ['🧾','초도품 자재 매칭'],
   '/quality/cn': ['🔁','설계변경(CN) 이력'],
+  '/quality/complaints': ['🛎','고객사 불만 접수'],
   '/quality/drawing-dist': ['📐','도면 배포이력'],
   '/erp': ['🔗','ERP 연동'], '/activity': ['🗂','활동 이력'], '/backup': ['🗄','데이터 백업'],
 }
@@ -522,6 +523,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/quality/fa-progress" icon="🚦" onNavigate={onNavigate}>초도품 진행관리</MenuItem>
           <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
           <MenuItem to="/quality/cn" icon="🔁" onNavigate={onNavigate}>설계변경(CN) 이력</MenuItem>
+          <MenuItem to="/quality/complaints" icon="🛎" onNavigate={onNavigate}>고객사 불만 접수</MenuItem>
           <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
           <MenuItem to="/quality/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
         </CollapseSection>

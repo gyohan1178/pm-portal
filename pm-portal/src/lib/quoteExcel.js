@@ -76,6 +76,15 @@ const pageFooter = (ws, ko) => {
   ws.headerFooter = { oddFooter: `&L&8${ko ? '(주)진선테크' : 'Jinsun Tech Co., Ltd'}&C&8&P / &N` }
 }
 
+// 이미지 파일을 받아 온다 — 없거나(404 · index.html 로 떨어짐) 실패하면 null
+async function loadImage(url) {
+  try {
+    const r = await fetch(url, { cache: 'no-cache' })
+    if (!r.ok || !/image\//.test(r.headers.get('content-type') || '')) return null
+    return await r.arrayBuffer()
+  } catch { return null }
+}
+
 /**
  * 견적서 워크북 생성 후 다운로드
  * head : { quoteNo, quoteDate, currency, issuedTo, attn, projectName, validityDays,
@@ -226,6 +235,14 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
   ws.pageSetup.printArea = `B2:K${Math.max(condRow + conds.length, condRow + 1)}`
   // 품목이 많지 않으면 한 장에 — 합계 · 조건이 다음 쪽으로 혼자 넘어가지 않게
   if (lines.length <= 22) ws.pageSetup.fitToHeight = 1
+  // ── 로고 · 직인 (v4.181.0) — public/logo.png · public/seal.png. 파일이 없으면 그냥 넘어간다
+  if (head.brand) {
+    const logo = await loadImage('/logo.png')
+    if (logo) ws.addImage(wb.addImage({ buffer: logo, extension: 'png' }), { tl: { col: 1.05, row: 1.05 }, ext: { width: 92, height: 50 } })
+    const seal = await loadImage('/seal.png')
+    if (seal) ws.addImage(wb.addImage({ buffer: seal, extension: 'png' }), { tl: { col: ko ? 8.32 : 8.75, row: 5.75 }, ext: { width: 60, height: 60 } })   // 상호(회사 이름) 바로 오른쪽에 겹쳐
+  }
+
   // ── 세부견적서 (v4.138.0) — 고객 제출용. 어셈블리마다 부품별 판매가 · 조립비 · 합계(= 견적 단가) ──
   const cd = extra.customerDetail
   if (cd?.details?.length) addDetailSheet(wb, cd, { ko, money, cur, head })

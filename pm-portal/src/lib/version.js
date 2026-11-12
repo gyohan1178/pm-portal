@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.180.0'
+export const APP_VERSION = 'v4.181.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,15 @@ export const APP_VERSION = 'v4.180.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.181.0',
+    date: '2026-11-13',
+    changes: [
+      '🛎 품질 › 고객사 불만 접수 새 화면 — 고객사 불량 · 반품(RMA) 건을 고객사 양식 그대로 적고 모아 봄. AXCELIS 는 RMA 대장(JINSUNTECH_RMA) 양식 · RMA 번호 자동(RMA#JS연도+4자리) · 품번 넣으면 품명 자동 · 같은 양식 엑셀 내려받기',
+      '🏢 매출 견적서(화면 인쇄 · 갑지 · 엑셀)에 회사 로고 · 직인 — 직인은 public/seal.png 를 넣으면 나옵니다',
+      '「고객불만접수_반영」 SQL 먼저 · 기존 RMA 이력은 「고객불만접수_엑셀리스_기존이력_넣기」 SQL 로',
+    ],
+  },
   {
     version: 'v4.180.0',
     date: '2026-11-13',

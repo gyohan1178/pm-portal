@@ -69,6 +69,7 @@ const PATH_LABELS = {
   'quality/fa-progress': ['품질', '초도품 진행관리'],
   'quality/fai':      ['품질', '초도품 자재 매칭'],
   'quality/cn':       ['품질', '설계변경(CN) 이력'],
+  'quality/complaints': ['품질', '고객사 불만 접수'],
   'quality/drawing-dist': ['품질', '도면 배포이력'],
   'quality/lot':      ['품질', '로트 관리'],
   'cost-saving':      ['분석', '원가절감 실적'],

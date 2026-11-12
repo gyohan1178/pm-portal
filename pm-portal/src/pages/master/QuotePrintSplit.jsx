@@ -5,8 +5,11 @@
 //     을지(2장~): 세부 품목표. 장마다 머리글 · 표 제목을 다시 찍고 마지막 장에만 합계
 //   화면에는 안 보이고, 인쇄할 때만 QuoteSheet 의 편집 화면 대신 찍힌다 (body.qs-split).
 
+import { QuoteLogo, CompanyWithSeal } from '../../components/QuoteBrand'
+
 // 을지 한 장에 넣는 분량 (한 줄짜리 품목 기준 18개).
 //   품명 · 비고가 길어 두세 줄로 접히는 품목은 그만큼 무겁게 쳐서 덜 넣는다 → 장이 넘쳐 밀리지 않게.
+
 export const SPLIT_ROWS_PER_PAGE = 18
 // 「자동」일 때 이 줄 수부터 갑지 · 을지로 나눈다. 5줄까지는 한 장에 합계 · 납기 · 비고까지 들어간다 (6줄이면 비고가 다음 장으로 밀림 — 시험 확인).
 export const SPLIT_AUTO_FROM = 6
@@ -59,7 +62,8 @@ export default function QuotePrintSplit({
     <div className="qs-split-print" data-quote-split>
       {/* ── 갑지 ── */}
       <section className="qs-sheet" data-qs-sheet="cover">
-        <div className="text-center mb-4">
+        <div className="text-center mb-4 relative min-h-[44px]">
+          {isSales && <QuoteLogo />}
           <h2 className="text-3xl font-bold tracking-widest text-slate-900">{title}</h2>
           <p className="text-xs text-slate-500 mt-1">{ko ? '견적번호' : 'NO'} : {no} · {quoteDate}</p>
         </div>
@@ -79,7 +83,7 @@ export default function QuotePrintSplit({
             <div className="text-slate-600 leading-relaxed">
               {ko ? (
                 <>
-                  <div>상호 : <b className="text-slate-800">{S.company}</b> · 등록번호 : {S.bizNo}</div>
+                  <div>상호 : <CompanyWithSeal name={S.company} seal={isSales} /> · 등록번호 : {S.bizNo}</div>
                   <div>대표 : {S.ceo}</div>
                   <div>주소 : {S.address}</div>
                   <div>업태 : {S.bizType}</div>
@@ -91,7 +95,7 @@ export default function QuotePrintSplit({
                 </>
               ) : (
                 <>
-                  <div>Company : {S.company}</div>
+                  <div>Company : <CompanyWithSeal name={S.company} seal={isSales} /></div>
                   <div>Business registration number : {S.bizNo}</div>
                   <div>CEO : {S.ceo}</div>
                   <div>Adress : {S.address}</div>
