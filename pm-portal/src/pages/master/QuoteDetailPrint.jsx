@@ -55,7 +55,7 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
                   <tr key={r.no} data-qd-row={r.std_code}>
                     <td className="text-slate-400">{r.no}</td>
                     <td className="font-mono whitespace-nowrap">{r.std_code}</td>
-                    <td>{r.name}</td>
+                    <td>{r.name}{r.note && <div className="text-[10px] text-slate-600" data-qd-note>※ {r.note}</div>}</td>
                     {showMaker && <td className="whitespace-nowrap">{r.maker || '—'}</td>}
                     {showMaker && <td className="font-mono whitespace-nowrap">{r.makerPn || '—'}</td>}
                     <td className="text-right">{r.qty}</td>

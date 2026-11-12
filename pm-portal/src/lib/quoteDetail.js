@@ -54,7 +54,8 @@ export function buildDetail(line, opt = {}) {
     const price = prev[i] != null ? cents(prev[i], cur) : cents(rawUnit[i] * f, cur)
     return { no: i + 1, std_code: p.std_code || p.manufacturer_code || '',   // 부품표로 만든 줄(코드 없음)은 제조사품번 (v4.148.0)
        name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur),
-       key: partKey(p), buyKrw: p.buyKrw ?? null, prev: prev[i] != null }
+       key: partKey(p), buyKrw: p.buyKrw ?? null, prev: prev[i] != null,
+       note: String(p.qnote || '').trim() }   // 구매자재 견적 특이사항 (변경 모델 · MOQ …) — 인쇄 · 엑셀 품명 아래 ※ (v4.179.2)
   })
   const partsSum = cents(rows.reduce((a, r) => a + r.amount, 0), cur)
   let labor = rawLabor > 0 ? cents(rawLabor * f, cur) : 0   // 조립비도 계산 그대로 (부품 반올림 몇 원은 절삭 줄에 같이)

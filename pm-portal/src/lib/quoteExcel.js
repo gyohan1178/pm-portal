@@ -244,7 +244,8 @@ function addDetailSheet(wb, cd, { ko, money, cur, head }) {
     cols.forEach(([label], i) => put(ws, `${L(i)}${r}`, label, { bold: true, size: 10, align: 'center', border: true, fill: 'FFF1F5F9' }))
     r++
     for (const x of d.rows) {
-      const vals = mk ? [x.no, x.std_code, x.name, x.maker, x.makerPn, x.qty, x.unit, x.price, x.amount] : [x.no, x.std_code, x.name, x.qty, x.unit, x.price, x.amount]
+      const nm = x.note ? `${x.name}\n※ ${x.note}` : x.name   // 구매자재 견적 특이사항 — 품명 아래 줄 (v4.179.2)
+      const vals = mk ? [x.no, x.std_code, nm, x.maker, x.makerPn, x.qty, x.unit, x.price, x.amount] : [x.no, x.std_code, nm, x.qty, x.unit, x.price, x.amount]
       vals.forEach((v, i) => {
         const isMoney = i >= cols.length - 2
         put(ws, `${L(i)}${r}`, v ?? '', { size: 10, border: true, align: i === 0 || i === cols.length - 3 ? 'center' : isMoney || i === cols.length - 4 ? 'right' : undefined, fmt: isMoney ? money : undefined, wrap: i === 2 })
