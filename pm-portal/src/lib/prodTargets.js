@@ -50,7 +50,7 @@ export async function fetchPtProd(cust) {
 // 연결 — 생산관리 줄마다 { id(생산관리 줄), n_lines, pos, guess }
 export async function fetchPtLinks(cust) {
   try {
-    return await fetchAll(() => supabase.from('pm_prod_link_sum_v').select('*').eq('customer_code', cust).order('id'))
+    return await fetchAll(() => supabase.from('pm_prod_link_sum_v').select('*').eq('customer_code', cust).order('id'), 1000, { serial: true })
   } catch (e) { throw wrap(e) }
 }
 // AXCELIS 진행 중 고객사 PO (품번별 진행 수주 수량) — 대상 목록 옆 숫자
@@ -88,8 +88,8 @@ function whyUnlinked(p, cust) {
 export async function fetchLineProdMap() {
   const sortH = (t) => String(t || '').split(' ').filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))
   const [prod, iss] = await Promise.all([
-    fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id')).catch(() => []),
-    fetchAll(() => supabase.from('pm_line_issue_v').select('id,issued,src').order('id')).catch(() => []),
+    fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id'), 1000, { serial: true }).catch(() => []),
+    fetchAll(() => supabase.from('pm_line_issue_v').select('id,issued,src').order('id'), 1000, { serial: true }).catch(() => []),
   ])
   const m = new Map(prod.map((r) => [r.id, { ...r, hogiList: sortH(r.hogis) }]))
   for (const r of iss) {

@@ -141,7 +141,7 @@ export default function FlowMap() {
             const dim = key && !n.keys.includes(key)
             const on = sel?.id === n.id || (key && n.keys.includes(key))
             const other = !cell.show
-            const bub = cell.show ? (cell.lead ? { n: cell.lead.n, cls: BUB[cell.lead.tone] || BUB.gray } : null)
+            const bub = cell.quiet ? null : cell.show ? (cell.lead ? { n: cell.lead.n, cls: BUB[cell.lead.tone] || BUB.gray } : null)
               : cell.rel && cell.rel.n > 0 ? { n: cell.rel.n, cls: 'bg-white text-[#6c5ce7] border-[1.5px] border-[#6c5ce7]' } : null
             return (
               <button key={n.id} type="button" onClick={() => pick(n, n.dept)} data-flowmap-node={n.id} data-node-name={n.name}

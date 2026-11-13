@@ -14,7 +14,7 @@ export const MAP_COLS = 8
 const cs = (pcs, page) => `/customer/${pcs}/${page}`
 
 // 단계 — col: 0 견적 · 1~2 수주 · 회신 · 3~5 자재 준비 · 6 생산 · 7 검수 → 납품
-//   keys: 같은 흐름끼리 묶는 이름(누르면 같은 키의 칸 · 화살표만 진하게)
+//   keys: 같은 흐름끼리 묶는 이름(누르면 같은 키의 칸 · 화살표만 진하게) · quiet: 칸 위 숫자를 안 띄움
 export const MAP_NODES = [
   { id: 's1', dept: '영업', col: 0, name: '견적 작성', keys: ['price'], go: () => ['/sales-quote'], badges: (c) => [['작성 가능', c?.rfq_ready, 'violet'], ['회신 D-3', c?.rfq_due, 'red']] },
   { id: 's3', dept: '영업', col: 1, name: '수주 등록', keys: ['po'], go: () => ['/orders'], badges: (c) => [['정식 PO 대기 지남', c?.po_wait, 'red'], ['이번 달 접수', c?.ord_month, 'gray']] },
@@ -22,17 +22,17 @@ export const MAP_NODES = [
   { id: 's6', dept: '영업', col: 3, name: '납기 협의', keys: ['reply'], go: () => ['/orders'], badges: (c) => [['납기 지남', c?.ord_late, 'red'], ['조건부 · 불가', c?.ord_risk, 'amber']] },
   { id: 's10', dept: '영업', col: 7, name: '납품', keys: ['ship'], go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
   { id: 'p1', dept: '구매자재', col: 1, name: '수주 확인·회신', keys: ['po', 'reply'], go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'amber']] },
-  { id: 'p3', dept: '구매자재', col: 3, name: '구매발주', keys: ['buy'], go: (pcs) => [cs(pcs, 'purchase'), '/control-tower'], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red'], ['발주 필요', ct?.orderNeeded, 'amber']] },
-  { id: 'p4', dept: '구매자재', col: 4, name: '입고', keys: ['buy'], go: () => ['/inbound', '/control-tower'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
+  { id: 'p3', dept: '구매자재', col: 3, name: '구매발주', quiet: true, keys: ['buy'], go: (pcs) => [cs(pcs, 'purchase'), '/control-tower'], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red'], ['발주 필요', ct?.orderNeeded, 'amber']] },
+  { id: 'p4', dept: '구매자재', col: 4, name: '입고', quiet: true, keys: ['buy'], go: () => ['/inbound', '/control-tower'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
   { id: 'p5', dept: '구매자재', col: 5, name: '불출', keys: ['mreq'], go: () => ['/outbound', '/issue'], badges: () => [] },
   { id: 'm6', dept: '제조', col: 3, name: '도면 수령', keys: ['dwg'], go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['옛 Rev 반납', c?.dwg_unret, 'red'], ['수령 대기', c?.dwg_unrcv, 'amber']] },
   { id: 'm1', dept: '제조', col: 5, name: '자재 요청', keys: ['mreq'], go: () => ['/material-request'], badges: (c) => [['처리 대기', c?.req_open, 'amber'], ['처리 중', c?.req_doing, 'gray']] },
-  { id: 'm2', dept: '제조', col: 6, name: '생산', keys: ['mreq', 'make', 'qc'], go: () => ['/production/AX'], badges: (c) => [['제작 중', c?.prod_making, 'violet'], ['제작 대기', c?.prod_wait, 'gray']] },
+  { id: 'm2', dept: '제조', col: 6, name: '생산', quiet: true, keys: ['mreq', 'make', 'qc'], go: () => ['/production/AX'], badges: (c) => [['제작 중', c?.prod_making, 'violet'], ['제작 대기', c?.prod_wait, 'gray']] },
   { id: 'q5', dept: '품질', col: 4, name: '도면 수령', keys: ['dwg'], go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['수령 대기', c?.dwg_unrcv, 'amber']] },
   { id: 'q3', dept: '품질', col: 7, name: '품질 검수', keys: ['qc', 'ship'], go: () => ['/production/AX'], badges: (c) => [['검수 대기', c?.prod_quality, 'amber']] },
   { id: 't1', dept: '생산기술', col: 2, name: '새 도면 확인', keys: ['dwg'], go: () => ['/quality/cn', '/quality/drawing-dist?tab=int'], badges: (c) => [['영업 공유', c?.dwg_shared, 'violet']] },
   { id: 't2', dept: '생산기술', col: 3, name: '사내 도면 배포', keys: ['dwg'], go: () => ['/quality/drawing-dist?tab=int'], badges: (c) => [['배포 대기', c?.dwg_shared, 'amber'], ['수령 확인 대기', c?.dwg_unrcv, 'gray']] },
-  { id: 't3', dept: '생산기술', col: 6, name: '생산 일정', keys: ['make'], go: () => ['/production/AX'], badges: (c) => [['제작 대기', c?.prod_wait, 'gray']] },
+  { id: 't3', dept: '생산기술', col: 6, name: '생산 일정', quiet: true, keys: ['make'], go: () => ['/production/AX'], badges: (c) => [['제작 대기', c?.prod_wait, 'gray']] },
 ]
 
 // 곁일 — 순서 없이 생기는 일. from: 다른 부서에서 넘어오는 일
@@ -172,7 +172,8 @@ export function cellOf(spec, dept, viewer, data) {
   // 칸 오른쪽 위 숫자 — 빨강 > 주황 > 보라 > 회색 중 0 보다 큰 첫 숫자
   const live = badges.filter((b) => b.n > 0)
   const lead = live.find((b) => b.tone === 'red') || live.find((b) => b.tone === 'amber') || live.find((b) => b.tone === 'violet') || live[0] || null
-  return { show, badges, rel, lead }
+  // quiet 칸(구매발주 · 입고 · 생산 · 생산 일정) — 늘 수백 건이라 알림이 아닌 현황 숫자 → 칸 위 숫자는 안 띄운다 (v4.186.0 · 칸을 누르면 아래 설명에는 그대로)
+  return { show, badges, rel, lead, quiet: !!spec.quiet }
 }
 
 // 자리 계산 — 폭에 맞춰 칸 너비 · 간격을 정한다 (테스트도 이 함수로 겹침을 본다)
