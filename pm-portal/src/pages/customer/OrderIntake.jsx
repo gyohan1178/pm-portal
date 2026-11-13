@@ -20,6 +20,7 @@ import { logActivity } from '../../lib/activityLog'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO, kst, kstDT } from '../../lib/utils'
 import { fetchQuoteMarginCfg, QUOTE_CFG_KEY } from '../../lib/quoteSettings'
+import { queryRetry, queryRetryDelay } from '../../lib/netStatus'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   setLineRev,
@@ -49,6 +50,8 @@ const md = (d) => (d ? kst(d).slice(5, 10).replace('-', '/') : '—')
 const ts = (t) => kstDT(t)
 const isUsd = (o) => o.currency === 'USD' || o.ccn === 'B'
 const amountOf = (l) => (+l.qty || 0) * (+l.unit_price || 0)
+// 보기 · 함수(SQL)가 아직 없다는 오류인가 — 이때만 예전 방식(전부 받기)으로 (v4.182.2)
+const noViewErr = (e) => !!e && (['42P01', '42883', 'PGRST202', 'PGRST205'].includes(e.code) || /does not exist|schema cache|Could not find the (table|function)/i.test(e.message || ''))
 const money = (o, v) => (isUsd(o) ? `$${fmt(Math.round(v * 100) / 100)}` : won(v))
 const dayDiff = (d) => (d ? Math.round((new Date(d) - new Date(todayISO())) / 86400000) : null)
 
@@ -351,10 +354,15 @@ export default function OrderIntake() {
   const needFull = tab !== 'list' || ['done', 'cancel', 'all'].includes(view) || kpi === 'noPrice' || kpi === 'month'
   const qd = useDeferredValue(q)            // 글자 칠 때마다 1만 줄을 다시 거르지 않게 — 입력은 바로, 목록은 한 박자 뒤 (v4.90.6)
   const k = qd.trim().toUpperCase()
-  const fastQ = useQuery({ queryKey: ['orderIntake', 'fast'], queryFn: fetchOrdersFast, retry: false })
+  // v4.182.2 — 빠른 길이 한 번 실패했다고 바로 「전부 받기」(1.4만 줄)로 넘어가지 않는다
+  //   서버가 붐벼 한 번 시간 초과가 나면 가장 무거운 길로 빠져 20초 넘게 걸리고 「인터넷 불안정」 이 떴다
+  //   → 보기(SQL)가 아예 없을 때만 전부 받기 · 그 밖의 실패는 같은 빠른 요청을 다시 시도 · 그래도 안 되면 「다시 불러오기」
+  const fastQ = useQuery({ queryKey: ['orderIntake', 'fast'], queryFn: fetchOrdersFast, retry: (c, e) => !noViewErr(e) && queryRetry(c, e), retryDelay: queryRetryDelay })
   // 예상 매출 · 단가 없는 품목 수 — 빠르게 받은 때는 DB 합계 (검색어도 같이). placeholderData 로 검색 바꾸는 동안 숫자가 비지 않게
-  const moneyQ = useQuery({ queryKey: ['orderMoney', k], queryFn: () => fetchOrderMoney(k), retry: false, enabled: !needFull && !fastQ.error, placeholderData: (prev) => prev })
-  const fastBroken = !!fastQ.error || !!moneyQ.error
+  //   예상 매출 합계가 실패해도 목록은 그대로 — 합계 칸만 「—」
+  const moneyQ = useQuery({ queryKey: ['orderMoney', k], queryFn: () => fetchOrderMoney(k), retry: (c, e) => !noViewErr(e) && queryRetry(c, e), retryDelay: queryRetryDelay, enabled: !needFull && !fastQ.error, placeholderData: (prev) => prev })
+  const fastBroken = noViewErr(fastQ.error) || noViewErr(moneyQ.error)
+  const fastFailed = !!fastQ.error && !fastBroken
   const wantFull = needFull || fastBroken
   const fullQ = useQuery({ queryKey: ['orderIntake', 'full'], queryFn: fetchOrders, enabled: wantFull })
   const usingFull = wantFull && !!fullQ.data
@@ -450,7 +458,10 @@ export default function OrderIntake() {
     const yr = today.slice(0, 4)
     const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0, byCust: {} }
     let noPriceN = null
-    if (!usingFull && moneyQ.data && !moneyQ.error) {
+    if (!usingFull && !(moneyQ.data && !moneyQ.error)) {
+      // 빠르게 받은 때 DB 합계가 아직 없거나 실패 — 받아 둔 일부 줄로 대충 더하면 작게 나오므로 숫자를 비워 둔다 (v4.182.2)
+      m.na = moneyQ.error ? 'err' : 'wait'
+    } else if (!usingFull) {
       // 빠르게 — DB 합계로 (줄마다 더하던 것과 같은 식 · 고객사 선택 · 검색어 같이)
       noPriceN = 0
       moneyQ.data.filter((r) => cust === 'all' || r.customer_code === cust).forEach((r) => {
@@ -477,7 +488,7 @@ export default function OrderIntake() {
     const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
     return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
-  }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data])
+  }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data, moneyQ.error])
 
   const lines = useMemo(() => {
     if (isLoading) return []                 // 지난 이력까지 받는 동안 — 반쯤 받은 목록을 잠깐 보여주지 않게 (v4.103.0)
@@ -744,6 +755,12 @@ export default function OrderIntake() {
 
   return (
     <div className="space-y-4 min-w-0" data-order-intake data-view={isBuy ? 'buy' : 'sales'}>
+      {fastFailed && !usingFull && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 flex flex-wrap items-center gap-3" data-fast-failed>
+          <span>수주대장 목록을 불러오지 못했습니다 — 서버가 붐비거나 연결이 잠깐 끊겼을 수 있습니다.</span>
+          <button type="button" onClick={() => fastQ.refetch()} className="px-3 py-1.5 rounded-lg bg-white border border-red-200 font-bold hover:bg-red-100">다시 불러오기</button>
+        </div>
+      )}
       <PageHead crumb="영업" title="수주대장"
         desc={<>전장 고객사 PO 를 발주서 PDF 로 접수하고, 구매자재가 품번마다 확인 · 회신합니다. 같은 PO 를 다시 올리면 바뀐 것만 반영되고 변경 이력이 남습니다.
           {isBuy ? ' 품번을 체크해 한꺼번에 회신하세요.' : ' 구매자재 회신은 결론 · 준비일 · 메모만 보입니다.'}</>}>
@@ -801,8 +818,10 @@ export default function OrderIntake() {
         <div className="min-w-0 md:min-w-[210px]">
           <div className="text-[12px] text-slate-500 flex items-center gap-1">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span>
             <InfoTip text={`납기가 올해인 줄의 「수량 × PO 단가」 합계 (취소 줄 제외). 달러 PO 는 환율 ${fx.toLocaleString('ko-KR')}원으로 바꿔 더합니다. 단가가 없는 품목은 빠지니 아래 「단가 없는 품목」을 채우면 정확해집니다.`} /></div>
-          <div className="text-[22px] md:text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{won(m.total)}</div>
-          <div className="text-[11.5px] text-slate-600 tabular-nums mt-0.5">납품 완료 <b>{won(m.done)}</b> · 납품 예정 <b>{won(m.total - m.done)}</b></div>
+          <div className="text-[22px] md:text-[26px] font-extrabold leading-tight tabular-nums text-emerald-700" data-money-total>{m.na ? (m.na === 'err' ? '—' : '…') : won(m.total)}</div>
+          {m.na === 'err'
+            ? <div className="text-[11.5px] text-slate-500 mt-0.5" data-money-na>합계를 불러오지 못했습니다 (목록은 그대로) · <button type="button" className="underline font-semibold text-emerald-700" onClick={() => moneyQ.refetch()}>다시</button></div>
+            : !m.na && <div className="text-[11.5px] text-slate-600 tabular-nums mt-0.5">납품 완료 <b>{won(m.done)}</b> · 납품 예정 <b>{won(m.total - m.done)}</b></div>}
         </div>
         {/* 휴대폰: 고객사마다 두 줄 (합계 / 완료 · 예정) — 큰 금액 4칸이 화면 밖으로 밀리던 것 (v4.90.7) */}
         <div className="md:hidden w-full divide-y divide-emerald-100 text-[12px] tabular-nums" data-money-cust-m>
