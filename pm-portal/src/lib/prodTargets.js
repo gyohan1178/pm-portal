@@ -87,10 +87,18 @@ function whyUnlinked(p, cust) {
 //     보기가 없으면(SQL 전) 불출 정보만 빠지고 나머지는 그대로
 export async function fetchLineProdMap() {
   const sortH = (t) => String(t || '').split(' ').filter(Boolean).sort((a, b) => a.localeCompare(b, 'ko', { numeric: true }))
-  const [prod, iss] = await Promise.all([
-    fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id'), 1000, { serial: true }).catch(() => []),
-    fetchAll(() => supabase.from('pm_line_issue_v').select('id,issued,src').order('id'), 1000, { serial: true }).catch(() => []),
-  ])
+  // v4.186.2 — 한 번의 요청으로 (pm_line_prod_all · 수주대장_호기연결_한번에_반영_261113.sql). 함수가 없으면(SQL 전) 예전처럼 따로
+  let prod = null, iss = null
+  try {
+    const { data, error } = await supabase.rpc('pm_line_prod_all')
+    if (!error && data && Array.isArray(data.prod) && Array.isArray(data.iss)) { prod = data.prod; iss = data.iss }
+  } catch { /* 아래 예전 방식 */ }
+  if (!prod) {
+    ;[prod, iss] = await Promise.all([
+      fetchAll(() => supabase.from('pm_line_prod_v').select('*').order('id'), 1000, { serial: true }).catch(() => []),
+      fetchAll(() => supabase.from('pm_line_issue_v').select('id,issued,src').order('id'), 1000, { serial: true }).catch(() => []),
+    ])
+  }
   const m = new Map(prod.map((r) => [r.id, { ...r, hogiList: sortH(r.hogis) }]))
   for (const r of iss) {
     const cur = m.get(r.id) || { id: r.id, hogiList: [] }
