@@ -15,6 +15,7 @@ import PageHead from '../../components/PageHead'
 import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import { EmptyRow, ErrorRow } from '../../components/ui/EmptyState'
 import { BTN } from '../../lib/uiText'
+import { fetchIssueAssys, assyKey } from '../../lib/issueAssy'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -151,9 +152,37 @@ export default function OutboundHistory() {
   const histGroups = useMemo(() => groupHistory(histRows), [histRows])
   const histView = useVisibleRows(histGroups, 300, [hQuery, hKind])
   const [openGroup, setOpenGroup] = useState({})   // 펼친 다품목 묶음
+  // 다품목 출고 — 어떤 상위품목을 몇 대분 뺐는지 (v4.183.0 · 기록은 이 버전부터)
+  const [mode, setMode] = useState('line')         // line 출고 줄 · assy 상위품목 기준
+  const [openAssy, setOpenAssy] = useState({})
+  const { data: assyMap = new Map() } = useQuery({ queryKey: ['outboundAssys', hQuery], queryFn: () => fetchIssueAssys(hQuery) })
+  const assysOf = (r) => (r && r._kind === '다품목 출고' ? assyMap.get(assyKey(r.processed_at, r._custId)) : null) || null
+  // 상위품목 기준 — 기간 안에서 상위품목마다 몇 대분 · 몇 번 (고객사 조건 반영)
+  const assyRows = useMemo(() => {
+    const by = new Map()
+    for (const g of groupHistory(history)) {
+      const r = g.rows[0], list = assysOf(r)
+      if (!list) continue
+      for (const a of list) {
+        const k = `${r._custId || ''}|${a.code}`
+        const e = by.get(k) || { key: k, code: a.code, name: a.name, custId: r._custId, qty: 0, batches: [] }
+        e.qty += a.qty
+        e.batches.push({ key: g.key, date: r.movement_date, at: r.processed_at, qty: a.qty, who: r._who || a.by || '', lines: g.rows.length, others: list.filter((x) => x.code !== a.code).map((x) => `${x.code} ×${x.qty}`) })
+        by.set(k, e)
+      }
+    }
+    return [...by.values()].sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code))
+  }, [history, assyMap])
   const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
 
   function exportHistory() {
+    if (mode === 'assy') {
+      const data = assyRows.flatMap((e) => e.batches.map((b) => ({ '상위품목': e.code, '품명': e.name || '', '고객사': custName(e.custId), '출고일': b.date, '시각': timeOf(b.at), '대수': b.qty, '같이 뺀 상위품목': b.others.join(', '), '부품 줄': b.lines, '처리자': b.who })))
+      const wb = XLSX.utils.book_new()
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), '상위품목기준')
+      XLSX.writeFile(wb, `출고현황_상위품목_${hQuery.from}_${hQuery.to}.xlsx`)
+      return
+    }
     const data = histRows.map(r=>({
       '출고일':r.movement_date, '시각':timeOf(r.processed_at), '구분':r._kind,
       '기준코드':r.items?.std_code, '품명':r.items?.name,
@@ -161,6 +190,7 @@ export default function OutboundHistory() {
       '고객사PO':r.purchase_orders?.po_number||'',
       '고객사':(custName(r._custId) || r.purchase_orders?.customers?.name||'') + (r._custGuess ? ' (추정)' : ''),
       '프로젝트':(r._projCode||'') + (r._projGuess ? ' (추정)' : ''), '처리자':r._who||'', '비고':r._memo||'',
+      '상위품목(다품목)': (assysOf(r) || []).map((a) => `${a.code} ×${a.qty}`).join(', '),
     }))
     const wb=XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(data),'출고현황')
@@ -173,7 +203,7 @@ export default function OutboundHistory() {
         desc="ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정 이력을 봅니다. 어느 고객사 · 프로젝트로, 누가 뺐는지 확인합니다.">
         <Link to="/outbound" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">📤 ASSY 출고</Link>
         <Link to="/issue" className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 whitespace-nowrap">🧺 다품목 출고</Link>
-        <button onClick={exportHistory} disabled={!histRows.length}
+        <button onClick={exportHistory} disabled={mode === 'assy' ? !assyRows.length : !histRows.length}
           className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 disabled:opacity-40">{BTN.excel}</button>
       </PageHead>
 
@@ -213,11 +243,58 @@ export default function OutboundHistory() {
         </div>
         <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer})}
           className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
-        <div className="ml-auto text-xs text-slate-400 self-center">총 {histRows.length}건</div>
+        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold" data-outhist-mode>
+          {[['line', '출고 줄'], ['assy', '🧩 상위품목 기준']].map(([k, t]) => (
+            <button key={k} type="button" onClick={() => setMode(k)} data-mode={k}
+              className={`px-2.5 py-1.5 rounded-md ${mode === k ? 'bg-violet-100 text-violet-700' : 'text-slate-500 hover:bg-slate-50'}`}>{t}</button>
+          ))}
+        </div>
+        <div className="ml-auto text-xs text-slate-400 self-center">{mode === 'assy' ? `상위품목 ${assyRows.length}종` : `총 ${histRows.length}건`}</div>
       </div>
 
 
-      {histLoading ? (
+      {mode === 'assy' ? (
+        <div className="rounded-xl border border-slate-200 overflow-hidden bg-white" data-assy-view>
+          <div className="px-4 py-2.5 text-[12px] text-slate-500 bg-slate-50 border-b border-slate-200">
+            다품목 출고에서 ASSY 로 전개해 뺀 것을 상위품목마다 모았습니다 · 줄을 누르면 출고한 날마다 나옵니다.
+            <span className="text-slate-400"> 11월 13일(v4.183.0) 이후 다품목 출고부터 기록됩니다 · 단품으로 담은 것 · 호기 키팅은 세지 않습니다.</span>
+          </div>
+          <table className="w-full text-xs">
+            <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
+              <th className="px-3 py-2.5 text-left font-bold">상위품목</th><th className="px-3 py-2.5 text-left font-bold">품명</th>
+              <th className="px-3 py-2.5 text-left font-bold">고객사</th><th className="px-3 py-2.5 text-right font-bold">출고 대수</th>
+              <th className="px-3 py-2.5 text-right font-bold">출고 횟수</th><th className="px-3 py-2.5 text-left font-bold">마지막 출고</th>
+            </tr></thead>
+            <tbody>
+              {histLoading ? <SkeletonRows cols={6} rows={6} />
+                : !assyRows.length ? <EmptyRow cols={6} icon="🧩" title="상위품목 기록이 없습니다" desc="이 기간에 ASSY 를 전개해 다품목 출고한 기록이 없습니다 (v4.183.0 이전 출고는 기록이 없습니다)." />
+                : assyRows.map((e) => {
+                  const op = !!openAssy[e.key], last = e.batches.reduce((a, b) => (String(b.at || b.date) > String(a.at || a.date) ? b : a), e.batches[0])
+                  return (
+                    <Fragment key={e.key}>
+                      <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setOpenAssy((o) => ({ ...o, [e.key]: !o[e.key] }))} data-assy-row={e.code}>
+                        <td className="px-3 py-2 font-mono text-indigo-600 whitespace-nowrap"><span className="text-slate-300 mr-1">{op ? '▾' : '▸'}</span>{e.code}</td>
+                        <td className="px-3 py-2 font-semibold text-slate-800">{e.name || '—'}</td>
+                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{custName(e.custId) || '—'}</td>
+                        <td className="px-3 py-2 text-right font-extrabold text-violet-700 tabular-nums" data-assy-qty>{e.qty.toLocaleString('ko-KR')}대</td>
+                        <td className="px-3 py-2 text-right text-slate-600 tabular-nums">{e.batches.length}번</td>
+                        <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{last.date} <span className="text-slate-400">{timeOf(last.at)}</span></td>
+                      </tr>
+                      {op && e.batches.map((b, i) => (
+                        <tr key={e.key + i} className="border-b border-slate-100 bg-violet-50/30 text-slate-600">
+                          <td className="px-3 py-1.5 text-slate-300 pl-8">└</td>
+                          <td className="px-3 py-1.5" colSpan={2}>{b.date} <span className="text-slate-400">{timeOf(b.at)}</span> · {b.who || '—'} · 부품 {b.lines}줄{b.others.length ? <span className="text-slate-400"> · 같이: {b.others.join(', ')}</span> : null}</td>
+                          <td className="px-3 py-1.5 text-right font-bold tabular-nums">{b.qty.toLocaleString('ko-KR')}대</td>
+                          <td colSpan={2} />
+                        </tr>
+                      ))}
+                    </Fragment>
+                  )
+                })}
+            </tbody>
+          </table>
+        </div>
+      ) : histLoading ? (
         <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
           <table className="w-full text-xs"><tbody><SkeletonRows cols={11} rows={10} /></tbody></table>
         </div>
@@ -260,7 +337,11 @@ export default function OutboundHistory() {
                           </>}
                         </td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap" title={r._projName||''}>
-                          {sub ? '' : <>
+                          {sub ? '' : assysOf(r) ? (
+                            <span className="text-violet-700 font-semibold" data-row-assys title={assysOf(r).map((a) => `${a.code} ${a.name || ''} ×${a.qty}대`).join('\n')}>
+                              🧩 {assysOf(r)[0].code} ×{assysOf(r)[0].qty}대{assysOf(r).length > 1 ? ` 외 ${assysOf(r).length - 1}종` : ''}
+                            </span>
+                          ) : <>
                             {r._projCode||'-'}
                             {r._projGuess && <span className="ml-1 text-[10px] text-amber-500" title="예전 기록이라 프로젝트가 저장돼 있지 않아, 출고된 부품을 전부 가진 BOM으로 찾았습니다">추정</span>}
                           </>}

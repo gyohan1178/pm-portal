@@ -15,6 +15,8 @@ import { useUndo } from '../../components/UndoBar'
 import { useCompact } from '../../hooks/useCompact'
 import { useFillHeight } from '../../hooks/useFillHeight'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
+import { addPendingAssys, clearPendingAssys, stampPendingAssys, unstampAssys } from '../../lib/issueAssy'
+import { useMyProfile } from '../../hooks/useProfile'
 import { must } from '../../lib/db'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
@@ -112,6 +114,7 @@ export default function Issue() {
   }, [loc.state])
   // 불출표에 '어느 상위품번에 몇 개' 를 적으려면 전개할 때 기록해 둬야 한다.
   const [lastAssys, setLastAssys] = useState([])
+  const { data: myProfile } = useMyProfile()
   const [byAssyMap, setByAssyMap] = useState({})
 
   const addMut = useMutation({
@@ -154,6 +157,7 @@ export default function Issue() {
       qc.invalidateQueries({ queryKey: ['picking', csId] })
       // 상위품번·제외 표시도 함께 지운다. 남아 있으면 다음 불출표에 섞인다.
       setLastAssys([]); setByAssyMap({}); setExcluded(new Set())
+      clearPendingAssys(csId)   // 출고 현황 「상위품목」 대기 줄도 (v4.183.0)
     },
     onError: e => toastError('초기화 오류: ' + e.message),
   })
@@ -324,6 +328,8 @@ export default function Issue() {
       }
       setLastAssys(picked.map(p => ({ ...p, qty: Number(p.qty) })))
       setByAssyMap(map)
+      // 출고 현황에서 「어떤 상위품목을 몇 대분」 보이게 — 출고 처리 때 이 출고에 붙는다 (v4.183.0)
+      await addPendingAssys(csId, assys.map(a => ({ std_code: a.std_code, name: a.name, qty: Number(a.qty) })), myProfile?.name)
       addMut.mutate(data.map(r => ({
         item_id: r.item_id, std_code: r.std_code, name: r.name,
         unit: r.unit, qty: r.qty, issue_qty: r.qty,
@@ -399,6 +405,7 @@ export default function Issue() {
     for (const p of u.prods)
       must(await supabase.from('production').update({ missing_parts: p.missing_parts ?? [], part_issue: p.part_issue, parts_done: p.parts_done }).eq('id', p.id), '호기 되돌리기')
     await restoreIssued(u.issued)
+    if (u.assyAt) await unstampAssys(csId, u.assyAt)   // 상위품목도 다시 대기로
     // ③ 담기함 — 처리되어 지워진 줄만 다시 넣는다
     const ids = u.picking.map(l => l.id).filter(Boolean)
     const still = new Set()
@@ -419,6 +426,8 @@ export default function Issue() {
       const { data, error } = await supabase.rpc('pm_process_issue', { p_customer_id: csId })
       if (error) throw error
       await syncMissingToProduction(snapshot) // 결품 ↔ 생산관리 동기화 (실패해도 출고는 유지)
+      const assyAt = await stampPendingAssys(csId)   // 상위품목 대기 줄 → 이 출고에 붙임 (실패해도 출고는 유지)
+      if (u) u.assyAt = assyAt
       if (u) {
         try {
           const after = u.itemIds.length ? await moveRows({ type: '출고', itemIds: u.itemIds, since: sinceYesterday() }) : []
