@@ -1,4 +1,5 @@
 import { useState, useEffect, Suspense } from 'react'
+import MenuTabs from '../MenuTabs'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { holidayCoverageWarning } from '../../lib/bizdays'
 import { supabase } from '../../lib/supabase'
@@ -208,6 +209,7 @@ export default function Layout({ profile }) {
         <NetBanner />
         <main className="pm-main flex-1 overflow-y-auto p-4 lg:p-5">
           <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">불러오는 중...</div>}>
+            <MenuTabs />
             <Outlet />
           </Suspense>
         </main>

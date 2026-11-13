@@ -1,6 +1,6 @@
 import { useState, useEffect, createContext, useContext, Fragment } from 'react'
 import { isFieldOnly, canAccessSection, canSeeFlow, isPurchasing, myAuthUser } from '../../hooks/useProfile'
-import { NavLink } from 'react-router-dom'
+import { NavLink, useLocation } from 'react-router-dom'
 import { APP_VERSION, CHANGELOG } from '../../lib/version'
 import { loadChangelogOld } from '../../lib/loadChangelogOld'
 import { primaryCsCode } from '../../lib/customers'
@@ -239,8 +239,11 @@ function useAlertCounts(buy = false) {
   return data || {}
 }
 
-function MenuItem({ to, icon, children, end, onNavigate, badge }) {
+function MenuItem({ to, icon, children, end, onNavigate, badge, also }) {
   const prefs = useContext(MenuPrefsCtx)
+  // also — 같은 묶음의 다른 화면 주소 (v4.187.0 메뉴 묶음) : 그 화면에 있어도 이 줄이 켜진다
+  const { pathname } = useLocation()
+  const alsoOn = (also || []).some((a) => (a instanceof RegExp ? a.test(pathname) : pathname === a || pathname.startsWith(a + '/')))
   const fav = prefs?.favorites?.includes(to)
   const hidden = prefs?.hidden?.includes(to)
 
@@ -251,7 +254,7 @@ function MenuItem({ to, icon, children, end, onNavigate, badge }) {
     <NavLink to={to} end={end} onClick={onNavigate}
       className={({ isActive }) =>
         `flex items-center gap-2.5 px-4 py-[5px] text-[13px] font-medium relative transition-colors
-        ${isActive
+        ${isActive || alsoOn
           ? 'text-indigo-600 bg-indigo-50 before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:bg-indigo-600 before:rounded-r'
           : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'}`}>
       <span className="text-sm w-4 text-center flex-shrink-0">{icon}</span>
@@ -480,10 +483,9 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         <CollapseSection mover={mv} label="🛒 구매" sKey="buy">
           <MenuItem to={`/customer/${pcs}/purchase`} icon="🛒" onNavigate={onNavigate} badge={isPurchasing(profile) ? alerts['/purchase'] : 0}>구매발주</MenuItem>
           <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
-          <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate}>품목 단가 등록</MenuItem>
-          <MenuItem to="/payment-plan" icon="💳" onNavigate={onNavigate}>결제 계획</MenuItem>
-          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate}>부족자재</MenuItem>
-          <MenuItem to="/missing" icon="🧩" onNavigate={onNavigate}>결품 현황</MenuItem>
+          {/* v4.187.0 메뉴 묶음 — 단가 등록 + 변동 이력 · 부족자재 + 결품 현황 (화면 위 탭으로 오감) · 결제 계획은 안 써서 메뉴에서 뺌 (주소 /payment-plan 은 그대로) */}
+          <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate} also={['/master/price']}>단가 등록 · 이력</MenuItem>
+          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate} also={['/missing']}>부족자재 · 결품</MenuItem>
         </CollapseSection>
         )}
     </>),
@@ -525,8 +527,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 🔬 품질 — 초도품 진행관리 · 초도품(FAI) · 설계변경(CN) 이력 · 도면 배포이력 · 로트 관리 */}
         {canAccessSection(profile, 'quality') && (
         <CollapseSection mover={mv} label="🔬 품질" sKey="quality">
-          <MenuItem to="/quality/fa-progress" icon="🚦" onNavigate={onNavigate}>초도품 진행관리</MenuItem>
-          <MenuItem to="/quality/fai" icon="🧾" onNavigate={onNavigate}>초도품 자재 매칭</MenuItem>
+          <MenuItem to="/quality/fa-progress" icon="🚦" onNavigate={onNavigate} also={['/quality/fai']}>초도품 (진행 · 자재 매칭)</MenuItem>
           <MenuItem to="/quality/cn" icon="🔁" onNavigate={onNavigate}>설계변경(CN) 이력</MenuItem>
           <MenuItem to="/quality/complaints" icon="🛎" onNavigate={onNavigate}>고객사 불만 접수</MenuItem>
           <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
@@ -554,7 +555,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* ⚙️ 기초자료 — 자주 보는 마스터만 */}
         {canAccessSection(profile, 'master') && (
         <CollapseSection mover={mv} label="⚙️ 기초자료" sKey="master" defaultOpen={false}>
-          <MenuItem to="/master/items" icon="🗂️" onNavigate={onNavigate}>기준코드 DB</MenuItem>
+          <MenuItem to="/master/items" icon="🗂️" onNavigate={onNavigate} also={['/master/codemap']}>기준코드 (DB · 매핑)</MenuItem>
           <MenuItem to={`/customer/${pcs}/bom`} icon="🧬" onNavigate={onNavigate}>BOM</MenuItem>
           <MenuItem to="/master/vendors" icon="🏢" onNavigate={onNavigate}>협력사</MenuItem>
         </CollapseSection>
@@ -564,8 +565,6 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 🔧 기타 — 가끔 쓰는 것. 기본 접힘 */}
         {canAccessSection(profile, 'master') && (
         <CollapseSection mover={mv} label="🔧 기타" sKey="etc" defaultOpen={false}>
-          <MenuItem to="/master/codemap" icon="🔢" onNavigate={onNavigate}>기준코드 매핑</MenuItem>
-          <MenuItem to="/master/price"   icon="💲" onNavigate={onNavigate}>단가변동이력</MenuItem>
           <MenuItem to="/erp"    icon="🔗" onNavigate={onNavigate}>ERP 연동</MenuItem>
           {isAdmin && <MenuItem to="/activity" icon="🗂" onNavigate={onNavigate}>활동 이력 · 용량</MenuItem>}
           {isAdmin && <MenuItem to="/backup" icon="🗄" onNavigate={onNavigate}>데이터 백업</MenuItem>}

@@ -41,7 +41,6 @@ function buildCommands() {
   push('구매', '품목 단가 등록', '/quote', 'quote gyeonjeok danga 견적입력')
   push('영업', '매출견적', '/sales-quote', 'sales quote maechul gyeonjeok')
   push('영업', '수주대장', '/orders', 'orders suju po balju')
-  push('구매', '결제 계획', '/payment-plan', 'payment plan gyeolje')
   push('기타', 'ERP 연동', '/erp', 'erp')
   push('기타', '기준코드 매핑', '/master/codemap', 'codemap maeping 품목관계')
   // 주간 / 분석
