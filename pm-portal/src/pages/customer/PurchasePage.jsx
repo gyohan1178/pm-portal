@@ -22,6 +22,7 @@ import * as XLSX from 'xlsx'
 import CustomerTabs from '../../components/CustomerTabs'
 import PageHead from '../../components/PageHead'
 import PoDueDialog from '../../components/PoDueDialog'
+import DueRequestDialog from '../../components/DueRequestDialog'
 import VendorScorecard from '../../components/VendorScorecard'
 import { printForeignPO } from '../../lib/foreignPO'
 import { genPoNumber } from '../../lib/poNumber'
@@ -221,6 +222,7 @@ export default function PurchasePage() {
   const [bulkPo, setBulkPo] = useState('')
   // 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다
   const [delAsk, setDelAsk] = useState(false)
+  const [dueReq, setDueReq] = useState(null)   // 협력사 납기 회신 요청 창 (v4.184.0)
   const [delWord, setDelWord] = useState('')
   // 여러 칸 차례 정렬 (v4.114.1) — 먼저 누른 칸이 먼저. 예) 구매처 → 요청납기 = 구매처끼리 묶고 그 안에서 납기 순
   const [sorts, setSorts] = useState([])   // [{key, dir}]
@@ -1544,6 +1546,10 @@ export default function PurchasePage() {
             }}
             title={fRows.length ? `해외 업체(${fv[0].name}) ${fRows.length}건 영문 발주서 — 인쇄하거나 PDF 로 저장` : '해외 업체 발주를 한 곳만 고르면 영문 발주서를 뽑습니다'}
             className={B(fRows.length, 'border-sky-300 text-sky-700 bg-white hover:bg-sky-100')}>🌏 해외 발주서</button>
+          {/* 협력사 납기 회신 요청 — 업체별 메일용 표 · 엑셀 (발주번호 없이) */}
+          <button disabled={!has} style={{ width: 112 }} data-po-duereq onClick={() => setDueReq(checkedPOs)}
+            title="체크한 건을 업체별로 모아 납기 회신을 요청하는 메일 표 · 엑셀을 만듭니다"
+            className={B(has, 'border-violet-300 text-violet-700 bg-white hover:bg-violet-100')}>📨 납기 회신 요청</button>
 
           <div className="w-px h-5 bg-indigo-200"/>
 
@@ -1840,6 +1846,7 @@ export default function PurchasePage() {
           )}
         </div>
       )}
+      {dueReq && dueReq.length > 0 && <DueRequestDialog pos={dueReq} vendors={vendors} custName={cs?.name || ''} onClose={() => setDueReq(null)} />}
       {dueDlg && dueDlg.length > 0 && <PoDueDialog pos={dueDlg} onClose={()=>setDueDlg(null)} onDone={()=>setChecked({})} />}
     </div>
   )
