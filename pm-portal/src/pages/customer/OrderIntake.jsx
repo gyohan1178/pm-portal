@@ -360,7 +360,10 @@ export default function OrderIntake() {
   const fastQ = useQuery({ queryKey: ['orderIntake', 'fast'], queryFn: fetchOrdersFast, retry: (c, e) => !noViewErr(e) && queryRetry(c, e), retryDelay: queryRetryDelay })
   // 예상 매출 · 단가 없는 품목 수 — 빠르게 받은 때는 DB 합계 (검색어도 같이). placeholderData 로 검색 바꾸는 동안 숫자가 비지 않게
   //   예상 매출 합계가 실패해도 목록은 그대로 — 합계 칸만 「—」
-  const moneyQ = useQuery({ queryKey: ['orderMoney', k], queryFn: () => fetchOrderMoney(k), retry: (c, e) => !noViewErr(e) && queryRetry(c, e), retryDelay: queryRetryDelay, enabled: !needFull && !fastQ.error, placeholderData: (prev) => prev })
+  // v4.185.0 — 예상 매출은 「보기」를 켰을 때만 받는다 (기본 접힘 · 이 브라우저에 기억) — 화면 열 때 서버 요청을 줄여 목록이 먼저 뜨게
+  const [showMoney, setShowMoney] = useState(() => { try { return localStorage.getItem('pm.oi.money') === '1' } catch { return false } })
+  const toggleMoney = (v) => { setShowMoney(v); try { localStorage.setItem('pm.oi.money', v ? '1' : '0') } catch { /* 저장 안 되는 브라우저 */ } }
+  const moneyQ = useQuery({ queryKey: ['orderMoney', k], queryFn: () => fetchOrderMoney(k), retry: (c, e) => !noViewErr(e) && queryRetry(c, e), retryDelay: queryRetryDelay, enabled: showMoney && !needFull && !fastQ.error, placeholderData: (prev) => prev })
   const fastBroken = noViewErr(fastQ.error) || noViewErr(moneyQ.error)
   const fastFailed = !!fastQ.error && !fastBroken
   const wantFull = needFull || fastBroken
@@ -371,14 +374,16 @@ export default function OrderIntake() {
   const error = wantFull ? fullQ.error : null
   const refresh = () => { qc.invalidateQueries({ queryKey: ['orderIntake'] }); qc.invalidateQueries({ queryKey: ['orderMoney'] }) }
   // 생산관리 연결 — 수주 줄 id → 호기 · 자재불출 여부 (SQL 전이면 빈 목록)
-  const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000 })
+  // 호기 연결 · 자재요청 연결 · 불출 자동 회신은 목록이 뜬 다음에 (v4.185.0 — 열 때 한꺼번에 몰려 목록 요청이 줄을 섰다)
+  const listReady = !!(fastQ.data || fullQ.data)
+  const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000, enabled: listReady })
   // 수주 줄에서 만든 자재 요청 (v4.170.0) — 「🙋 자재요청됨 / 요청 불출완료」 표시용
-  const { data: mrByTag } = useQuery({ queryKey: ['orderMrMap'], queryFn: fetchOrderMrMap, staleTime: 60 * 1000 })
+  const { data: mrByTag } = useQuery({ queryKey: ['orderMrMap'], queryFn: fetchOrderMrMap, staleTime: 60 * 1000, enabled: listReady })
   // 자재불출 끝난 줄 → 회신이 비어 있으면 「가능」 자동 (v4.117.0) — 화면 열 때 한 번, 편집 권한 있는 사람만
   //   함수가 없으면(SQL 전) 조용히 넘어감
   const issReplyRan = useRef(false)
   useEffect(() => {
-    if (!editable || issReplyRan.current) return
+    if (!editable || !listReady || issReplyRan.current) return
     issReplyRan.current = true
     supabase.rpc('pm_order_issue_reply').then(({ data, error }) => {
       const n = Number(data) || 0
@@ -388,7 +393,7 @@ export default function OrderIntake() {
       qc.invalidateQueries({ queryKey: ['lineProdMap'] })
       qc.invalidateQueries({ queryKey: ['menuAlerts'] })
     })
-  }, [editable]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editable, listReady]) // eslint-disable-line react-hooks/exhaustive-deps
   // 작은 작업(회신 · 납품 · 불출일 · 납품처 · 확인 · 삭제) 뒤에는 1만 줄을 다시 받지 않고 화면 데이터만 고친다 (v4.90.6 속도)
   //   PDF 등록 · AX 엑셀 반영처럼 줄이 생기는 작업만 전체를 다시 받는다
   //   빠르게 · 전부 두 캐시를 같이 고친다. 예상 매출 합계는 DB 에서 다시 받는다 (가볍다)
@@ -458,7 +463,9 @@ export default function OrderIntake() {
     const yr = today.slice(0, 4)
     const m = { krw: 0, usd: 0, doneKrw: 0, doneUsd: 0, later: 0, noDue: 0, byCust: {} }
     let noPriceN = null
-    if (!usingFull && !(moneyQ.data && !moneyQ.error)) {
+    if (!showMoney) {
+      m.na = 'off'                    // 예상 매출 접힘 — 계산 안 함 (v4.185.0)
+    } else if (!usingFull && !(moneyQ.data && !moneyQ.error)) {
       // 빠르게 받은 때 DB 합계가 아직 없거나 실패 — 받아 둔 일부 줄로 대충 더하면 작게 나오므로 숫자를 비워 둔다 (v4.182.2)
       m.na = moneyQ.error ? 'err' : 'wait'
     } else if (!usingFull) {
@@ -488,7 +495,7 @@ export default function OrderIntake() {
     const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
     return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
-  }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data, moneyQ.error])
+  }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data, moneyQ.error, showMoney])
 
   const lines = useMemo(() => {
     if (isLoading) return []                 // 지난 이력까지 받는 동안 — 반쯤 받은 목록을 잠깐 보여주지 않게 (v4.103.0)
@@ -813,7 +820,14 @@ export default function OrderIntake() {
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
 
-      {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) */}
+      {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) · v4.185.0 기본 접힘 */}
+      {!showMoney ? (
+        <button type="button" onClick={() => toggleMoney(true)} data-money-show
+          className={`w-full rounded-xl border px-4 md:px-5 py-2.5 flex items-center gap-2 text-left text-[12.5px] text-slate-600 hover:brightness-[0.98] ${KPI_TONE.green[0]}`}>
+          <span className="font-bold text-emerald-700">💰 {today.slice(0, 4)}년 예상 매출 보기 ▸</span>
+          <span className="text-[11.5px] text-slate-400">눌렀을 때만 계산합니다 (화면을 빨리 띄우려고 접어 둠 · 단가 없는 품목도 여기서)</span>
+        </button>
+      ) : (
       <div className={`rounded-xl border px-4 md:px-5 py-3 flex flex-wrap items-start gap-x-8 gap-y-3 min-w-0 ${KPI_TONE.green[0]}`} data-kpi="예상 매출">
         <div className="min-w-0 md:min-w-[210px]">
           <div className="text-[12px] text-slate-500 flex items-center gap-1">{m.yr}년 예상 매출 <span className="text-[10.5px] text-slate-400">· 올해 납기 · 발주 단가</span>
@@ -865,8 +879,10 @@ export default function OrderIntake() {
               단가 없는 품목 {kpis.noPriceN.toLocaleString('ko-KR')} (합계 제외) {kpi === 'noPrice' ? '✕' : '보기 →'}
             </button>
           )}
+          <button type="button" onClick={() => toggleMoney(false)} data-money-hide className="block ml-auto text-[11px] text-slate-400 underline hover:text-slate-600">접기 ▴</button>
         </div>
       </div>
+      )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-2.5">
         <div className="flex flex-wrap items-center gap-2">
