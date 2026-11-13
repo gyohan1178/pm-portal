@@ -240,7 +240,7 @@ export async function downloadQuoteExcel({ head, lines, totals, extra = {}, file
     const logo = await loadImage('/logo.png')
     if (logo) ws.addImage(wb.addImage({ buffer: logo, extension: 'png' }), { tl: { col: 1.05, row: 1.05 }, ext: { width: 92, height: 50 } })
     const seal = await loadImage('/seal.png')
-    if (seal) ws.addImage(wb.addImage({ buffer: seal, extension: 'png' }), { tl: { col: ko ? 8.32 : 8.75, row: 5.75 }, ext: { width: 60, height: 60 } })   // 상호(회사 이름) 바로 오른쪽에 겹쳐
+    if (seal) ws.addImage(wb.addImage({ buffer: seal, extension: 'png' }), { tl: { col: ko ? 9.55 : 9.75, row: 5.8 }, ext: { width: 58, height: 58 } })   // 상호 줄 글 끝 오른쪽 빈 자리 (글자를 가리지 않게)
   }
 
   // ── 세부견적서 (v4.138.0) — 고객 제출용. 어셈블리마다 부품별 판매가 · 조립비 · 합계(= 견적 단가) ──

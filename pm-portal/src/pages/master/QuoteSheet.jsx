@@ -6,7 +6,7 @@ import { downloadQuoteExcel, SUPPLIER, SUPPLIER_KO } from '../../lib/quoteExcel'
 import { quoteFileBase } from '../../lib/quoteFileName'
 import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuotePrintSplit'
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
-import { QuoteLogo, CompanyWithSeal } from '../../components/QuoteBrand'
+import { QuoteLogo, SealLine } from '../../components/QuoteBrand'
 import QuotePartsModal from './QuotePartsModal'
 import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
 import { fetchQuoteNotes, remarksFromNotes, fetchPartNq } from '../../lib/quoteNote'
@@ -1425,7 +1425,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             <div className="font-bold text-sm text-slate-800 border-b border-slate-300 pb-1 mb-2">{ko ? '공급자' : 'Supplier'}</div>
             {ko ? (
             <div className="text-slate-600 leading-relaxed" data-quote-supplier="ko">
-              <div>상호 : <CompanyWithSeal name={SUPPLIER_KO.company} seal={isSales} /> · 등록번호 : {SUPPLIER_KO.bizNo}</div>
+              <SealLine seal={isSales}>상호 : <b className="text-slate-800">{SUPPLIER_KO.company}</b> · 등록번호 : {SUPPLIER_KO.bizNo}</SealLine>
               <div>대표 : {SUPPLIER_KO.ceo}</div>
               <div>주소 : {SUPPLIER_KO.address}</div>
               <div>업태 : {SUPPLIER_KO.bizType}</div>
@@ -1449,7 +1449,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
             </div>
             ) : (
             <div className="text-slate-600 leading-relaxed" data-quote-supplier="en">
-              <div>Company : <CompanyWithSeal name={SUPPLIER.company} seal={isSales} /></div>
+              <SealLine seal={isSales}>Company : {SUPPLIER.company}</SealLine>
               <div>Business registration number : {SUPPLIER.bizNo}</div>
               <div>CEO : {SUPPLIER.ceo}</div>
               <div>Adress : {SUPPLIER.address}</div>

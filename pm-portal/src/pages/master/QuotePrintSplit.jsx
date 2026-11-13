@@ -5,7 +5,7 @@
 //     을지(2장~): 세부 품목표. 장마다 머리글 · 표 제목을 다시 찍고 마지막 장에만 합계
 //   화면에는 안 보이고, 인쇄할 때만 QuoteSheet 의 편집 화면 대신 찍힌다 (body.qs-split).
 
-import { QuoteLogo, CompanyWithSeal } from '../../components/QuoteBrand'
+import { QuoteLogo, SealLine } from '../../components/QuoteBrand'
 
 // 을지 한 장에 넣는 분량 (한 줄짜리 품목 기준 18개).
 //   품명 · 비고가 길어 두세 줄로 접히는 품목은 그만큼 무겁게 쳐서 덜 넣는다 → 장이 넘쳐 밀리지 않게.
@@ -83,7 +83,7 @@ export default function QuotePrintSplit({
             <div className="text-slate-600 leading-relaxed">
               {ko ? (
                 <>
-                  <div>상호 : <CompanyWithSeal name={S.company} seal={isSales} /> · 등록번호 : {S.bizNo}</div>
+                  <SealLine seal={isSales}>상호 : <b className="text-slate-800">{S.company}</b> · 등록번호 : {S.bizNo}</SealLine>
                   <div>대표 : {S.ceo}</div>
                   <div>주소 : {S.address}</div>
                   <div>업태 : {S.bizType}</div>
@@ -95,7 +95,7 @@ export default function QuotePrintSplit({
                 </>
               ) : (
                 <>
-                  <div>Company : <CompanyWithSeal name={S.company} seal={isSales} /></div>
+                  <SealLine seal={isSales}>Company : {S.company}</SealLine>
                   <div>Business registration number : {S.bizNo}</div>
                   <div>CEO : {S.ceo}</div>
                   <div>Adress : {S.address}</div>
