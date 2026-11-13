@@ -103,10 +103,15 @@ const MenuPrefsCtx = createContext(null)
 //   bizDays 는 lib/orderIntake 의 bizDaysSince 와 같은 계산 — 메뉴가 수주대장 코드 전체를 미리 받지 않게 여기 따로 둔다
 const bizDays = (ts, now = new Date()) => {
   if (!ts) return 0
-  const d = new Date(ts); let n = 0
-  const cur = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  while (cur < end) { cur.setDate(cur.getDate() + 1); const w = cur.getDay(); if (w !== 0 && w !== 6) n++ }
+  const d = new Date(ts)
+  if (isNaN(d)) return 0
+  // 하루씩 세지 않고 주 단위로 (v4.182.1 — 옛 PO 가 많아 수주대장이 느렸음) · 결과는 같다
+  const a = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())
+  const b = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((b - a) / 86400000)
+  if (days <= 0) return 0
+  let n = Math.floor(days / 7) * 5, w = new Date(a).getUTCDay()
+  for (let i = 0; i < days % 7; i++) { w = (w + 1) % 7; if (w !== 0 && w !== 6) n++ }
   return n
 }
 const pageAll = async (mk) => {     // 1,000줄 넘게 — 1,000줄씩 이어 받기

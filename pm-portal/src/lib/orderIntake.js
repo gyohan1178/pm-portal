@@ -579,26 +579,18 @@ export async function axSyncRun(pv, meName) {
 
 // ── 목록 ────────────────────────────────────────────────────
 // 큰 표를 1,000줄씩 「동시에」 받는다 — 예전엔 13,000줄을 14번 차례로 받아 화면 열기 · 작업 뒤마다 오래 걸렸다 (v4.90.6)
-async function fetchParallel(table, cols, { order = 'id', conc = 6, page = 1000 } = {}) {
-  const head = await supabase.from(table).select('id', { count: 'exact', head: true })
-  if (head.error) throw head.error
-  const total = head.count || 0
+async function fetchParallel(table, cols, { order = 'id', first = 3, conc = 6, page = 1000 } = {}) {
+  // v4.182.1 — 줄 수를 먼저 세지 않는다: 세는 요청을 한 번 더 기다리느라 수주대장이 늦게 떴다
+  //   처음에 3쪽(3,000줄)을 한꺼번에 받고, 마지막 쪽까지 가득 찼으면 6쪽씩 더 받는다
   const all = [], seen = new Set()
   const take = (rows) => rows.forEach((r) => { if (r?.id != null) { if (seen.has(r.id)) return; seen.add(r.id) } all.push(r) })
-  const pages = Math.max(1, Math.ceil(total / page))
-  for (let p = 0; p < pages; p += conc) {
-    const res = await Promise.all(Array.from({ length: Math.min(conc, pages - p) }, (_, k) =>
+  for (let p = 0, n = first; ; p += n, n = conc) {
+    const res = await Promise.all(Array.from({ length: n }, (_, k) =>
       supabase.from(table).select(cols).order(order).range((p + k) * page, (p + k + 1) * page - 1)))
     const bad = res.find((x) => x.error)
     if (bad) throw bad.error
     res.forEach((x) => take(x.data || []))
-  }
-  // 세는 사이에 늘어난 줄 — 마지막 쪽이 가득 찼으면 이어서 더 받는다
-  for (let from = pages * page; ; from += page) {
-    const { data, error } = await supabase.from(table).select(cols).order(order).range(from, from + page - 1)
-    if (error) throw error
-    take(data || [])
-    if (!data || data.length < page) break
+    if (res.some((x) => (x.data || []).length < page)) break
   }
   return all
 }
@@ -681,10 +673,15 @@ export function stageOf(o) {
 // 영업일 경과 (주말 제외)
 export function bizDaysSince(ts, now = new Date()) {
   if (!ts) return 0
-  const d = new Date(ts); let n = 0
-  const cur = new Date(d.getFullYear(), d.getMonth(), d.getDate())
-  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  while (cur < end) { cur.setDate(cur.getDate() + 1); const w = cur.getDay(); if (w !== 0 && w !== 6) n++ }
+  const d = new Date(ts)
+  if (isNaN(d)) return 0
+  // 하루씩 세지 않고 주 단위로 (v4.182.1 — 옛 PO 가 많아 수주대장이 느렸음) · 결과는 같다
+  const a = Date.UTC(d.getFullYear(), d.getMonth(), d.getDate())
+  const b = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())
+  const days = Math.round((b - a) / 86400000)
+  if (days <= 0) return 0
+  let n = Math.floor(days / 7) * 5, w = new Date(a).getUTCDay()
+  for (let i = 0; i < days % 7; i++) { w = (w + 1) % 7; if (w !== 0 && w !== 6) n++ }
   return n
 }
 
