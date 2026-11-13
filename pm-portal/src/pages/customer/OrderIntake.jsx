@@ -986,24 +986,26 @@ export default function OrderIntake() {
         )
       })()}
 
-      {/* 일괄 줄 — 품번별 보기에선 늘 보인다 (안 고르면 흐리게 · v4.151.0). 예전엔 고를 때 생겨 표가 아래로 밀렸다 */}
+      {/* 일괄 줄 — 품번별 보기에선 늘 보인다 (v4.151.0) · 안 고르면 한 줄 안내만, 체크하면 펼침 (v4.185.1) */}
       {!isBuy && (mode === 'line' || checkedLines.length > 0) && (
-        <div className={`sticky top-0 z-20 rounded-xl border bg-white px-4 py-3 flex flex-wrap items-center gap-3 ${checkedLines.length ? 'border-violet-300 shadow-md' : 'border-slate-200'}`} data-bulk>
-          <b className="text-xs whitespace-nowrap" style={{ minWidth: 170 }} data-bulk-count>{checkedLines.length ? <span className="text-violet-700">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</span> : <span className="text-slate-400 font-semibold">품목을 체크하면 한 번에 처리</span>}</b>
-          <fieldset disabled={!checkedLines.length} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
+        <div className={`sticky top-0 z-20 rounded-xl border bg-white px-4 flex flex-wrap items-center gap-3 ${checkedLines.length ? 'py-3 border-violet-300 shadow-md' : 'py-1.5 border-slate-200'}`} data-bulk data-bulk-open={checkedLines.length ? '1' : '0'}>
+          <b className="text-xs whitespace-nowrap" style={{ minWidth: 170 }} data-bulk-count>{checkedLines.length ? <span className="text-violet-700">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</span> : <span className="text-slate-400 font-semibold">☑ 품목을 체크하면 한 번에 처리하는 칸이 여기 펼쳐집니다</span>}</b>
+          {/* v4.185.1 — 안 골랐을 땐 한 줄 안내만 (칸이 너무 커서) · 체크하면 처리 칸이 펼쳐진다 */}
+          {checkedLines.length > 0 && <fieldset className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
           <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다{editable ? ' · 나간 품목은 「납품 표시」' : ''}</span>
           {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
           {editable && <span className="ml-auto">{dueCtl}</span>}
           {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
-          </fieldset>
+          </fieldset>}
         </div>
       )}
       {isBuy && (mode === 'line' || checkedLines.length > 0) && (
-        <div className={`sticky top-0 z-20 rounded-xl border bg-white px-4 py-3 flex flex-wrap items-center gap-3 ${checkedLines.length ? 'border-violet-300 shadow-md' : 'border-slate-200'}`} data-bulk>
-          <b className="text-xs whitespace-nowrap" style={{ minWidth: 170 }} data-bulk-count>{checkedLines.length ? <span className="text-violet-700">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</span> : <span className="text-slate-400 font-semibold">품목을 체크하면 한 번에 처리</span>}</b>
-          <fieldset disabled={!checkedLines.length} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
+        <div className={`sticky top-0 z-20 rounded-xl border bg-white px-4 flex flex-wrap items-center gap-3 ${checkedLines.length ? 'py-3 border-violet-300 shadow-md' : 'py-1.5 border-slate-200'}`} data-bulk data-bulk-open={checkedLines.length ? '1' : '0'}>
+          <b className="text-xs whitespace-nowrap" style={{ minWidth: 170 }} data-bulk-count>{checkedLines.length ? <span className="text-violet-700">품목 {checkedLines.length}개 선택 · PO {new Set(checkedLines.map((l) => l.order_id)).size}건</span> : <span className="text-slate-400 font-semibold">☑ 품목을 체크하면 한 번에 처리하는 칸이 여기 펼쳐집니다</span>}</b>
+          {/* v4.185.1 — 안 골랐을 땐 한 줄 안내만 (칸이 너무 커서) · 체크하면 처리 칸이 펼쳐진다 */}
+          {checkedLines.length > 0 && <fieldset className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
           <div className="flex-1"><ReplyForm count={checkedLines.length} busy={replyMut.isPending} onSave={(form) => replyMut.mutate({ ls: checkedLines, form })} /></div>
           <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 whitespace-nowrap" title="협력사에 자재를 내줘야 하는 날 — 납기(고객사 납품일)와 따로 관리">협력사 불출일
             <input type="date" value={relDate} onChange={(e) => setRelDate(e.target.value)} data-bulk-release-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
@@ -1014,7 +1016,7 @@ export default function OrderIntake() {
           <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
-          </fieldset>
+          </fieldset>}
         </div>
       )}
 
