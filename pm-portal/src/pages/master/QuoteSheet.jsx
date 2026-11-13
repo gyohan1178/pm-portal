@@ -8,7 +8,7 @@ import QuotePrintSplit, { SPLIT_CSS, SPLIT_AUTO_FROM, wantSplit } from './QuoteP
 import QuoteDetailPrint, { DETAIL_CSS } from './QuoteDetailPrint'
 import { QuoteLogo, SealLine } from '../../components/QuoteBrand'
 import QuotePartsModal from './QuotePartsModal'
-import { partsFromPaste, toPasteParts, pasteToMatched } from '../../lib/quotePartsPaste'
+import { partsFromPaste, toPasteParts, pasteToMatched, hydratePasteItems } from '../../lib/quotePartsPaste'
 import { fetchQuoteNotes, remarksFromNotes, fetchPartNq } from '../../lib/quoteNote'
 import { saveRfq, patchRfq, checkRfq } from './rfq'
 import { buildDetails, noPartsAssy, DETAIL_REMARK } from '../../lib/quoteDetail'
@@ -502,6 +502,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
   // 부품표 붙여넣기로 만든 ASSY 줄 (v4.148.0) — BOM 없이 이 견적 안에서만 (부품 단가 · 제외는 「▼ 부품」에서)
   async function addPastedAssy({ code, name, qty, labor, matched }) {
+    // 저장해 둔 부품표는 L/T · MOQ 가 없다 → 품목 마스터 값으로 채운다 (못 받아도 줄은 넣는다)
+    try { matched = await hydratePasteItems(matched) } catch (e) { toastError('부품 L/T 를 못 불러왔습니다 — 부품표에서 직접 적어 주세요 (' + e.message + ')') }
     const parts = partsFromPaste(matched)
     const noPrice = parts.filter((x) => x.buyKrw == null).length
     const ltMax = parts.reduce((a, x) => (x.lt == null ? a : Math.max(a, num(x.lt))), 0)

@@ -80,6 +80,20 @@ export async function matchPartsPaste(rows, prefix = '') {
   })
 }
 
+// 저장해 둔 부품표(pasteToMatched)는 품목의 id · 코드 · 이름만 갖고 있다 → 지금 품목 마스터의 L/T · MOQ · 구매처를 붙인다 (v4.186.1)
+//   예전엔 견적 접수에서 넘어온 부품표 줄의 L/T 가 늘 「-」 라, 견적서 납기에 부품 L/T 가 반영되지 않았다
+export async function hydratePasteItems(matched) {
+  const ids = [...new Set((matched || []).filter((m) => m.item?.id && m.item.lt_weeks === undefined).map((m) => m.item.id))]
+  if (!ids.length) return matched
+  const by = new Map()
+  for (let i = 0; i < ids.length; i += 150) {
+    const { data, error } = await supabase.from('items').select('id,lt_weeks,moq,vendors(name)').in('id', ids.slice(i, i + 150))
+    if (error) throw error
+    ;(data || []).forEach((x) => by.set(x.id, x))
+  }
+  return matched.map((m) => (m.item?.id && by.has(m.item.id) ? { ...m, item: { ...m.item, lt_weeks: by.get(m.item.id).lt_weeks ?? null, moq: by.get(m.item.id).moq ?? null, vendors: by.get(m.item.id).vendors || null } } : m))
+}
+
 // 견적 화면 부품 줄 모양 (QuoteSheet parts) — 레벨 1 · 등록 여부와 상관없이 단가가 있으면 원가에 들어감
 export function partsFromPaste(matched) {
   return matched.map((m, i) => ({

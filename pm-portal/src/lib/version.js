@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.186.0'
+export const APP_VERSION = 'v4.186.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.186.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.186.1',
+    date: '2026-11-13',
+    changes: [
+      '매출견적 — 견적 접수에서 넘어온 부품표 품목의 L/T 가 늘 「-」 이던 것: 품목 마스터(기준코드 DB)의 L/T · MOQ 를 붙임 → 견적서 하단 납기에 부품 최장 L/T 가 반영됨',
+    ],
+  },
   {
     version: 'v4.186.0',
     date: '2026-11-13',
