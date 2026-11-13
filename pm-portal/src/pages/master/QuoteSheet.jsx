@@ -365,7 +365,8 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           if (x) p.nq = { reason: x.reason || '', memo: x.memo || '', by: x.by || '' }
         }
       }
-      return remarksFromNotes(kind, parts, notes)
+      // 어셈블리 부품 특이사항은 줄 비고에 쌓지 않는다 — 세부견적서 「특이사항」 열로 (v4.182.0). 단품만 비고에
+      return kind === 'item' ? remarksFromNotes(kind, parts, notes) : ''
     }
     catch (e) { toastError('구매자재 견적 특이사항을 못 불러왔습니다 — 비고는 직접 확인해 주세요 (' + (e?.message || e) + ')'); return '' }
   }
@@ -1014,10 +1015,10 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
   })
 
   async function doPrint() {
-    if (detailOn && details.length && (detailMissing > 0 || detailNoParts.length > 0)) {
+    if (detailOn && details.length && detailNoParts.length > 0) {
       const ok = await ask({ title: '세부견적에 빠지는 것이 있습니다 — 그대로 인쇄할까요?',
         items: [
-          ...(detailMissing > 0 ? [`단가 없는 부품 ${detailMissing}개 — 견적 단가에도 안 들어가 있어 세부에서도 빠집니다`] : []),
+          ...(detailMissing > 0 ? [`단가 없는 부품 ${detailMissing}개 — 세부견적에 단가 · 금액 빈칸으로 나가고 특이사항 열에 사유가 붙습니다`] : []),
           ...detailNoParts.map((l) => `${l.std_code || '-'} — 부품 정보가 없어 세부견적을 못 만듭니다 (지난 견적을 불러온 줄이면 원가분석에서 다시 가져오세요)`),
         ],
         okText: '그대로 인쇄' })
@@ -1291,7 +1292,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
           <div className="flex-1" />
           {detailOn && (detailMissing > 0 || detailNoParts.length > 0) && (
             <span className="text-[11px] font-bold text-amber-600" data-quote-detail-count
-              title="단가 없는 부품은 견적 단가에도, 세부견적에도 빠집니다 · 부품 정보가 없는 ASSY 는 세부견적을 못 만듭니다">
+              title="단가 없는 부품은 견적 단가에는 안 들어가고, 세부견적에는 단가 · 금액 빈칸 + 특이사항으로 나갑니다 · 부품 정보가 없는 ASSY 는 세부견적을 못 만듭니다">
               ⚠ 세부견적 {[detailMissing > 0 && `단가없음 ${detailMissing}`, detailNoParts.length > 0 && `부품정보 없음 ${detailNoParts.length}`].filter(Boolean).join(' · ')}
             </span>
           )}

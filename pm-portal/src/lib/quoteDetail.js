@@ -7,7 +7,9 @@
 //     · 계산 그대로의 단가면(견적 단가 = 계산값을 100원 미만 절삭한 값) → 부품 · 조립비를 계산 그대로 두고 그 차이가 절삭 줄
 //     · 단가를 손으로 고쳤으면(네고) → 부품 · 조립비를 같은 비율로 맞춤 (절삭 줄은 반올림 몇 원만 남거나 없음)
 //   판매 실적가 (v4.162.0): 같은 고객사에 전에 낸 부품 판매가가 있으면 그 값 그대로 (네고로 맞출 때도 고정) — 나머지 부품 · 조립비가 맞춤
-//   빠지는 줄: 체크 해제 · 단가 제외(문서 · 소요량 0) · 구매 조립품의 하위 · 매입가 없음(→ missing 으로 센다)
+//   빠지는 줄: 체크 해제 · 단가 제외(문서 · 소요량 0) · 구매 조립품의 하위
+//   매입가가 없는 부품(사급 · 사양 미확정 …)도 줄로 넣는다 — 단가 · 금액은 비우고 「특이사항」에 사유 (v4.182.0 · missing 으로도 센다)
+//   특이사항 = 견적 접수에서 남긴 견적 불가 사유(pt.nq) + 구매자재 견적 특이사항(pt.qnote)
 import { tierMargin } from './costAnalysis'
 import { roundPrice } from './marginSim'
 import { prevOf, partKey, prevEligible } from './salePrice'
@@ -18,6 +20,8 @@ export const cents = (v, cur) => (cur === 'KRW' ? Math.round(n(v)) : Math.round(
 
 // 세부에 넣을 부품인가
 export const detailPart = (p) => p && !p.excluded && p.status !== 'skip' && !p.supplySkip && p.buyKrw != null && n(p.buyKrw) > 0 && n(p.qty) > 0
+// 부품 줄 특이사항 — 고객사와 공유하는 글
+export const partNote = (p) => [p?.nq ? [p.nq.reason, p.nq.memo].filter(Boolean).join(' — ') : '', String(p?.qnote || '').trim()].filter(Boolean).join(' / ')
 // 단가가 없어 빠지는 부품 (경고용)
 export const missingPart = (p) => p && !p.excluded && p.status !== 'skip' && !p.supplySkip && !p.isParentNode && (p.buyKrw == null || p.status === 'unreg' || n(p.buyKrw) <= 0)
 
@@ -50,14 +54,23 @@ export function buildDetail(line, opt = {}) {
   const fixedSum = rawUnit.reduce((a, u, i) => a + (prev[i] != null ? u * n(parts[i].qty) : 0), 0)
   const flex = rawTotal - fixedSum
   const f = scaled ? (flex > 0 ? Math.max(0, (target - fixedSum) / flex) : 1) : 1
-  const rows = parts.map((p, i) => {
+  const priced = parts.map((p, i) => {
     const price = prev[i] != null ? cents(prev[i], cur) : cents(rawUnit[i] * f, cur)
-    return { no: i + 1, std_code: p.std_code || p.manufacturer_code || '',   // 부품표로 만든 줄(코드 없음)은 제조사품번 (v4.148.0)
+    return { std_code: p.std_code || p.manufacturer_code || '',   // 부품표로 만든 줄(코드 없음)은 제조사품번 (v4.148.0)
        name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '', qty: n(p.qty), unit: p.unit || 'EA', price, amount: cents(price * n(p.qty), cur),
        key: partKey(p), buyKrw: p.buyKrw ?? null, prev: prev[i] != null,
-       note: String(p.qnote || '').trim() }   // 구매자재 견적 특이사항 (변경 모델 · MOQ …) — 인쇄 · 엑셀 품명 아래 ※ (v4.179.2)
+       note: partNote(p) }   // 특이사항 열 (v4.182.0)
   })
-  const partsSum = cents(rows.reduce((a, r) => a + r.amount, 0), cur)
+  // BOM 순서대로 — 단가 있는 부품 + 단가 없는 부품(빈칸 · 특이사항)
+  const pIdx = new Map(parts.map((p, i) => [p, i]))
+  const rows = []
+  for (const p of line.parts) {
+    if (pIdx.has(p)) rows.push(priced[pIdx.get(p)])
+    else if (missingPart(p) && n(p.qty) > 0) rows.push({ std_code: p.std_code || p.manufacturer_code || '', name: p.name || '', maker: p.manufacturer || '', makerPn: p.manufacturer_code || '',
+      qty: n(p.qty), unit: p.unit || 'EA', price: null, amount: null, key: partKey(p), buyKrw: null, prev: false, nopr: true, note: partNote(p) })
+  }
+  rows.forEach((r, i) => { r.no = i + 1 })
+  const partsSum = cents(rows.reduce((a, r) => a + n(r.amount), 0), cur)
   let labor = rawLabor > 0 ? cents(rawLabor * f, cur) : 0   // 조립비도 계산 그대로 (부품 반올림 몇 원은 절삭 줄에 같이)
   // 네고로 맞춘 단가는 「잘라낸 금액」이 없다 — 반올림 몇 원은 조립비가 맡아 절삭 줄을 안 만든다
   if (scaled && labor > 0) labor = Math.max(0, cents(target - partsSum, cur))

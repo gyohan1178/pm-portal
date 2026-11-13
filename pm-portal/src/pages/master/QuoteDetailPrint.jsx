@@ -13,10 +13,10 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
   // 장 나누기 — 품명이 길면 무겁게 (paginate 는 description · remarks 로 무게를 잰다)
   const sheets = []
   details.forEach((d, di) => {
-    const pages = paginate(d.detail.rows.map((r) => ({ ...r, description: r.name, remarks: '' })), DETAIL_ROWS_PER_PAGE)
+    const pages = paginate(d.detail.rows.map((r) => ({ ...r, description: r.name, remarks: r.note || '' })), DETAIL_ROWS_PER_PAGE)
     pages.forEach((rows, pi) => sheets.push({ d, di, rows, pi, last: pi === pages.length - 1, pages: pages.length }))
   })
-  const cols = showMaker ? 9 : 7
+  const cols = showMaker ? 10 : 8   // 마지막 열 = 특이사항 (v4.182.0)
   const m = (v) => money(v, currency)
   return (
     <div className="qd-print" data-quote-detail-print>
@@ -48,6 +48,7 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
                   <th className="w-12 text-center">{ko ? '단위' : 'Unit'}</th>
                   <th className="w-24 text-right">{ko ? '단가' : 'Unit Price'}</th>
                   <th className="w-28 text-right">{ko ? '금액' : 'Amount'}</th>
+                  <th className="text-left">{ko ? '특이사항' : 'Remarks'}</th>
                 </tr>
               </thead>
               <tbody>
@@ -55,36 +56,37 @@ export default function QuoteDetailPrint({ ko, savedNo, quoteDate, party, projec
                   <tr key={r.no} data-qd-row={r.std_code}>
                     <td className="text-slate-400">{r.no}</td>
                     <td className="font-mono whitespace-nowrap">{r.std_code}</td>
-                    <td>{r.name}{r.note && <div className="text-[10px] text-slate-600" data-qd-note>※ {r.note}</div>}</td>
+                    <td>{r.name}</td>
                     {showMaker && <td className="whitespace-nowrap">{r.maker || '—'}</td>}
                     {showMaker && <td className="font-mono whitespace-nowrap">{r.makerPn || '—'}</td>}
                     <td className="text-right">{r.qty}</td>
                     <td className="text-center">{r.unit}</td>
-                    <td className="text-right">{m(r.price)}</td>
-                    <td className="text-right">{m(r.amount)}</td>
+                    <td className="text-right">{r.price == null ? '—' : m(r.price)}</td>
+                    <td className="text-right">{r.amount == null ? '—' : m(r.amount)}</td>
+                    <td className="text-[10px] text-slate-700" data-qd-note>{r.note}</td>
                   </tr>
                 ))}
               </tbody>
               {s.last && (
                 <tfoot>
-                  <tr className="qd-sub"><td colSpan={cols - 1} className="text-right pr-3">{ko ? '자재 소계' : 'Material Subtotal'}</td><td className="text-right" data-qd-parts>{m(dt.partsSum)}</td></tr>
+                  <tr className="qd-sub"><td colSpan={cols - 2} className="text-right pr-3">{ko ? '자재 소계' : 'Material Subtotal'}</td><td className="text-right" data-qd-parts>{m(dt.partsSum)}</td><td /></tr>
                   {dt.labor > 0 && (
                     <tr className="qd-labor" data-qd-labor>
                       <td className="text-slate-400">{dt.rows.length + 1}</td>
                       <td colSpan={showMaker ? 4 : 2}>{ko ? '조립 · 배선 · 검사비' : 'Assembly, Wiring & Test'}</td>
                       <td className="text-right">1</td><td className="text-center">{ko ? '식' : 'Lot'}</td>
-                      <td className="text-right">{m(dt.labor)}</td><td className="text-right">{m(dt.labor)}</td>
+                      <td className="text-right">{m(dt.labor)}</td><td className="text-right">{m(dt.labor)}</td><td />
                     </tr>
                   )}
                   {dt.adjust !== 0 && (
                     <>
-                      <tr className="qd-sub"><td colSpan={cols - 1} className="text-right pr-3">{ko ? '소계' : 'Subtotal'}</td><td className="text-right" data-qd-subtotal>{m(dt.subtotal)}</td></tr>
-                      <tr data-qd-adjust={dt.adjust}><td colSpan={cols - 1} className="text-right pr-3 text-slate-500">{adjustLabel(dt.adjust, ko)}</td>
-                        <td className="text-right text-slate-500">{dt.adjust < 0 ? '−' : '+'}{m(Math.abs(dt.adjust))}</td></tr>
+                      <tr className="qd-sub"><td colSpan={cols - 2} className="text-right pr-3">{ko ? '소계' : 'Subtotal'}</td><td className="text-right" data-qd-subtotal>{m(dt.subtotal)}</td><td /></tr>
+                      <tr data-qd-adjust={dt.adjust}><td colSpan={cols - 2} className="text-right pr-3 text-slate-500">{adjustLabel(dt.adjust, ko)}</td>
+                        <td className="text-right text-slate-500">{dt.adjust < 0 ? '−' : '+'}{m(Math.abs(dt.adjust))}</td><td /></tr>
                     </>
                   )}
-                  <tr className="qs-total"><td colSpan={cols - 1} className="text-right pr-3">{ko ? `${l.std_code} 1${l.unit || 'EA'} 합계 (= 견적 단가)` : `Total per ${l.unit || 'EA'} (= quoted unit price)`}</td>
-                    <td className="text-right" data-qd-total>{sym}{m(dt.total)}</td></tr>
+                  <tr className="qs-total"><td colSpan={cols - 2} className="text-right pr-3">{ko ? `${l.std_code} 1${l.unit || 'EA'} 합계 (= 견적 단가)` : `Total per ${l.unit || 'EA'} (= quoted unit price)`}</td>
+                    <td className="text-right" data-qd-total>{sym}{m(dt.total)}</td><td /></tr>
                 </tfoot>
               )}
             </table>
