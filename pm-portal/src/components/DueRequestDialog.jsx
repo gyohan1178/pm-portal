@@ -30,7 +30,7 @@ export default function DueRequestDialog({ pos, vendors, custName, onClose }) {
           <div>
             <h3 className="text-[17px] font-extrabold text-slate-800">📨 납기 회신 요청</h3>
             <p className="text-[12.5px] text-slate-500 mt-0.5">체크한 {total}건을 업체 {groups.length}곳으로 나눴습니다. 업체마다 「메일용 복사」 → 메일 본문에 붙여 넣으면 표째로 들어갑니다.
-              <br />「특이사항」은 납기 지남 · 임박 · 변경 약속일에 맞춰 자동으로 적었습니다 — 펼쳐서 고쳐 쓰면 고친 문구로 복사 · 엑셀에 들어갑니다. 발주번호는 넣지 않습니다.</p>
+              <br />「특이사항」에는 「기재된 일정에 변경 없는지 확인 부탁드립니다」를 넣었습니다 — 펼쳐서 줄마다 고쳐 쓰면 고친 문구로 복사 · 엑셀에 들어갑니다. 발주번호는 넣지 않습니다.</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none px-1" aria-label="닫기">✕</button>
         </div>

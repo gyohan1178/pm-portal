@@ -1,6 +1,6 @@
 // 협력사 납기 회신 요청 (v4.184.0) — 구매발주에서 체크한 건을 업체별로 모아 메일에 붙일 표 · 엑셀로
 //   발주번호는 넣지 않는다 (이카운트 발주번호와 안 맞는 경우가 많아 협력사가 헷갈림) — 품번 · 제조사품번으로 찾게
-//   v4.184.1 — 첫 인사 문구는 빼고(메일에서 직접 쓰므로), 회신 칸 두 개 대신 「특이사항」 한 칸에 줄마다 요청 문구를 자동으로
+//   v4.184.1 — 첫 인사 문구는 빼고(메일에서 직접 쓰므로), 회신 칸 두 개 대신 「특이사항」 한 칸 · v4.184.2 모든 줄 같은 문구
 // 받을 날 — 협력사 변경 납기 > 요청 납기 (구매발주 dueOf 와 같은 규칙)
 const dueOf = (p) => String(p?.vendor_date || p?.promise_date || '').slice(0, 10)
 
@@ -17,24 +17,9 @@ export const DUE_COLS = [
   ['note', '특이사항'],
 ]
 
-const KDAY = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10)
-const days = (a, b) => Math.round((Date.parse(b) - Date.parse(a)) / 86400000)
-const md = (d) => String(d || '').slice(5).replace('-', '/')
-// 줄마다 특이사항 문구 — 받을 날(변경 약속일 > 요청 납기) 기준으로 지남 · 임박 · 예정, 일부 입고면 남은 수량
-export function dueNote(r, today = KDAY()) {
-  const part = r.remain > 0 && r.remain < r.qty ? ` (${r.qty.toLocaleString('ko-KR')}개 중 ${r.remain.toLocaleString('ko-KR')}개 미입고)` : ''
-  if (r.promised) {
-    const d = days(r.promised, today)
-    if (d > 0) return `변경 약속일(${md(r.promised)}) ${d}일 지남${part} — 입고 가능일 재확인 부탁드립니다`
-    if (d === 0) return `변경 약속일(${md(r.promised)}) 오늘${part} — 입고 여부 확인 부탁드립니다`
-    return `변경 약속일 ${md(r.promised)} 입고 예정${part} — 일정 변동 없는지 확인 부탁드립니다`
-  }
-  if (!r.req) return `납기 미정${part} — 입고 가능일 회신 부탁드립니다`
-  const d = days(r.req, today)
-  if (d > 0) return `요청 납기 ${d}일 지남${part} — 입고 가능일 회신 부탁드립니다`
-  if (d === 0) return `요청 납기 오늘${part} — 입고 가능 여부 회신 부탁드립니다`
-  return `요청 납기 D-${-d}${part} — 납기 내 입고 가능 여부 회신 부탁드립니다`
-}
+// 줄마다 특이사항 — 모든 줄에 같은 문구 (v4.184.2 · 임박 · 지남 두 경우뿐이라 나눌 필요 없음). 창에서 줄마다 고쳐 쓸 수 있음
+export const DUE_NOTE = '기재된 일정에 변경 없는지 확인 부탁드립니다'
+export const dueNote = () => DUE_NOTE
 
 // 체크한 발주 → [{ vendor, rows:[…] }] (업체 이름순 · 업체 안에서는 요청 납기순)
 export function buildDueRequest(pos, vendors = []) {
