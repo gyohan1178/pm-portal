@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../lib/toast'
 import { Link } from 'react-router-dom'
+import PageHead from '../components/PageHead'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import PurchaseDashboard from './PurchaseDashboard'
@@ -456,18 +457,9 @@ export default function WeeklyReport() {
           </div>
         </div>
 
-        {/* 헤더 — 그라데이션 배너 */}
-        <div className="rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 flex items-center justify-between shadow-lg">
-          <div>
-            <p className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest mb-1">Weekly Report</p>
-            <h1 className="text-xl font-bold text-white">구매자재 주간업무보고</h1>
-            <p className="text-xs text-slate-400 mt-1 font-mono">{week.label}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs font-semibold text-slate-300">진선테크 구매자재</p>
-            <p className="text-[11px] text-slate-500 mt-0.5 font-mono">작성일 {ymdKST(today)}</p>
-          </div>
-        </div>
+        {/* 머리글 — 다른 화면과 같은 모양 (v4.188.2 · 예전 어두운 띠 배너는 뺌). 출력물에도 제목 · 주 · 작성일이 찍힌다 */}
+        <PageHead crumb="보고" title="구매자재 주간업무보고"
+          desc={<><span className="font-mono">{week.label}</span> · 진선테크 구매자재 · 작성일 <span className="font-mono">{ymdKST(today)}</span></>} />
 
         {/* KPI — 요약을 맨 위로 (v4.69.0: 요약 → 일정 → 지연 · 특이사항 순)
             v4.69.1: 칸을 낮게 — 이름 한 줄 + 숫자 한 줄(보조 숫자는 옆에 작게) · 자재요청은 불출만 */}
