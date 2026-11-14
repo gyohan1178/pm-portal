@@ -27,6 +27,7 @@ import {
   ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, setDueDates, DUE_FIELDS, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
+import { LATE_REASONS, LATE_NONE, LATE_TONE, LATE_OWNER, fetchLateMap, setLateReason, lateSummary, confirmOrders, unconfirmOrders } from '../../lib/orderLate'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
 import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
@@ -126,6 +127,20 @@ function useNarrow() {
 // 공용 지표 카드로 (v4.168.0)
 function Kpi({ tone, label, value, sub, on, onClick, tip, loading }) {
   return <KpiCard tone={tone === 'violet' ? 'pr' : tone} label={label} value={value} note={sub} on={on} onClick={onClick} tip={tip} loading={loading} />
+}
+
+// 미납 사유 칸 (v4.190.0) — 납기 지난 줄의 「상태」 아래 · 편집 권한이면 바로 고름
+function LateCell({ row, editable, busy, onPick }) {
+  const r = row?.reason || ''
+  const tip = row ? [row.memo, row.set_name, row.set_at && kst(row.set_at).slice(5, 10)].filter(Boolean).join(' · ') : '왜 못 나갔는지 고르세요'
+  if (!editable) return r ? <div className={`inline-block mt-1 px-1.5 py-[1px] rounded border text-[10.5px] font-bold ${LATE_TONE[r] || LATE_TONE['기타']}`} title={tip} data-late-reason={r}>{r}</div> : null
+  return (
+    <select value={r} disabled={busy} onChange={(e) => onPick(e.target.value)} title={tip} data-late-reason={r}
+      className={`block mt-1 max-w-full px-1 py-[1px] rounded border text-[10.5px] font-bold ${r ? LATE_TONE[r] || LATE_TONE['기타'] : 'bg-white text-slate-400 border-dashed border-slate-300'}`}>
+      <option value="">미납 사유…</option>
+      {LATE_REASONS.map((x) => <option key={x} value={x}>{x}</option>)}
+    </select>
+  )
 }
 
 function DueCell({ l, noRelease = false }) {
@@ -378,6 +393,9 @@ export default function OrderIntake() {
   const listReady = !!(fastQ.data || fullQ.data)
   const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000, enabled: listReady })
   // 수주 줄에서 만든 자재 요청 (v4.170.0) — 「🙋 자재요청됨 / 요청 불출완료」 표시용
+  // 미납 사유 (v4.190.0) — 납기 지난 줄에 왜 못 나갔는지 · 표가 없으면 null (사유 칸을 숨긴다)
+  const { data: lateMap } = useQuery({ queryKey: ['orderLate'], queryFn: fetchLateMap, staleTime: 60 * 1000, enabled: listReady })
+  const [lateF, setLateF] = useState(null)      // 「납기 지남」을 사유로 한 번 더 거르기
   const { data: mrByTag } = useQuery({ queryKey: ['orderMrMap'], queryFn: fetchOrderMrMap, staleTime: 60 * 1000, enabled: listReady })
   // 자재불출 끝난 줄 → 회신이 비어 있으면 「가능」 자동 (v4.117.0) — 화면 열 때 한 번, 편집 권한 있는 사람만
   //   함수가 없으면(SQL 전) 조용히 넘어감
@@ -501,6 +519,7 @@ export default function OrderIntake() {
     if (isLoading) return []                 // 지난 이력까지 받는 동안 — 반쯤 받은 목록을 잠깐 보여주지 않게 (v4.103.0)
     let r = kpi && kpi !== 'month' ? kpis[kpi] : scoped
     if (!kpi) r = r.filter((l) => inView(view, l))
+    if (kpi === 'late' && lateF && lateMap) r = r.filter((l) => (lateMap.get(l.id)?.reason || LATE_NONE) === lateF)
     if (kpi === 'month') { const ids = new Set(kpis.monthPos.map((o) => o.id)); r = scoped.filter((l) => ids.has(l.order_id)) }
     // 자재불출 거르기 — 지금은 AXCELIS(기타 업체 포함)만 연결 (VM · CSK · Edwards 는 불출 기준을 정한 뒤)
     if (iss !== 'all') r = r.filter((l) => ISS_CUST.includes(l.o.customer_code) && !!prodMap?.get(l.id)?.issued === (iss === 'yes'))
@@ -511,7 +530,7 @@ export default function OrderIntake() {
       cust: (a, b) => a.o.customer_code.localeCompare(b.o.customer_code) || due(a).localeCompare(due(b)),
     }[sort]
     return [...r].sort(cmp)
-  }, [scoped, kpis, kpi, view, sort, isLoading, iss, prodMap])
+  }, [scoped, kpis, kpi, view, sort, isLoading, iss, prodMap, lateF, lateMap])
 
   // PO별 묶기 — PO 마다 전체 줄을 다시 거르면 PO 수 × 줄 수로 느려진다 → 한 번에 묶는다 (v4.90.6)
   const poRows = useMemo(() => {
@@ -612,6 +631,27 @@ export default function OrderIntake() {
     onSuccess: (r) => { if (Object.keys(r.patch).length) { patchLines((l) => (l.id === r.id ? r.patch : null)); toastSuccess('Rev 저장 — 생산관리 호기는 다음 「↻ PO 연동」 때 따라감') } },
     onError: (e) => toastError(/brev/.test(e.message || '') ? 'BREV 칸이 아직 없습니다 — 수주대장_SREV_BREV_반영_261026.sql 을 먼저 실행하세요' : 'Rev 저장 실패: ' + e.message),
   })
+  // 미납 사유 넣기 · 바꾸기 · 지우기 (v4.190.0) — 화면은 받아 둔 사유 표만 고친다
+  const lateMut = useMutation({
+    mutationFn: ({ ls, reason, memo }) => setLateReason(ls, reason, memo, meName, lateMap),
+    onSuccess: (r, v) => {
+      qc.setQueryData(['orderLate'], (old) => { const m = new Map(old || []); r.ids.forEach((id) => (r.row ? m.set(id, { line_id: id, ...r.row }) : m.delete(id))); return m })
+      if (v.ls.length > 1 || !r.row) toastSuccess(r.row ? `미납 사유 「${r.row.reason}」 ${r.ids.length}품목` : `미납 사유 지움 ${r.ids.length}품목`)
+    },
+    onError: (e) => toastError(e.message),
+  })
+  // PO 확인 처리 (v4.190.0) — 회신은 나중에 하더라도 접수 확인만 먼저 · 고른 줄의 PO 를 한꺼번에 · 6초 되돌리기
+  const confirmMut = useMutation({
+    mutationFn: ({ ls }) => confirmOrders(ls.filter((l) => !l.o.confirmed_at).map((l) => l.order_id), meName),
+    onSuccess: (r) => {
+      patchHead(r.ids, () => r.head)
+      setChecked(new Set()); qc.invalidateQueries({ queryKey: ['menuAlerts'] })
+      const msg = r.ids.length ? `PO ${r.ids.length}건 확인 처리 — 「미확인」에서 빠졌습니다 (회신은 따로)` : '이미 모두 확인된 PO 입니다'
+      if (r.ids.length) snack.show(msg, async () => { await unconfirmOrders(r.ids); patchHead(r.ids, () => ({ confirmed_at: null, confirmed_name: null })); qc.invalidateQueries({ queryKey: ['menuAlerts'] }) })
+      else toastSuccess(msg)
+    },
+    onError: (e) => toastError('확인 처리 실패: ' + e.message),
+  })
   const relMut = useMutation({
     mutationFn: ({ ls, date }) => setReleaseDate(ls, date, meName),
     onSuccess: (r) => { const ids = new Set(r.ids); patchLines((l) => (ids.has(l.id) ? r.patch : null)); toastSuccess('협력사 불출일 저장') },
@@ -656,6 +696,7 @@ export default function OrderIntake() {
       <button type="button" disabled={!dueDate || dueMut.isPending} onClick={bulkDue} data-bulk-due className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dueMut.isPending && <Spin />}변경</button>
     </label>
   )
+
   const headMut = useMutation({
     mutationFn: async ({ id, patch, log }) => {
       const { error } = await supabase.from('pm_order').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', id)
@@ -744,6 +785,17 @@ export default function OrderIntake() {
   const totalN = mode === 'line' ? lines.length : poRows.length
   const liveVisible = shownLines.filter((l) => !l.st.cancelled)
   const checkedLines = liveVisible.filter((l) => checked.has(l.id))
+  // 두 일괄 줄에 같이 쓰는 「미납 사유」 칸 (v4.190.0) — 고른 줄 중 납기 지난 것에만 들어간다
+  const lateChecked = lateMap ? checkedLines.filter((l) => KPI_PICK.late(l, today)) : []
+  const lateCtl = lateMap && editable && lateChecked.length > 0 && (
+    <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 whitespace-nowrap" title="고른 품목 중 납기 지난 줄에 왜 못 나갔는지를 한 번에 넣습니다">미납 사유
+      <select value="" disabled={lateMut.isPending} onChange={(e) => { const v = e.target.value; if (v) lateMut.mutate({ ls: lateChecked, reason: v === '-' ? '' : v }, { onSuccess: () => setChecked(new Set()) }) }} data-bulk-late className="px-2 py-1 text-xs border border-slate-200 rounded-lg bg-white">
+        <option value="">{lateChecked.length}줄에 넣기…</option>
+        {LATE_REASONS.map((r) => <option key={r} value={r}>{r}</option>)}
+        <option value="-">사유 지우기</option>
+      </select>
+    </label>
+  )
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
   const allOn = liveVisible.length > 0 && liveVisible.every((l) => checked.has(l.id))
 
@@ -757,7 +809,7 @@ export default function OrderIntake() {
   }
   const m = kpis.money
   const pos = kpis.pos
-  const kpiBtn = (key) => ({ on: kpi === key, onClick: () => setKpi(kpi === key ? null : key) })
+  const kpiBtn = (key) => ({ on: kpi === key, onClick: () => { setLateF(null); setKpi(kpi === key ? null : key) } })
   const sel = 'text-xs font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-600'
 
   return (
@@ -819,6 +871,24 @@ export default function OrderIntake() {
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
+
+      {/* 미납 사유별 (v4.190.0) — 납기 지난 줄을 왜 못 나갔는지로 나눠 본다 · 누르면 그 사유만 */}
+      {lateMap && kpis.late.length > 0 && (
+        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 flex flex-wrap items-center gap-2" data-late-sum>
+          <b className="text-xs text-slate-700 whitespace-nowrap">납기 지남 {kpis.late.length}줄 — 사유별</b>
+          {lateSummary(kpis.late, lateMap).map((x) => {
+            const on = kpi === 'late' && lateF === x.reason
+            return (
+              <button key={x.reason} type="button" data-late-chip={x.reason} title={`${x.reason} — PO ${x.pos}건${LATE_OWNER[x.reason] ? ` · 풀 곳: ${LATE_OWNER[x.reason]}` : ''}`}
+                onClick={() => { if (on) { setLateF(null) } else { setKpi('late'); setLateF(x.reason); setMode('line') } }}
+                className={`px-2.5 py-1 rounded-full text-[11px] font-bold border ${x.reason === LATE_NONE ? 'bg-white text-slate-500 border-slate-300 border-dashed' : LATE_TONE[x.reason]} ${on ? 'ring-2 ring-violet-400' : ''}`}>
+                {x.reason} {x.n}{LATE_OWNER[x.reason] ? <span className="font-medium opacity-70"> · {LATE_OWNER[x.reason]}</span> : null}
+              </button>
+            )
+          })}
+          <span className="text-[11px] text-slate-400">사유는 품번별 보기의 「상태」 칸에서 고르거나, 체크해서 한 번에 넣습니다</span>
+        </div>
+      )}
 
       {/* 올해 예상 매출 — 카드 줄과 따로 길게 (v4.90.3) · 고객사별 합계 / 납품 완료 / 납품 예정 (v4.90.4) · v4.185.0 기본 접힘 */}
       {!showMoney ? (
@@ -935,7 +1005,7 @@ export default function OrderIntake() {
             <span className="font-semibold text-amber-600/80 ml-1">Rev {kpis.odd.filter((l) => l.odd.rev).length} · 단가 {kpis.odd.filter((l) => l.odd.price).length}{kpis.odd.some((l) => l.odd.note) ? ` · 메모 ${kpis.odd.filter((l) => l.odd.note).length}` : ''}</span>
             {kpi === 'odd' && ' ✕'}
           </button>
-          {kpi && <button type="button" onClick={() => setKpi(null)} className="text-xs text-violet-600 font-bold">지표 거르기 해제 ✕</button>}
+          {kpi && <button type="button" onClick={() => { setKpi(null); setLateF(null) }} className="text-xs text-violet-600 font-bold">지표 거르기 해제 ✕{kpi === 'late' && lateF ? ` (${lateF})` : ''}</button>}
         </div>
       </div>
 
@@ -994,7 +1064,7 @@ export default function OrderIntake() {
           {checkedLines.length > 0 && <fieldset className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40 [&_input:disabled]:opacity-40">
           <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다{editable ? ' · 나간 품목은 「납품 표시」' : ''}</span>
           {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
-          {editable && <span className="ml-auto">{dueCtl}</span>}
+          {editable && <span className="ml-auto flex flex-wrap items-center gap-3">{lateCtl}{dueCtl}</span>}
           {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
@@ -1012,6 +1082,8 @@ export default function OrderIntake() {
             <button type="button" disabled={!relDate || relMut.isPending} onClick={() => relMut.mutate({ ls: checkedLines, date: relDate }, { onSuccess: () => { setRelDate(''); setChecked(new Set()) } })} data-bulk-release className="px-2.5 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">저장</button>
           </label>
           {editable && dueCtl}
+          {lateCtl}
+          {editable && <button type="button" disabled={confirmMut.isPending || !checkedLines.some((l) => !l.o.confirmed_at && !l.st.cancelled)} title="회신은 나중에 하더라도 접수 확인만 먼저 — 고른 품목의 PO 중 아직 확인 안 된 것을 한꺼번에 「확인했음」으로 (미확인 숫자에서 빠짐)" onClick={() => confirmMut.mutate({ ls: checkedLines.filter((l) => !l.st.cancelled) })} data-bulk-confirm className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{confirmMut.isPending && <Spin />}✓ 확인 처리</button>}
           {<button type="button" disabled={oddMut.isPending || !checkedLines.some((l) => l.odd)} title="고른 품목 중 특이사항(REV · 단가 다름 등) 있는 것을 확인 처리" onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인</button>}
           <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
@@ -1087,6 +1159,7 @@ export default function OrderIntake() {
                       <span className={`inline-block px-2 py-0.5 rounded-full text-[11px] font-bold ${stCls}`} data-status title={l.cancel_reason || ''}>{stLabel}</span>
                       <ProdLink ps={linkMap?.get(l.id)} />
                       {late && <div className="text-[10.5px] text-red-500 mt-0.5">{bizDaysSince(l.o.registered_at)}영업일 미확인</div>}
+                      {lateMap && KPI_PICK.late(l, today) && <LateCell row={lateMap.get(l.id)} editable={editable} busy={lateMut.isPending} onPick={(reason) => lateMut.mutate({ ls: [l], reason, memo: lateMap.get(l.id)?.memo })} />}
                       {l.st.cancelled && l.cancel_reason && <div className="text-[10.5px] text-slate-500 mt-0.5 whitespace-normal" data-cancel-reason>{l.cancel_reason}</div>}
                     </td>
                     <td className="px-3 py-3"><ReplyCell l={l} memo={!isBuy} /></td>
