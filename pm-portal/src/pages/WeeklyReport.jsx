@@ -2,6 +2,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { toast, toastError, toastSuccess } from '../lib/toast'
 import { Link } from 'react-router-dom'
 import PageHead from '../components/PageHead'
+import { fetchWeeklyCycle } from '../lib/weeklyCycle'
+import { fetchCycleBase } from '../hooks/useCycleCount'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import PurchaseDashboard from './PurchaseDashboard'
@@ -121,6 +123,13 @@ async function fetchWeeklyReport(from, to) {
     purchaseData: [...(portal.purchase||[])],
     pendingData:  [...(portal.pending||[])],
   }
+}
+
+// 지난주 대비 증감 (v4.189.0) — 지난주 값을 모르면 안 그린다
+function Delta({ now, prev }) {
+  if (prev == null || now == null) return null
+  const d = Number(now) - Number(prev)
+  return <span data-delta className="text-[11px] font-bold text-slate-500 ml-1.5 whitespace-nowrap">{d === 0 ? '＝' : d > 0 ? `▲${d.toLocaleString()}` : `▼${Math.abs(d).toLocaleString()}`}<span className="font-normal text-slate-400"> (지난주 {Number(prev).toLocaleString()})</span></span>
 }
 
 function SectionCard({ title, color, children, id, collapsed, onToggle, extra }) {
@@ -326,6 +335,17 @@ export default function WeeklyReport() {
     queryFn:()=>fetchWeeklyReport(week.from, week.to),
   })
 
+  // 지난주 값 (요약 카드 증감) · 순환실사 운영 현황 (v4.189.0) — 못 받아도 보고서는 그대로
+  const prevWeek = useMemo(()=>getWeekRange(weekOffset-1),[weekOffset])
+  const { data:pd } = useQuery({
+    queryKey:['weeklyReport2', prevWeek.from, prevWeek.to],
+    queryFn:()=>fetchWeeklyReport(prevWeek.from, prevWeek.to),
+  })
+  const { data:cyc } = useQuery({
+    queryKey:['weeklyCycle', week.from, week.to],
+    queryFn:()=>fetchWeeklyCycle(week.from, week.to, ymdKST(new Date()), fetchCycleBase).catch(()=>null),
+  })
+
   function handlePrint() {
     const orig = document.title
     document.title = `구매자재팀_주간업무보고_${week.from}`
@@ -396,6 +416,9 @@ export default function WeeklyReport() {
   const inboundCount  = (d?.inbound||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
   const planTotal     = (d?.plan||[]).reduce((a,r)=>a+Number(r.total_qty||0),0)
   const planCount     = (d?.plan||[]).reduce((a,r)=>a+Number(r.cnt||0),0)
+  const prevInbound   = pd ? (pd.inbound||[]).reduce((a,r)=>a+Number(r.cnt||0),0) : null
+  const prevPlan      = pd ? (pd.plan||[]).reduce((a,r)=>a+Number(r.cnt||0),0) : null
+  const prevReq       = pd && !pd.reqErr ? (pd.reqSum?.issue.items||0) : null
   // 지연 = 받을 날(협력사 변경 납기가 있으면 그 날, 없으면 요청 납기)이 지난 건 (v4.108.0)
   //   변경 납기가 오늘 이후인 건은 그날까지 지연이 아니다 — 서버(SQL 반영 전)가 보내도 여기서 뺀다
   //   ① 독촉 필요 = 변경 납기 없음(직접 입력 포함) · ② 변경 납기도 지남
@@ -463,16 +486,18 @@ export default function WeeklyReport() {
 
         {/* KPI — 요약을 맨 위로 (v4.69.0: 요약 → 일정 → 지연 · 특이사항 순)
             v4.69.1: 칸을 낮게 — 이름 한 줄 + 숫자 한 줄(보조 숫자는 옆에 작게) · 자재요청은 불출만 */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 print:grid-cols-4 gap-2">
+        <div className={`grid grid-cols-2 gap-2 ${cyc?.setup ? 'lg:grid-cols-5 print:grid-cols-5' : 'lg:grid-cols-4 print:grid-cols-4'}`}>
           <div data-kpi="inbound" className="rounded-xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-white px-3.5 py-2.5 shadow-sm">
             <p className="text-[11px] font-bold text-emerald-600">📦 이번 주 입고</p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{inboundCount.toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
               <span className="text-xs text-slate-400 ml-2">{inboundTotal.toLocaleString()}개</span></p>
+            <p className="leading-tight"><Delta now={inboundCount} prev={prevInbound} /></p>
           </div>
           <div data-kpi="plan" className="rounded-xl border border-blue-100 bg-gradient-to-br from-blue-50 to-white px-3.5 py-2.5 shadow-sm">
             <p className="text-[11px] font-bold text-blue-600">📋 차주 입고 예정</p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{planCount.toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
               <span className="text-xs text-slate-400 ml-2">{planTotal.toLocaleString()}개</span></p>
+            <p className="leading-tight"><Delta now={planCount} prev={prevPlan} /></p>
           </div>
           {/* 자재요청 대응 — 자재요청 화면에서 그 주에 불출 처리한 것 */}
           <div data-req-sum className="rounded-xl border border-purple-100 bg-gradient-to-br from-purple-50 to-white px-3.5 py-2.5 shadow-sm">
@@ -483,12 +508,21 @@ export default function WeeklyReport() {
               <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{(d?.reqSum?.issue.items||0).toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">품목</span>
                 <span className="text-xs text-slate-400 ml-2">요청 {d?.reqSum?.issue.reqs||0}건</span></p>
             )}
+            {!d?.reqErr && <p className="leading-tight"><Delta now={d?.reqSum?.issue.items||0} prev={prevReq} /></p>}
           </div>
           <div className={`rounded-xl border px-3.5 py-2.5 shadow-sm ${delayCount>0?'border-red-200 bg-gradient-to-br from-red-50 to-white':'border-slate-100 bg-gradient-to-br from-slate-50 to-white'}`}>
             <p className={`text-[11px] font-bold flex items-center gap-1 ${delayCount>0?'text-red-600':'text-slate-500'}`}>{delayCount>0?'🚨':'✅'} 납기 지연<InfoTip align="right" text="포털이 자동으로 모은 받을 날이 지난 건(AXCELIS · Edwards · VM · CSK) + 이 주 주간보고에 직접 적은 지연 건. 받을 날 = 협력사 변경 납기가 있으면 그 날, 없으면 요청 납기 — 변경 납기를 받으면 그날까지 지연에서 빠집니다. 변경 납기가 없으면(직접 입력 포함) 「독촉」, 변경 납기도 지났으면 「변경 납기도 지남」." /></p>
             <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{delayCount}</span><span className="text-sm ml-0.5 text-slate-400">건</span>
               <span className="text-xs text-slate-400 ml-2">{delayCount>0?`독촉 ${delayG1.length} · 변경 납기도 지남 ${delayG2.length}`:'지난 납기 없음'}</span></p>
           </div>
+          {cyc?.setup && (
+            <div data-kpi="cycle" className="rounded-xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white px-3.5 py-2.5 shadow-sm">
+              <p className="text-[11px] font-bold text-violet-600">🔄 순환실사</p>
+              <p className="mt-0.5 whitespace-nowrap"><span className="text-2xl font-bold text-slate-900">{cyc.sum.counted.toLocaleString()}</span><span className="text-sm ml-0.5 text-slate-400">칸</span>
+                <span className="text-xs text-slate-400 ml-2">목표 {cyc.sum.target.toLocaleString()}</span></p>
+              <p className="text-[11px] text-slate-500 leading-tight">차이 {cyc.sum.diff}품목 · 반영 {cyc.sum.applied} · 미반영 {cyc.sum.diff - cyc.sum.applied}</p>
+            </div>
+          )}
         </div>
 
         {/* 캘린더 — 이번주 + 다음주 */}
@@ -696,6 +730,59 @@ export default function WeeklyReport() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* 순환실사 운영 현황 (v4.189.0) — 담당자별 이번 주 센 칸 · 한 바퀴 진행률 · 차이 · 반영 */}
+        {cyc?.setup && cyc.rows.length > 0 && (
+          <SectionCard title="🔄 순환실사 운영 현황" color="bg-violet-50"
+            extra={<span className="text-[11px] text-slate-500">창고 칸을 담당자별로 매일 나눠 세는 실사 · 실사 기록에서 자동 집계 (실사하는 날 {cyc.sum.days}일)</span>}>
+            <div data-cycle-sec>
+              <table className="w-full text-xs">
+                <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-500">
+                  <th className="px-3 py-2 text-left font-bold">담당자</th>
+                  <th className="px-3 py-2 text-left font-bold">담당 렉</th>
+                  <th className="px-3 py-2 text-right font-bold">이번 주 센 칸 / 목표</th>
+                  <th className="px-3 py-2 text-left font-bold w-[240px]">한 바퀴 진행률</th>
+                  <th className="px-3 py-2 text-right font-bold">차이 발견</th>
+                  <th className="px-3 py-2 text-right font-bold">재고 반영</th>
+                </tr></thead>
+                <tbody>
+                  {cyc.rows.map(r => (
+                    <tr key={r.name} className="border-b border-slate-100" data-cycle-row={r.name}>
+                      <td className="px-3 py-2 font-bold text-slate-800 whitespace-nowrap">{r.name}{r.helper && <span className="ml-1 text-[10px] font-semibold text-slate-400">도우미</span>}</td>
+                      <td className="px-3 py-2 text-slate-500">{r.helper ? `${(r.of||[]).join(' · ')} 렉을 같이 돎` : r.racks}</td>
+                      <td className={`px-3 py-2 text-right font-bold tabular-nums ${r.counted < r.target ? 'text-red-600' : 'text-slate-800'}`}>{r.counted} / {r.target}</td>
+                      <td className="px-3 py-2">
+                        {r.rs ? (
+                          <div className="flex items-center gap-2">
+                            <div className="flex-1 h-2 rounded bg-violet-100 overflow-hidden"><div className="h-2 bg-violet-500 rounded" style={{ width: `${r.rs.pct}%`, WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }} /></div>
+                            <span className="text-slate-500 whitespace-nowrap tabular-nums">{r.rs.round}바퀴째 {r.rs.pct}% ({r.rs.counted}/{r.rs.total}칸)</span>
+                          </div>
+                        ) : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{r.helper ? '—' : `${r.diff}품목`}</td>
+                      <td className={`px-3 py-2 text-right font-bold tabular-nums ${!r.helper && r.applied < r.diff ? 'text-amber-600' : 'text-emerald-700'}`}>{r.helper ? '—' : `${r.applied} / ${r.diff}`}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-slate-50 font-extrabold text-slate-800">
+                    <td className="px-3 py-2">합계</td><td />
+                    <td className="px-3 py-2 text-right tabular-nums">{cyc.sum.counted} / {cyc.sum.target}</td>
+                    <td className="px-3 py-2 font-medium text-slate-500 tabular-nums">전체 {cyc.sum.lapPct}% ({cyc.sum.lapCounted}/{cyc.sum.lapTotal}칸)</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{cyc.sum.diff}품목</td>
+                    <td className="px-3 py-2 text-right tabular-nums">{cyc.sum.applied} / {cyc.sum.diff}</td>
+                  </tr>
+                </tbody>
+              </table>
+              {cyc.diffs.length > 0 && (
+                <div className="px-4 py-2.5 border-t border-slate-100 text-xs text-slate-600 space-y-0.5" data-cycle-diffs>
+                  <p className="font-bold text-slate-800">이번 주 차이 품목 (수량 차이 큰 순 · 최대 5줄)</p>
+                  {cyc.diffs.map(a => (
+                    <p key={a.id}>{a.location} · <span className="font-mono">{a.items?.std_code || '—'}</span> {a.items?.name || ''} — 장부 {Number(a.book_qty||0).toLocaleString()} / 실물 {Number(a.counted_qty||0).toLocaleString()} ({Number(a.diff) > 0 ? '+' : ''}{Number(a.diff).toLocaleString()}) · {a.applied ? '반영' : <b className="text-amber-600">미반영</b>}</p>
+                  ))}
+                </div>
+              )}
+            </div>
+          </SectionCard>
         )}
 
         {/* 납기 지연 */}
