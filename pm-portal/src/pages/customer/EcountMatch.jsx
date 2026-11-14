@@ -1,4 +1,5 @@
 import { EmptyRow } from '../../components/ui/EmptyState'
+import { KpiCard } from '../../components/ui/Kpi'
 // 수주대장 › 이카운트 대조 (v4.94.0)
 //   ① 판매입력 파일 만들기 — 납품했는데 판매입력 안 된 줄 → 이카운트 판매입력 업로드 양식
 //   ② 판매 자료 올려 대조 — PO No. · 품목코드로 맞추고, 맞은 줄은 「판매입력 마감」 + 명세서번호
@@ -20,15 +21,9 @@ const CODE_KEY = 'pm_ecount_cust_codes'
 const loadCodes = () => { try { return JSON.parse(localStorage.getItem(CODE_KEY) || '{}') || {} } catch { return {} } }
 const saveCodes = (v) => { try { localStorage.setItem(CODE_KEY, JSON.stringify(v)) } catch { /* 저장 못 해도 이번 파일엔 들어감 */ } }
 
+// 공용 지표 카드로 (v4.188.1 — 화면마다 달랐던 모양 맞추기)
 function Kpi({ tone, label, value, sub, on, onClick, k }) {
-  const T = { green: 'bg-emerald-50/70 border-emerald-100 text-emerald-700', red: 'bg-red-50/70 border-red-100 text-red-600', amber: 'bg-amber-50/70 border-amber-100 text-amber-700', violet: 'bg-violet-50/70 border-violet-100 text-violet-700', gray: 'bg-white border-slate-200 text-slate-800' }[tone]
-  return (
-    <button type="button" onClick={onClick} data-ec-kpi={k} className={`min-w-0 text-left rounded-xl border px-3 md:px-4 py-3 ${T} ${on ? 'ring-2 ring-violet-400' : 'hover:shadow-sm'}`}>
-      <div className="text-[12px] text-slate-500">{label}</div>
-      <div className="text-[24px] md:text-[28px] font-extrabold leading-tight tabular-nums">{value.toLocaleString('ko-KR')}</div>
-      <div className="text-[11px] text-slate-500">{sub}</div>
-    </button>
-  )
+  return <KpiCard data-ec-kpi={k} tone={tone === 'violet' ? 'pr' : tone} label={label} value={Number(value) || 0} note={sub} on={on} onClick={onClick} />
 }
 
 export default function EcountMatch({ orders, editable, meName, onChanged }) {

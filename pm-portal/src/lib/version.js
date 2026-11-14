@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.188.0'
+export const APP_VERSION = 'v4.188.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.188.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.188.1',
+    date: '2026-11-14',
+    changes: ['화면 구성 맞추기 — 이카운트 대조 · 사내 도면 배포의 지표 카드를 공용 카드로, 도움말 머리글을 다른 화면과 같은 모양으로'],
+  },
   {
     version: 'v4.188.0',
     date: '2026-11-14',

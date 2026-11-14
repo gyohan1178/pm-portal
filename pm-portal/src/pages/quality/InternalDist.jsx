@@ -9,6 +9,7 @@ import { todayISO, kst, kstDT } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { logActivity } from '../../lib/activityLog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
+import { KpiCard } from '../../components/ui/Kpi'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { RCV_DEPTS, REASONS, myRcvDepts, fetchDwgInt, stateOf, STATE_LABEL, STATE_TONE, lastRev, parseDwgPaste, shareDwg, distribute, markRcpt, cancelDwg, fetchExtDist, revMap } from './dwgInt'
 
@@ -101,8 +102,9 @@ export default function InternalDist() {
     return <div className="rounded-xl border border-amber-200 bg-amber-50 p-5 text-sm text-amber-800">사내 배포 표가 아직 없습니다. Supabase SQL Editor 에서 <b>사내배포_반영_261023.sql</b> 을 먼저 실행해 주세요.<div className="text-xs mt-1 text-amber-600">{error.message}</div></div>
   }
 
+  // 공용 지표 카드로 (v4.188.1)
   const Kpi = ({ tone, label, v, sub }) => (
-    <div className={`rounded-xl border px-4 py-3 ${tone}`}><div className="text-[12px] text-slate-500">{label}</div><div className="text-[26px] font-extrabold leading-tight tabular-nums">{n(v)}</div><div className="text-[11px] text-slate-500 truncate">{sub}</div></div>
+    <KpiCard tone={/red/.test(tone) ? 'red' : /amber/.test(tone) ? 'amber' : /violet/.test(tone) ? 'pr' : ''} label={label} value={Number(v) || 0} note={sub} />
   )
   const pill = (k, l, c, tone) => (
     <button key={k} type="button" onClick={() => setOnly(only === k ? 'live' : k)} data-dwg-only={k}
