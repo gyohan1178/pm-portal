@@ -28,6 +28,7 @@ import { buildSubBomsFor } from '../../lib/bomSubExpand'
 import { buildMetaRows, syncItemMeta } from '../../lib/itemMeta'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
+import { useNarrow } from '../../hooks/useNarrow'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 
@@ -483,6 +484,9 @@ export default function BOM() {
   }
 
   const [tab, setTab] = useState('list')
+  // 휴대폰 — 찾아보기가 먼저 보이게 올리기 · 양식 버튼 3개는 접어 둔다 (v4.194.0)
+  const narrow = useNarrow()
+  const [upOpenM, setUpOpenM] = useState(false)
   const [selAssembly, setSelAssembly] = useState(null)
   const [editAsm, setEditAsm] = useState(null)     // 상위품번 수정
   const [addPart, setAddPart] = useState(null)     // 품목 추가
@@ -1022,6 +1026,13 @@ export default function BOM() {
           </button>
         )}
         <div className="flex-1" />
+        {narrow && (
+          <button type="button" data-bom-up-fold onClick={() => setUpOpenM(v => !v)}
+            className="px-3 h-11 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 whitespace-nowrap">
+            {upOpenM || uploading ? '올리기 접기 ▴' : '올리기 · 양식 3개 펼치기 ▾'}
+          </button>
+        )}
+        {(!narrow || upOpenM || uploading) && <>
         <button onClick={() => downloadCsvTemplate(TEMPLATES.bom.filename, TEMPLATES.bom.headers, TEMPLATES.bom.samples)}
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
           ⬇ 양식 다운로드
@@ -1035,6 +1046,7 @@ export default function BOM() {
           {uploading ? <Spin /> : '📄'} {uploading ? '파싱 중...' : 'AXCELIS 리포트(HTM·엑셀)'}
           <input type="file" accept=".htm,.html,.xlsx,.xls" className="hidden" onChange={handleHtmFile} disabled={uploading} />
         </label>
+        </>}
       </div>
 
       {/* 올리기 단계 — 파일 고르기 → 읽고 점검 → 미리보기 확인 → DB 저장 (v4.104.0) */}

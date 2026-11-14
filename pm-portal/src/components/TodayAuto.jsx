@@ -1,5 +1,6 @@
 // 내 오늘 할 일 — 자동 모음 (v4.191.0) · 할 일 화면 맨 위 (구매자재)
 //   노트북 화면(1366×768)에서 한 줄에 들어가게 낮고 좁은 칸 6개 · 누르면 그 화면으로
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { todayISO } from '../lib/utils'
@@ -23,7 +24,8 @@ function Tile({ to, label, n, tone, note, k }) {
   )
 }
 
-export default function TodayAuto({ profile }) {
+export default function TodayAuto({ profile, fold = false }) {
+  const [openM, setOpenM] = useState(false)   // 휴대폰 — 한 줄로 접어 둔다 · 눌러서 펼침 (v4.194.0)
   const today = todayISO()
   const pcs = (primaryCsCode(profile) || 'ax').toLowerCase()
   const pcsName = CUSTOMERS.find((c) => c.id === pcs)?.name || pcs.toUpperCase()
@@ -34,6 +36,21 @@ export default function TodayAuto({ profile }) {
   const myId = customers.find((x) => String(x.code || '').toLowerCase() === pcs)?.id || null
   const po = rows ? tallyPo(rows, today, scope === 'mine' ? myId : null) : null
   const who = scope === 'mine' ? pcsName : '전체'
+  const ordN = c ? (Number(c.ord_unconfirmed) || 0) + (Number(c.ord_waiting) || 0) : null
+  if (fold && !openM) {
+    const bit = (l, v, cls) => <span className={`whitespace-nowrap ${v > 0 ? cls : 'text-slate-400'}`}>{l} {v == null ? '—' : Number(v).toLocaleString()}</span>
+    return (
+      <button type="button" data-today-fold onClick={() => setOpenM(true)}
+        className="w-full min-h-[48px] rounded-2xl border border-slate-200 bg-white px-3 py-2 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-left text-xs font-bold">
+        <span className="text-slate-800">오늘 챙길 일</span>
+        {bit('입고 지남', po?.late, 'text-red-600')}
+        {bit('오늘 입고', po?.today, 'text-violet-700')}
+        {bit('수주', ordN, 'text-amber-700')}
+        {bit('요청', c ? c.req_open : null, 'text-amber-700')}
+        <span className="ml-auto font-medium text-slate-500 whitespace-nowrap">6칸 펼치기 ▾</span>
+      </button>
+    )
+  }
   return (
     <section className="rounded-2xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 space-y-2" data-today-auto>
       <div className="flex items-center gap-2 flex-wrap">
@@ -52,6 +69,7 @@ export default function TodayAuto({ profile }) {
         <Tile k="req" to="/material-request" label="자재 요청 처리 대기" n={c ? c.req_open : null} tone="amber" note="팀 전체" />
         <Tile k="rfq" to="/quote" label="견적 단가 요청" n={c ? c.rfq_price : null} tone="violet" note="영업 → 구매자재" />
       </div>
+      {fold && <button type="button" data-today-unfold onClick={() => setOpenM(false)} className="w-full h-11 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-500">접기 ▴</button>}
       {isError && <p className="text-[11px] text-red-500">발주 숫자를 불러오지 못했습니다 — 잠시 뒤 새로고침해 주세요</p>}
     </section>
   )

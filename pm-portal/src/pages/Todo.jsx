@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { useMe, isPurchasing } from '../hooks/useProfile'
 import TodayAuto from '../components/TodayAuto'
+import { useNarrow } from '../hooks/useNarrow'
 import { todayISO, kst, kstYmd } from '../lib/utils'
 import { dday, isOwnedBy, canEditTodo, isNewForMe, groupOf, postponeDate } from '../lib/todoView'
 import { useCycleTodo, CycleTodoRow } from '../components/CycleTodo'
@@ -259,6 +260,9 @@ export default function Todo() {
   const newCnt = list.filter(r => isNewForMe(r, me)).length
   // 검색 · 주간회의 안건만 볼 때는 실사 줄을 숨긴다
   const cycShown = q.trim() || agendaOnly ? [] : cyc.items
+  // 휴대폰 — 내 오늘 실사(아직 안 끝난 것)만 맨 위로 올린다. 나머지 순서 · 내용은 PC 와 같다 (v4.194.0)
+  const narrow = useNarrow()
+  const cycLead = narrow ? cycShown.filter(c => c.isMe && !c.complete) : []
 
   // 미루기 · 완료 — 묻지 않고 바로, 6초 동안 되돌리기 (v4.104.0)
   function postpone(r, kind) {
@@ -394,7 +398,12 @@ export default function Todo() {
       {snack.el}{confirmEl}{coach.el}
 
       {/* 오늘 챙길 일 — 자동 모음 (v4.191.0) · 구매자재만 */}
-      {isPurchasing(me) && <TodayAuto profile={me} />}
+      {cycLead.length > 0 && (
+        <div data-cycle-lead className="rounded-xl border-2 border-indigo-300 bg-white overflow-hidden">
+          {cycLead.map(c => <CycleTodoRow key={c.key} it={c} cyc={cyc} showName={who === 'all'} lead />)}
+        </div>
+      )}
+      {isPurchasing(me) && <TodayAuto profile={me} fold={narrow} />}
 
       {/* 사람 칩 — 들어오면 「나」 */}
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -445,7 +454,7 @@ export default function Todo() {
         <div className="space-y-3">
           {GROUPS.map(gr => {
             const items = grouped[gr.key]
-            const cy = cycShown.filter(c => (gr.key === 'done') === c.complete && (gr.key === 'soon' || gr.key === 'done'))
+            const cy = cycShown.filter(c => (gr.key === 'done') === c.complete && (gr.key === 'soon' || gr.key === 'done') && !cycLead.includes(c))
             if (!items.length && !cy.length) return null
             const isFolded = !q && folded[gr.key]
             return (

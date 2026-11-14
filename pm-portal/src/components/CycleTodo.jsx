@@ -98,9 +98,9 @@ function useLocCounts(enabled) {
   })
 }
 
-export function CycleTodoRow({ it, cyc, showName }) {
+export function CycleTodoRow({ it, cyc, showName, lead = false }) {
   const nav = useNavigate()
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(lead)   // lead — 휴대폰 할 일 맨 위 (v4.194.0): 칸을 펼쳐 두고 「이어서 세기」 큰 버튼
   const { data: byLoc } = useLocCounts(open)
   const { plan, target, complete, rs, week, o, isMe, name, holds = [], daily = DAILY, goalDone } = it
   const holdApi = useCellHold()
@@ -155,8 +155,16 @@ export function CycleTodoRow({ it, cyc, showName }) {
           </div>
         </div>
       </div>
+      {lead && !complete && plan.nextLoc && (
+        <div className="px-3 pb-2.5">
+          <button type="button" data-cycle-go={plan.nextLoc} onClick={() => nav(`/cell/${plan.nextLoc}`)}
+            className="w-full h-12 rounded-xl bg-indigo-600 text-white text-[15px] font-extrabold active:bg-indigo-700">
+            이어서 세기 — <span className="font-mono">{plan.nextLoc}</span>
+          </button>
+        </div>
+      )}
       {open && (
-        <div className="pl-9 pr-3 pb-3">
+        <div className={lead ? 'px-3 pb-3' : 'pl-9 pr-3 pb-3'}>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-1.5">
             {plan.list.map((c) => {
               const k = byLoc?.get(c.loc) || 0
@@ -164,7 +172,7 @@ export function CycleTodoRow({ it, cyc, showName }) {
               return (
                 <div key={c.loc} className="relative">
                   <button type="button" data-cycle-cell={c.loc} onClick={() => nav(`/cell/${c.loc}`)}
-                    className={`w-full text-left rounded-lg border px-2.5 py-1.5 ${c.done ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
+                    className={`w-full text-left rounded-lg border px-2.5 ${lead ? 'py-2.5' : 'py-1.5'} ${c.done ? 'border-emerald-200 bg-emerald-50' : 'border-slate-200 bg-white hover:border-indigo-300'}`}>
                     <p className={`font-mono text-sm font-bold ${c.done ? 'text-emerald-700' : 'text-indigo-600'}`}>{c.loc}</p>
                     <p className="text-[10px] text-slate-500">{c.done ? '오늘 셈 ✓' : `${byLoc ? (k ? `품목 ${k}` : '빈 칸') : '…'} · ${c.last ? `마지막 ${md(c.last)}` : '처음'}`}
                       {!c.done && ng > 0 && <b className="text-rose-600"> · 음수 {ng}</b>}</p>

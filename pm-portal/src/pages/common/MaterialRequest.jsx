@@ -26,6 +26,7 @@ import InfoTip from '../../components/ux/InfoTip'
 import Spin from '../../components/ux/Spin'
 import { useCoach } from '../../components/ux/CoachMarks'
 import { useRemember } from '../../hooks/useRemember'
+import { useNarrow } from '../../hooks/useNarrow'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -178,6 +179,9 @@ export default function MaterialRequest() {
   })
 
   const checked = list.filter(r => sel[r.id])
+  // 휴대폰 — 지표 4칸은 한 줄로 접고, 처리 버튼 줄은 요청을 체크했을 때만 (v4.194.0). 없애지 않고 접기만 한다
+  const narrow = useNarrow()
+  const [kpiOpenM, setKpiOpenM] = useState(false)
 
   // ── 처리자 배정 (2026-10-06) — 아무도 안 잡은 요청을 누구 몫인지 정해 둔다 ──
   const { data: handlers = [] } = useQuery({
@@ -1653,7 +1657,16 @@ export default function MaterialRequest() {
       {tab === 'list' && (
         <>
           {/* 요약 지표 — 누르면 그 조건만 본다 (진행 중 목록) */}
-          {liveTab && (
+          {liveTab && narrow && !kpiOpenM && !kpi && (
+            <button type="button" data-req-kpi-fold onClick={() => setKpiOpenM(true)}
+              className="w-full min-h-[48px] rounded-xl border border-slate-200 bg-white px-3 py-2 flex items-center gap-x-2 gap-y-0.5 flex-wrap text-left text-xs font-bold">
+              {[['overdue', '필요일 지남', 'text-rose-600'], ['readyLate', '불출 예정 지남', 'text-amber-700'], ['unassigned', '미배정', 'text-sky-700'], ['urgent', '긴급', 'text-slate-800']].map(([k, l, c]) => (
+                <span key={k} className={`whitespace-nowrap ${reqView.counts[k] > 0 ? c : 'text-slate-400'}`}>{l} {n(reqView.counts[k] || 0)}</span>
+              ))}
+              <span className="ml-auto font-medium text-slate-500 whitespace-nowrap">지표 4개 펼치기 ▾</span>
+            </button>
+          )}
+          {liveTab && (!narrow || kpiOpenM || !!kpi) && (
             <KpiRow cols={4} data="req" data-req-kpi>
               {[
                 ['overdue',    '⏰ 필요일 지남',      '현장이 달라고 한 날이 지난 요청',        'border-rose-200 bg-rose-50 text-rose-700',     'ring-rose-400', '아직 처리 안 끝난 품목이 있는 요청 중, 요청서의 필요일이 오늘보다 앞인 것 (요청서 단위로 셉니다).'],
@@ -1667,6 +1680,9 @@ export default function MaterialRequest() {
                   onClick={() => { setKpi(v => (v === k ? null : k)); setSel({}) }} />
               ))}
             </KpiRow>
+          )}
+          {liveTab && narrow && kpiOpenM && !kpi && (
+            <button type="button" data-req-kpi-unfold onClick={() => setKpiOpenM(false)} className="w-full h-11 rounded-lg border border-slate-200 bg-white text-xs font-bold text-slate-500">지표 접기 ▴</button>
           )}
 
           <div className="flex items-center gap-2 flex-wrap">
@@ -1719,8 +1735,8 @@ export default function MaterialRequest() {
           {/* 고른 요청으로 할 일 — 늘 같은 자리 (v4.151.0). 안 고르면 흐리게 · 상황에 안 맞는 버튼도 흐리게
               예전엔 고를 때 위 줄 오른쪽에 버튼 14개가 생겨 줄이 늘고 표가 밀렸다 */}
           <div className={`flex items-center gap-1.5 flex-wrap rounded-xl border px-3 py-2 ${checked.length ? 'border-indigo-200 bg-indigo-50/60' : 'border-slate-200 bg-slate-50/60'}`} data-req-actbar>
-            <span className="text-xs whitespace-nowrap" style={{ width: 92 }} data-req-selcount>{checked.length ? <b className="text-indigo-600">{checked.length}건 선택</b> : <span className="text-slate-400">요청을 체크</span>}</span>
-            <fieldset disabled={!checked.length} className="contents [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40">
+            <span className={`text-xs ${narrow && !checked.length ? '' : 'whitespace-nowrap'}`} style={narrow && !checked.length ? undefined : { width: 92 }} data-req-selcount>{checked.length ? <b className="text-indigo-600">{checked.length}건 선택</b> : <span className="text-slate-400">{narrow ? '요청을 체크하면 처리 버튼이 여기 나옵니다 (출력 · 확인 · 불출 등)' : '요청을 체크'}</span>}</span>
+            <fieldset disabled={!checked.length} className={(narrow && !checked.length ? 'hidden' : 'contents') + ' [&_button:disabled]:opacity-40 [&_button:disabled]:cursor-not-allowed [&_select:disabled]:opacity-40'}>
                 {/* 출력은 요청자도 쓴다 — 자기 요청을 뽑아 창고에 가져가야 하기 때문 */}
                 <button onClick={printRequest}
                   title="선택한 요청을 출력합니다 — 보관 위치순으로 나오고 확인칸이 있습니다"

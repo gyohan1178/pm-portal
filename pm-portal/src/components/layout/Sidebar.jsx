@@ -14,6 +14,8 @@ import { toast, toastError } from '../../lib/toast'
 import { visibleDepts, flowOf } from '../../lib/workflow'
 import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLOW_SEEN_EVENT } from '../../lib/flowSeen'
 import { docCountsQuery } from '../../lib/docRequest'
+import { useNarrow } from '../../hooks/useNarrow'
+import { useCycleTodo } from '../CycleTodo'
 
 // 업무 흐름 — 내 부서에 마지막으로 본 뒤 새로 늘어난 일 (사이드바 숫자 · 탭 제목 「(3) …」) · v4.97.0
 //   업무 흐름 화면과 같은 건수(flowCounts)를 쓰고, 「봤음」 기준은 그 화면이 저장한 것을 읽는다
@@ -253,7 +255,7 @@ function MenuItem({ to, icon, children, end, onNavigate, badge, also }) {
   const link = (
     <NavLink to={to} end={end} onClick={onNavigate}
       className={({ isActive }) =>
-        `flex items-center gap-2.5 px-4 py-[5px] text-[13px] font-medium relative transition-colors
+        `flex items-center gap-2.5 px-4 py-[11px] md:py-[5px] text-[15px] md:text-[13px] font-medium relative transition-colors
         ${isActive || alsoOn
           ? 'text-indigo-600 bg-indigo-50 before:absolute before:left-0 before:top-1 before:bottom-1 before:w-0.5 before:bg-indigo-600 before:rounded-r'
           : 'text-slate-500 hover:text-slate-800 hover:bg-slate-100'}`}>
@@ -283,13 +285,28 @@ function MenuItem({ to, icon, children, end, onNavigate, badge, also }) {
 }
 
 // mover — 「메뉴 정리」 중일 때 그룹 이름 옆에 붙는 ▲▼ (그룹 순서 바꾸기)
+// 휴대폰 메뉴 맨 위 — 「오늘 실사 이어서」 한 줄 (v4.194.0)
+//   메뉴 구성은 PC 와 같고 이 한 줄만 더 있다 · 오늘 칸이 남은 사람에게만 · 누르면 다음 칸으로
+function CycleShortcut({ profile, onNavigate }) {
+  const cyc = useCycleTodo({ who: 'me', me: profile, people: [] })
+  const it = cyc.items[0]
+  if (!it || it.complete || !it.plan?.nextLoc) return null
+  return (
+    <NavLink to={`/cell/${it.plan.nextLoc}`} onClick={onNavigate} data-menu-cycle
+      className="mx-2 mt-2 px-3 min-h-[52px] rounded-xl bg-indigo-600 text-white flex flex-col justify-center">
+      <span className="text-sm font-extrabold">🧾 오늘 실사 이어서</span>
+      <span className="text-[11px] font-semibold opacity-90">{it.plan.done} / {it.target}칸 · 다음 <span className="font-mono">{it.plan.nextLoc}</span></span>
+    </NavLink>
+  )
+}
+
 function CollapseSection({ label, sKey, defaultOpen = true, children, mover = null }) {
   const [open, toggle] = usePersistOpen(`sidebar_${sKey}`, defaultOpen)
   return (
     <div>
       <div className="flex items-center">
         <button onClick={toggle}
-          className="flex-1 flex items-center justify-between px-4 pt-2 pb-0.5 text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-slate-600 transition-colors">
+          className="flex-1 flex items-center justify-between px-4 pt-3 pb-1.5 md:pt-2 md:pb-0.5 text-[12px] md:text-[10px] font-bold text-slate-400 uppercase tracking-wider hover:text-slate-600 transition-colors">
           {label}
           <span className={`text-slate-300 transition-transform duration-200 ${open ? '' : '-rotate-90'}`}>▾</span>
         </button>
@@ -313,7 +330,7 @@ function CustomerSection({ customer, onNavigate }) {
   return (
     <div>
       <button onClick={toggle}
-        className="w-full flex items-center gap-2 px-4 py-1 hover:bg-slate-100 transition-colors">
+        className="w-full flex items-center gap-2 px-4 py-2.5 md:py-1 hover:bg-slate-100 transition-colors">
         <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ background: customer.color }} />
         <span className="text-xs font-bold text-slate-700 flex-1 text-left">{customer.name}</span>
         <span className={`text-slate-300 text-xs transition-transform duration-200 ${open ? '' : '-rotate-90'}`}>▾</span>
@@ -321,7 +338,7 @@ function CustomerSection({ customer, onNavigate }) {
       {open && SUB.map(s => (
         <NavLink key={s.path} to={`/customer/${customer.id}/${s.path}`} onClick={onNavigate}
           className={({ isActive }) =>
-            `flex items-center gap-1.5 pl-9 pr-4 py-[3px] text-xs font-medium transition-colors
+            `flex items-center gap-1.5 pl-9 pr-4 py-[10px] md:py-[3px] text-sm md:text-xs font-medium transition-colors
             before:content-[''] before:w-1 before:h-1 before:rounded-full before:bg-current before:flex-shrink-0
             ${isActive ? 'text-indigo-600 font-semibold' : 'text-slate-400 hover:text-slate-700'}`}>
           {s.label}
@@ -391,6 +408,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
   const isAdmin = profile?.role === 'admin'
   const signupN = usePendingSignups(isAdmin)   // 승인 대기 가입 신청 (v4.115.0)
   const fieldOnly = isFieldOnly(profile)
+  const narrow = useNarrow()
   const pcs = primaryCsCode(profile)
   const [showChangelog, setShowChangelog] = useState(false)
 
@@ -589,13 +607,15 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           )}
           {/* 모바일 닫기 버튼 */}
           {onNavigate && (
-            <button onClick={onNavigate} className="lg:hidden p-1 text-slate-400 hover:text-slate-600">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <button onClick={onNavigate} className="lg:hidden p-1 min-w-[44px] min-h-[44px] md:min-w-0 md:min-h-0 flex items-center justify-center text-slate-400 hover:text-slate-600">
+              <svg className="w-5 h-5 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/>
               </svg>
             </button>
           )}
         </div>
+
+        {narrow && !fieldOnly && profile && <CycleShortcut profile={profile} onNavigate={onNavigate} />}
 
         {/* 업무 흐름 — 현장 전용 계정 말고 모두 (v4.91.0) */}
         {!fieldOnly && canSeeFlow(profile) && !(profile?.role !== 'viewer' && canAccessSection(profile, 'home')) && (
