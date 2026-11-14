@@ -1,4 +1,5 @@
 import { useState, useEffect, Suspense } from 'react'
+import { startUsage, trackPage } from '../../lib/usage'
 import MenuTabs from '../MenuTabs'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { holidayCoverageWarning } from '../../lib/bizdays'
@@ -92,6 +93,9 @@ const PATH_LABELS = {
 
 export default function Layout({ profile }) {
   const location = useLocation()
+  // 사용 기록 — 화면 열기 · 버튼 누르기 횟수만 (v4.188.0 · lib/usage)
+  useEffect(() => { startUsage() }, [])
+  useEffect(() => { trackPage(location.pathname) }, [location.pathname])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // PC 에서 메뉴 접기 (노트북에서 표를 넓게) — 접으면 모바일처럼 ☰ 로 열고 닫는다 (v4.63.0)
   const [collapsed, setCollapsed] = useState(getSidebarCollapsed)
