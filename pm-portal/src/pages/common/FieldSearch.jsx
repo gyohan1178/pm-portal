@@ -19,6 +19,7 @@ import { SkelBar, SkeletonRows, SkeletonCards } from '../../components/ux/Skelet
 import { useCoach } from '../../components/ux/CoachMarks'
 import { downloadBomExcel, downloadBomCsv } from '../../lib/bomExport'
 import { toastError } from '../../lib/toast'
+import Hl from '../../components/ux/Hl'
 
 // 🏭 현장 검색 — 민감정보(재고·구매처·단가·고객사코드) 제외
 //    노출: 품명·구분·제조사·제조사품번·위치 + 역전개 + BOM
@@ -187,10 +188,10 @@ export default function FieldSearch() {
             placeholder="품명·기준코드·제조사·제조사품번·규격 검색 (2글자↑ 자동완성)"
             renderSuggest={s => (<>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-xs text-indigo-600">{s.std_code}</span>
+                <span className="font-mono text-xs text-indigo-600"><Hl text={s.std_code} q={pq} /></span>
                 {s.type && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">{s.type}</span>}
               </div>
-              <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
+              <div className="text-[11px] text-slate-500 truncate"><Hl text={`${s.name || ''}${s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}`} q={pq} /></div>
             </>)} />
           </div>
 
@@ -210,7 +211,7 @@ export default function FieldSearch() {
                     <div key={it.id} onClick={() => setDetail(it)} data-fs-card
                       className="rounded-xl border border-slate-200 bg-white p-3 cursor-pointer active:bg-slate-50">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-mono text-sm font-bold text-indigo-600">{it.std_code}</span>
+                        <span className="font-mono text-sm font-bold text-indigo-600"><Hl text={it.std_code} q={pSubmitted} /></span>
                         <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span>
                         <span className="ml-auto flex items-center gap-1.5">
                           {it.qty != null && (
@@ -223,8 +224,8 @@ export default function FieldSearch() {
                           <AuxLocs aux={it.aux} />
                         </span>
                       </div>
-                      <div className="text-xs text-slate-700 mt-1.5">{it.name}</div>
-                      <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono">{it.manufacturer_code || '-'}</span></div>
+                      <div className="text-xs text-slate-700 mt-1.5"><Hl text={it.name} q={pSubmitted} /></div>
+                      <div className="text-[11px] text-slate-400 mt-0.5">{it.manufacturer || '-'} · <span className="font-mono"><Hl text={it.manufacturer_code || '-'} q={pSubmitted} /></span></div>
                       <MfrAltList item={it} list={it.mfrs} q={pSubmitted} max={3} />
                       {it.spec && <div className="text-[11px] text-slate-400 truncate">{it.spec}</div>}
                       <button onClick={() => openBOM(it.std_code)} data-fs-card-bom className="mt-2 text-[11px] text-indigo-500 font-semibold">📋 BOM 전개 ↗</button>
@@ -242,11 +243,11 @@ export default function FieldSearch() {
                       <tbody>
                         {items.map(it => (
                           <tr key={it.id} data-fs-row className="border-b border-slate-100 hover:bg-slate-50">
-                            <td className="px-3 py-2 font-mono text-indigo-600">{it.std_code}</td>
-                            <td className="px-3 py-2 text-slate-700 max-w-[240px] truncate">{it.name}</td>
+                            <td className="px-3 py-2 font-mono text-indigo-600"><Hl text={it.std_code} q={pSubmitted} /></td>
+                            <td className="px-3 py-2 text-slate-700 max-w-[240px] truncate"><Hl text={it.name} q={pSubmitted} /></td>
                             <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type || '-'}</span></td>
                             <td className="px-3 py-2 text-slate-600">{it.manufacturer || '-'}</td>
-                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500">{it.manufacturer_code || '-'}
+                            <td className="px-3 py-2 font-mono text-[11px] text-slate-500"><Hl text={it.manufacturer_code || '-'} q={pSubmitted} />
                               <MfrAltList item={it} list={it.mfrs} q={pSubmitted} className="font-sans max-w-[360px]" /></td>
                             <td className="px-3 py-2 text-slate-500 max-w-[200px] truncate" title={it.spec}>{it.spec || '-'}</td>
                             <td className={`px-3 py-2 text-right font-mono font-bold ${
@@ -279,10 +280,10 @@ export default function FieldSearch() {
               placeholder="기준코드 / 제조사품번 / 품명 (2글자↑ 자동완성)"
               renderSuggest={s => (<>
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-xs text-indigo-600">{s.std_code}</span>
+                  <span className="font-mono text-xs text-indigo-600"><Hl text={s.std_code} q={rq} /></span>
                   {s.type && <span className="px-1 rounded text-[9px] font-bold bg-slate-100 text-slate-400">{s.type}</span>}
                 </div>
-                <div className="text-[11px] text-slate-500 truncate">{s.name}{s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}</div>
+                <div className="text-[11px] text-slate-500 truncate"><Hl text={`${s.name || ''}${s.manufacturer_code ? ` · ${s.manufacturer_code}` : ''}`} q={rq} /></div>
               </>)} />
           </div>
 

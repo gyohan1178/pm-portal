@@ -38,6 +38,7 @@ import InfoTip from '../../components/ux/InfoTip'
 import Spin from '../../components/ux/Spin'
 import { useRemember } from '../../hooks/useRemember'
 import { useUndoSnack } from '../../components/ux/UndoSnack'
+import Hl from '../../components/ux/Hl'
 
 
 function monthAgoStr() {
@@ -190,7 +191,7 @@ export default function PurchasePage() {
   const [onlyMade, setOnlyMade] = useState(() => madeIds.size > 0)
   const [tab, setTab] = useState('po') // po | history
   const [typeTab, setTypeTab] = useRemember('po.type', '전체', (v) => typeof v === 'string')   // 보던 조건 기억 (v4.191.0)
-  const [search, setSearch] = useState('')  // 거래처·제조사·품번 검색
+  const [search, setSearch] = useState(() => sp.get('q') || '')  // 거래처·제조사·품번 검색 · ?q= 로 넘어오면 그 품번으로 (통합 검색 「발주」 · v4.193.0)
   // 발주가 수천 건이라 한 글자마다 필터·정렬을 다시 돌리면 입력이 멈춘다.
   // 입력은 즉시 반영하되(타이핑 끊김 없음) 실제 필터는 멈춘 뒤에 한 번만.
   const dq = useDebounced(search, 250)
@@ -207,6 +208,7 @@ export default function PurchasePage() {
   const [editId, setEditId] = useState(null)
   const [itemSearch, setItemSearch] = useState('')
   const [itemResults, setItemResults] = useState([])
+  const [itemHi, setItemHi] = useState(-1)   // 품목 담기 칸 — 방향키로 고른 줄
   const [selItem, setSelItem] = useState(null)
   // ERP 발주서 담당자 — 내려받은 사람으로 찍는다
   const me = useMe()
@@ -1136,15 +1138,23 @@ export default function PurchasePage() {
                 <div className="grid grid-cols-12 gap-2 items-start">
                   <div className="col-span-5 relative">
                     <label className="block text-xs font-bold text-slate-500 mb-1">품목 {!editId&&'*'}</label>
-                    <input value={itemSearch} onChange={e=>searchItems(e.target.value)} placeholder="품명·기준코드·제조사품번" disabled={!!editId}
+                    <input value={itemSearch} onChange={e=>{ setItemHi(-1); searchItems(e.target.value) }} placeholder="품명·기준코드·제조사품번 (↑↓ 로 고르고 Enter)" disabled={!!editId} data-item-search
+                      onKeyDown={(e) => {
+                        // 방향키로 고르기 (v4.193.0) — 마우스로만 고를 수 있던 것
+                        if (!itemResults.length) return
+                        if (e.key === 'ArrowDown') { e.preventDefault(); setItemHi((h) => Math.min(h + 1, itemResults.length - 1)) }
+                        else if (e.key === 'ArrowUp') { e.preventDefault(); setItemHi((h) => Math.max(h - 1, 0)) }
+                        else if (e.key === 'Enter' && itemHi >= 0) { e.preventDefault(); e.currentTarget.parentElement.querySelector(`[data-item-hit="${itemHi}"]`)?.click() }
+                        else if (e.key === 'Escape') { setItemResults([]); setItemHi(-1) }
+                      }}
                       className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50"/>
                     {itemResults.length>0&&(
                       <div className="absolute top-full left-0 right-0 z-10 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
-                        {itemResults.map(item=>(
-                          <button key={item.id} onClick={()=>{setSelItem(item);setItemSearch(item.name);setItemResults([]);if(item.vendor_id&&!selVendor){setSelVendor(item.vendor_id);setVendorSearch(item.vendors?.name||'')};setForm(prev=>({...prev,unit_price:(item.purchase_price??prev.unit_price)||'',type:item.type||prev.type}))}}
-                            className="w-full text-left px-3 py-2 hover:bg-indigo-50 border-b border-slate-100 last:border-0 text-xs">
+                        {itemResults.map((item, ii)=>(
+                          <button key={item.id} type="button" data-item-hit={ii} onMouseEnter={() => setItemHi(ii)} onClick={()=>{setItemHi(-1);setSelItem(item);setItemSearch(item.name);setItemResults([]);if(item.vendor_id&&!selVendor){setSelVendor(item.vendor_id);setVendorSearch(item.vendors?.name||'')};setForm(prev=>({...prev,unit_price:(item.purchase_price??prev.unit_price)||'',type:item.type||prev.type}))}}
+                            className={`w-full text-left px-3 py-2 border-b border-slate-100 last:border-0 text-xs ${ii === itemHi ? 'bg-indigo-50' : 'hover:bg-indigo-50'}`}>
                             <div className="font-semibold text-slate-800 flex items-center gap-1.5">
-                              <span className="truncate flex-1">{item.name}</span>
+                              <span className="truncate flex-1"><Hl text={item.name} q={itemSearch} /></span>
                               {item.stock > 0 ? (
                                 <span className="shrink-0 px-1.5 py-0.5 rounded bg-teal-100 text-teal-700 text-[10px] font-bold whitespace-nowrap">
                                   재고 {item.stock}{item.unit || ''}
@@ -1159,7 +1169,7 @@ export default function PurchasePage() {
                               )}
                             </div>
                             <div className="text-slate-400 font-mono text-xs flex gap-2">
-                              <span>{item.std_code}</span>
+                              <span><Hl text={item.std_code} q={itemSearch} /></span>
                               {item.manufacturer_code&&<span className="text-violet-500">· {item.manufacturer_code}</span>}
                               {item.purchase_price?<span className="text-indigo-500">· ₩{Math.round(item.purchase_price).toLocaleString()}</span>:null}
                             </div>

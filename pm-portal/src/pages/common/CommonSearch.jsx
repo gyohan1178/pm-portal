@@ -1,6 +1,6 @@
 import AuxLocs from '../../components/AuxLocs'
 import { fetchAuxByItems } from '../../lib/cellAux'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -17,22 +17,45 @@ import { mfrSearchCond, attachMfrs } from '../../lib/itemMeta'
 import MfrAltList from '../../components/MfrAltList'
 import Hl from '../../components/ux/Hl'
 import { useRemember } from '../../hooks/useRemember'
+import { parseTerms, isMany, codeCands, matchTerms, MANY_MAX } from '../../lib/searchMany'
+import { useMe, isPurchasing } from '../../hooks/useProfile'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
 
 // ── 제품 검색 (items 전체 페이징) ──
+const ITEM_SEL = 'id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, customer_item_codes(customer_code,customers(code,name))'
 async function searchItems(q) {
   if (!q.trim()) return []
+  if (isMany(q)) return searchManyItems(parseTerms(q))
   // 고객사 승인 제조사품번(대체품 · 사용 금지 포함)으로 쳐도 품목이 나오게 (v4.172.0)
   const alt = await mfrSearchCond(q).catch(() => '')
   const { data, error } = await supabase.from('items')
     // ⚠ 구매처(vendors)는 가져오지 않는다. 화면에서 지워도 조회로 넘어오면
     //   개발자도구에서 보인다. 아예 받지 않는다.
-    .select('id,std_code,name,type,unit,manufacturer,manufacturer_code,spec,dept,stock_managed, customer_item_codes(customer_code,customers(code,name))')
+    .select(ITEM_SEL)
     .or([ilikeAny(['std_code', 'name', 'manufacturer', 'manufacturer_code', 'spec'], q), alt].filter(Boolean).join(','))
     .limit(200)
   if (error) throw error
+  return withLocations(data || [])
+}
+// 품번 여러 개 (v4.193.0) — 기준코드(접두 있든 없든) · 제조사품번이 똑같은 품목만
+async function searchManyItems(terms) {
+  const codes = [...new Set(terms.flatMap(codeCands))], mf = [...new Set(terms.flatMap((t) => [t, t.toUpperCase()]))]
+  const got = new Map()
+  for (let i = 0; i < codes.length; i += 150) {
+    const { data, error } = await supabase.from('items').select(ITEM_SEL).in('std_code', codes.slice(i, i + 150))
+    if (error) throw error
+    ;(data || []).forEach((d) => got.set(d.id, d))
+  }
+  for (let i = 0; i < mf.length; i += 150) {
+    const { data, error } = await supabase.from('items').select(ITEM_SEL).in('manufacturer_code', mf.slice(i, i + 150))
+    if (error) throw error
+    ;(data || []).forEach((d) => got.set(d.id, d))
+  }
+  return withLocations([...got.values()])
+}
+async function withLocations(data) {
   // 보관위치만 모은다. 수량은 받지 않는다 — 현장에서 물건을 찾는 화면이다.
   const ids = (data || []).map(d => d.id)
   const locMap = {}
@@ -101,13 +124,25 @@ export default function CommonSearch() {
   const { data: customers = [] } = useCustomers()
   const [reqCs, setReqCs] = useState('')
 
-  const { data: items = [], isLoading: pLoading, error: pErr } = useQuery({
+  const { data: itemsRaw = [], isLoading: pLoading, error: pErr } = useQuery({
     queryKey: ['commonProduct', pSubmitted], queryFn: () => searchItems(pSubmitted), enabled: !!pSubmitted.trim(),
   })
+  // 여러 품번 붙여넣기 (v4.193.0) — 붙여넣은 차례대로 · 못 찾은 품번은 따로 알려 준다
+  const many = isMany(pSubmitted)
+  const manyInfo = useMemo(() => {
+    if (!many) return null
+    const terms = parseTerms(pSubmitted), r = matchTerms(terms, itemsRaw)
+    const seen = new Set(), ordered = []
+    terms.forEach((t) => (r.found.get(t) || []).forEach((it) => { if (!seen.has(it.id)) { seen.add(it.id); ordered.push(it) } }))
+    return { terms, ordered, missing: r.missing, hit: terms.length - r.missing.length }
+  }, [many, pSubmitted, itemsRaw])
+  const items = manyInfo ? manyInfo.ordered : itemsRaw
+  const me = useMe(), buyer = isPurchasing(me)     // 발주 · 입고 이력 바로가기는 구매자재만 (현장 계정에는 안 보임)
+  const csOf = (code) => ({ AX: 'ax', ED: 'ed', CS: 'csk', VM: 'vm', HC: 'hc' }[String(code || '').slice(0, 2).toUpperCase()] || 'ax')
   // 최근 검색어 (v4.192.0) — 결과가 나온 검색만 · 이 브라우저에 6개까지 · 누르면 바로 다시 검색
   useEffect(() => {
     const t = String(pSubmitted || '').trim()
-    if (t.length < 2 || pLoading || !items.length) return
+    if (t.length < 2 || pLoading || !items.length || isMany(t)) return
     setRecent((old) => (old[0] === t ? old : [t, ...old.filter((x) => x.toUpperCase() !== t.toUpperCase())].slice(0, 6)))
   }, [pSubmitted, pLoading, items.length]) // eslint-disable-line react-hooks/exhaustive-deps
   const { data: used = [], isLoading: rLoading, error: rErr } = useQuery({
@@ -149,8 +184,13 @@ export default function CommonSearch() {
       {tab === 'product' && (
         <>
           <div className="flex gap-2">
-            <input value={pq} onChange={e => setPq(e.target.value)} onKeyDown={e => e.key === 'Enter' && setPSubmitted(pq)}
-              placeholder="기준코드·품명·제조사·제조사품번(승인 대체품 포함)·규격 검색"
+            <input autoFocus={typeof window !== 'undefined' && window.innerWidth >= 768 /* 휴대폰에서는 자판이 바로 올라오지 않게 */} data-search-main value={pq} onChange={e => setPq(e.target.value)} onKeyDown={e => e.key === 'Enter' && setPSubmitted(pq)}
+              onPaste={(e) => {
+                // 엑셀에서 품번 여러 줄을 붙이면 줄마다 찾는다 (v4.193.0)
+                const terms = parseTerms(e.clipboardData?.getData('text') || '')
+                if (terms.length >= 2) { e.preventDefault(); setPq(''); setPSubmitted(terms.join('\n')) }
+              }}
+              placeholder="기준코드·품명·제조사·제조사품번(승인 대체품 포함)·규격 검색 — 엑셀 품번 여러 줄을 붙여넣어도 됩니다"
               className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <button onClick={() => setPSubmitted(pq)} disabled={!pq.trim()}
               className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
@@ -166,6 +206,16 @@ export default function CommonSearch() {
             </div>
           )}
 
+          {manyInfo && !pLoading && !pErr && (
+            <div className="rounded-xl border border-[#d5e2fb] bg-[#eef4ff] px-3 py-2 text-xs text-slate-600 flex items-start gap-2 flex-wrap" data-many>
+              <b className="text-slate-800 whitespace-nowrap">붙여넣은 품번 {manyInfo.terms.length}개</b>
+              <span className="text-emerald-700 font-bold whitespace-nowrap">찾음 {manyInfo.hit}</span>
+              {manyInfo.missing.length > 0 && <span className="text-red-600 font-bold" data-many-missing>못 찾음 {manyInfo.missing.length} <span className="font-mono font-medium">{manyInfo.missing.slice(0, 12).join(' · ')}{manyInfo.missing.length > 12 ? ` 외 ${manyInfo.missing.length - 12}` : ''}</span></span>}
+              <span className="text-slate-400">기준코드 · 제조사품번이 똑같은 것만 찾습니다{manyInfo.terms.length >= MANY_MAX ? ` · 한 번에 ${MANY_MAX}개까지` : ''}</span>
+              <button type="button" onClick={() => setPSubmitted('')} data-many-clear className="ml-auto text-slate-400 hover:text-slate-600 whitespace-nowrap">지우기 ✕</button>
+            </div>
+          )}
+
           {pSubmitted && (pLoading
             ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-search-loading="product">
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={6} rows={6} two={[0, 3]} /></tbody></table>
@@ -173,7 +223,7 @@ export default function CommonSearch() {
             : pErr
               ? <ErrorState error={pErr} title="검색하지 못했습니다" />
             : items.length === 0
-              ? <EmptyState icon="🔎" title={`「${pSubmitted}」 결과가 없습니다`} desc="기준코드 · 품명 · 제조사품번 일부만 넣어 보세요. 띄어쓰기나 하이픈(-)을 빼면 찾아지는 경우가 많습니다." />
+              ? <EmptyState icon="🔎" title={many ? '붙여넣은 품번과 똑같은 품목이 없습니다' : `「${pSubmitted}」 결과가 없습니다`} desc="기준코드 · 품명 · 제조사품번 일부만 넣어 보세요. 띄어쓰기나 하이픈(-)을 빼면 찾아지는 경우가 많습니다." />
               : <div className="rounded-xl border border-slate-200 overflow-x-auto">
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs whitespace-nowrap">
@@ -222,7 +272,14 @@ export default function CommonSearch() {
                                 : '-'}
                             </td>
                             <td className="px-3 py-2">
-                              <div className="flex gap-1">
+                              <div className="flex gap-1" data-row-actions>
+                                {/* 찾고 나서 바로 다음 일로 (v4.193.0) — 사용처는 누구나 · 발주 · 입고 이력은 구매자재만 */}
+                                <button type="button" data-act="where" title="이 부품이 들어가는 어셈블리 보기 (역전개)" onClick={() => { setTab('where'); setRq(it.std_code); setRSubmitted(it.std_code) }}
+                                  className="px-1.5 py-0.5 rounded border border-slate-200 text-[11px] text-slate-600 hover:bg-slate-50">사용처</button>
+                                {buyer && <button type="button" data-act="po" title="이 품목의 구매발주 보기" onClick={() => navigate(`/customer/${csOf(it.std_code)}/purchase?q=${encodeURIComponent(it.std_code)}`)}
+                                  className="px-1.5 py-0.5 rounded border border-[#d5e2fb] bg-[#eef4ff] text-[11px] text-[#1d5fd1] hover:bg-[#e1ecff]">발주</button>}
+                                {buyer && <button type="button" data-act="inb" title="이 품목의 입고 이력 보기 (입고 현황)" onClick={() => navigate(`/inbound?hist=${encodeURIComponent(it.std_code)}`)}
+                                  className="px-1.5 py-0.5 rounded border border-[#d5e2fb] bg-[#eef4ff] text-[11px] text-[#1d5fd1] hover:bg-[#e1ecff]">입고 이력</button>}
                                 {[['img', '사진'], ['web', '사양']].map(([k, l]) => (
                                   <a key={k} href={webSearch(it, k)} target="_blank" rel="noopener noreferrer"
                                     className="px-1.5 py-0.5 rounded border border-slate-200 text-[11px] text-slate-500 hover:bg-slate-50">{l} ↗</a>

@@ -303,6 +303,8 @@ export default function Inbound() {
   // 구매발주 화면의 「입고 처리」로 오면 ?po=id,id… — 그 발주를 체크하고 잔량을 채워 둔다
   const [sp, setSp] = useSearchParams()
   const [poFromUrl] = useState(() => (sp.get('po') || '').split(',').filter(Boolean))
+  // 통합 검색 「입고 이력」에서 넘어오면 (?hist=품번) 입고 현황 탭 + 그 품번으로 (v4.193.0)
+  useEffect(() => { const h = sp.get('hist'); if (h) { setTab('history'); setHItem(h) } }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [poApplied, setPoApplied] = useState(false)
   useEffect(() => {
     if (poApplied || !poFromUrl.length || isLoading) return

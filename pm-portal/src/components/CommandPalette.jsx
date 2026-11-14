@@ -1,6 +1,19 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { CUSTOMERS } from '../lib/customers'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../lib/supabase'
+import { ilikeAny } from '../lib/pgFilter'
+import { useMe, isFieldOnly } from '../hooks/useProfile'
+import Hl from './ux/Hl'
+
+// 품번 · 품명으로 품목 찾기 (v4.193.0) — 메뉴만 찾던 창에서 품목도. 고르면 통합 검색 결과로 간다
+async function findItems(q) {
+  const { data, error } = await supabase.from('items').select('id,std_code,name,manufacturer_code')
+    .or(ilikeAny(['std_code', 'name', 'manufacturer_code'], q)).order('std_code').limit(7)
+  if (error) return []
+  return data || []
+}
 
 // Ctrl+D (또는 Ctrl+K) 빠른 실행창 — 어디서든 열어서 검색 후 이동. 분산된 메뉴 동선을 하나로.
 // D 를 기본으로 둔 이유: 마우스를 쥔 채 왼손만으로 누를 수 있다.
@@ -98,11 +111,21 @@ export default function CommandPalette() {
     return () => { window.removeEventListener('keydown', onKey); window.removeEventListener('open-command-palette', onOpen) }
   }, [])
 
-  const filtered = useMemo(() => {
+  const cmds = useMemo(() => {
     const s = q.trim().toLowerCase()
     if (!s) return COMMANDS
     return COMMANDS.filter(c => (c.label + ' ' + c.group + ' ' + c.keywords).toLowerCase().includes(s))
   }, [q])
+  // 품목 — 2글자부터 · 입력이 멈춘 뒤 한 번만 찾는다 (현장 전용 계정은 통합 검색이 없어 뺀다)
+  const me = useMe()
+  const [dq, setDq] = useState('')
+  useEffect(() => { const t = setTimeout(() => setDq(q.trim()), 250); return () => clearTimeout(t) }, [q])
+  const itemsOn = open && dq.length >= 2 && !!me && !isFieldOnly(me)
+  const { data: hits = [], isFetching } = useQuery({ queryKey: ['paletteItems', dq], queryFn: () => findItems(dq), enabled: itemsOn, staleTime: 60 * 1000 })
+  const filtered = useMemo(() => [
+    ...cmds,
+    ...(itemsOn && dq === q.trim() ? hits.map((it) => ({ item: it, group: '품목', label: it.std_code, to: `/search?q=${encodeURIComponent(it.std_code)}` })) : []),
+  ], [cmds, hits, itemsOn, dq, q])
 
   useEffect(() => { setHi(0) }, [q])
 
@@ -121,16 +144,18 @@ export default function CommandPalette() {
             else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)) }
             else if (e.key === 'Enter') { e.preventDefault(); go(filtered[hi]) }
           }}
-          placeholder="어디로 갈까요? (예: 발주, 입고, AX 소요량)"
+          placeholder="메뉴 또는 품번 · 품명 (예: 발주, 입고, 6200111)"
           className="w-full px-4 py-3.5 text-sm border-b border-slate-100 focus:outline-none"/>
         <div className="max-h-[52vh] overflow-y-auto py-1">
-          {filtered.length === 0 && <div className="px-4 py-6 text-center text-sm text-slate-400">결과 없음</div>}
+          {filtered.length === 0 && <div className="px-4 py-6 text-center text-sm text-slate-400">{itemsOn && (isFetching || dq !== q.trim()) ? '품목 찾는 중…' : '결과 없음'}</div>}
           {filtered.map((c, i) => (
             <button key={c.to + c.label} type="button"
               onMouseEnter={() => setHi(i)} onClick={() => go(c)}
               className={`w-full text-left px-4 py-2 flex items-center gap-2 text-sm ${i === hi ? 'bg-indigo-50' : 'hover:bg-slate-50'}`}>
-              <span className="text-[10px] font-bold text-slate-400 w-24 shrink-0 truncate">{c.group}</span>
-              <span className="font-semibold text-slate-700 flex-1 truncate">{c.label}</span>
+              <span className={`text-[10px] font-bold w-24 shrink-0 truncate ${c.item ? 'text-[#6c5ce7]' : 'text-slate-400'}`}>{c.group}</span>
+              {c.item
+                ? <span className="flex-1 min-w-0 truncate" data-palette-item={c.item.std_code}><span className="font-mono font-bold text-slate-800"><Hl text={c.item.std_code} q={q} /></span> <span className="text-xs text-slate-500"><Hl text={c.item.name || ''} q={q} />{c.item.manufacturer_code ? <> · <span className="font-mono"><Hl text={c.item.manufacturer_code} q={q} /></span></> : null}</span></span>
+                : <span className="font-semibold text-slate-700 flex-1 truncate">{c.label}</span>}
               {i === hi && <span className="text-[10px] text-indigo-400">Enter ↵</span>}
             </button>
           ))}
