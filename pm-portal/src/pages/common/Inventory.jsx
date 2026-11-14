@@ -577,8 +577,9 @@ export default function Inventory() {
           {() => (
             <tbody>
               {error ? <ErrorRow cols={COLS.length} error={error} onRetry={refetch} />
-              : rows.length===0 ? <EmptyRow cols={COLS.length} icon="📦" title={kpiF ? '이 조건의 품목이 없습니다' : '재고 데이터가 없습니다'}
-                  desc={kpiF ? '지표를 한 번 더 누르면 거르기가 풀립니다.' : (appliedSearch || brandFilter!=='전체' || typeFilter!=='전체') ? '검색어 · 구분 · 브랜드 조건을 풀어 보세요.' : undefined} />
+              : rows.length===0 ? <EmptyRow cols={COLS.length} icon="📦" title={(kpiF || appliedSearch || brandFilter!=='전체' || typeFilter!=='전체') ? '이 조건의 품목이 없습니다' : '재고 데이터가 없습니다'}
+                  desc={kpiF ? '지표 거르기가 걸려 있습니다.' : (appliedSearch || brandFilter!=='전체' || typeFilter!=='전체') ? `${[appliedSearch && '검색어', typeFilter!=='전체' && `구분 ${typeFilter}`, brandFilter!=='전체' && `브랜드 ${brandFilter}`].filter(Boolean).join(' · ')} 조건이 걸려 있습니다.` : undefined}
+                  action={(kpiF || appliedSearch || brandFilter!=='전체' || typeFilter!=='전체') ? <button type="button" data-clear-filters onClick={() => { setKpiF(null); setTypeFilter('전체'); setBrandFilter('전체'); setSearch(''); setAppliedSearch('') }} className="mt-1 h-[34px] px-3 rounded-lg border border-[#6c5ce7] bg-white text-xs font-bold text-[#6c5ce7] hover:bg-[#eeebfd]">조건 풀기</button> : undefined} />
               : vis.shown.map(r=>{
                 const safety=r.items?.safety_stock||0
                 const status=r.qty===0?'zero':r.qty<safety&&safety>0?'low':'ok'

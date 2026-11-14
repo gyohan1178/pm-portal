@@ -1662,7 +1662,10 @@ export default function PurchasePage() {
               {()=>(
                 <tbody>
                   {filtered.length===0
-                    ? <EmptyRow cols={PO_COLS.length} title="구매 발주가 없습니다" />
+                    ? (purchases.length > 0
+                        ? <EmptyRow cols={PO_COLS.length} icon="🔎" title="이 조건의 발주가 없습니다" desc={`전체 ${purchases.length.toLocaleString()}건이 조건에 가려져 있습니다${typeTab !== '전체' ? ` · 구분 ${typeTab}` : ''}${search.trim() ? ' · 검색어' : ''}${dueFilter ? ' · 납기' : ''}${filterOrderDate ? ' · 발주일' : ''}`}
+                            action={<button type="button" data-clear-filters onClick={() => { setTypeTab('전체'); setSearch(''); setDueFilter(''); setFilterOrderDate(''); setOnlyMade(false) }} className="mt-1 h-[34px] px-3 rounded-lg border border-[#6c5ce7] bg-white text-xs font-bold text-[#6c5ce7] hover:bg-[#eeebfd]">조건 풀기</button>} />
+                        : <EmptyRow cols={PO_COLS.length} title="구매 발주가 없습니다" />)
                     : sorted.slice(0, visibleCount).map(p=>{
                       const due=dueOf(p)
                       const diff=due?Math.round((new Date(due)-new Date(today))/86400000):null

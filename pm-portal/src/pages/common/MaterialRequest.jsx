@@ -1860,7 +1860,11 @@ export default function MaterialRequest() {
           {!isLoading && !list.length && (
             <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
               <p className="text-3xl mb-2">🙋</p>
-              <p className="text-sm font-bold text-slate-600">요청이 없습니다</p>
+              <p className="text-sm font-bold text-slate-600">{(csFilter || deptFilter || mine) ? '이 조건의 요청이 없습니다' : '요청이 없습니다'}</p>
+              {(csFilter || deptFilter || mine) && <div className="mt-1">
+                <p className="text-xs text-slate-400 mb-1">{[csFilter && `고객사 ${String(csFilter).toUpperCase()}`, deptFilter && `부서 ${deptFilter}`, mine && '내 요청만'].filter(Boolean).join(' · ')} 조건이 걸려 있습니다</p>
+                <button type="button" data-clear-filters onClick={() => { setCsFilter(null); setDeptFilter(null); setMine(false) }} className="mt-1 h-[34px] px-3 rounded-lg border border-[#6c5ce7] bg-white text-xs font-bold text-[#6c5ce7] hover:bg-[#eeebfd]">조건 풀기</button>
+              </div>}
               {canReq && (
                 <>
                   <p className="text-xs text-slate-400 mt-1 leading-relaxed">

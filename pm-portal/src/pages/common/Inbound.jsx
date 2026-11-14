@@ -33,6 +33,7 @@ import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
 import { useRemember } from '../../hooks/useRemember'
+import PeriodChips from '../../components/ux/PeriodChips'
 import { fetchInboundWait } from '../../lib/inboundWait'
 
 function todayStr() { return todayISO() }
@@ -678,8 +679,13 @@ export default function Inbound() {
                 <table className="w-full text-xs"><tbody><SkeletonRows cols={PROC_COLS.length + 1} rows={8} first={1} two={[3, 4]} /></tbody></table>
               </div>)
             : rows.length === 0
-              ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400 text-xs">
-                  미입고 발주가 없습니다
+              ? <div className="rounded-xl border border-slate-200 bg-slate-50 p-8 text-center text-slate-400 text-xs" data-inb-empty>
+                  {/* 거르기 때문에 0건인지 · 정말 없는지 갈라서 (v4.192.0 — 보던 조건을 기억하게 되어, 조건에 가려진 것을 모르고 지나치지 않게) */}
+                  {(selCustomer || dRowSearch || vendorText) ? <>
+                    <p className="font-bold text-slate-500">이 조건에 맞는 미입고 발주가 없습니다</p>
+                    <p className="mt-1 mb-2">{[selCustomer && '고객사', dRowSearch && '검색어', vendorText && '구매처'].filter(Boolean).join(' · ')} 조건이 걸려 있습니다</p>
+                    <button type="button" data-clear-filters onClick={() => { setSelCustomer(''); setRowSearch(''); setVendorText('') }} className="mt-1 h-[34px] px-3 rounded-lg border border-[#6c5ce7] bg-white text-xs font-bold text-[#6c5ce7] hover:bg-[#eeebfd]">조건 풀기</button>
+                  </> : '미입고 발주가 없습니다'}
                 </div>
               : (
                 <div className="flex-1 min-h-0 rounded-xl border border-slate-200 overflow-hidden flex flex-col">
@@ -1033,6 +1039,7 @@ export default function Inbound() {
                 title="입고일 · 기준코드 · 품명 · 제조사 · 제조사품번 · 단위 · 수량 · 단가 · 발주번호 · 구매처 · 고객사 · 비고"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
+            <PeriodChips from={hFrom} to={hTo} onPick={(r) => { setHFrom(r.from); setHTo(r.to); setHQuery({ from: r.from, to: r.to, customerId: '', vendorId: null }) }} />
             <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:'',vendorId:null})}
               className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
             {/* v4.151.0 — 버튼은 늘 같은 자리 (안 맞으면 흐리게) · 고른 개수는 앞에 따로. 예전엔 고를 때 버튼 3개가 생겨 밀렸다 */}

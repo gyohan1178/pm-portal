@@ -15,6 +15,8 @@ import PageHead from '../../components/PageHead'
 import { EmptyState, ErrorState } from '../../components/ui/EmptyState'
 import { mfrSearchCond, attachMfrs } from '../../lib/itemMeta'
 import MfrAltList from '../../components/MfrAltList'
+import Hl from '../../components/ux/Hl'
+import { useRemember } from '../../hooks/useRemember'
 
 const CUST_PREFIX = { ax: 'AXCELIS', csk: 'CSK', ed: 'Edwards', vm: 'VM' }
 const prefixOf = code => (code || '').split('-')[0]?.slice(0, 2)?.toLowerCase()
@@ -85,6 +87,7 @@ export default function CommonSearch() {
   const [tab, setTab] = useState('product')
   const [pq, setPq] = useState(''); const [pSubmitted, setPSubmitted] = useState('')
   const [rq, setRq] = useState(''); const [rSubmitted, setRSubmitted] = useState('')
+  const [recent, setRecent] = useRemember('search.recent', [], (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'))
   // 다른 화면에서 품번을 누르면 /search?q=품번 으로 온다 → 그 품번으로 바로 검색 (v4.57.0)
   //   ?tab=used 면 역전개(사용처)로
   const [sp] = useSearchParams()
@@ -101,6 +104,12 @@ export default function CommonSearch() {
   const { data: items = [], isLoading: pLoading, error: pErr } = useQuery({
     queryKey: ['commonProduct', pSubmitted], queryFn: () => searchItems(pSubmitted), enabled: !!pSubmitted.trim(),
   })
+  // 최근 검색어 (v4.192.0) — 결과가 나온 검색만 · 이 브라우저에 6개까지 · 누르면 바로 다시 검색
+  useEffect(() => {
+    const t = String(pSubmitted || '').trim()
+    if (t.length < 2 || pLoading || !items.length) return
+    setRecent((old) => (old[0] === t ? old : [t, ...old.filter((x) => x.toUpperCase() !== t.toUpperCase())].slice(0, 6)))
+  }, [pSubmitted, pLoading, items.length]) // eslint-disable-line react-hooks/exhaustive-deps
   const { data: used = [], isLoading: rLoading, error: rErr } = useQuery({
     queryKey: ['commonWhereUsed', rSubmitted], queryFn: () => whereUsedAll(rSubmitted), enabled: !!rSubmitted.trim(),
   })
@@ -146,6 +155,16 @@ export default function CommonSearch() {
             <button onClick={() => setPSubmitted(pq)} disabled={!pq.trim()}
               className="px-5 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">검색</button>
           </div>
+          {recent.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap" data-recent>
+              <span className="text-[11px] text-slate-400">최근 검색</span>
+              {recent.map((t) => (
+                <button key={t} type="button" data-recent-q={t} onClick={() => { setPq(t); setPSubmitted(t) }}
+                  className={`px-2 py-0.5 rounded-full border text-[11px] font-mono ${t === pSubmitted ? 'border-[#6c5ce7] bg-[#eeebfd] text-[#6c5ce7]' : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{t}</button>
+              ))}
+              <button type="button" onClick={() => setRecent([])} data-recent-clear className="text-[11px] text-slate-400 hover:text-slate-600">지우기</button>
+            </div>
+          )}
 
           {pSubmitted && (pLoading
             ? <div className="rounded-xl border border-slate-200 overflow-hidden" data-search-loading="product">
@@ -168,23 +187,23 @@ export default function CommonSearch() {
                         {items.map(it => (
                           <tr key={it.id} className="border-b border-slate-100 hover:bg-slate-50">
                             <td className="px-3 py-2">
-                              <div className="font-mono text-indigo-600">{it.std_code}</div>
-                              <div className="text-[11px] text-slate-500 max-w-[220px] truncate">{it.name}</div>
+                              <div className="font-mono text-indigo-600"><Hl text={it.std_code} q={pSubmitted} /></div>
+                              <div className="text-[11px] text-slate-500 max-w-[220px] truncate"><Hl text={it.name} q={pSubmitted} /></div>
                             </td>
                             <td className="px-3 py-2">
                               {it.customer_item_codes?.length
                                 ? <div className="flex flex-col gap-0.5">
                                     {it.customer_item_codes.map((c, i) =>
                                       <span key={i} className="font-mono text-[11px] text-slate-500">
-                                        <span className="text-slate-400">{c.customers?.code?.toUpperCase()}:</span> {c.customer_code}
+                                        <span className="text-slate-400">{c.customers?.code?.toUpperCase()}:</span> <Hl text={c.customer_code} q={pSubmitted} />
                                       </span>)}
                                   </div>
                                 : <span className="text-slate-300 text-[11px]">—</span>}
                             </td>
                             <td className="px-3 py-2"><span className={`px-1.5 py-0.5 rounded-full text-[10px] font-bold ${it.type === '가공' ? 'bg-indigo-50 text-indigo-600' : 'bg-blue-50 text-blue-600'}`}>{it.type}</span></td>
                             <td className="px-3 py-2">
-                              <div className="text-slate-700">{it.manufacturer || '-'}</div>
-                              <div className="font-mono text-[11px] text-slate-400">{it.manufacturer_code || ''}</div>
+                              <div className="text-slate-700"><Hl text={it.manufacturer || '-'} q={pSubmitted} /></div>
+                              <div className="font-mono text-[11px] text-slate-400"><Hl text={it.manufacturer_code || ''} q={pSubmitted} /></div>
                               <MfrAltList item={it} list={it.mfrs} q={pSubmitted} className="max-w-[420px]" />
                             </td>
                             <td className="px-3 py-2 text-slate-500">

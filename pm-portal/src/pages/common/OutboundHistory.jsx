@@ -17,6 +17,7 @@ import { EmptyRow, ErrorRow } from '../../components/ui/EmptyState'
 import { BTN } from '../../lib/uiText'
 import { fetchIssueAssys, assyKey } from '../../lib/issueAssy'
 import { useRemember } from '../../hooks/useRemember'
+import PeriodChips from '../../components/ux/PeriodChips'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -242,6 +243,8 @@ export default function OutboundHistory() {
             {OUT_KINDS.map(k=><option key={k} value={k}>{k}</option>)}
           </select>
         </div>
+        {/* 기간 빠른 선택 (v4.192.0) — 누르면 날짜가 들어가고 바로 조회 */}
+        <PeriodChips from={hFrom} to={hTo} onPick={(r) => { setHFrom(r.from); setHTo(r.to); setHQuery({ from: r.from, to: r.to, customerId: hCustomer }) }} />
         <button onClick={()=>setHQuery({from:hFrom,to:hTo,customerId:hCustomer})}
           className="px-4 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">조회</button>
         <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold" data-outhist-mode>
