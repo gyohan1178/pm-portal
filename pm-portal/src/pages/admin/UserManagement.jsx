@@ -209,7 +209,7 @@ function ScopeModal({ profile, onSave, onClose }) {
   const [flowOn, setFlowOn] = useState(!(init || []).includes('-flow'))
   const toggle = (k) => setSel(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-bold text-slate-800 mb-1">{profile.name} · 메뉴 권한</h3>
         <p className="text-xs text-slate-400 mb-4">접근 가능한 상위 메뉴를 지정합니다. 지정 안 된 메뉴는 보이지 않고 URL 직접 접근도 차단됩니다.</p>

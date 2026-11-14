@@ -16,6 +16,7 @@ import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import { EmptyRow, ErrorRow } from '../../components/ui/EmptyState'
 import { BTN } from '../../lib/uiText'
 import { fetchIssueAssys, assyKey } from '../../lib/issueAssy'
+import { useRemember } from '../../hooks/useRemember'
 
 // 출고 현황 — ASSY 출고 · 다품목 출고 · 자재요청 불출 · 실사 조정을 한 곳에서 본다.
 //   (예전엔 ASSY 출고 화면의 탭이었다. 다른 경로 출고도 다 나오므로 따로 뺐다)
@@ -153,7 +154,7 @@ export default function OutboundHistory() {
   const histView = useVisibleRows(histGroups, 300, [hQuery, hKind])
   const [openGroup, setOpenGroup] = useState({})   // 펼친 다품목 묶음
   // 다품목 출고 — 어떤 상위품목을 몇 대분 뺐는지 (v4.183.0 · 기록은 이 버전부터)
-  const [mode, setMode] = useState('line')         // line 출고 줄 · assy 상위품목 기준
+  const [mode, setMode] = useRemember('outhist.mode', 'line', (v) => v === 'line' || v === 'assy')         // line 출고 줄 · assy 상위품목 기준
   const [openAssy, setOpenAssy] = useState({})
   const { data: assyMap = new Map() } = useQuery({ queryKey: ['outboundAssys', hQuery], queryFn: () => fetchIssueAssys(hQuery) })
   const assysOf = (r) => (r && r._kind === '다품목 출고' ? assyMap.get(assyKey(r.processed_at, r._custId)) : null) || null

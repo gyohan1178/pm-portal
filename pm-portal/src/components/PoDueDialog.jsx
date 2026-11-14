@@ -52,7 +52,7 @@ export default function PoDueDialog({ pos = [], onClose, onDone }) {
     </button>
   )
   return (
-    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4" onClick={onClose} data-due-dialog>
+    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4" data-due-dialog>
       <div className="bg-white rounded-2xl w-full max-w-[480px] max-h-[92vh] overflow-y-auto p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="text-[15px] font-extrabold text-slate-800">📅 납기 바꾸기 <span className="text-[12px] font-bold text-slate-400">{pos.length}건</span></h3>

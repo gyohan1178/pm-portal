@@ -415,8 +415,7 @@ export default function CustomerPO() {
 
       {/* 카드 상세 — 표를 그대로 옮겨 복사할 수 있게 한다 */}
       {detail && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setDetail(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-5xl rounded-2xl overflow-hidden max-h-[88vh] flex flex-col"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100 flex items-center gap-2 flex-wrap">
@@ -668,7 +667,7 @@ export default function CustomerPO() {
       {showUpload && String(csCode||'').toLowerCase()==='ax' && <CustomerPOUpload csId={cs?.id} csCode={csCode} onClose={()=>setShowUpload(false)} />}
 
       {chgModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={()=>setChgModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col" onClick={e=>e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
               <div>

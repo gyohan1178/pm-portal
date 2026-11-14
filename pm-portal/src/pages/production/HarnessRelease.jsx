@@ -563,7 +563,7 @@ function PasteIssueModal({ onClose, onIssue, busy }) {
   const okRows = m.filter(x => x.state === 'ok')
   const cnt = m.reduce((a, x) => ({ ...a, [x.state]: (a[x.state] || 0) + 1 }), {})
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-hr-paste-modal>
         <div className="px-5 py-3 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

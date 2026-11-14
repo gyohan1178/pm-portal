@@ -25,6 +25,7 @@ import { matcher } from '../../lib/searchMatch'
 import { withNetRetry, isNetErr } from '../../lib/netStatus'
 import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
+import { useRemember } from '../../hooks/useRemember'
 
 async function fetchProjects(customerId) {
   const { data } = await supabase.from('projects').select('id,code,name,rev').eq('customer_id', customerId).order('code')
@@ -130,10 +131,10 @@ export default function Outbound() {
     })
   }, []))
   // 위치순이 기본. 창고를 돌며 꺼내는 순서와 같아 동선이 짧아진다.
-  const [sortBy, setSortBy] = useState('location')      // maker | location | code
+  const [sortBy, setSortBy] = useRemember('out.sort', 'location', (v) => ['maker', 'location', 'code'].includes(v))      // maker | location | code
   const [harnessUnits, setHarnessUnits] = useState(10)  // 하네스 불출 대수
   // 출고 처리
-  const [selCustomer, setSelCustomer] = useState('')
+  const [selCustomer, setSelCustomer] = useRemember('out.cs', '', (v) => typeof v === 'string')   // 보던 고객사 기억 (v4.191.0)
   const [selProject, setSelProject] = useState('')
   const [projSearch, setProjSearch] = useState('')
   const [outUnits, setOutUnits] = useState(1)
@@ -952,7 +953,7 @@ function LabelConfirmModal({ data, onCancel, onPrint }) {
   const cnt = Math.max(0, b - a + 1)
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
         <div className="space-y-2 text-sm">

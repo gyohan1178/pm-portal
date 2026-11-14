@@ -208,8 +208,7 @@ export default function CostSummary({ csId, csName }) {
 
       {/* 두 번 고른다 — 범위, 그다음 단가 포함 여부 */}
       {xlAsk && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setXlAsk(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3"
             onClick={e => e.stopPropagation()}>
 

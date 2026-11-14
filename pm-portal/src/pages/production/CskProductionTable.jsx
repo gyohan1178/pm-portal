@@ -29,7 +29,7 @@ function OptionModal({ row, onClose }) {
   const c = row.csk || {}
   const lines = optionLines(c.option)
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

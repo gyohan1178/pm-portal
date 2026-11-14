@@ -220,7 +220,7 @@ export default function ProcessBoard({ tv: tvProp }) {
       {tab === 'flow' ? <>{Table}<div className="pb-foot"><Legend /></div></> : <MissingList rows={enriched} cust={cust} q={q} />}
 
       {scanOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={() => setScanOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="w-full max-w-md max-h-[92vh] overflow-y-auto rounded-3xl" onClick={(e) => e.stopPropagation()}>
             <ScanView onClose={() => setScanOpen(false)} />
           </div>

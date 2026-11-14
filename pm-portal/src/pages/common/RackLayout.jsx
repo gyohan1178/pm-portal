@@ -533,8 +533,7 @@ export default function RackLayout() {
       </div>
 
       {snapOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setSnapOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-2xl rounded-2xl overflow-hidden max-h-[85vh] flex flex-col"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -585,8 +584,7 @@ export default function RackLayout() {
       )}
 
       {clearAsk && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setClearAsk(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-2xl overflow-hidden"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 bg-rose-50 border-b border-rose-100">

@@ -187,8 +187,7 @@ export default function StockPaste({ onClose }) {
 
   return (<>
     {confirmEl}
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-      onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[88vh] flex flex-col"
         onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3.5 border-b border-slate-200 flex items-center justify-between">

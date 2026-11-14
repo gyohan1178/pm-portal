@@ -1368,7 +1368,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
   const usd = isUsd(o)
   const Info = ({ k: label, children }) => <div><div className="text-[10.5px] text-slate-400">{label}</div><div className="text-xs text-slate-700 font-semibold">{children}</div></div>
   return (
-    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" onClick={onClose} data-po-drawer={o.po_no}>
+    <div className="fixed inset-0 z-40 flex justify-end bg-black/20" data-po-drawer={o.po_no}>
       <div className="w-full max-w-[920px] h-full bg-[#f7f8fb] shadow-2xl overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-white border-b border-slate-200 px-6 py-4 z-10">
           <div className="flex items-center gap-2">

@@ -517,7 +517,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
   })
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-3xl w-full max-h-[88vh] overflow-hidden flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-slate-200 flex items-center justify-between">
           <p className="text-sm font-bold text-slate-800">AXCELIS PO 엑셀 반영 — 수주대장 · 고객사 PO · 생산관리 한 번에</p>

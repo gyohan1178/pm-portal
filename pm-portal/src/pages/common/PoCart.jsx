@@ -220,7 +220,7 @@ export default function PoCart({ open, onClose }) {
   if (!open) return null
   return (<>
     {confirmEl}
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-auto">
       <div className="bg-white rounded-2xl w-full max-w-6xl my-6" onClick={(e) => e.stopPropagation()}>
         {/* 머리 */}
         <div className="px-5 pt-5 pb-3 border-b border-slate-100">

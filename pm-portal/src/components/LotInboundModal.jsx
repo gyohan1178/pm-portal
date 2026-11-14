@@ -65,7 +65,7 @@ export default function LotInboundModal({ rows, date, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto">
       <div className="bg-white w-full max-w-2xl rounded-2xl my-8" onClick={e => e.stopPropagation()}>
         <div className="px-5 pt-4 pb-3 border-b border-slate-100">
           <h3 className="text-base font-bold text-slate-900">🏷 로트 입력 — 방금 입고한 로트 관리 품목 {rows.length}개</h3>

@@ -80,7 +80,7 @@ export default function AuditApplyModal({ onClose }) {
   const pickedDiff = [...picked].filter(id => shown.some(r => r.id === id))
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto">
       <div className="bg-white w-full max-w-5xl rounded-2xl my-6" onClick={e => e.stopPropagation()}>
         <div className="px-5 pt-4 pb-3 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

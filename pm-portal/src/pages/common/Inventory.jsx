@@ -33,6 +33,7 @@ import { useConfirm } from '../../components/ux/ConfirmDialog'
 import InfoTip from '../../components/ux/InfoTip'
 import Spin from '../../components/ux/Spin'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
+import { useRemember } from '../../hooks/useRemember'
 
 const EMPTY_AUX = new Map()
 
@@ -88,8 +89,8 @@ const COLS = [
 
 export default function Inventory() {
   const [search, setSearch] = useState('')
-  const [typeFilter, setTypeFilter] = useState('전체')
-  const [brandFilter, setBrandFilter] = useState('전체')
+  const [typeFilter, setTypeFilter] = useRemember('inv.type', '전체', (v) => typeof v === 'string')   // 보던 조건 기억 (v4.191.0)
+  const [brandFilter, setBrandFilter] = useRemember('inv.brand', '전체', (v) => typeof v === 'string')
   const [appliedSearch, setAppliedSearch] = useState('')
   const [scanOpen, setScanOpen] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)

@@ -36,6 +36,8 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import InfoTip from '../../components/ux/InfoTip'
 import Spin from '../../components/ux/Spin'
+import { useRemember } from '../../hooks/useRemember'
+import { useUndoSnack } from '../../components/ux/UndoSnack'
 
 
 function monthAgoStr() {
@@ -187,7 +189,7 @@ export default function PurchasePage() {
   const [madeIds] = useState(() => new Set((sp.get('made') || '').split(',').filter(Boolean)))
   const [onlyMade, setOnlyMade] = useState(() => madeIds.size > 0)
   const [tab, setTab] = useState('po') // po | history
-  const [typeTab, setTypeTab] = useState('전체')
+  const [typeTab, setTypeTab] = useRemember('po.type', '전체', (v) => typeof v === 'string')   // 보던 조건 기억 (v4.191.0)
   const [search, setSearch] = useState('')  // 거래처·제조사·품번 검색
   // 발주가 수천 건이라 한 글자마다 필터·정렬을 다시 돌리면 입력이 멈춘다.
   // 입력은 즉시 반영하되(타이핑 끊김 없음) 실제 필터는 멈춘 뒤에 한 번만.
@@ -225,7 +227,7 @@ export default function PurchasePage() {
   const [dueReq, setDueReq] = useState(null)   // 협력사 납기 회신 요청 창 (v4.184.0)
   const [delWord, setDelWord] = useState('')
   // 여러 칸 차례 정렬 (v4.114.1) — 먼저 누른 칸이 먼저. 예) 구매처 → 요청납기 = 구매처끼리 묶고 그 안에서 납기 순
-  const [sorts, setSorts] = useState([])   // [{key, dir}]
+  const [sorts, setSorts] = useRemember('po.sorts', [], (v) => Array.isArray(v) && v.every((x) => x && typeof x.key === 'string'))   // [{key, dir}]
   const [bulkOrderDate, setBulkOrderDate] = useState('')
   const [bulkPromiseDate, setBulkPromiseDate] = useState('')
   const [dueDlg, setDueDlg] = useState(null)        // 납기 바꾸기 창 — 대상 발주들 (v4.98.0)
@@ -423,21 +425,48 @@ export default function PurchasePage() {
     onSuccess:()=>qc.invalidateQueries(['purchase']),
     onError:(e)=>toastError('삭제 실패: ' + e.message),
   })
+  // 일괄 바꾸기 되돌리기 (v4.191.0) — 발주번호 부여 · 발주일자 변경은 고른 줄 전부를 덮어써서, 잘못 누르면 원래 값을 알 수 없었다
+  //   누른 순간의 값을 기억해 두었다가 6초 안에 「되돌리기」를 누르면 줄마다 원래 값으로
+  const snack = useUndoSnack(6000)
+  const undoField = async (field, prev, label) => {
+    const by = new Map()
+    prev.forEach(([id, v]) => { const k = v == null ? '\u0000' : String(v); if (!by.has(k)) by.set(k, { v: v ?? null, ids: [] }); by.get(k).ids.push(id) })
+    for (const g of by.values()) {
+      for (let i = 0; i < g.ids.length; i += 100) {
+        const { error } = await supabase.from('purchase_orders').update({ [field]: g.v }).in('id', g.ids.slice(i, i + 100))
+        if (error) throw error
+      }
+    }
+    logActivity('update', 'purchase_orders', null, `${label} 되돌림 ${prev.length}건`, null, cs?.name)
+    qc.invalidateQueries(['purchase'])
+  }
+  const prevOf = (ids, field) => { const m = new Map(purchases.map((p) => [p.id, p[field] ?? null])); return ids.map((id) => [id, m.get(id) ?? null]) }
   const bulkPoMut = useMutation({
     mutationFn:async({ids,poNo})=>{
-      const{error}=await supabase.from('purchase_orders').update({po_number:poNo}).in('id',ids); if(error) throw error
+      const prev = prevOf(ids, 'po_number')
+      for (let i = 0; i < ids.length; i += 100) {
+        const{error}=await supabase.from('purchase_orders').update({po_number:poNo}).in('id',ids.slice(i, i + 100)); if(error) throw error
+      }
       logActivity('update','purchase_orders', poNo, `발주번호 일괄 부여 ${ids.length}건`, null, cs?.name)
+      return { prev, poNo }
     },
-    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkPo(''); setChecked({}) },
+    onSuccess:(r)=>{ qc.invalidateQueries(['purchase']); setBulkPo(''); setChecked({})
+      snack.show(`발주번호 「${r.poNo}」 ${r.prev.length}건 부여`, () => undoField('po_number', r.prev, '발주번호 부여')) },
     onError:(e)=>toastError('저장 실패: '+e.message),
   })
   const bulkDateMut = useMutation({
     mutationFn:async({ids,field,value})=>{
-      const{error}=await supabase.from('purchase_orders').update({[field]:value||null}).in('id',ids); if(error) throw error
+      const prev = prevOf(ids, field)
+      for (let i = 0; i < ids.length; i += 100) {
+        const{error}=await supabase.from('purchase_orders').update({[field]:value||null}).in('id',ids.slice(i, i + 100)); if(error) throw error
+      }
       logActivity('update','purchase_orders', null,
         `${field==='promise_date'?'납기':'발주일'} 일괄 변경 ${ids.length}건 → ${value||'(비움)'}`, null, cs?.name)
+      return { prev, field, value }
     },
-    onSuccess:()=>{ qc.invalidateQueries(['purchase']); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({}) },
+    onSuccess:(r)=>{ qc.invalidateQueries(['purchase']); setBulkOrderDate(''); setBulkPromiseDate(''); setChecked({})
+      const label = r.field==='promise_date'?'납기':'발주일자'
+      snack.show(`${label} ${r.prev.length}건 → ${r.value||'(비움)'}`, () => undoField(r.field, r.prev, `${label} 변경`)) },
     onError:(e)=>toastError('저장 실패: '+e.message),
   })
 
@@ -954,7 +983,7 @@ export default function PurchasePage() {
 
   return (
     <div className="space-y-4">
-      {confirmEl}
+      {confirmEl}{snack.el}
       <PageHead crumb={`${cs?.name || ''} · 구매`} title="구매발주"
         desc={narrow ? '고객사별로 발주했는지 · 입고됐는지 확인합니다' : "발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다."}>
         {tab==='po' && !narrow && <>
@@ -995,8 +1024,7 @@ export default function PurchasePage() {
       {/* 일괄 삭제 확인 — '삭제' 를 직접 쳐야 진행된다.
           체크가 여러 건 걸린 채로 잘못 누르면 한꺼번에 날아가기 때문이다. */}
       {delAsk && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={()=>setDelAsk(false)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-md space-y-3"
             onClick={e=>e.stopPropagation()}>
             <div>

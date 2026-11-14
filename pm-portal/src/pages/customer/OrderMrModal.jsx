@@ -27,7 +27,7 @@ export default function OrderMrModal({ lines, meName, onClose, onDone }) {
     } catch (e) { toastError('자재 요청 실패: ' + (e.message || e)) } finally { setBusy(false) }
   }
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-slate-900/40 flex items-start justify-center p-3 md:p-8 overflow-y-auto whitespace-normal" onClick={onClose} data-mr-modal>
+    <div className="fixed inset-0 z-[60] bg-slate-900/40 flex items-start justify-center p-3 md:p-8 overflow-y-auto whitespace-normal" data-mr-modal>
       <div className="w-full max-w-[760px] bg-white rounded-2xl shadow-xl overflow-x-hidden" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-4 border-b border-slate-100">
           <div className="text-[11px] text-slate-400">수주대장</div>

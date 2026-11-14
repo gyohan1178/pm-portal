@@ -59,7 +59,7 @@ export default function EcountPurchaseModal({ rows, customers = [], email, onClo
   }
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div data-ecp-modal className="bg-white rounded-2xl p-5 w-full max-w-6xl max-h-[90vh] overflow-hidden grid grid-cols-[1fr_230px] gap-5" onClick={(e) => e.stopPropagation()}>
         <div className="min-h-0 overflow-auto pr-1">
           <h3 className="text-base font-bold text-slate-900">📤 이카운트 구매입력 변환</h3>

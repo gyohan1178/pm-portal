@@ -494,7 +494,7 @@ function ExternalDist() {
 
       {/* 도면별 배포처 — 설계변경 폐기통보 (지침 5항) */}
       {scrapFor && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setScrapFor('')}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-3xl max-h-[85vh] overflow-auto space-y-3" onClick={(e) => e.stopPropagation()}>
             <div>
               <h3 className="text-base font-bold text-slate-900">📐 {scrapFor} — 이 도면을 받아 간 곳</h3>
@@ -546,7 +546,7 @@ function ExternalDist() {
 
       {/* 등록·수정 */}
       {form && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setForm(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-2xl max-h-[88vh] overflow-auto space-y-3" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900">{form.id ? '배포이력 수정' : '배포 기록 남기기'}</h3>
 

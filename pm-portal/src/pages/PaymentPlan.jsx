@@ -296,8 +296,7 @@ export default function PaymentPlan() {
 
       {/* 분할 입력 */}
       {openPo && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => { setOpenPo(null); setRows([]) }}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-800">💳 결제 분할</h3>
             <p className="text-xs text-slate-500 mt-0.5">

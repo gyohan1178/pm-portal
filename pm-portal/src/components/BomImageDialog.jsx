@@ -77,7 +77,7 @@ export default function BomImageDialog({ rows, assembly, onClose }) {
   )
 
   return (
-    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 flex items-start justify-center z-50 p-4 overflow-auto">
       <div data-bom-image className="bg-white rounded-2xl w-full max-w-6xl my-6 flex flex-col lg:flex-row gap-4 p-5" onClick={(e) => e.stopPropagation()}>
         <div className="lg:w-80 flex-shrink-0 space-y-3">
           <div>

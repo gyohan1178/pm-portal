@@ -22,6 +22,7 @@ import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
 import PageHead from '../../components/PageHead'
 import { EmptyState } from '../../components/ui/EmptyState'
+import { useRemember } from '../../hooks/useRemember'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -73,7 +74,7 @@ async function fetchCart(csId) {
 
 export default function Issue() {
   const qc = useQueryClient()
-  const [csCode, setCsCode] = useState('ax')      // 고객사
+  const [csCode, setCsCode] = useRemember('issue.cs', 'ax', (v) => typeof v === 'string' && !!v)      // 고객사
   const [itemSearch, setItemSearch] = useState('')
   const [itemHits, setItemHits] = useState([])
   const [picked, setPicked] = useState([])   // 전개 전 담은 목록
@@ -1078,7 +1079,7 @@ export default function Issue() {
 // 라벨 출력 전 확인 모달 — 몇 장 나가는지 보고 나서 출력한다 (오출력 방지)
 function LabelConfirmModal({ data, onCancel, onPrint }) {
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onCancel}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-sm p-5" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
         <div className="space-y-2 text-sm">

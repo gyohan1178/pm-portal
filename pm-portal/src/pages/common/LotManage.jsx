@@ -513,8 +513,7 @@ export default function LotManage() {
 
       {/* 로트관리 대상 품목 — 화면에서 켜고 끈다 */}
       {mgrOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setMgrOpen(false)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-2xl space-y-3 max-h-[86vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div>
@@ -685,8 +684,7 @@ function LotAdd({ preset, onClose, onDone }) {
   const mkc = item?.maker_code || item?.manufacturer_code
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[92vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -845,8 +843,7 @@ function LotEdit({ lot, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl overflow-hidden max-h-[92vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
@@ -965,8 +962,7 @@ function ShelfEdit({ item, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4"
-      onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div className="bg-white w-full sm:max-w-sm rounded-t-2xl sm:rounded-2xl overflow-hidden"
         onClick={e => e.stopPropagation()}>
         <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">

@@ -437,8 +437,7 @@ export default function FieldSearch() {
 
       {/* 품목 상세 — 창고에서 어느 칸인지 그림으로 */}
       {detail && (
-        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-3"
-          onClick={() => setDetail(null)}>
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-end sm:items-center justify-center p-3">
           <div className="bg-white w-full max-w-md rounded-2xl max-h-[88vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100 flex items-start gap-2">

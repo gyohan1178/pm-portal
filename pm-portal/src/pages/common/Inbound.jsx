@@ -32,10 +32,29 @@ import { fetchVendors } from '../../lib/vendorsQuery'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import { useRemember } from '../../hooks/useRemember'
+import { fetchInboundWait } from '../../lib/inboundWait'
 
 function todayStr() { return todayISO() }
 function monthAgoStr() {
   const d = new Date(); d.setMonth(d.getMonth()-1); return ymdKST(d)
+}
+
+// 받은 자재의 보관 위치 · 기다리는 곳 (v4.191.0) — 줄이 높아지지 않게 품명 옆 작은 표시
+//   full: 담은 품목 패널 — 호기 이름까지 · big: 휴대폰 카드
+function WaitInfo({ w, full = false, big = false, part = 'all' }) {
+  if (!w) return null
+  const showLoc = part !== 'wait' && !!w.loc, showWait = part !== 'loc'
+  if (!showLoc && !(showWait && (w.reqN || w.hogis.length))) return null
+  const sz = big ? 'text-[11.5px] px-1.5 py-[1px]' : 'text-[10.5px] px-1'
+  const short = part === 'wait'      // 표 줄 — 품명이 잘리지 않게 짧게 (자세한 것은 마우스를 올리면)
+  return (
+    <span className={`inline-flex items-center gap-1 shrink-0 ${big ? 'flex-wrap mt-0.5' : ''}`} data-inb-wait>
+      {showLoc && <span data-inb-loc className={`${sz} rounded bg-slate-100 text-slate-700 font-mono font-bold whitespace-nowrap`} title={`보관 위치 ${w.loc}${w.stock != null ? ` · 지금 재고 ${w.stock}` : ''}`}>📍{w.loc}</span>}
+      {showWait && w.reqN > 0 && <span data-inb-req className={`${sz} rounded bg-violet-50 text-violet-700 font-bold whitespace-nowrap`} title={`이 품목을 기다리는 자재 요청 ${w.reqN}건 · 남은 수량 ${w.reqQty}`}>{short ? '요청' : '요청 대기'} {w.reqN}</span>}
+      {showWait && w.hogis.length > 0 && <span data-inb-miss className={`${sz} rounded bg-red-50 text-red-600 font-bold whitespace-nowrap`} title={`미불출로 기다리는 호기: ${w.hogis.join(', ')} · 모자란 수량 ${w.missQty}`}>미불출 {full ? w.hogis.slice(0, 3).join(' · ') + (w.hogis.length > 3 ? ` 외 ${w.hogis.length - 3}` : '') : `${w.hogis.length}대`}</span>}
+    </span>
+  )
 }
 
 async function fetchPendingPOs(customerId, vendorId) {
@@ -175,7 +194,7 @@ export default function Inbound() {
   const [dMemo, setDMemo] = useState('')
   const [dDate, setDDate] = useState(todayStr())
   // 입고 처리
-  const [selCustomer, setSelCustomer] = useState('')
+  const [selCustomer, setSelCustomer] = useRemember('inbound.cs', '', (v) => typeof v === 'string')   // 보던 고객사 기억 (v4.191.0)
   const [selVendor, setSelVendor] = useState('')
   const [checked, setChecked] = useState({})
   const narrow = useNarrow()   // 휴대폰 — 표 대신 카드 · 검색칸 크게 (v4.152.0)
@@ -187,7 +206,7 @@ export default function Inbound() {
   const [note, setNote] = useState('')
   const [inboundDate, setInboundDate] = useState(todayStr())
   const [result, setResult] = useState(null)
-  const [sort, setSort] = useState({ key:'order_date', dir:'asc' })  // 입고처리 표 헤더 정렬
+  const [sort, setSort] = useRemember('inbound.sort', { key:'order_date', dir:'asc' }, (v) => v && typeof v.key === 'string' && (v.dir === 'asc' || v.dir === 'desc'))  // 입고처리 표 헤더 정렬
   // 입고 현황
   const [hFrom, setHFrom] = useState(monthAgoStr())
   const [hTo, setHTo] = useState(todayStr())
@@ -251,6 +270,12 @@ export default function Inbound() {
 
   // 입고 단가 경고 (v4.98.0) — 품목마다 직전 입고 단가(단가 이력)와 ±10% 넘게 다르면 줄에 표시
   const priceItemIds = useMemo(() => [...new Set(pendingPOs.map(p => p.item_id).filter(Boolean))].sort(), [pendingPOs])
+  // 받은 자재를 어디에 두고 · 누가 기다리는지 (v4.191.0) — 보관 위치 · 자재 요청 대기 · 미불출 호기
+  const { data: wait } = useQuery({
+    queryKey: ['inboundWait', priceItemIds.length, priceItemIds[0] || '', priceItemIds[priceItemIds.length - 1] || ''],
+    enabled: priceItemIds.length > 0, staleTime: 2 * 60 * 1000,
+    queryFn: () => fetchInboundWait(priceItemIds),
+  })
   const { data: lastPrice = {} } = useQuery({
     queryKey: ['lastPrices', priceItemIds.length, priceItemIds[0] || '', priceItemIds[priceItemIds.length - 1] || ''],
     enabled: priceItemIds.length > 0,
@@ -685,6 +710,7 @@ export default function Inbound() {
                                     <span className={`ml-auto shrink-0 px-2 py-0.5 rounded-full text-[11px] font-bold ${delayed ? 'bg-rose-50 text-rose-600' : 'bg-slate-100 text-slate-600'}`}>{delayed ? '지연 · ' : ''}받을 날 {due ? String(due).slice(5) : '-'}{po.vendor_date ? ' (변경)' : ''}</span>
                                   </div>
                                   <div className="text-[13px] text-slate-700 truncate">{po.items?.name||''}</div>
+                                  <WaitInfo w={wait?.of(po.item_id, po.items?.std_code)} big />
                                   {(po.items?.manufacturer || po.items?.manufacturer_code) && <div className="text-[12px] text-slate-500 truncate">{po.items?.manufacturer||'—'} · <span className="font-mono">{po.items?.manufacturer_code||''}</span></div>}
                                   <div className="mt-0.5 flex flex-wrap gap-x-2 text-[12px] text-slate-500">
                                     <span className="font-semibold text-slate-600">{po.vendors?.name||'-'}</span>
@@ -751,10 +777,14 @@ export default function Inbound() {
                               <td className="px-3 py-1.5">
                                 <div className="flex items-center gap-1.5 max-w-[260px]">
                                   <span className="font-mono text-indigo-600 shrink-0">{po.items?.std_code}</span>
+                                  <WaitInfo w={wait?.of(po.item_id, po.items?.std_code)} part="loc" />
                                   {/* 발주할 때 적어 둔 메모. 입고 때도 봐야 한다 — 줄이 높아지지 않게 품번 옆에 (v4.62.0) */}
                                   {po.memo && <span className="text-[10.5px] text-amber-700 bg-amber-50 rounded px-1 truncate" title={po.memo}>{po.memo}</span>}
                                 </div>
-                                <div className="text-[11px] text-slate-500 truncate max-w-[260px]" title={po.items?.name||''}>{po.items?.name||''}</div>
+                                <div className="flex items-center gap-1.5 max-w-[260px]">
+                                  <span className="text-[11px] text-slate-500 truncate min-w-0" title={po.items?.name||''}>{po.items?.name||''}</span>
+                                  <WaitInfo w={wait?.of(po.item_id, po.items?.std_code)} part="wait" />
+                                </div>
                               </td>
                               <td className="px-3 py-2">
                                 <div className="text-slate-700 truncate max-w-[130px]">{po.items?.manufacturer||'-'}</div>
@@ -837,6 +867,7 @@ export default function Inbound() {
                           {r.items?.std_code || '-'}
                         </span>
                         <span className="text-slate-600 flex-1 min-w-0 truncate">
+                          <WaitInfo w={wait?.of(r.item_id, r.items?.std_code)} full />{' '}
                           {r.items?.name}
                           {r.memo && (
                             <span className="ml-1 px-1 rounded bg-amber-50 text-amber-700 text-[10px]" title={r.memo}>{r.memo}</span>
@@ -1131,8 +1162,7 @@ export default function Inbound() {
 
       {/* 입고일 변경 — 날짜만 바꾼다 */}
       {dateForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={()=>setDateForm(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3"
             onClick={e=>e.stopPropagation()}>
             <div>

@@ -453,7 +453,7 @@ function CustomerExport({ view, all, today, filtered, onClose }) {
 
   const summary = customerSummary(rows)
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto">
       <div className="bg-white w-full max-w-6xl rounded-2xl my-8" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 pt-4 pb-3 border-b border-slate-100">
           <h3 className="text-base font-bold text-slate-900">📤 고객사 제출용 — FA Status Report (영문 엑셀)</h3>
@@ -1249,7 +1249,7 @@ function PasteModal({ rows, csId, me, onClose, onDone }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto">
       <div className="bg-white w-full max-w-4xl rounded-2xl my-8" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 pt-4 pb-3 border-b border-slate-100">
           <h3 className="text-base font-bold text-slate-900">📋 FA 목록 붙여넣기</h3>

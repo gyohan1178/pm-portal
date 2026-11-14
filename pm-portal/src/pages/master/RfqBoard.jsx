@@ -256,7 +256,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
         initial={{ code: pasteFor.l.pn, name: pasteFor.l.name || pasteFor.l.pn, qty: pasteFor.l.qty, labor: pasteFor.l.paste_parts?.labor || '', text: pasteFor.l.paste_parts ? pasteToText(pasteFor.l.paste_parts) : '' }}
         onClose={() => setPasteFor(null)} onAdd={(x) => savePaste(pasteFor.r, pasteFor.l, x)} />}
       {send && (
-        <div className="fixed inset-0 z-[80] bg-slate-900/40 flex items-center justify-center p-4" onMouseDown={() => setSend(null)} data-rfq-send>
+        <div className="fixed inset-0 z-[80] bg-slate-900/40 flex items-center justify-center p-4" data-rfq-send>
           <div className="w-full max-w-[460px] bg-white rounded-2xl shadow-xl p-5" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
             <h3 className="text-[15px] font-extrabold text-slate-800">「{send.r.title}」 {send.rest.length ? `— ${send.pick.length}품목을 ` : '견적을 '}발송 완료로 할까요?</h3>
             <p className="text-[12.5px] text-slate-500 mt-1">품목 {n(send.pick.length)}개 · 오늘({md(today)}) 발송으로 남깁니다. 「발송 완료」 목록으로 옮겨지고, 잘못 눌렀으면 「↩ 발송 취소」로 되돌릴 수 있습니다.</p>

@@ -3,7 +3,8 @@ import { useState, useMemo, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
-import { useMe } from '../hooks/useProfile'
+import { useMe, isPurchasing } from '../hooks/useProfile'
+import TodayAuto from '../components/TodayAuto'
 import { todayISO, kst, kstYmd } from '../lib/utils'
 import { dday, isOwnedBy, canEditTodo, isNewForMe, groupOf, postponeDate } from '../lib/todoView'
 import { useCycleTodo, CycleTodoRow } from '../components/CycleTodo'
@@ -392,6 +393,9 @@ export default function Todo() {
       </PageHead>
       {snack.el}{confirmEl}{coach.el}
 
+      {/* 오늘 챙길 일 — 자동 모음 (v4.191.0) · 구매자재만 */}
+      {isPurchasing(me) && <TodayAuto profile={me} />}
+
       {/* 사람 칩 — 들어오면 「나」 */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {chips.map(c => (
@@ -466,8 +470,7 @@ export default function Todo() {
         const done = r.status === '완료'
         const mine = isMine(r)
         return (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto"
-          onClick={e => { if (e.target === e.currentTarget) setDetail(null) }}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto">
           <div className="bg-white w-full max-w-2xl rounded-2xl my-8" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
               <span className={`px-2 py-1 text-[11px] font-bold rounded-md ${ST_CLS[r.status]}`}>{r.status}</span>
@@ -590,8 +593,7 @@ export default function Todo() {
       })()}
 
       {draft && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => closeDraft()}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-2xl max-h-[88vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100">

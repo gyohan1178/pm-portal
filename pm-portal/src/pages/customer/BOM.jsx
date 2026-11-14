@@ -1535,8 +1535,7 @@ export default function BOM() {
       {/* BOM 행 편집 — 대체품 교체·수량 수정 */}
       {/* 상위품번 수정 — 코드·품명·REV */}
       {editAsm && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setEditAsm(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-md rounded-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-800">상위품번 수정</h3>
@@ -1588,8 +1587,7 @@ export default function BOM() {
 
       {/* 품목 추가 — 이 BOM 에 넣을 부품 */}
       {addPart && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => { setAddPart(null); setPartQ(''); setPartHits([]) }}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-lg rounded-2xl" onClick={e => e.stopPropagation()}>
             <div className="px-4 py-3 border-b border-slate-100">
               <h3 className="text-base font-bold text-slate-800">품목 추가</h3>
@@ -1877,7 +1875,7 @@ function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setH
   }
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5" onClick={e => e.stopPropagation()}>
         <h3 className="text-base font-bold text-slate-800 mb-1">
           {isEdit ? '🔧 BOM 행 수정' : '＋ BOM 행 추가'}

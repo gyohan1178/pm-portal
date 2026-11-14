@@ -52,7 +52,7 @@ function ConfirmDialog({ title, desc, items = [], more = 0, okText = '확인', c
     } else onDone(true)
   }
   return createPortal(
-    <div className="fixed inset-0 z-[80] bg-slate-900/40 flex items-center justify-center p-4 whitespace-normal" onMouseDown={() => onDone(null)} data-confirm-dialog>
+    <div className="fixed inset-0 z-[80] bg-slate-900/40 flex items-center justify-center p-4 whitespace-normal" data-confirm-dialog>
       <div ref={boxRef} className="w-full max-w-[440px] bg-white rounded-2xl shadow-xl p-5" onMouseDown={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <h3 className="text-[15px] font-extrabold text-slate-800">{title}</h3>
         {desc && <p className="text-[12.5px] text-slate-500 mt-1 whitespace-pre-line">{desc}</p>}

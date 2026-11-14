@@ -67,7 +67,7 @@ export default function DocRequestModal({ preset = {}, onClose }) {
 
   const editable = canEdit(profile)
   return (
-    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4 whitespace-normal" onClick={onClose} data-doc-req-modal>
+    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4 whitespace-normal" data-doc-req-modal>
       <div className="bg-white rounded-2xl w-full max-w-[460px] max-h-[92vh] overflow-y-auto overflow-x-hidden p-5 space-y-3" onClick={(e) => e.stopPropagation()} data-doc-req-box>
         <div className="flex items-center justify-between">
           <h3 className="text-[15px] font-extrabold text-slate-800">📎 영업에 자료 요청</h3>

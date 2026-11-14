@@ -1852,7 +1852,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       {/* 보관함 — 채번 전 견적을 넣어 두는 곳 */}
       {draftOpen && (
-        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setDraftOpen(false)}>
+        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between px-5 py-3 border-b border-slate-200">
               <div>
@@ -1887,7 +1887,7 @@ export default function QuoteSheet({ customerId, customerName, initialLine, cfg 
 
       {/* 마진 구간 설정 — 모든 PC 공통 */}
       {cfgOpen && tierDraft && (
-        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setCfgOpen(false)}>
+        <div className="no-print fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-start justify-between px-5 py-3 border-b border-slate-200">
               <div>

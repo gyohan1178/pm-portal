@@ -731,7 +731,7 @@ export default function CostSaving() {
 
       {/* 등록 모달 */}
       {form && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setForm(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-lg space-y-3" onClick={(e) => e.stopPropagation()}>
             <div>
               <h3 className="text-base font-bold text-slate-900">원가절감 실적 등록</h3>
@@ -785,7 +785,7 @@ export default function CostSaving() {
 
       {/* 목표 */}
       {targetOpen && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setTargetOpen(false)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-sm space-y-3" onClick={(e) => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-900">🎯 집계 기간 · 절감 목표</h3>
             <label className="block text-[11px] font-bold text-slate-400">연간 목표 (원)</label>

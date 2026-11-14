@@ -418,8 +418,7 @@ export default function CellAudit() {
       {confirmEl}
       {/* 품목 넣기 — 검색해서 이 칸에 등록하거나 다른 칸에서 옮긴다 */}
       {addOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
-          onClick={() => setAddOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1">
@@ -514,7 +513,7 @@ export default function CellAudit() {
           onScan={(l) => { setAuxReg(null); auxPickMain(l) }} />
       )}
       {auxReg?.stage === 'pick' && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center" onClick={() => setAuxReg(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center">
           <div data-aux-pick className="bg-white w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <h3 className="text-base font-bold text-slate-800">🔗 {location} = 보조 칸</h3>
             <p className="text-xs text-slate-400 mt-1 mb-3">

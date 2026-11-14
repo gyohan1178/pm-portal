@@ -169,7 +169,7 @@ export default function Complaints() {
       </div>
 
       {form && (
-        <div className="fixed inset-0 z-50 bg-slate-900/30 flex items-start justify-center overflow-y-auto p-4" onClick={() => !busy && setForm(null)}>
+        <div className="fixed inset-0 z-50 bg-slate-900/30 flex items-start justify-center overflow-y-auto p-4">
           <div className="w-full max-w-[760px] mt-10 rounded-2xl bg-white shadow-xl" onClick={(e) => e.stopPropagation()} role="dialog" data-complaint-form>
             <div className="px-6 pt-5 pb-3 border-b border-slate-100">
               <div className="text-[11px] text-slate-400">AXCELIS · RMA 대장 양식</div>

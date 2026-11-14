@@ -1341,7 +1341,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
 
       {/* 편집 모달 */}
       {edit && (
-        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={() => setEdit(null)}>
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between sticky top-0 bg-white">
               <h3 className="text-sm font-bold text-slate-800">{edit.id ? '호기 편집' : '호기 추가'}</h3>

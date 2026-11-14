@@ -24,7 +24,7 @@ export default function DueRequestDialog({ pos, vendors, custName, onClose }) {
   const COLS = DUE_COLS
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" onClick={onClose} data-due-req>
+    <div className="fixed inset-0 z-50 bg-slate-900/40 flex items-center justify-center p-4" data-due-req>
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-6xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="px-6 pt-5 pb-3 border-b border-slate-100 flex items-start justify-between gap-3">
           <div>

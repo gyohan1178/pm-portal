@@ -19,7 +19,7 @@ export async function downloadTemplate() {
 
 export default function OrderEntry({ mode = 'one', onClose, onSaved, meName }) {
   return (
-    <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/25 overflow-y-auto p-3 md:p-8" onClick={onClose} data-entry-modal={mode}>
+    <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/25 overflow-y-auto p-3 md:p-8" data-entry-modal={mode}>
       <div className="w-full max-w-[1100px] bg-[#f7f8fb] rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
         {mode === 'excel' ? <ExcelEntry onClose={onClose} onSaved={onSaved} meName={meName} /> : <OneEntry onClose={onClose} onSaved={onSaved} meName={meName} />}
       </div>

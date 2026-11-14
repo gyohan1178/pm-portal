@@ -703,7 +703,7 @@ export default function Items() {
 
       {/* 고객사 코드 추가 모달 */}
       {codeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={()=>setCodeModal(null)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white rounded-2xl shadow-2xl w-96 p-5" onClick={e=>e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <div>

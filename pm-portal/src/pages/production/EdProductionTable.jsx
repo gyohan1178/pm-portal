@@ -481,7 +481,7 @@ export function MissingModal({ row, onClose, onSave, saving }) {
     set(i, { pn: it.std_code.replace(/^(ED|AX)-/, ''), name: it.name || '', maker: it.manufacturer || '', makerPn: it.manufacturer_code || '' })
   }
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[88vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div>
@@ -550,7 +550,7 @@ export function RulesModal({ rules, onClose, onSave, saving, defaults, extraKind
     onSave({ days: out, qcDays: qcDays === '' ? 4 : Number(qcDays), map: rules.map, bom: rules.bom })
   }
   return (
-    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()} data-rules-modal>
         <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
           <div>

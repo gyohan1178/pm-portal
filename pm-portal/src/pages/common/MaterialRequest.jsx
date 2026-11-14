@@ -25,6 +25,7 @@ import { useUndoSnack } from '../../components/ux/UndoSnack'
 import InfoTip from '../../components/ux/InfoTip'
 import Spin from '../../components/ux/Spin'
 import { useCoach } from '../../components/ux/CoachMarks'
+import { useRemember } from '../../hooks/useRemember'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -106,9 +107,9 @@ export default function MaterialRequest() {
   const canReq = useCanRequest()      // 요청 등록 — 조회 계정도 가능
   const [tab, setTab] = useState('list')      // list | new
   const [filter, setFilter] = useState(null)  // null=미완료
-  const [mine, setMine] = useState(false)      // 내가 등록한 것만
-  const [csFilter, setCsFilter] = useState(null)
-  const [deptFilter, setDeptFilter] = useState(null)
+  const [mine, setMine] = useRemember('mr.mine', false, (v) => typeof v === 'boolean')      // 내가 등록한 것만
+  const [csFilter, setCsFilter] = useRemember('mr.cs', null, (v) => v === null || typeof v === 'string')   // 보던 조건 기억 (v4.191.0)
+  const [deptFilter, setDeptFilter] = useRemember('mr.dept', null, (v) => v === null || typeof v === 'string')
   // 담당자가 보기 좋게 (2026-10-06) — 처리자 · 요약 지표로 거르고, 급한 순 구간으로 끊는다
   const [who, setWho] = useState(null)        // null 전체 · '__me' · '__none' · '__etc' · 처리자 이름
   const [kpi, setKpi] = useState(null)        // overdue · readyLate · unassigned · urgent
@@ -1396,8 +1397,7 @@ export default function MaterialRequest() {
 
       {/* ───────── ASSY 선택 ───────── */}
       {assyOpen && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
-          onClick={() => setAssyOpen(false)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-1">
@@ -1482,8 +1482,7 @@ export default function MaterialRequest() {
 
       {/* ───────── 품목 검색 ───────── */}
       {searchIdx !== null && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center"
-          onClick={() => setSearchIdx(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center">
           <div className="bg-white w-full sm:max-w-lg rounded-t-2xl sm:rounded-2xl p-4 max-h-[85vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-2">
@@ -1580,8 +1579,7 @@ export default function MaterialRequest() {
 
       {/* 코드 입력 */}
       {codeForm && (
-        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setCodeForm(null)}>
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl w-full max-w-md p-5 space-y-3"
             onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between">
@@ -2408,8 +2406,7 @@ export default function MaterialRequest() {
 
       {/* ───────── 불출 가능일 회신 ───────── */}
       {readyForm && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setReadyForm(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-md space-y-4"
             onClick={e => e.stopPropagation()}>
             <div>
@@ -2484,8 +2481,7 @@ export default function MaterialRequest() {
 
       {/* ───────── 부서 변경 ───────── */}
       {reassign && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setReassign(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-lg max-h-[85vh] overflow-y-auto space-y-4"
             onClick={e => e.stopPropagation()}>
             <div>
@@ -2577,8 +2573,7 @@ export default function MaterialRequest() {
 
       {/* 품번 바꾸기 — 같은 물건이 다른 코드로 있거나 대체품을 쓸 때 */}
       {ciRow && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4"
-          onClick={() => setCiRow(null)}>
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-5 w-full max-w-lg space-y-3 max-h-[86vh] overflow-y-auto"
             onClick={e => e.stopPropagation()}>
             <div>

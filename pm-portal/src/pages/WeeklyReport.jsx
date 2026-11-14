@@ -663,7 +663,7 @@ export default function WeeklyReport() {
 
         {/* 캘린더 입력 모달 */}
         {calModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 no-print p-4" onClick={()=>setCalModal(null)}>
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 no-print p-4">
             <div className="bg-white rounded-2xl shadow-2xl w-80 p-5" onClick={e=>e.stopPropagation()}>
               <div className="flex items-center justify-between mb-4">
                 <div>
