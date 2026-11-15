@@ -433,6 +433,21 @@ S.DATA.pm_todo = [
   { id: 2, title: '2027 순차매입 발주 등록', status: '진행중', priority: '보통', owner: '김교한', owner_id: 'u1', due_date: '2026-10-29', agenda: true, comment_cnt: 1, created_at: '2026-10-21T01:00:00Z' },
   { id: 3, title: '로트 관리 운영안내 배포', status: '대기', priority: '보통', owner: '남기문', owner_id: 'u2', due_date: '2026-11-03', agenda: false, comment_cnt: 0, created_at: '2026-10-22T01:00:00Z' }]
 S.DATA.pm_todo_comment = S.DATA.pm_todo_comment || []
+// ?sched=1 — 부서별 할 일 · 일정 SQL 을 돌린 뒤의 DB 흉내 (v4.197.0). 새 칸이 있고, 새로 적으면 부서 · 기본값이 붙는다
+if (_qs.get('sched')) {
+  const base = { dept: '구매자재', scope: 'dept', to_dept: null, kind: 'todo', end_date: null, room: false, time_from: null, time_to: null, repeat: null, reject_reason: null }
+  S.DATA.pm_todo = [
+    ...S.DATA.pm_todo.map((r) => ({ ...base, ...r })),
+    { ...base, id: 10, title: '팀원 A 오전 반차', kind: 'note', status: '대기', priority: '보통', due_date: '2026-11-16', created_by: 'u2', created_at: '2026-11-13T01:00:00Z', comment_cnt: 0 },
+    { ...base, id: 11, title: '영업 주간 미팅', kind: 'note', scope: 'all', dept: '영업', room: true, time_from: '14:00:00', time_to: '15:00:00', status: '대기', priority: '보통', due_date: '2026-11-16', created_by: 'u9', created_at: '2026-11-13T01:00:00Z', comment_cnt: 0 },
+    { ...base, id: 12, title: '품질 심사 준비', kind: 'note', scope: 'all', dept: '품질', room: true, time_from: '15:30:00', time_to: '16:30:00', status: '대기', priority: '보통', due_date: '2026-11-19', created_by: 'u8', created_at: '2026-11-13T01:00:00Z', comment_cnt: 0 },
+    { ...base, id: 13, title: '11/20 납품분 납기 확인 부탁', scope: 'req', dept: '영업', to_dept: '구매자재', status: '대기', priority: '보통', owner: null, owner_id: null, due_date: '2026-11-17', created_by: 'u9', created_at: '2026-11-14T01:00:00Z', comment_cnt: 0 },
+    { ...base, id: 14, title: '성적서 회신', scope: 'req', dept: '구매자재', to_dept: '품질', status: '대기', priority: '보통', owner: '김교한', owner_id: 'u1', due_date: '2026-11-18', created_by: 'u1', created_at: '2026-11-14T01:00:00Z', comment_cnt: 0, seen_at: '2026-11-14T01:00:00Z' },
+    { ...base, id: 15, title: '주간업무보고 확인', repeat: 'weekly', status: '대기', priority: '보통', owner: '김교한', owner_id: 'u1', due_date: '2026-11-16', created_by: 'u1', created_at: '2026-11-09T01:00:00Z', comment_cnt: 0, seen_at: '2026-11-09T01:00:00Z' },
+    { ...base, id: 16, title: '팀원 B 휴가 — Edwards 입고 대신 확인', kind: 'note', status: '대기', priority: '보통', due_date: '2026-11-24', end_date: '2026-11-27', created_by: 'u1', created_at: '2026-11-13T01:00:00Z', comment_cnt: 0 },
+  ]
+  S.DEF = { ...(S.DEF || {}), pm_todo: () => ({ ...base, dept: ME.dept || '기타', status: '대기', priority: '보통', comment_cnt: 0 }) }
+}
 if (_qs.get('cyc')) Object.assign(S.RPCFN, {
   pm_cell_hold_active: () => S.DATA.holds.map((h) => ({ ...h, neg_cnt: S.DATA.inventory.filter((i) => i.location === h.location && i.qty < 0).length })),
   pm_cell_hold_set: (a) => { const loc = a.p_loc.toUpperCase(); const auto = S.DATA.inventory.some((i) => i.location === loc && i.qty < 0); const ex = S.DATA.holds.find((h) => h.location === loc); if (ex) ex.reason = a.p_reason; else S.DATA.holds.push({ location: loc, reason: a.p_reason, auto_neg: auto, held_date: new Date().toISOString().slice(0, 10), held_name: '김교한' }); return [] },

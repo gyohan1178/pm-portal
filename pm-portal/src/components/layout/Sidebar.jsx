@@ -628,8 +628,14 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         <div className="py-1">
           {canSeeFlow(profile) && <MenuItem to="/flow" icon="🧭" onNavigate={onNavigate} badge={flowFresh}>업무 흐름</MenuItem>}
           <MenuItem to="/control-tower" icon="🎯" onNavigate={onNavigate}>관제탑</MenuItem>
-          <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
+          {canAccessSection(profile, 'todo') && <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>}
           <MenuItem to="/upload" icon="📥" onNavigate={onNavigate}>파일 올리기</MenuItem>
+        </div>
+        )}
+        {/* 할 일 — 관제탑 권한이 없어도 「할 일」 권한이 있으면 보인다 (부서별 할 일 · v4.197.0). 현장 · 조회 계정은 숨김 */}
+        {!fieldOnly && profile?.role !== 'viewer' && !canAccessSection(profile, 'home') && canAccessSection(profile, 'todo') && (
+        <div className="py-1">
+          <MenuItem to="/todo" icon="📋" onNavigate={onNavigate} badge={alerts['/todo']}>할 일</MenuItem>
         </div>
         )}
 

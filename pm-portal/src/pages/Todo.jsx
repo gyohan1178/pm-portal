@@ -14,6 +14,9 @@ import { useConfirm } from '../components/ux/ConfirmDialog'
 import { useUndoSnack } from '../components/ux/UndoSnack'
 import Spin from '../components/ux/Spin'
 import { useCoach } from '../components/ux/CoachMarks'
+import { useRemember } from '../hooks/useRemember'
+import { hasSched, isNote, scopeOf, nextRepeat, REPEAT_LABEL } from '../lib/todoSched'
+import { ScopeBadge, SchedStrip, SchedCalendar, SchedFields, NotesList } from '../components/TodoSched'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
 const PRIORITY = ['높음', '보통', '낮음']
@@ -90,6 +93,15 @@ export default function Todo() {
   const nameOf = (id) => people.find(p => p.id === id)?.name || ''
   // 오늘 순환 실사 줄 (v4.78.0) — 할 일 글이 아니라 센 기록으로 계산
   const cyc = useCycleTodo({ who, me, people })
+  // 부서별 보기 · 일정 (v4.197.0) — 새 칸이 DB 에 있을 때만 켠다 (SQL 전에는 예전 그대로)
+  const sched = hasSched(rows)
+  const myDept = me?.dept || '기타'
+  const todoRows = useMemo(() => rows.filter(r => !isNote(r)), [rows])   // 일정 · 특이사항은 할 일 묶음에 섞지 않는다
+  const [view, setView] = useRemember('todo.view', 'list', (v) => v === 'list' || v === 'cal')
+  const [rejectFor, setRejectFor] = useState(null)   // 「처리 못 함」 사유를 적는 줄
+  const [rejectText, setRejectText] = useState('')
+  // 일정 · 특이사항을 고칠 수 있나 — 적은 부서 · 적은 사람 · 관리자 (DB 규칙과 같게)
+  const canEditNote = (r) => !!me && (r.created_by === me.id || (r.dept || '기타') === myDept || me.role === 'admin')
 
   // 고칠 수 있는지 = 내가 담당이거나 내가 적은 일
   const isMine = (r) => canEditTodo(r, me)
@@ -113,6 +125,21 @@ export default function Todo() {
         agenda: !!rec.agenda, tag: rec.tag || null,
       }
       if (!payload.title) throw new Error('내용을 적어 주세요')
+      // 범위 · 일정 칸 (v4.197.0) — 새 칸이 있는 DB 에서만 보낸다
+      if (sched) {
+        const sc = rec.scope || 'dept', isN = rec.kind === 'note' && sc !== 'req'
+        if (sc === 'req' && !rec.to_dept) throw new Error('요청을 받을 부서를 골라 주세요')
+        if (isN && !rec.due_date) throw new Error('일정 · 특이사항은 날짜를 적어 주세요')
+        if (isN && rec.end_date && rec.end_date < rec.due_date) throw new Error('끝 날이 시작 날보다 앞입니다')
+        const room = isN && sc === 'all' && !!rec.room
+        Object.assign(payload, {
+          scope: sc, to_dept: sc === 'req' ? rec.to_dept : null, kind: isN ? 'note' : 'todo',
+          end_date: isN && rec.end_date && rec.end_date > rec.due_date ? rec.end_date : null,
+          room, time_from: room && rec.time_from ? rec.time_from : null, time_to: room && rec.time_to ? rec.time_to : null,
+          repeat: rec.repeat || null,
+        })
+        if (isN) Object.assign(payload, { owner: null, owner_id: null, status: '대기', priority: '보통', agenda: false, tag: null })
+      }
       const hasSeen = rows.some(r => 'seen_at' in r)
       if (rec.id != null) {
         // 담당자가 바뀌면 새 담당자에게 「새로 받음」으로 뜨게 한다
@@ -209,7 +236,7 @@ export default function Todo() {
 
   // 사람 칩 — 남은 일 · 기한 지남 건수
   const chips = useMemo(() => {
-    const open = rows.filter(r => r.status !== '완료')
+    const open = todoRows.filter(r => r.status !== '완료')
     const cnt = (person) => {
       const mine = open.filter(r => isOwnedBy(r, person))
       const cy = person?.name && cyc.pendingNames.has(person.name) ? 1 : 0   // 오늘 실사 안 끝남
@@ -228,7 +255,7 @@ export default function Todo() {
     }
     list.push({ key: 'all', label: '전체', open: open.length + cyc.pendingNames.size, over: open.filter(r => groupOf(r) === 'overdue').length })
     return list
-  }, [rows, people, me, cyc.pendingNames])
+  }, [todoRows, people, me, cyc.pendingNames])
 
   const whoPerson = who === 'me' ? me
     : who === 'all' ? null
@@ -238,8 +265,10 @@ export default function Todo() {
   const list = useMemo(() => {
     const kw = q.trim().toLowerCase()
     const twoWeeks = new Date(Date.now() - 14 * 86400000).toISOString()
-    return rows.filter(r => {
-      if (who !== 'all' && !isOwnedBy(r, whoPerson)) return false
+    return todoRows.filter(r => {
+      // 우리 부서로 온 요청은 담당자가 정해지기 전에도 「나」 화면에 보인다 (v4.197.0)
+      const inbox = who === 'me' && scopeOf(r) === 'req' && r.to_dept === myDept && !(r.owner || '').trim()
+      if (who !== 'all' && !isOwnedBy(r, whoPerson) && !inbox) return false
       if (agendaOnly && !r.agenda) return false
       // 완료는 최근 2주만 (검색하면 전부)
       if (r.status === '완료' && !kw && !(r.done_at && r.done_at >= twoWeeks)) return false
@@ -247,7 +276,7 @@ export default function Todo() {
       return [r.title, r.detail, r.owner, r.tag]
         .some(v => String(v || '').toLowerCase().includes(kw))
     })
-  }, [rows, who, whoPerson, agendaOnly, q])
+  }, [todoRows, who, whoPerson, agendaOnly, q, myDept])
 
   const grouped = useMemo(() => {
     const g = { overdue: [], soon: [], later: [], done: [] }
@@ -274,8 +303,32 @@ export default function Todo() {
   function toggleDone(r) {
     const done = r.status === '완료'
     patchMut.mutate({ id: r.id, patch: { status: done ? '대기' : '완료' } }, {
-      onSuccess: () => { if (!done) snack.show(`「${r.title}」 완료`, () => restore(r.id, { status: r.status })) },
+      onSuccess: async () => {
+        if (done) return
+        // 반복 할 일 — 끝내면 다음 회차를 만든다. 되돌리면 만든 회차도 지운다 (v4.197.0)
+        let nextId = null
+        const to = sched ? nextRepeat(r.repeat, r.due_date) : null
+        if (to) {
+          const { data, error } = await supabase.from('pm_todo').insert({
+            title: r.title, detail: r.detail || null, status: '대기', priority: r.priority || '보통', owner: r.owner || null, owner_id: r.owner_id || null,
+            due_date: to, agenda: !!r.agenda, tag: r.tag || null, scope: scopeOf(r), to_dept: r.to_dept || null, kind: 'todo', repeat: r.repeat,
+            ...(me?.id ? { created_by: me.id } : {}), ...(r.owner_id && r.owner_id === me?.id ? { seen_at: new Date().toISOString() } : {}),
+          }).select('id').single()
+          if (error) toastError('다음 회차를 만들지 못했습니다: ' + error.message)
+          else { nextId = data?.id ?? null; refresh() }
+        }
+        snack.show(`「${r.title}」 완료${to ? ` · 다음 ${to.slice(5).replace('-', '/')}` : ''}`, async () => {
+          if (nextId != null) await supabase.from('pm_todo').delete().eq('id', nextId)
+          await restore(r.id, { status: r.status })
+        })
+      },
     })
+  }
+  // 받은 요청을 못 할 때 — 보류로 두고 사유를 남긴다 (보낸 부서 화면에 그대로 보인다)
+  function saveReject(r) {
+    const why = rejectText.trim()
+    if (!why) { toastError('못 하는 사유를 한 줄 적어 주세요'); return }
+    patchMut.mutate({ id: r.id, patch: { status: '보류', reject_reason: why } }, { onSuccess: () => { setRejectFor(null); setRejectText('') } })
   }
 
   const renderRow = (r) => {
@@ -302,6 +355,8 @@ export default function Todo() {
                   새로 받음{nameOf(r.created_by) ? ` · ${nameOf(r.created_by)}` : ''}
                 </span>
               )}
+              {sched && <ScopeBadge r={r} myDept={myDept} />}
+              {sched && r.repeat && <span data-todo-repeat className="px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 text-[10px] font-bold">↻ {REPEAT_LABEL[r.repeat]}</span>}
               {r.agenda && (
                 <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">주간회의</span>
               )}
@@ -318,6 +373,10 @@ export default function Todo() {
                 <span className={ddayCls(done ? null : d)}>{r.due_date.slice(5)} {!done && ddayText(d)}</span>
               )}
               {done && r.done_at && <span className="text-emerald-600">{kst(r.done_at).slice(5, 10)} 완료</span>}
+              {r.reject_reason && r.status === '보류' && <span data-todo-reject-why className="text-amber-700 font-semibold">처리 못 함 — {r.reject_reason}</span>}
+              {sched && !done && scopeOf(r) === 'req' && r.to_dept === myDept && r.status !== '보류' && (
+                <button data-todo-reject onClick={() => { setRejectFor(rejectFor === r.id ? null : r.id); setRejectText('') }} className="text-slate-500 underline">처리 못 함</button>
+              )}
               <button onClick={() => { setOpenCmt(cmtOpen ? null : r.id); setCmtText('') }}
                 className={`${r.comment_cnt > 0 ? 'text-indigo-600 font-semibold' : 'text-slate-400'}`}>
                 💬 {r.comment_cnt > 0 ? r.comment_cnt : '댓글'}
@@ -351,6 +410,15 @@ export default function Todo() {
           )}
         </div>
 
+        {rejectFor === r.id && (
+          <div className="mt-2 ml-6 flex gap-1.5">
+            <input value={rejectText} onChange={e => setRejectText(e.target.value)} autoFocus data-todo-reject-input
+              onKeyDown={e => { if (e.key === 'Enter') saveReject(r) }}
+              placeholder="못 하는 사유 한 줄 — 보낸 부서 화면에 보입니다" className="flex-1 px-2 py-1.5 text-xs border border-slate-200 rounded-lg" />
+            <button onClick={() => saveReject(r)} data-todo-reject-save className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-800 text-white">저장</button>
+            <button onClick={() => setRejectFor(null)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-300 text-slate-600">취소</button>
+          </div>
+        )}
         {cmtOpen && (
           <div className="mt-2.5 pt-2.5 border-t border-slate-100 space-y-1.5 ml-6">
             {comments.map(c => (
@@ -382,7 +450,9 @@ export default function Todo() {
     { sel: '[data-todo-who]', title: '② 사람별로 보기', body: '들어오면 「나」의 일만 보입니다. 사람을 누르면 그 사람 일, 「지남」은 기한이 지난 수입니다.' },
     { sel: '[data-todo-done]', title: '③ 끝나면 체크', body: '체크하면 완료 묶음으로 옮겨지고, 잘못 눌렀으면 아래 「되돌리기」를 6초 안에 누르세요. 「내일로 · 다음 주」로 기한을 바로 미룰 수도 있습니다.' },
   ], !isLoading)
-  const newDraft = () => setDraft({ status: '대기', priority: '보통', owner: me?.name || '', owner_id_pick: me?.id || '', due_date: '' })
+  const newDraft = (due = '') => setDraft({ status: '대기', priority: '보통', owner: me?.name || '', owner_id_pick: me?.id || '', due_date: due || '', scope: 'dept', kind: 'todo' })
+  // 달력 · 위 줄에서 누른 줄 — 일정은 고칠 수 있으면 수정 창, 아니면 내용만. 할 일은 예전처럼 상세
+  const openItem = (r) => (isNote(r) && canEditNote(r) ? setDraft({ ...r }) : openDetail(r))
 
   return (
     <div className="space-y-4">
@@ -390,7 +460,14 @@ export default function Todo() {
         desc="내 일이 급한 순서로 먼저 보입니다 · 사람을 누르면 그 사람 일만">
         <button onClick={coach.start} data-coach-again
           className="ml-auto px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-500 hover:bg-slate-50">💡 안내</button>
-        <button onClick={newDraft} data-todo-add
+        {sched && !narrow && (
+          <span className="inline-flex rounded-lg bg-slate-200/70 p-0.5 text-xs font-bold" data-todo-view>
+            {[['list', '목록'], ['cal', '달력']].map(([k, l]) => (
+              <button key={k} type="button" data-todo-view-btn={k} onClick={() => setView(k)} className={`h-7 px-3 rounded-md ${view === k ? 'bg-white text-slate-900' : 'text-slate-500'}`}>{l}</button>
+            ))}
+          </span>
+        )}
+        <button onClick={() => newDraft()} data-todo-add
           className="px-3.5 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">
           + 추가
         </button>
@@ -403,8 +480,14 @@ export default function Todo() {
           {cycLead.map(c => <CycleTodoRow key={c.key} it={c} cyc={cyc} showName={who === 'all'} lead />)}
         </div>
       )}
+      {sched && <SchedStrip rows={rows} today={todayStr()} myDept={myDept} onOpen={openItem} />}
       {isPurchasing(me) && <TodayAuto profile={me} fold={narrow} />}
 
+      {/* 달력 보기 (PC) — 할 일 · 부서 특이사항 · 전사 공유 · 요청을 날짜 칸에 (v4.197.0) */}
+      {sched && !narrow && view === 'cal' && (
+        <SchedCalendar rows={rows} today={todayStr()} myDept={myDept} onOpen={openItem} onAdd={(d) => newDraft(d)} />
+      )}
+      {!(sched && !narrow && view === 'cal') && (<>
       {/* 사람 칩 — 들어오면 「나」 */}
       <div className="flex items-center gap-1.5 flex-wrap">
         {chips.map(c => (
@@ -441,6 +524,10 @@ export default function Todo() {
           ))}
         </div>
       )}
+      {sched && !q.trim() && !agendaOnly && (
+        <NotesList rows={rows} today={todayStr()} myDept={myDept} canEdit={canEditNote} onEdit={(r) => setDraft({ ...r })}
+          onDelete={async (r) => { if (await askDelete(r)) delMut.mutate(r.id) }} />
+      )}
       {!isLoading && !list.length && !cycShown.length && (
         <div className="rounded-xl border border-slate-200 bg-white p-10 text-center">
           <p className="text-sm text-slate-500 font-semibold">
@@ -471,6 +558,7 @@ export default function Todo() {
           })}
         </div>
       )}
+      </>)}
 
       {/* 안건 상세 — 회의에서 하나를 펼쳐 놓고 이야기할 때 쓴다 */}
       {detail && (() => {
@@ -482,7 +570,9 @@ export default function Todo() {
         <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto">
           <div className="bg-white w-full max-w-2xl rounded-2xl my-8" onClick={e => e.stopPropagation()}>
             <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-2">
-              <span className={`px-2 py-1 text-[11px] font-bold rounded-md ${ST_CLS[r.status]}`}>{r.status}</span>
+              {!isNote(r) && <span className={`px-2 py-1 text-[11px] font-bold rounded-md ${ST_CLS[r.status]}`}>{r.status}</span>}
+              {sched && <ScopeBadge r={r} myDept={myDept} />}
+              {isNote(r) && scopeOf(r) === 'dept' && <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 text-[10px] font-bold">부서 특이사항 · {r.dept || ''}</span>}
               {r.agenda && (
                 <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">주간회의</span>
               )}
@@ -578,7 +668,7 @@ export default function Todo() {
               </div>
             </div>
 
-            <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2">
+            <div className={`px-5 py-3 border-t border-slate-100 items-center gap-2 ${isNote(r) ? 'hidden' : 'flex'}`}>
               <select value={r.status}
                 onChange={e => patchMut.mutate({ id: r.id, patch: { status: e.target.value } })}
                 className={`px-2.5 py-1.5 text-xs font-bold rounded-md border-0 cursor-pointer ${ST_CLS[r.status]}`}>
@@ -609,6 +699,7 @@ export default function Todo() {
               <h3 className="text-base font-bold text-slate-800">{draft.id ? '할 일 수정' : '할 일 추가'}</h3>
             </div>
             <div className="p-4 space-y-3">
+              {sched && <SchedFields draft={draft} setDraft={setDraft} rows={rows} myDept={myDept} />}
               <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">내용 *</label>
                 <input value={draft.title || ''} autoFocus
@@ -625,12 +716,13 @@ export default function Todo() {
                   placeholder="배경·경과 등"
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
               </div>
-              <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+              {/* 일정 · 특이사항은 담당자 · 상태가 없다 — 아래 칸을 숨긴다 (v4.197.0) */}
+              <label className={`items-center gap-2 text-sm font-semibold text-slate-700 ${sched && draft.kind === 'note' ? 'hidden' : 'flex'}`}>
                 <input type="checkbox" checked={!!draft.agenda}
                   onChange={e => setDraft(s => ({ ...s, agenda: e.target.checked }))} />
                 주간회의 안건 <span className="font-normal text-slate-400 text-xs">(회의에서 다룰 것)</span>
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className={`grid-cols-2 gap-3 ${sched && draft.kind === 'note' ? 'hidden' : 'grid'}`}>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">담당자</label>
                   {/* 이름을 직접 치면 오타 · 직함 차이로 그 사람 화면에 안 떴다 → 포털 사용자 중에서 고른다 */}

@@ -239,6 +239,8 @@ export function canAccessPath(profile, pathname) {
   if (pathname === '/restore') return canEdit(profile)
 
   const sec = sectionOfPath(pathname)
+  // 할 일 — 현장 · 조회 계정은 못 연다 (메뉴에도 없다 · DB 에서도 막는다 · v4.197.0)
+  if (sec === 'todo' && (isFieldOnly(profile) || profile?.role === 'viewer')) return false
   if (sec === 'home') {
     // 관제탑은 지정한 사람만 본다.
     // menu_scope 에 'home' 이 있어야 하며, 없으면 landingPath 로 보낸다.
