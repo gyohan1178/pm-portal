@@ -460,6 +460,9 @@ if (_qs.get('sched')) {
   S.DEF = { ...(S.DEF || {}), pm_todo: () => ({ ...base, dept: ME.dept || '기타', status: '대기', priority: '보통', comment_cnt: 0 }) }
   if (_qs.get('noseen')) S.DATA.pm_todo.forEach((r) => { delete r.seen_at })
 }
+// v4.198.1 — ?flowc=1 : 예전 집계(줄 기준 679 · 679) · ?oc=1 : 새 PO 기준 요약 함수가 있는 DB
+if (_qs.get('flowc')) S.RPCFN.pm_flow_counts = () => ({ ord_unconfirmed: 679, ord_waiting: 679, req_open: 52, rfq_price: 2 })
+if (_qs.get('oc')) S.RPCFN.pm_order_confirm_summary = () => ({ unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 1 })
 if (_qs.get('cyc')) Object.assign(S.RPCFN, {
   pm_cell_hold_active: () => S.DATA.holds.map((h) => ({ ...h, neg_cnt: S.DATA.inventory.filter((i) => i.location === h.location && i.qty < 0).length })),
   pm_cell_hold_set: (a) => { const loc = a.p_loc.toUpperCase(); const auto = S.DATA.inventory.some((i) => i.location === loc && i.qty < 0); const ex = S.DATA.holds.find((h) => h.location === loc); if (ex) ex.reason = a.p_reason; else S.DATA.holds.push({ location: loc, reason: a.p_reason, auto_neg: auto, held_date: new Date().toISOString().slice(0, 10), held_name: '김교한' }); return [] },
