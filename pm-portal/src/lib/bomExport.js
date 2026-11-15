@@ -59,7 +59,7 @@ export async function downloadBomExcel(asm, rows, dwMap) {
   ws.getRow(1).height = 26
   ws.mergeCells(2, 1, 2, n)
   const lv1 = data.filter((x) => x.lv <= 1).length
-  ws.getCell(2, 1).value = `조회일 ${new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ')}   |   부품 ${data.length}줄 (1레벨 ${lv1})   |   진선테크 PM 포털 · 현장 검색`
+  ws.getCell(2, 1).value = `조회일 ${new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 16).replace('T', ' ')}   |   부품 ${data.length}줄 (1레벨 ${lv1})   |   진선테크 JS 포털 · 현장 검색`
   ws.getCell(2, 1).font = { size: 10, color: { argb: 'FF64748B' } }
   // 머리글
   const H = 4

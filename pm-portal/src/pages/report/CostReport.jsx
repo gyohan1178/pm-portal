@@ -240,7 +240,7 @@ export default function CostReport({
         기준단가와 5배 넘게 벌어진 건은 단위·환율·품번이 어긋난 것으로 보고 지표에서 제외합니다.
         <br />
         <b className="text-slate-500">구매단가 변동률</b> — (실구매 금액 − 기준 금액) ÷ 기준 금액. 플러스면 단가가 올랐다는 뜻입니다.
-        <span className="ml-2">· 작성 {today} · PM Portal 자동 집계</span>
+        <span className="ml-2">· 작성 {today} · JS 포털 자동 집계</span>
       </div>
     </div>
   )

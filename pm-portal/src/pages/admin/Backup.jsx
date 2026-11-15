@@ -126,7 +126,7 @@ export default function Backup() {
   return (
     <div className="space-y-4 max-w-3xl">
       <PageHead crumb="기타" title="데이터 백업"
-        desc={<>PM 포털 표 {BACKUP_TABLES.length}개를 엑셀(보기용)과 JSON(복구용 원본) 두 파일로 내려받습니다. <b className="text-slate-600">주 1회</b> 받아서 회사 드라이브/NAS에 보관하세요.</>} />
+        desc={<>JS 포털 표 {BACKUP_TABLES.length}개를 엑셀(보기용)과 JSON(복구용 원본) 두 파일로 내려받습니다. <b className="text-slate-600">주 1회</b> 받아서 회사 드라이브/NAS에 보관하세요.</>} />
 
       <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[11px] text-amber-700 space-y-1">
         <div>⚠️ Supabase 무료 플랜은 자동 백업이 제한적입니다. 이 수동 백업이 데이터 사고(실수 삭제·서비스 장애) 시 유일한 복구 수단이 될 수 있어요. 데이터가 늘면 1~3분 걸릴 수 있습니다.</div>

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import BrandMark from '../components/BrandMark'
 
 export default function Login() {
   const [mode, setMode] = useState('login')   // login | signup
@@ -65,9 +66,8 @@ export default function Login() {
       <div className="w-full max-w-sm">
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-8">
           <div className="flex flex-col items-center mb-8">
-            <img src="/logo.png" alt="진선테크" className="h-10 object-contain mb-3" />
-            <h1 className="text-base font-bold text-slate-900">구매/자재 포털</h1>
-            <p className="text-xs text-slate-400 mt-1">진선테크 내부 시스템</p>
+            <h1 className="mb-4" aria-label="JS 포털"><BrandMark size="lg" /></h1>
+            <p className="text-xs text-slate-500">진선테크 업무 포털</p>
           </div>
 
           <div className="flex gap-1 bg-slate-100 rounded-lg p-1 mb-6">

@@ -168,7 +168,7 @@ export default function ProcessBoard({ tv: tvProp }) {
         </div>
         {Band}
         {Table}
-        <div className="pb-tv-foot"><Legend /><span>진선테크 PM Portal</span></div>
+        <div className="pb-tv-foot"><Legend /><span>진선테크 JS 포털</span></div>
       </div>
     )
   }

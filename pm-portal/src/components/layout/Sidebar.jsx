@@ -16,6 +16,7 @@ import { flowCountsQuery, flowSnapshot, readSeen, freshTotal, setTitleCount, FLO
 import { docCountsQuery } from '../../lib/docRequest'
 import { useNarrow } from '../../hooks/useNarrow'
 import { useCycleTodo } from '../CycleTodo'
+import BrandMark from '../BrandMark'
 
 // 업무 흐름 — 내 부서에 마지막으로 본 뒤 새로 늘어난 일 (사이드바 숫자 · 탭 제목 「(3) …」) · v4.97.0
 //   업무 흐름 화면과 같은 건수(flowCounts)를 쓰고, 「봤음」 기준은 그 화면이 저장한 것을 읽는다
@@ -366,7 +367,7 @@ function ChangelogModal({ onClose }) {
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
           <div>
             <p className="text-sm font-bold text-slate-900">업데이트 이력</p>
-            <p className="text-xs text-slate-400 mt-0.5">PM Portal {APP_VERSION}</p>
+            <p className="text-xs text-slate-400 mt-0.5">JS 포털 {APP_VERSION}</p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg w-8 h-8 flex items-center justify-center">✕</button>
         </div>
@@ -597,8 +598,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
         {/* 로고 */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
           <div>
-            <img src="/logo.png" alt="진선테크" className="h-7 object-contain" />
-            <p className="text-xs text-slate-400 mt-0.5">구매/자재 포털</p>
+            <BrandMark />
           </div>
           {/* PC 메뉴 접기 — 접으면 위 ☰ 로 다시 연다 (v4.63.0) */}
           {onCollapse && (

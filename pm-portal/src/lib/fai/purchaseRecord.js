@@ -209,7 +209,7 @@ export function drawPurchaseRecord(doc, poId) {
     y += r.h
   })
   ctx.fillStyle = '#888'; ctx.font = `14px ${XF}`
-  ctx.fillText(`진선테크 PM Portal 발주·입고 기록 · 출력 ${todayISO()}`, 4, y + 10)
+  ctx.fillText(`진선테크 JS 포털 발주·입고 기록 · 출력 ${todayISO()}`, 4, y + 10)
   const n = `Axcelis 품목 ${doc.lines.length}줄`
   ctx.fillText(n, W - ctx.measureText(n).width - 4, y + 10)
   return { canvas: c, w: W, h: H }
