@@ -447,6 +447,7 @@ if (_qs.get('sched')) {
     { ...base, id: 16, title: '팀원 B 휴가 — Edwards 입고 대신 확인', kind: 'note', status: '대기', priority: '보통', due_date: '2026-11-24', end_date: '2026-11-27', created_by: 'u1', created_at: '2026-11-13T01:00:00Z', comment_cnt: 0 },
   ]
   S.DEF = { ...(S.DEF || {}), pm_todo: () => ({ ...base, dept: ME.dept || '기타', status: '대기', priority: '보통', comment_cnt: 0 }) }
+  if (_qs.get('noseen')) S.DATA.pm_todo.forEach((r) => { delete r.seen_at })
 }
 if (_qs.get('cyc')) Object.assign(S.RPCFN, {
   pm_cell_hold_active: () => S.DATA.holds.map((h) => ({ ...h, neg_cnt: S.DATA.inventory.filter((i) => i.location === h.location && i.qty < 0).length })),

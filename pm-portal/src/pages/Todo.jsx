@@ -312,7 +312,7 @@ export default function Todo() {
           const { data, error } = await supabase.from('pm_todo').insert({
             title: r.title, detail: r.detail || null, status: '대기', priority: r.priority || '보통', owner: r.owner || null, owner_id: r.owner_id || null,
             due_date: to, agenda: !!r.agenda, tag: r.tag || null, scope: scopeOf(r), to_dept: r.to_dept || null, kind: 'todo', repeat: r.repeat,
-            ...(me?.id ? { created_by: me.id } : {}), ...(r.owner_id && r.owner_id === me?.id ? { seen_at: new Date().toISOString() } : {}),
+            ...(me?.id ? { created_by: me.id } : {}), ...('seen_at' in r && r.owner_id && r.owner_id === me?.id ? { seen_at: new Date().toISOString() } : {}),
           }).select('id').single()
           if (error) toastError('다음 회차를 만들지 못했습니다: ' + error.message)
           else { nextId = data?.id ?? null; refresh() }

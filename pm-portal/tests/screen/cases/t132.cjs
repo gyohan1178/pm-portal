@@ -94,6 +94,12 @@ const base = 'http://localhost:8765/app.html'
   ok(await p.locator('[data-note-row="16"] [data-note-del]').count() === 1, '우리 부서 특이사항은 고칠 수 있다')
   await p.close()
 
+  // ── 2b) seen_at 칸 없는 DB — 반복 다음 회차에 seen_at 을 보내지 않는다 ──
+  { const q = await open('sched=1&noseen=1&')
+    await q.locator('[data-todo-row="15"] [data-todo-done]').click(); await q.waitForTimeout(900)
+    const nx2 = (await todos(q)).filter(r => r.title === '주간업무보고 확인' && r.status === '대기')
+    ok(nx2.length === 1 && nx2[0].due_date === '2026-11-23' && !('seen_at' in nx2[0]), 'seen_at 없는 DB: 다음 회차에 seen_at 안 보냄', nx2)
+    await q.close() }
   // ── 3) 다른 부서(영업 · 편집) — 순환 실사 · 오늘 챙길 일 없음, 남의 전사 공유는 잠김 ──
   { const q = await open('sched=1&cyc=1&', undefined, { name: '우영업', role: 'editor', dept: '영업', menu_scope: ['todo', 'sales'], is_lead: false })
     const t = await q.locator('main').innerText()
