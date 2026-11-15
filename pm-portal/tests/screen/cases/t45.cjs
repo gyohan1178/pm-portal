@@ -1,0 +1,34 @@
+// v4.115.1 — 로그인 · 로그아웃 · 다른 사람으로 다시 로그인
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+const T=async(p,s)=>((await p.textContent(s).catch(()=>''))||'').replace(/\s+/g,' ').trim();
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1400,height:1000}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+const login=async(email,pw='pw')=>{ await p.fill('input[type=email]',email); await p.fill('input[type=password]',pw); await p.click('button[type=submit]'); await p.waitForTimeout(2200) }
+await p.goto('http://localhost:8765/app.html?authsim=1&r=%2F'); await p.waitForTimeout(1500);
+console.log('① 처음 — 로그인 화면');
+ok(!!await p.$('input[type=password]'),'로그인 화면');
+console.log('② 김교한(관리자) 로그인');
+await login('gyohan@jinsuntech.co.kr');
+ok(!await p.$('input[type=password]'),'포털로 들어감');
+let body=await T(p,'body'); ok(/회원 관리/.test(body),'관리자 메뉴(회원 관리) 보임');
+let mp=await p.evaluate(()=>window.__qc.getQueryData(['myProfile'])?.name); ok(mp==='김교한'||mp===undefined,'내 프로필 = 김교한',mp);
+ok(await p.$$eval('[data-menu-badge]',t=>t.length)>0,'메뉴 숫자 뜸');
+console.log('③ 틀린 비밀번호');
+console.log('④ 로그아웃');
+await p.click('button:has-text("로그아웃")'); await p.waitForTimeout(1500);
+ok(!!await p.$('input[type=password]'),'로그아웃 → 로그인 화면');
+await login('gyohan@jinsuntech.co.kr','xx');
+ok(!!await p.$('input[type=password]')&&/Invalid|틀|올바르|확인/.test(await T(p,'body')),'틀린 비밀번호 → 못 들어감 · 안내');
+console.log('⑤ 남기문(조회) 으로 다시 로그인 — 앞 사람 정보가 남지 않는지');
+await login('nam@jinsuntech.co.kr');
+ok(!await p.$('input[type=password]'),'포털로 들어감');
+body=await T(p,'body');
+ok(!/회원 관리/.test(body),'조회 계정 — 관리자 메뉴 없음 (App 프로필은 사람별)');
+await p.click('a[href="/todo"]').catch(()=>{}); await p.waitForTimeout(1500);
+mp=await p.evaluate(()=>window.__qc.getQueryData(['myProfile']));
+ok(mp?.name==='남기문'&&mp?.role==='viewer','내 프로필 캐시 = 남기문(조회) — 앞 사람(김교한) 정보가 남지 않음',mp&&{n:mp.name,r:mp.role});
+const ma=await p.evaluate(()=>JSON.stringify(window.__qc.getQueryCache().getAll().filter(q=>q.state.data!==undefined).map(q=>q.queryKey[0])));
+console.log('    cache',ma.slice(0,300));
+const calls=await p.evaluate(()=>window.__authCalls); console.log('    auth calls',calls); ok(calls.getUser===0,'인증 서버 조회(getUser) 0번',calls);
+ok(errs.length===0,'오류 없음',errs);
+console.log(`\nt45 ${pass}/${pass+fail}`);await b.close();process.exit(fail?1:0)})();

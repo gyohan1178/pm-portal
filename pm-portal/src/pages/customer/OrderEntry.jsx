@@ -6,6 +6,7 @@ import { ORDER_CUSTOMERS, matchLines, isManualCust } from '../../lib/orderIntake
 import { KINDS, KIND_HELP, CHANNELS, parseEntryPaste, parseEntryWorkbook, templateWorkbook, registerEntry, fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { todayISO } from '../../lib/utils'
+import { swallow } from '../../lib/errorLog'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 const inCls = 'w-full h-9 px-2.5 text-[13px] border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-violet-500'
@@ -36,7 +37,7 @@ function OneEntry({ onClose, onSaved, meName }) {
   const etc = isManualCust(cust)
   const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
   const [tried, setTried] = useState(false)
-  useEffect(() => { if (etc) fetchEtcNames().then(setEtcNames).catch(() => {}) }, [etc])
+  useEffect(() => { if (etc) fetchEtcNames().then(setEtcNames).catch(swallow('수주 직접 등록 · 기타 업체 이름 읽기')) }, [etc])
   const pickCust = (c) => { setCust(c); if (isManualCust(c) && kind === 'planned') setKind('po') }
   const [paste, setPaste] = useState('')
   const [lines, setLines] = useState([])         // matchLines 결과
@@ -47,7 +48,7 @@ function OneEntry({ onClose, onSaved, meName }) {
 
   // 고객사가 바뀌면 품번을 다시 찾는다
   const match = async (raw, c = cust) => (raw.length ? matchLines(c, raw) : [])
-  useEffect(() => { let on = true; if (lines.length) match(lines.map(({ item, how, ...l }) => l)).then((r) => { if (on) setLines(r) }).catch(() => {}); return () => { on = false } }, [cust]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { let on = true; if (lines.length) match(lines.map(({ item, how, ...l }) => l)).then((r) => { if (on) setLines(r) }).catch(swallow('수주 직접 등록 · 품번 맞추기')); return () => { on = false } }, [cust]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function addPaste() {
     const raw = parseEntryPaste(paste)

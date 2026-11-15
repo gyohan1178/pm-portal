@@ -1,0 +1,20 @@
+// v4.160.0 — 품목 「정식 코드로」 : 새 코드면 기준코드만 바꿈 · 있는 코드면 그쪽으로 옮기고 임시 품목 지움 · 견적 부품표 따라감
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const errs=[];const p=await b.newPage({viewport:{width:1600,height:1000}});p.on('pageerror',e=>errs.push(e.message))
+await p.goto('http://localhost:8765/app.html?tmpi=1&r='+encodeURIComponent('/master/items'));await p.waitForTimeout(2500)
+ok(await p.locator('[data-tmp-badge]').count()===2,'「임시」 표시 2개')
+const row=(c)=>p.locator('tbody tr',{hasText:c}).first()
+await row('TMP-2611-0001').hover(); await row('TMP-2611-0001').locator('[data-tmp-promote]').click(); await p.waitForTimeout(300)
+await p.fill('[data-confirm-input]','ax-110999001'); await p.click('[data-confirm-ok]'); await p.waitForTimeout(1500)
+let D=await p.evaluate(()=>JSON.parse(JSON.stringify(window.__S.DATA)))
+const t1=D.items.find(i=>i.id==='tm1'); ok(t1.std_code==='AX-110999001'&&t1.stock_managed===true&&t1.purchase_price===410000,'새 코드 — 기준코드만 바뀜 · 매입가 그대로 · 재고관리 켬',t1)
+ok(D.pm_rfq_line.find(l=>l.id==='ru1').paste_parts.parts[0].std_code==='AX-110999001','견적 부품표도 새 코드로')
+await row('TMP-2611-0002').hover(); await row('TMP-2611-0002').locator('[data-tmp-promote]').click(); await p.waitForTimeout(300)
+await p.fill('[data-confirm-input]','AX-6200111'); await p.click('[data-confirm-ok]'); await p.waitForTimeout(1500)
+D=await p.evaluate(()=>JSON.parse(JSON.stringify(window.__S.DATA)))
+ok(!D.items.find(i=>i.id==='tm2'),'있는 코드 — 임시 품목 지움')
+const pp=D.pm_rfq_line.find(l=>l.id==='ru2').paste_parts.parts[0]; ok(pp.std_code==='AX-6200111'&&pp.item_id==='p2','견적 부품표 → 있던 품목',pp)
+ok(D.items.find(i=>i.id==='p2').purchase_price===32000,'있던 품목 매입가는 그대로 (이미 있음)')
+ok(errs.length===0,'화면 오류 없음',errs)
+console.log(`\n${pass} pass / ${fail} fail`);await b.close();process.exit(fail?1:0)})()

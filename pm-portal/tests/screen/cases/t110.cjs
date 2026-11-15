@@ -1,0 +1,23 @@
+// v4.179.1 — 통화 바꿀 때 손으로 넣은 단가 줄 유지
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const errs=[];const p=await b.newPage({viewport:{width:1600,height:1100}});p.on('pageerror',e=>errs.push(e.message));
+await p.goto('http://localhost:8765/app.html?r=/sales-quote');await p.waitForTimeout(2000);
+await p.click('button:has-text("✍ 견적 작성")');await p.waitForTimeout(1000);
+const pn=p.locator('input[placeholder="품번 입력 (ASSY·단품 자동 판별)"]');await pn.fill('AX-110153030');await pn.press('Enter');await p.waitForTimeout(2000);
+await p.click('button:has-text("+ 빈 줄")');await p.waitForTimeout(500);
+const pr=p.locator('input.qi.font-semibold[type=number]');
+const n=await pr.count(); await pr.nth(n-1).fill('84000000');await p.waitForTimeout(300);
+const before=await pr.evaluateAll(a=>a.map(x=>Number(x.value)));
+const rate=Number(await p.locator('input[type=number]').nth(1).inputValue().catch(()=>0));
+await p.click('[data-quote-cur-btn="USD"]');await p.waitForTimeout(800);
+const usd=await pr.evaluateAll(a=>a.map(x=>Number(x.value)));
+console.log(before,usd);
+ok(usd[usd.length-1]>0,'손으로 넣은 줄 USD 로 바꿔도 0 이 아님');
+ok(usd[usd.length-1]===60000,'판매환율 1400 으로 환산 (84,000,000 ÷ 1400 = 60,000)',usd);
+await p.click('[data-quote-cur-btn="KRW"]');await p.waitForTimeout(800);
+const back=await pr.evaluateAll(a=>a.map(x=>Number(x.value)));
+ok(Math.abs(back[back.length-1]-84000000)<=100,'다시 원화로 → 84,000,000 근처',back);
+ok(back[0]===before[0],'ASSY 줄은 원가로 다시 계산 — 처음과 같음');
+ok(!errs.length,'오류 없음',errs);
+console.log(`\n${pass} 통과 / ${fail} 실패`);await b.close();process.exit(fail?1:0)})();

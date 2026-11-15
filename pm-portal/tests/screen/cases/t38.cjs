@@ -1,0 +1,26 @@
+// v4.112.1 — 입고 현황 상위품목 칸 뺌 · 줄 눌러 선택
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.goto('http://localhost:8765/app.html?ecp=1&r='+encodeURIComponent('/inbound'));await p.waitForTimeout(1500);
+await p.click('button:has-text("📋 입고 현황")');await p.waitForTimeout(500);
+const d=await p.$$('input[type=date]');await d[0].fill('2026-10-01');await d[1].fill('2026-11-05');await p.click('button:has-text("조회")');await p.waitForTimeout(900);
+const heads=await p.$$eval('thead th',t=>t.map(x=>x.textContent.trim()));
+ok(!heads.some(h=>h.includes('상위품목'))&&heads.length===14,'상위품목 칸 없음 · 머리 14칸',heads);
+const tds=await p.$$eval('tbody tr[data-hist-row="m5"] td',t=>t.length); ok(tds===14,'줄도 14칸',tds);
+const cnt=async()=>(await p.$$('tbody tr[data-hist-row] input[type=checkbox]:checked')).length;
+await p.click('tbody tr[data-hist-row="m5"] td:nth-child(4)'); await p.waitForTimeout(200);
+ok(await cnt()===1&&await p.isChecked('tr[data-hist-row="m5"] input[type=checkbox]'),'품명 칸 눌러 선택');
+ok(/1건 선택/.test(await p.textContent('[data-hist-selcount]'))&&await p.$eval('[data-hist-ecount]',e=>!e.matches(':disabled')),'1건 선택 · 버튼 켜짐');
+await p.click('tbody tr[data-hist-row="m5"] td:nth-child(9)'); await p.waitForTimeout(200);
+ok(await cnt()===0,'다시 누르면 해제');
+await p.click('tr[data-hist-row="m1"] input[type=checkbox]'); await p.waitForTimeout(200);
+ok(await cnt()===1,'체크박스 직접 누르면 한 번만 바뀜');
+await p.click('tr[data-hist-row="m1"] input[type=checkbox]'); await p.waitForTimeout(200);
+ok(await cnt()===0,'체크박스 다시 → 해제');
+await p.click('tr[data-hist-row="m2"] td:nth-child(2)'); await p.click('tr[data-hist-row="m3"] td:nth-child(13)'); await p.waitForTimeout(200);
+ok(await cnt()===2,'여러 줄 눌러 고르기');
+await p.click('tr[data-hist-row="m6"] [data-item-link]'); await p.waitForTimeout(600);
+ok(!(await p.$('tr[data-hist-row="m6"]'))||!(await p.isChecked('tr[data-hist-row="m6"] input[type=checkbox]')),'기준코드 링크는 선택 안 바꾸고 통합검색으로');
+ok(errs.length===0,'오류 없음',errs);
+console.log(`\nt38 ${pass}/${pass+fail}`);await b.close();process.exit(fail?1:0)})();

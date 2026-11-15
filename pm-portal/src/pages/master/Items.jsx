@@ -19,6 +19,7 @@ import { checkRfq } from './rfq'
 import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn, CPS_INFO } from '../../lib/itemMeta'
 import ItemMetaPanel from '../../components/ItemMetaPanel'
 import MfrCheckPanel from '../../components/MfrCheckPanel'
+import { swallow } from '../../lib/errorLog'
 
 const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
@@ -135,7 +136,7 @@ export default function Items() {
       for (const id of r.rfqIds) {
         const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
         const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
-        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(() => {})
+        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(swallow('단가 등록 뒤 견적 접수 상태 갱신'))
       }
       qc.invalidateQueries(['items'])
       toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ''}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)

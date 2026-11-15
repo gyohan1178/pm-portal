@@ -22,6 +22,7 @@ function add(kind, page, key) {
   if (buf.size > 300) flush()
 }
 let curPage = null          // 지금 화면 (라우터가 알려 준 주소) — 버튼을 이 화면 것으로 센다
+export const currentPage = () => curPage || pageKey(window.location.pathname)
 export function trackPage(pathname) { curPage = pageKey(pathname); add('page', curPage, curPage) }
 
 export async function flush() {

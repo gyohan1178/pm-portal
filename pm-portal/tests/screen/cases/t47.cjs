@@ -1,0 +1,40 @@
+// v4.117.0 — 수주대장 ↔ 자재불출
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();
+const run=async(qs,me)=>{const p=await b.newPage({viewport:{width:1500,height:1000}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+ await p.goto('http://localhost:8765/app.html?pt=1&'+qs+(me?'&me='+encodeURIComponent(JSON.stringify(me)):'')+'&r=%2Forders');await p.waitForTimeout(2500);return {p,errs}};
+console.log('① 관리자(편집) — 불출 표시 · 자동 회신');
+let {p,errs}=await run('iss=1');
+const badges=await p.$$eval('[data-issued]',t=>t.map(x=>x.getAttribute('data-issued')));
+ok(badges.length===1&&badges[0]==='고객사 PO 불출','📦 불출 ✔ — AXCELIS 줄 하나만 (VM 없음)',badges);
+const calls=await p.evaluate(()=>window.__issCalls); ok(calls===1,'회신 자동 함수 1번만 불림',calls);
+const body=(await p.textContent('body')).replace(/\s+/g,' ');
+ok(/자재불출 끝난 1줄 — 회신 「가능」 자동/.test(body),'안내 — 1줄');
+const rep=await p.evaluate(()=>window.__S?.DATA?.pm_order_line?.map(l=>[l.id,l.reply]));
+console.log('    lines',JSON.stringify(rep));
+// 거르기
+await p.selectOption('[data-iss-sel]','no'); await p.waitForTimeout(500);
+let n=await p.$$eval('[data-issued]',t=>t.length); ok(n===0,'불출 전 — 불출 줄 안 보임',n);
+ok(!/PO2610000242/.test((await p.textContent('body'))),'불출 전 — VM 줄은 안 나옴 (AXCELIS 만)');
+await p.selectOption('[data-iss-sel]','yes'); await p.waitForTimeout(500);
+n=await p.$$eval('[data-issued]',t=>t.length); ok(n===1,'불출 끝 — 한 줄',n);
+const txt=(await p.textContent('body')).replace(/\s+/g,' ');
+ok(!/PO2610000242/.test(txt)&&/47894KF/.test(txt),'AXCELIS PO 만');
+await p.screenshot({path:'iss_list.png'});
+// 호기 + 불출 같이
+const both=await p.$$eval('[data-prod-link]',t=>t.length); ok(both>=1,'🏭 호기 표시도 그대로',both);
+await p.click('button:has-text("VM")'); await p.waitForTimeout(400); ok(!await p.$('[data-iss-sel]'),'VM 탭 — 자재불출 거르기 숨김');
+ok(errs.length===0,'오류 없음',errs); await p.close();
+console.log('② 조회 계정 — 자동 회신 안 부름');
+({p,errs}=await run('iss=1',{role:'viewer'}));
+ok(await p.evaluate(()=>window.__issCalls)===0,'함수 안 불림');
+ok((await p.$$eval('[data-issued]',t=>t.length))===1,'표시는 보임');
+ok(errs.length===0,'오류 없음',errs); await p.close();
+console.log('③ SQL 전 — 보기 · 함수 없음');
+({p,errs}=await run('iss=nofn'));
+ok((await p.$$eval('[data-issued]',t=>t.length))===0,'불출 표시 없음');
+ok((await p.$$eval('[data-prod-link]',t=>t.length))>=1,'🏭 호기 표시는 그대로');
+ok(!/회신 「가능」 자동/.test(await p.textContent('body')),'안내 없음');
+ok(errs.length===0,'오류 없음',errs); await p.close();
+console.log(`\nt47 ${pass}/${pass+fail}`);await b.close();process.exit(fail?1:0)})();

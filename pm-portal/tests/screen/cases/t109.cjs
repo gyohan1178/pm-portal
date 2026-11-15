@@ -1,0 +1,15 @@
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1600,height:1100}});
+await p.goto('http://localhost:8765/app.html?q99=1&nq1=1&r=/quote');await p.waitForTimeout(2200);
+await p.click('[data-price-req-nq="AX-5109999"]');await p.fill('[data-price-req-nq-memo]','사급');await p.click('[data-price-req-nq-ok]');await p.waitForTimeout(1500);
+await p.click('a[href="/sales-quote"]');await p.waitForTimeout(2200);
+const row=p.locator('[data-rfq="FFU 단품 키트"]');
+ok(/부품 견적 불가/.test(await row.textContent()),'「부품 견적 불가 — 영업 확인」 상태');
+const wa=row.locator('[data-rfq-act="write-anyway"]');
+ok(await wa.count()===1,'이 상태에서도 「단가 없는 부품 두고 견적 작성」',await row.locator('[data-rfq-act]').evaluateAll(a=>a.map(x=>x.innerText)));
+ok(await row.locator('[data-rfq-act="recheck"]').count()===1,'다시 점검 버튼도');
+await wa.click();await p.waitForTimeout(300);await p.click('[role="dialog"] button:has-text("견적 작성으로")');await p.waitForTimeout(2500);
+ok(/견 적 서/.test(await p.textContent('main')),'견적 작성 화면으로');
+await p.screenshot({path:'nqp.png'});
+console.log(`\n${pass} 통과 / ${fail} 실패`);await b.close();process.exit(fail?1:0)})();

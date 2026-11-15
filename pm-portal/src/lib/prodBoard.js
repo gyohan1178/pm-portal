@@ -10,6 +10,7 @@ import { fetchProdQc } from './prodAuto'
 import { fetchScans } from './prodSteps'
 import { fetchMainOverrides, isMainRow } from '../pages/production/mainPns'
 import { isTpRow } from './thirdParty'
+import { swallow } from './errorLog'
 
 export const COLS = 'id,customer_code,company,pn,name,hogi,part,status,req_date,due_fix,elec_done,arrival_date,machine_recv,harness_recv,part_issue,elec_recv,quality_recv,shipped_date,missing_parts,memo,manager,rev,brev,ccn,po_id,order_line_id,vm,csk'
 export const hogiNo = (h) => { const m = String(h || '').match(/\d+/); return m ? Number(m[0]) : 9999 }
@@ -28,7 +29,7 @@ export const ddText = (n) => (n == null ? '' : n === 0 ? 'D-day' : n < 0 ? `D+${
 export const BOARD_DONE = ['완료', '현장작업']
 // 진행 중 호기 + PO 번호 + 스캔 기록 + VM · CSK 검수 기록
 export async function fetchBoard() {
-  await fetchMainOverrides().catch(() => null)
+  await fetchMainOverrides().catch(swallow('공정 현황판 · 주요품목 지정 읽기'))
   const rows = (await fetchAll(() => supabase.from('production').select(COLS).neq('status', '완료').order('id')))
     .filter((r) => !BOARD_DONE.includes(r.status))
   const lineIds = [...new Set(rows.map((r) => r.order_line_id).filter(Boolean))]

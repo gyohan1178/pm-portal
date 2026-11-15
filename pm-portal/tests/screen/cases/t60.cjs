@@ -1,0 +1,20 @@
+// v4.132.0 — 자재요청 이력 머리글 정렬
+const {chromium}=require('playwright');
+const base='http://localhost:8765/app.html';
+let pass=0, fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)} else {fail++;console.log('  ✗',m, x===undefined?'':'→ '+JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();
+const p=await b.newPage({viewport:{width:1440,height:1000}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.goto(`${base}?mr=1&r=${encodeURIComponent('/material-request')}`);await p.waitForTimeout(1800);
+await p.click('text=📊 이력'); await p.waitForTimeout(1200);
+const col=async(i)=>p.$$eval('table tbody tr',(rs,i)=>rs.map(r=>r.children[i]?.textContent.trim()),i);
+let v=await col(1); ok(v[0]==='MR-261030-02','처음엔 원래 차례(요청일 최근)',v);
+await p.click('th >> text=요청번호'); await p.waitForTimeout(300);
+v=await col(1); ok(JSON.stringify(v)===JSON.stringify(['MR-261028-04','MR-261029-03','MR-261029-03','MR-261029-05','MR-261030-02','MR-261031-01']),'요청번호 ▲ — 불출일 달라도 번호 순',v);
+const q=await col(10); ok(q[1]==='Tube'&&q[2]==='Gas Sensor','같은 요청번호는 원래 차례 유지',q);
+ok(/요청번호 ▲/.test(await p.textContent('thead')),'머리글에 ▲');
+await p.click('th >> text=요청번호'); await p.waitForTimeout(300);
+v=await col(1); ok(v[0]==='MR-261031-01'&&v[5]==='MR-261028-04','한 번 더 → ▼',v);
+await p.click('th >> text=/^요청$/'); await p.waitForTimeout(300);
+const qt=await col(13); ok(qt.join(',')==='1,2,3,4,9,15','요청 수량 — 숫자로 정렬',qt);
+ok(errs.length===0,'화면 오류 없음',errs);
+console.log(`결과: 통과 ${pass} · 실패 ${fail}`);await b.close();})();

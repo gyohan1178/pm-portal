@@ -1,0 +1,21 @@
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1500,height:1100}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.addInitScript(()=>{ window.__dl=[]; const o=HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click=function(){ if(this.download) window.__dl.push(this.download); else o.call(this) };
+  window.__titles=[]; window.print=()=>{ window.__titles.push(document.title); setTimeout(()=>window.dispatchEvent(new Event('afterprint')),50) } });
+await p.goto('http://localhost:8765/app.html?r='+encodeURIComponent('/sales-quote'));await p.waitForTimeout(2000);await p.click('button:has-text("✍ 견적 작성")');await p.waitForTimeout(1200);
+const btns=await p.$$eval('button',bs=>bs.map(b=>b.textContent.trim()).filter(t=>/엑셀|인쇄|PDF|출력/.test(t)));console.log('buttons',btns);
+const issued=p.locator('input').filter({has:p.locator('xpath=.')}).first();
+// 수신 · 건명 입력
+const inputs=await p.$$('input.qi'); 
+const proj=p.locator('input[placeholder="RFQ_110228078"]'); await proj.fill('7700039 WIRE 단품 견적');
+await p.fill('input[placeholder="고객사 이름"]','(주)벨류엔지니어링');
+const pn=p.locator('input[placeholder="품번 입력 (ASSY·단품 자동 판별)"]'); await pn.fill('AX-6200111'); await pn.press('Enter'); await p.waitForTimeout(1500);
+console.log('excel enabled', await p.isEnabled('button:has-text("📥 엑셀")'));
+const ex=p.locator('button:has-text("엑셀")').first(); await ex.click(); await p.waitForTimeout(1500);
+const dl=await p.evaluate(()=>window.__dl); console.log('dl',dl);
+ok(dl.length===1&&/^\d{6}_벨류엔지니어링_7700039 WIRE 단품 견적\.xlsx$/.test(dl[0]),'엑셀 파일 이름 규칙',dl);
+const pr=p.locator('button:has-text("인쇄"), button:has-text("PDF")').first(); if(await pr.count()){ const before=await p.title(); await pr.click(); await p.waitForTimeout(600);
+ const t=await p.evaluate(()=>window.__titles); ok(t.length===1&&t[0]===dl[0].replace(/\.xlsx$/,''),'인쇄(PDF) 문서 제목 = 같은 이름',t); ok(await p.title()===before,'인쇄 끝나면 제목 되돌림',await p.title()) } else console.log('no print btn');
+ok(errs.length===0,'오류 없음',errs);
+console.log(`\nt39 ${pass}/${pass+fail}`);await b.close();process.exit(fail?1:0)})();

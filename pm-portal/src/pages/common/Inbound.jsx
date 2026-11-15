@@ -35,6 +35,7 @@ import Spin from '../../components/ux/Spin'
 import { useRemember } from '../../hooks/useRemember'
 import PeriodChips from '../../components/ux/PeriodChips'
 import { fetchInboundWait } from '../../lib/inboundWait'
+import { swallow } from '../../lib/errorLog'
 
 function todayStr() { return todayISO() }
 function monthAgoStr() {
@@ -130,7 +131,7 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
   if (!lines.length) return null
   // 되돌리기용 — 처리 전 이 발주들의 입고 줄을 떠 둔다 (v4.58.0)
   const poIds = lines.map(l => l.po_id)
-  const before = await moveRows({ type: '입고', poIds }).catch(() => null)
+  const before = await moveRows({ type: '입고', poIds }).catch(swallow('입고 · 되돌리기용 이전 기록 떠 두기'))
   // RPC엔 기존 형식(po_id·qty·unit_price)만 전달
   const { error } = await supabase.rpc('pm_process_inbound', {
     p_lines: lines.map(({ item_id, ...l }) => l), p_note: note || null, p_date: inboundDate,
@@ -166,7 +167,7 @@ async function processInbound({ items, inboundData, note, inboundDate }) {
 
 // 발주외(구두발주·단건) 입고 — PO 없이 품목 직접 입고
 async function processDirectInbound({ item_id, qty, unit_price, customer_id, memo, date }) {
-  const before = await moveRows({ type: '입고', itemIds: [item_id], poNull: true, since: date }).catch(() => null)
+  const before = await moveRows({ type: '입고', itemIds: [item_id], poNull: true, since: date }).catch(swallow('발주 없는 입고 · 되돌리기용 이전 기록 떠 두기'))
   const { error } = await supabase.rpc('pm_direct_inbound', {
     p_item_id: item_id,
     p_qty: Number(qty),

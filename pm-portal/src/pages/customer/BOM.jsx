@@ -31,6 +31,7 @@ import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { useNarrow } from '../../hooks/useNarrow'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
+import { swallow } from '../../lib/errorLog'
 
 // BOM 수량 파싱 — 숫자는 그대로(0 포함), 빈칸/문자(A/R 등)는 0으로.
 // 주의: `|| 1` 쓰면 안 됨 (0이 falsy라 1로 둔갑). 명시적으로 숫자만 취함.
@@ -52,7 +53,7 @@ async function fetchAssemblies(customerId) {
   const [data, pj] = await Promise.all([
     fetchAll(() => supabase.rpc('get_bom_assemblies', { cs_id: customerId }).order('code').order('id')),
     // 등록일 = 마지막으로 올린 날 (2026-10-01) — BOM 을 올릴 때마다 projects.start_date 에 그날을 적는다. 못 읽으면 처음 등록일만
-    fetchAll(() => supabase.from('projects').select('id,start_date').eq('customer_id', customerId).order('id')).catch(() => null),
+    fetchAll(() => supabase.from('projects').select('id,start_date').eq('customer_id', customerId).order('id')).catch(swallow('BOM · 등록일 읽기')),
   ])
   const sd = pj ? Object.fromEntries(pj.map(x => [x.id, x.start_date])) : null
   const list = (data || []).map(p => ({

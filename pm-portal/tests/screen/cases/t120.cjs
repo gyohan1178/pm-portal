@@ -1,0 +1,33 @@
+// v4.188.0 — 사용 기록 (화면 열기 · 버튼 누르기 횟수만, 모아서 한 번에)
+const { chromium } = require('playwright')
+let pass = 0, fail = 0
+const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail++; console.log('  ✗ ' + m + ' → ' + JSON.stringify(x ?? '').slice(0, 400)) } }
+;(async () => {
+  const b = await chromium.launch(); const errs = []
+  const p = await b.newPage({ viewport: { width: 1440, height: 900 } }); p.on('pageerror', e => errs.push(e.message.slice(0, 120)))
+  await p.goto('http://localhost:8765/app.html?r=' + encodeURIComponent('/customer/ax/purchase')); await p.waitForTimeout(2000)
+  await p.evaluate(() => { window.__S.RPCFN.pm_usage_add = () => null })
+  const n0 = await p.evaluate(() => window.__S.RPC.filter((r) => r.fn === 'pm_usage_add').length)
+  ok(n0 === 0, '누르기 전엔 서버에 안 보냄 (모아 둠)', n0)
+  for (let i = 0; i < 3; i++) await p.click('[data-po-duereq]', { force: true }).catch(() => {})
+  await p.locator('tbody input[type=checkbox]').first().check(); await p.click('[data-po-duereq]'); await p.waitForTimeout(300)
+  await p.fill('[data-due-req] input >> nth=0', '비밀 메모 12345').catch(() => {})
+  await p.click('[data-due-req] button[aria-label="닫기"]').catch(() => {}); await p.click('a[href*="/inbound"]').catch(() => {})   // 팝업은 닫기 버튼으로만 닫힌다 (v4.191 이후); await p.waitForTimeout(1200)
+  await p.evaluate(() => window.__usage.flush()); await p.waitForTimeout(300)
+  const calls = await p.evaluate(() => window.__S.RPC.filter((r) => r.fn === 'pm_usage_add').map((r) => r.args.p_rows))
+  const rows = calls.flat()
+  ok(calls.length === 1, '한 번의 요청으로 모아서 보냄', calls.length)
+  const pg = rows.filter((r) => r.kind === 'page').map((r) => r.page)
+  ok(pg.includes('/customer/ax/purchase') && pg.includes('/inbound'), '화면 열기 — 구매발주 · 입고', pg)
+  const due = rows.find((r) => r.kind === 'btn' && /납기 회신 요청/.test(r.key))
+  ok(due && due.page === '/customer/ax/purchase' && due.n >= 1, '버튼 — 「납기 회신 요청」 이 구매발주 화면 것으로 횟수', due)
+  ok(rows.some((r) => r.kind === 'link' && r.page === '/customer/ax/purchase'), '링크(메뉴 이동)도 셈', rows.filter((r) => r.kind === 'link').slice(0, 2))
+  ok(!JSON.stringify(rows).includes('비밀 메모') && !/\d{3,}/.test(rows.map((r) => r.key).join('')), '입력한 내용 · 숫자는 안 남음', rows.map((r) => r.key).slice(0, 12))
+  ok(rows.every((r) => r.key.length <= 30 || r.kind === 'page'), '버튼 이름 30자까지')
+  // 표가 없으면 조용히 그만
+  const r2 = await p.evaluate(async () => { delete window.__S.RPCFN.pm_usage_add; window.__usage._test.reset(); window.__usage.trackPage('/x'); await window.__usage.flush(); window.__usage.trackPage('/y'); await window.__usage.flush(); return window.__S.RPC.filter((r) => r.fn === 'pm_usage_add').length })
+  ok(r2 === 2, '표 없음(SQL 전): 한 번 실패한 뒤로는 다시 안 보냄', r2)
+  ok(await p.evaluate(() => window.__usage.pageKey('/quality/fa/3f2a1b4c-1111-2222-3333-444455556666/edit')) === '/quality/fa/:id/edit', '주소의 낱개 id 는 지움')
+  ok(errs.length === 0, '화면 오류 없음', errs)
+  console.log(`t120 ${pass}/${pass + fail} 통과`); await b.close()
+})()

@@ -1,5 +1,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { startUsage, trackPage } from '../../lib/usage'
+import ErrorBoundary, { CrashProbe } from '../ErrorBoundary'
+import { startErrorLog } from '../../lib/errorLog'
 import MenuTabs from '../MenuTabs'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { holidayCoverageWarning } from '../../lib/bizdays'
@@ -94,7 +96,7 @@ const PATH_LABELS = {
 export default function Layout({ profile }) {
   const location = useLocation()
   // 사용 기록 — 화면 열기 · 버튼 누르기 횟수만 (v4.188.0 · lib/usage)
-  useEffect(() => { startUsage() }, [])
+  useEffect(() => { startUsage(); startErrorLog() }, [])   // 사용 기록 + 어디서도 잡지 않은 오류 기록 (v4.196.0)
   useEffect(() => { trackPage(location.pathname) }, [location.pathname])
   const [sidebarOpen, setSidebarOpen] = useState(false)
   // PC 에서 메뉴 접기 (노트북에서 표를 넓게) — 접으면 모바일처럼 ☰ 로 열고 닫는다 (v4.63.0)
@@ -214,7 +216,11 @@ export default function Layout({ profile }) {
         <main className="pm-main flex-1 overflow-y-auto p-4 lg:p-5">
           <Suspense fallback={<div className="flex items-center justify-center py-20 text-sm text-slate-400">불러오는 중...</div>}>
             <MenuTabs />
-            <Outlet />
+            {/* 화면 하나가 죽어도 메뉴는 살아 있게 — 다른 메뉴로 가면 다시 정상 (v4.196.0) */}
+            <ErrorBoundary key={location.pathname} page={location.pathname}>
+              <CrashProbe />
+              <Outlet />
+            </ErrorBoundary>
           </Suspense>
         </main>
         {settingsOpen && <SettingsModal profile={profile} onClose={() => setSettingsOpen(false)} />}

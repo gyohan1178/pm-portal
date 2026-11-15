@@ -1,0 +1,60 @@
+// v4.184.0 — 구매발주 「📨 납기 회신 요청」
+const { chromium } = require('playwright')
+const ExcelJS = require('/tmp/jsportal-test/repo/node_modules/exceljs')
+let pass = 0, fail = 0
+const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail++; console.log('  ✗ ' + m + ' → ' + JSON.stringify(x ?? '').slice(0, 300)) } }
+;(async () => {
+  const b = await chromium.launch(); const ctx = await b.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true })
+  await ctx.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: 'http://localhost:8765' })
+  const p = await ctx.newPage(); const errs = []; p.on('pageerror', e => errs.push(e.message.slice(0, 140)))
+  await p.goto('http://localhost:8765/app.html?r=' + encodeURIComponent('/customer/ax/purchase')); await p.waitForTimeout(2000)
+  await p.evaluate(async () => { const S = window.__S, b = S.DATA.purchase_orders.find((r) => r.id === 'po1')
+    S.DATA.purchase_orders.push({ ...b, id: 'dq1', item_id: 'p1', vendor_id: 'v2', po_number: 'JS-261101-01', qty_ordered: 50, qty_received: 20, qty_remaining: 30, promise_date: '2026-11-01', vendor_date: '2099-11-04' },
+                                { ...b, id: 'dq2', item_id: 'p1', vendor_id: 'v2', po_number: 'JS-261101-02', qty_ordered: 30, qty_received: 0, qty_remaining: 30, promise_date: '2026-10-25', vendor_date: null })
+    await window.__qc.invalidateQueries() }); await p.waitForTimeout(1200)
+  ok(await p.$eval('[data-po-duereq]', (e) => e.disabled), '① 체크 전엔 버튼 흐림')
+  const boxes = await p.$$('tbody input[type=checkbox]'); for (const x of boxes) await x.check(); await p.waitForTimeout(300)
+  ok(!(await p.$eval('[data-po-duereq]', (e) => e.disabled)), '① 체크하면 버튼 켜짐', boxes.length)
+  await p.click('[data-po-duereq]'); await p.waitForTimeout(400)
+  const vendors = await p.$$eval('[data-due-vendor]', (v) => v.map((x) => x.getAttribute('data-due-vendor')))
+  ok(vendors.join(',') === '로이코,파워일렉', '② 업체별로 나눔 (이름순)', vendors)
+  // 펼쳐서 내용
+  await p.click('[data-due-vendor="로이코"] button'); await p.waitForTimeout(200)
+  const txt = await p.$eval('[data-due-vendor="로이코"]', (e) => e.innerText)
+  ok(/AX-5100052/.test(txt) && /MISUMI/.test(txt) && /SPHS-M4-8/.test(txt) && !/JS-26/.test(txt), '② 품번 · 제조사 · 제조사품번 있고 발주번호 없음', txt.slice(0, 300))
+  ok(/2099-11-04/.test(txt), '② 협력사 변경 약속일 칸', txt.slice(0, 400))
+  // 특이사항 자동 문구
+  const notes = await p.$$eval('[data-due-vendor="로이코"] [data-due-note]', (a) => a.map((x) => x.value))
+  ok(notes.length === 2 && notes.every((x) => x === '기재된 일정에 변경 없는지 확인 부탁드립니다'), '② 특이사항 — 모든 줄 같은 문구', notes)
+  // 복사 — 인사 문구 없음 · 회신 칸 대신 특이사항
+  await p.click('[data-due-vendor="로이코"] [data-due-copy]'); await p.waitForTimeout(500)
+  const clip = await p.evaluate(async () => { const it = await navigator.clipboard.read(); const out = {}; for (const i of it) for (const t of i.types) out[t] = await (await i.getType(t)).text(); return out })
+  const H = clip['text/html'] || '', TX = clip['text/plain'] || ''
+  ok(/<table/.test(H) && /특이사항/.test(H) && !/회신 납기|회신 메모/.test(H) && /기재된 일정에 변경 없는지 확인 부탁드립니다/.test(H) && !/JS-26/.test(H), '③ 메일용 복사 — 표 · 특이사항 칸 · 발주번호 없음', H.slice(0, 200))
+  ok(/^로이코 · 2건\n/.test(TX) && !/안녕하세요|진선테크 구매자재팀/.test(TX) && /\t특이사항$/m.test(TX), '③ 인사 문구 없이 업체 줄 + 표', TX.slice(0, 200))
+  ok(/✓ 복사됨/.test(await p.$eval('[data-due-vendor="로이코"] [data-due-copy]', (e) => e.textContent)), '③ 복사한 업체 표시')
+  // 특이사항 고치면 복사에 반영
+  await p.fill('[data-due-vendor="로이코"] [data-due-note] >> nth=0', '긴급 — 11/20까지 꼭 필요합니다')
+  ok(/메일용 복사/.test(await p.$eval('[data-due-vendor="로이코"] [data-due-copy]', (e) => e.textContent)), '④ 고치면 「복사됨」 풀림 (다시 복사하게)')
+  await p.click('[data-due-vendor="로이코"] [data-due-copy]'); await p.waitForTimeout(400)
+  const clip2 = await p.evaluate(async () => (await (await (await navigator.clipboard.read())[0].getType('text/plain')).text()))
+  ok(/긴급 — 11\/20까지 꼭 필요합니다/.test(clip2) && (clip2.match(/기재된 일정에 변경 없는지/g) || []).length === 1, '④ 고친 특이사항으로 복사', clip2.slice(0, 300))
+  // 전체 엑셀
+  await p.evaluate(() => { const o = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { window.__dlName = this.download; return o.call(this) } })
+  const [dl] = await Promise.all([p.waitForEvent('download'), p.click('[data-due-excel-all]')])
+  const f = '/tmp/jsportal-test/out/due.xlsx'; await dl.saveAs(f)
+  const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(f)
+  const names = wb.worksheets.map((w) => w.name)
+  ok(names.join(',') === '로이코,파워일렉', '⑤ 엑셀 — 업체별 시트', names)
+  const ws = wb.getWorksheet('로이코'); const head = ws.getRow(3).values.slice(1)
+  ok(head.join('|') === 'No|품번|품명|제조사|제조사 품번|발주일|발주 수량|미입고|요청 납기|변경 약속일|특이사항', '⑤ 머리글 (발주번호 없음 · 특이사항)', head)
+  ok(ws.getRow(4).getCell(11).value === '긴급 — 11/20까지 꼭 필요합니다', '⑤ 엑셀에도 고친 특이사항', ws.getRow(4).getCell(11).value)
+  ok(ws.getRow(4).getCell(2).value === 'AX-5100052' && ws.rowCount === 5, '⑤ 로이코 2건', [ws.getRow(4).values, ws.rowCount])
+  ok(ws.getRow(3).getCell(11).fill?.fgColor?.argb === 'FFFEF08A', '⑤ 특이사항 칸 노란색')
+  const dn = await p.evaluate(() => window.__dlName)  // (시험 브라우저는 한글 파일 이름을 'download' 로 바꿔 보여서 a.download 값으로 확인)
+  ok(/^납기회신요청_\d{8}\.xlsx$/.test(dn), '⑤ 파일 이름 (여러 업체 = 업체 이름 없이)', dn)
+  await p.click('[data-due-vendor="파워일렉"] [data-due-toggle]'); await p.waitForTimeout(200)
+  await p.screenshot({ path: '/tmp/jsportal-test/out/due_dlg.png' })
+  ok(errs.length === 0, '화면 오류 없음', errs)
+  console.log(`t115 ${pass}/${pass + fail} 통과`); await b.close()
+})()

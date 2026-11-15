@@ -13,6 +13,7 @@ import { SkelBar } from '../components/ux/Skeleton'
 import { useConfirm } from '../components/ux/ConfirmDialog'
 import InfoTip from '../components/ux/InfoTip'
 import Spin from '../components/ux/Spin'
+import { swallow } from '../lib/errorLog'
 
 const CUSTOMERS = ['AXCELIS','Edwards','VM','CSK']
 
@@ -343,7 +344,7 @@ export default function WeeklyReport() {
   })
   const { data:cyc } = useQuery({
     queryKey:['weeklyCycle', week.from, week.to],
-    queryFn:()=>fetchWeeklyCycle(week.from, week.to, ymdKST(new Date()), fetchCycleBase).catch(()=>null),
+    queryFn:()=>fetchWeeklyCycle(week.from, week.to, ymdKST(new Date()), fetchCycleBase).catch(swallow('주간업무보고 · 순환 실사 현황 읽기')),
   })
 
   function handlePrint() {

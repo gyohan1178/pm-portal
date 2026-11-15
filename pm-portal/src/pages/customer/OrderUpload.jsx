@@ -9,6 +9,7 @@ import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrde
 import { fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { fetchSkipRules, saveSkipRules, rulesFor, skipRuleOf, ruleLabel, ruleFromLine } from '../../lib/orderSkip'
+import { swallow } from '../../lib/errorLog'
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 
@@ -147,7 +148,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   }
   const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
   const anyEtc = files.some((f) => etcOf(f.po))
-  useEffect(() => { if (anyEtc) fetchEtcNames().then(setEtcNames).catch(() => {}) }, [anyEtc])
+  useEffect(() => { if (anyEtc) fetchEtcNames().then(setEtcNames).catch(swallow('수주 올리기 · 기타 업체 이름 읽기')) }, [anyEtc])
 
   const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || !nameOk(f.po) || (f.po.warns.length > 0 && !f.force)
   // 이미 있는 PO — 바뀐 것이 없어도 빈 칸(납품처 · Rev · 품목 연결 …)을 채울 것이 있으면 저장 가능 (v4.90.1)

@@ -1,0 +1,56 @@
+// v4.196.0 — 화면 안전장치(한 화면이 죽어도 메뉴는 살아 있음) + 오류 기록
+const { chromium } = require('playwright')
+let pass = 0, fail = 0
+const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail++; console.log('  ✗ ' + m + ' → ' + JSON.stringify(x ?? '').slice(0, 400)) } }
+;(async () => {
+  const b = await chromium.launch()
+  const p = await b.newPage({ viewport: { width: 1366, height: 768 } }); const errs = []; p.on('pageerror', e => errs.push(e.message.slice(0, 120)))
+  await p.goto('http://localhost:8765/app.html?r=' + encodeURIComponent('/todo')); await p.waitForTimeout(2200)
+  await p.evaluate(() => { window.__S.RPCFN.pm_error_add = () => null })
+  const logs = () => p.evaluate(() => window.__S.RPC.filter((r) => r.fn === 'pm_error_add').map((r) => r.args.p_row))
+  ok(await p.locator('[data-error-boundary]').count() === 0, '평소에는 안내가 없다')
+  const title0 = await p.locator('main').innerText()
+  // 1) 화면 하나가 죽음
+  await p.evaluate(() => sessionStorage.setItem('pm_crash_test', '1'))
+  await p.click('aside a:has-text("입고")'); await p.waitForTimeout(900)
+  ok(await p.locator('[data-error-boundary]').count() === 1, '죽은 화면 자리에 안내가 뜬다')
+  ok(/문제가 생겼습니다/.test(await p.locator('[data-error-boundary]').innerText()), '안내 문구')
+  ok(await p.locator('aside [data-brand-mark]').count() === 1 && await p.locator('aside a:has-text("할 일")').count() >= 1, '메뉴는 그대로 살아 있다')
+  let L = await logs()
+  ok(L.length === 1 && L[0].kind === 'render' && /시험용/.test(L[0].message) && L[0].page === '/inbound' && /^v\d/.test(L[0].version), '오류가 기록된다 (종류 · 문구 · 화면 · 버전)', L)
+  ok(!('user_id' in (L[0] || {})) && Object.keys(L[0] || {}).sort().join() === 'agent,kind,message,page,stack,version,where_at', '기록에는 오류 정보만 (입력값 없음)', L[0])
+  // 2) 다른 메뉴로 가면 정상
+  await p.click('aside a:has-text("할 일")'); await p.waitForTimeout(900)
+  ok(await p.locator('[data-error-boundary]').count() === 0 && (await p.locator('main').innerText()).slice(0, 30) === title0.slice(0, 30), '다른 메뉴로 가면 정상 화면')
+  // 3) 다시 열기
+  await p.evaluate(() => sessionStorage.setItem('pm_crash_test', '1'))
+  await p.click('aside a:has-text("입고")'); await p.waitForTimeout(700)
+  ok(await p.locator('[data-error-boundary]').count() === 1, '다시 죽임')
+  await p.click('[data-error-retry]'); await p.waitForTimeout(1200)
+  ok(await p.locator('[data-error-boundary]').count() === 0 && /입고/.test(await p.locator('main').innerText()), '「다시 열기」 → 입고 화면이 열린다')
+  L = await logs(); ok(L.length === 1, '같은 오류는 한 접속에 한 번만 기록', L.length)
+  // 4) 어디서도 안 잡은 오류
+  await p.evaluate(() => { setTimeout(() => { throw new Error('전역 시험 A') }, 0) }); await p.waitForTimeout(300)
+  await p.evaluate(() => { Promise.reject(new Error('약속 시험 B')) }); await p.waitForTimeout(300)
+  await p.evaluate(() => { setTimeout(() => { throw new Error('전역 시험 A') }, 0) }); await p.waitForTimeout(300)
+  L = await logs()
+  ok(L.filter(x => x.kind === 'window' && /전역 시험 A/.test(x.message)).length === 1, '잡히지 않은 오류 기록 (중복 없이)', L.map(x => x.kind + ':' + x.message))
+  ok(L.filter(x => x.kind === 'promise' && /약속 시험 B/.test(x.message)).length === 1, '처리 안 된 비동기 오류 기록')
+  ok(await p.locator('[data-error-boundary]').count() === 0, '전역 오류로는 화면이 안 바뀐다')
+  // 5) 쏟아지지 않게 — 20건 상한
+  await p.evaluate(async () => { for (let i = 0; i < 40; i++) { setTimeout(() => { throw new Error('연속 ' + i) }, 0) } }); await p.waitForTimeout(600)
+  L = await logs(); ok(L.length === 20, '한 접속 20건까지만', L.length)
+  // 6) 표가 없을 때 (SQL 전) — 화면은 그대로
+  const q = await b.newPage({ viewport: { width: 390, height: 844 } }); const e2 = []; q.on('pageerror', e => e2.push(e.message.slice(0, 120)))
+  await q.goto('http://localhost:8765/app.html?r=' + encodeURIComponent('/todo')); await q.waitForTimeout(2200)
+  await q.evaluate(() => sessionStorage.setItem('pm_crash_test', '1'))
+  await q.evaluate(() => { window.__S.RPCFAIL = { pm_error_add: 99 } })
+  await q.goto('http://localhost:8765/app.html?r=' + encodeURIComponent('/inbound')); await q.waitForTimeout(2200)
+  ok(await q.locator('[data-error-boundary]').count() === 1, '휴대폰 · 기록 함수가 없어도 안내는 뜬다')
+  const sw = await q.evaluate(() => [document.documentElement.scrollWidth, innerWidth]); ok(sw[0] <= sw[1], '휴대폰 가로 넘침 없음', sw)
+  await q.screenshot({ path: '/tmp/jsportal-test/out/eb_mob.png' })
+  await p.evaluate(() => sessionStorage.setItem('pm_crash_test', '1')); await p.click('aside a:has-text("할 일")'); await p.waitForTimeout(700)
+  await p.screenshot({ path: '/tmp/jsportal-test/out/eb_pc.png' })
+  console.log(`pass=${pass} fail=${fail}`, 'errs', errs.filter(e => !/시험/.test(e) && !/연속/.test(e)), e2.filter(e => !/시험/.test(e)))
+  await b.close()
+})()

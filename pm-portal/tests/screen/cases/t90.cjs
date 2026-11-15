@@ -1,0 +1,17 @@
+// v4.161.0 — 담기함: 고객사 없는 줄을 그 자리에서 고름 (줄마다 · 일괄)
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const errs=[];const p=await b.newPage({viewport:{width:1500,height:1000}});p.on('pageerror',e=>errs.push(e.message))
+await p.goto('http://localhost:8765/app.html?cartcs=1&r='+encodeURIComponent('/material-request'));await p.waitForTimeout(2500)
+await p.locator('button:has-text("발주 담기함")').first().click(); await p.waitForTimeout(1500)
+const n0=await p.locator('[data-cart-cs]').count(); ok(n0===3,'줄마다 고객사 칸',n0)
+ok(await p.locator('[data-cart-bulk-cs]').count()===1,'「고객사 없는 줄 일괄」 보임')
+await p.selectOption('[data-cart-cs="pc1"]','cid-ed'); await p.waitForTimeout(800)
+let C=await p.evaluate(()=>window.__S.DATA.pm_po_cart.map(c=>[c.id,c.customer_id]))
+ok(C.find(c=>c[0]==='pc1')[1]==='cid-ed','줄 하나 — Edwards 로',C)
+await p.selectOption('[data-cart-bulk-cs]','cid-ax'); await p.waitForTimeout(800)
+C=await p.evaluate(()=>window.__S.DATA.pm_po_cart.map(c=>[c.id,c.customer_id]))
+ok(C.find(c=>c[0]==='pc2')[1]==='cid-ax'&&C.find(c=>c[0]==='pc1')[1]==='cid-ed','일괄 — 빈 줄(pc2)만 채움 · 고른 줄은 그대로',C)
+ok(await p.locator('[data-cart-bulk-cs]').count()===0,'다 채우면 일괄 칸 사라짐')
+ok(errs.length===0,'화면 오류 없음',errs)
+console.log(`\n${pass} pass / ${fail} fail`);await b.close();process.exit(fail?1:0)})()

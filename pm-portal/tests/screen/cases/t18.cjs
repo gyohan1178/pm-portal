@@ -1,0 +1,32 @@
+// v4.99.2 — 품목 단가 등록: 영업 견적 단가 요청 목록
+const {chromium}=require('playwright');
+const base='http://localhost:8765/app.html';
+let pass=0, fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)} else {fail++;console.log('  ✗',m, x===undefined?'':'→ '+JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();
+const p=await b.newPage({viewport:{width:1440,height:1000}});const errs=[];p.on('pageerror',e=>errs.push(e.message));
+await p.context().grantPermissions(['clipboard-read','clipboard-write']);
+await p.goto(`${base}?q99=1&r=/quote`);await p.waitForTimeout(2000);
+ok(await p.locator('[data-price-reqs]').count()===1,'품목 단가 등록 위에 「영업 견적 단가 요청」');
+const left=await p.textContent('[data-price-reqs-left]'); ok(/2/.test(left),'남은 부품 2개',left);
+const codes=await p.$$eval('[data-price-req]',a=>a.map(x=>x.getAttribute('data-price-req'))); ok(codes.length===2&&codes.includes('AX-5109999')&&codes.includes('AX-5000472'),'요청 부품 2개 표시',codes);
+const row=await p.textContent('[data-price-req="AX-5109999"]'); ok(/LE Spare/.test(row)&&/AXCELIS/.test(row)&&/지남/.test(row),'견적 건 · 고객사 · 회신 기한 지남',row);
+await p.screenshot({path:'/tmp/jsportal-test/out/q_reqs.png'});
+await p.click('[data-price-req-pick="AX-5109999"]'); await p.waitForTimeout(500);
+ok(/CONN HOUSING 12P/.test(await p.textContent('main')),'「단가 넣기」 → 입력칸에 품목 선택됨');
+const memo=await p.$eval('input[placeholder="메모"]',e=>e.value); ok(/LE Spare/.test(memo),'메모에 견적 건 이름',memo);
+await p.fill('input[type=number] >> nth=0','1500').catch(()=>{});
+const up=await p.$$eval('input[type=number]',a=>a.map(x=>x.value)); 
+await p.click('[data-quote-save]'); await p.waitForTimeout(1200);
+const it=await p.evaluate(()=>window.__S.DATA.items.find(x=>x.id==='n1')); ok(Number(it.purchase_price)===1500,'저장 → 매입가 반영',[it.purchase_price,up]);
+const left2=await p.textContent('[data-price-reqs-left]'); ok(/1/.test(left2),'목록 갱신 · 남은 부품 1개',left2);
+await p.click('[data-price-reqs-only]'); await p.waitForTimeout(200);
+ok(/✓/.test(await p.textContent('[data-price-req="AX-5109999"]')),'「남은 것만」 끄면 등록됨 ✓ 보임');
+await p.click('[data-price-reqs-copy]'); await p.waitForTimeout(300);
+const clip=await p.evaluate(()=>navigator.clipboard.readText()).catch(()=>''); ok(/AX-5000472/.test(clip)&&!/AX-5109999/.test(clip),'남은 품번만 복사',clip.slice(0,120));
+await p.click('[data-price-reqs-recheck]'); await p.waitForTimeout(1500);
+const ln=await p.evaluate(()=>window.__S.DATA.pm_rfq_line.find(x=>x.id==='rk1')); ok(!!ln.checked_at && ln.checked_at!=='2026-10-23T01:00:00Z','다시 점검 → 견적 접수 품목 점검됨',ln.checked_at);
+ok(errs.length===0,'오류 없음',errs);
+// 영업 계정은 /quote 못 봄 (구매 화면)
+const p2=await b.newPage();await p2.goto(`${base}?q99=1&me=${encodeURIComponent(JSON.stringify({dept:'영업',role:'editor',is_lead:false,menu_scope:['floor','sales']}))}&r=/quote`);await p2.waitForTimeout(1500);
+ok(await p2.locator('[data-price-reqs]').count()===0,'영업 계정은 품목 단가 등록 화면 안 열림 (그대로)');
+console.log(`\n${pass}/${pass+fail} 통과`); await b.close(); process.exit(fail?1:0)})();

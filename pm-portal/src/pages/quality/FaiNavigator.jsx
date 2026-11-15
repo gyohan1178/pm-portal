@@ -24,6 +24,7 @@ import {
   parseReport, buildRows, buildBuyIndex, normAx, V, CLS_LABEL, CLS_BADGE, qtyText, parentList,
 } from '../../lib/fai/partReport'
 import { repFromBom, fillClsFromDb } from '../../lib/fai/fromBom'
+import { swallow } from '../../lib/errorLog'
 
 // 초도품 자재 매칭 (FAI Navigator) — PM Portal 이식 1단계
 //
@@ -193,7 +194,7 @@ export default function FaiNavigator() {
         r.fileName = f.name
         setRep(r); setSel({}); setOpen({})
         // 리포트에 Class 칸이 없으면 DB(CPS 문서에서 읽은 값)로 채운다 (v4.174.0)
-        fillClsFromDb(r).then((n) => { if (n) setRep((x) => (x === r ? { ...r } : x)) }).catch(() => {})
+        fillClsFromDb(r).then((n) => { if (n) setRep((x) => (x === r ? { ...r } : x)) }).catch(swallow('초도품 자재 매칭 · 분류 채우기'))
         // 다음에 열 때 다시 안 올려도 되게. 용량이 크면 저장을 건너뛴다.
         lsSet(LS_REP, { name: f.name, txt: rd.result })
         toastSuccess(`${r.top.pn} Rev ${r.top.rev} — 품번 ${r.parts.size.toLocaleString('ko-KR')}개를 읽었습니다`)

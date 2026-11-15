@@ -26,6 +26,7 @@ import { withNetRetry, isNetErr } from '../../lib/netStatus'
 import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 import { useRemember } from '../../hooks/useRemember'
+import { swallow } from '../../lib/errorLog'
 
 async function fetchProjects(customerId) {
   const { data } = await supabase.from('projects').select('id,code,name,rev').eq('customer_id', customerId).order('code')
@@ -344,7 +345,7 @@ export default function Outbound() {
       }
       // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
       const itemIds = lines.map(l => l.item_id)
-      const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(() => null) : null
+      const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(swallow('출고 · 되돌리기용 이전 기록 떠 두기')) : null
       const res = await callOutboundRpc(
         { p_lines: lines, p_po_id: selCPO?.id||null, p_note: (verObj ? [`[BOM REV ${verObj.rev} 구버전]`, note].filter(Boolean).join(' ') : note)||null, p_mode: mode },
         { p_customer_id: selCustomer||null, p_project_id: selProject||null })

@@ -1,0 +1,20 @@
+// v4.177.0 — 견적 불가 부품 「목록에서 지우기」
+const {chromium}=require('playwright');
+let pass=0,fail=0; const ok=(c,m,x)=>{ if(c){pass++;console.log('  ✓',m)}else{fail++;console.log('  ✗',m,x===undefined?'':JSON.stringify(x))} };
+(async()=>{const b=await chromium.launch();const errs=[];const p=await b.newPage({viewport:{width:1500,height:1100}});p.on('pageerror',e=>errs.push(e.message));
+await p.goto('http://localhost:8765/app.html?q99=1&nq1=1&r=/quote');await p.waitForTimeout(2200);
+await p.click('[data-price-req-nq="AX-5109999"]');await p.fill('[data-price-req-nq-memo]','단종');await p.click('[data-price-req-nq-ok]');await p.waitForTimeout(1500);
+ok(await p.locator('[data-price-req-nq-done="AX-5109999"]').count()===1,'견적 불가 목록에 있음');
+ok(await p.locator('[data-price-req-nq-hide="AX-5109999"]').count()===1,'「🗑 목록에서 지우기」 버튼');
+await p.click('[data-price-req-nq-hide="AX-5109999"]');await p.waitForTimeout(400);
+ok(/목록에서 지울까요/.test(await p.textContent('body')),'확인 창');
+await p.click('[role="dialog"] button:has-text("목록에서 지우기")');await p.waitForTimeout(1500);
+ok(await p.locator('[data-price-req-nq-done="AX-5109999"]').count()===0&&await p.locator('[data-price-reqs-nq-list]').count()===0,'목록에서 사라짐');
+const codes=await p.$$eval('[data-price-req]',a=>a.map(x=>x.getAttribute('data-price-req')));
+ok(!codes.includes('AX-5109999'),'단가 요청 목록에도 다시 안 들어감',codes);
+const L=await p.evaluate(()=>window.__S.DATA.pm_rfq_line.filter(l=>['rk1','rk9'].includes(l.id)).map(l=>l.nq_parts));
+ok(L.every(a=>a.length===1&&a[0].hidden===true&&a[0].reason==='수급 불가'),'견적 불가 표시는 그대로 (hidden 만)',L);
+await p.click('a[href="/sales-quote"]');await p.waitForTimeout(2200);
+ok(/AX-5109999 수급 불가/.test(await p.textContent('[data-rfq="FFU 단품 키트"]')),'영업 견적 접수에는 사유 그대로');
+ok(!errs.length,'페이지 오류 없음',errs);
+console.log(`\n${pass} 통과 / ${fail} 실패`);await b.close();process.exit(fail?1:0)})();

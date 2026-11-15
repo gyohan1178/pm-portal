@@ -8,6 +8,7 @@ import { toast } from './lib/toast'
 import './index.css'
 import { initScale } from './lib/viewPrefs'
 import { isNetErr, reportNetFail, reportNetOk, queryRetry, queryRetryDelay } from './lib/netStatus'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // 화면 크기 (노트북이면 조금 작게) — 첫 화면부터 맞춘다 (v4.63.0)
 initScale()
@@ -61,7 +62,9 @@ ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter basename={import.meta.env.BASE_URL}>
-        <App />
+        <ErrorBoundary full>
+          <App />
+        </ErrorBoundary>
       </BrowserRouter>
       <Toaster />
     </QueryClientProvider>
