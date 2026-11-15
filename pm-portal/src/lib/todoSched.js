@@ -76,14 +76,14 @@ export function roomClash(rows, draft) {
 export const hm = (t) => (mins(t) == null ? '' : String(t).slice(0, 5))
 export const timeText = (r) => (hm(r.time_from) ? `${hm(r.time_from)}${hm(r.time_to) ? '~' + hm(r.time_to) : ''}` : '')
 
-// 달력 칸 — 월요일 시작. month: 그 달이 들어간 6주(42칸) · week: 그 주 7칸
+// 달력 칸 — 일요일 시작 (v4.198.0 — 월요일 시작에서 바꿈). month: 그 달이 들어간 6주(42칸) · week: 그 주 7칸
 export function monthGrid(ym) {
-  const first = `${ym}-01`, off = (dowOf(first) + 6) % 7
+  const first = `${ym}-01`, off = dowOf(first)
   const start = addDays(first, -off)
   return Array.from({ length: 42 }, (_, i) => { const d = addDays(start, i); return { ymd: d, inMonth: d.slice(0, 7) === ym } })
 }
 export function weekGrid(ymd) {
-  const start = addDays(ymd, -((dowOf(ymd) + 6) % 7))
+  const start = addDays(ymd, -dowOf(ymd))
   return Array.from({ length: 7 }, (_, i) => ({ ymd: addDays(start, i), inMonth: true }))
 }
 export const shiftMonth = (ym, n) => { const [y, m] = ym.split('-').map(Number); const d = new Date(Date.UTC(y, m - 1 + n, 1)); return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}` }

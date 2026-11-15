@@ -18,7 +18,7 @@ const CHIP = {
   todo: 'bg-white text-slate-700 border-slate-300',
 }
 const LEGEND = [['all', '전사 공유'], ['req', '유관부서 요청'], ['note', '부서 특이사항'], ['todo', '할 일'], ['rep', '반복']]
-const WD = ['월', '화', '수', '목', '금', '토', '일']
+const WD = ['일', '월', '화', '수', '목', '금', '토']
 const md = (ymd) => `${Number(ymd.slice(5, 7))}/${Number(ymd.slice(8))}`
 
 // 줄 옆 작은 표시 — 누가 보는 줄인지

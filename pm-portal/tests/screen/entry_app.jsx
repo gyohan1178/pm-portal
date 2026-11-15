@@ -122,6 +122,17 @@ if (_qs.get('pt')) {
 }
 // v4.101.0 자료 요청 직접 입력 — ?docetc=1 : 품번 없는 「CN 내역」 요청 (사유 긴 글)
 if (_qs.get('docetc')) S.DATA.pm_doc_request.push({ id: 9, kind: '기타', kind_label: 'CN 내역', customer_code: 'AX', item_id: null, part_no: '', need_date: '2026-11-05', reason: 'EFEM PD 리뉴얼 설계변경 이력 확인 — 초도품 성적서에 넣어야 함. 110158840 → 110219638 변경점 전체', from_dept: '품질', also_depts: [], requester_name: '박품질', status: 0, cancelled: false, history: [], created_at: '2026-10-26T01:00:00Z' })
+// v4.198.0 수주대장 미확인 PO 기준 — ?unconf=1 : Edwards PO 2건(납기 먼 것 · 7주 안) · 기타 PO 2건(4주 안 · 먼 것) · AX PO 1건
+if (_qs.get('unconf')) {
+  const reg = '2026-11-02T01:00:00Z'
+  const mk = (id, cust, po, extra = {}) => S.DATA.pm_order.push({ id, customer_code: cust, po_no: po, registered_at: reg, order_date: '2026-11-02', currency: 'KRW', source: 'pdf', kind: 'po', confirmed_at: null, migrated: false, planned: false, ...extra })
+  const ln = (id, oid, n, due) => S.DATA.pm_order_line.push({ id, order_id: oid, line_no: String(n), del_line: '1', item_id: null, raw_pn: 'UC-' + id, raw_desc: 'UNCONF ' + id, qty: 2, delivered_qty: 0, due_date: due, unit_price: 1000 })
+  mk('uo1', 'ED', 'UC-ED-FAR'); for (let i = 1; i <= 20; i++) ln('ue1_' + i, 'uo1', i, '2027-02-26')      // 납기 − 49 = 2027-01-08 → 확인 예정
+  mk('uo2', 'ED', 'UC-ED-NEAR'); for (let i = 1; i <= 15; i++) ln('ue2_' + i, 'uo2', i, '2026-12-28')     // 납기 − 49 = 2026-11-09 → 미확인
+  mk('uo3', 'ETC', 'UC-ETC-NEAR', { customer_name: '남일' }); for (let i = 1; i <= 3; i++) ln('ux3_' + i, 'uo3', i, '2026-12-01')   // 4주 안 → 미확인
+  mk('uo4', 'ETC', 'UC-ETC-FAR', { customer_name: '두웰' }); for (let i = 1; i <= 2; i++) ln('ux4_' + i, 'uo4', i, '2027-01-20')    // 확인 예정
+  mk('uo5', 'AX', 'UC-AX-1'); ln('ua5_1', 'uo5', 1, '2027-03-01')                                          // AX 는 납기와 상관없이 미확인
+}
 // v4.101.0 수주대장 특이사항 확인 — ?odd=1 : 같은 품목(a1)의 앞선 PO(Rev N · 단가 80만) → l1 이 Rev N→P · 단가 +25%
 if (_qs.get('odd')) {
   S.DATA.pm_order.push({ id: 'o0', customer_code: 'AX', po_no: '47001KF', ccn: 'K', registered_at: '2026-08-01T01:00:00Z', order_date: '2026-08-01', currency: 'KRW', source: 'pdf', kind: 'po' })

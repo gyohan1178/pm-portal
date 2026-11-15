@@ -66,6 +66,17 @@ const KPI_TONE = {
   violet: ['bg-violet-50/70 border-violet-100', 'text-violet-600'], green: ['bg-emerald-50/70 border-emerald-100', 'text-emerald-700'],
 }
 
+// 확인 기한 (v4.198.0) — 이 날부터 「미확인」(빨강). 그 전은 「확인 예정」(회색, 지표 숫자에서 빠짐)
+//   Edwards: 불출 기준(납기 − 35일, EUV 기준 · H2D 는 20일이라 더 늦음) 2주 전 = 납기 − 49일
+//   기타(남일 · 두웰 등 Edwards 협력사): 납기 − 28일
+//   그 밖(AXCELIS · VM · CSK) · 납기 없는 줄: 예전처럼 등록 1영업일 뒤 바로
+//   PO 확인은 PO 단위라 숫자도 PO 로 센다 — Edwards 발주서는 PO 하나에 품목이 20줄 넘게 들어온다
+export const CONFIRM_LEAD = { ED: 49, ETC: 28 }
+const ymdMinus = (ymd, n) => { const d = new Date(String(ymd).slice(0, 10) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
+export const confirmFrom = (l) => { const n = CONFIRM_LEAD[l.o?.customer_code]; return n && l.due_date ? ymdMinus(l.due_date, n) : null }
+const notConfirmed = (l) => l.st.live && !l.o.migrated && !l.o.planned && !l.st.confirmed && bizDaysSince(l.o.registered_at) >= 1
+const confirmSoon = (l, today = todayISO()) => { const f = confirmFrom(l); return !f || today >= f }
+
 // 줄 상태 — 한 칸으로 (회신 결론은 옆 「구매자재 회신」 칸에)
 function statusOf(l) {
   if (l.st.cancelled) return ['취소', 'bg-slate-100 text-slate-400']
@@ -74,12 +85,14 @@ function statusOf(l) {
   if (l.st.planned) return ['발주 예정', 'bg-violet-50 text-violet-700']
   if (l.reply) return ['납품 대기', 'bg-slate-100 text-slate-600']
   if (l.st.confirmed) return ['회신 대기', 'bg-amber-50 text-amber-700']
+  if (!l.o.migrated && !confirmSoon(l)) return ['확인 예정', 'bg-slate-100 text-slate-500']
   return ['확인 대기', 'bg-red-50 text-red-600']
 }
 
 // 지표 · 보기 조건 — 지표 숫자 · 목록 · 고객사 버튼 숫자가 같은 기준을 쓰도록 한 곳에 (v4.90.4)
 const KPI_PICK = {
-  unconfirmed: (l) => l.st.live && !l.o.migrated && !l.o.planned && !l.st.confirmed && bizDaysSince(l.o.registered_at) >= 1,
+  unconfirmed: (l, today) => notConfirmed(l) && confirmSoon(l, today),
+  unconfLater: (l, today) => notConfirmed(l) && !confirmSoon(l, today),
   waiting: (l) => l.st.live && !l.reply,
   risk: (l) => l.st.live && (l.reply === '조건부' || l.reply === '불가'),
   late: (l, today) => l.st.live && !!l.due_date && l.due_date < today,
@@ -471,7 +484,8 @@ export default function OrderIntake() {
   const month = today.slice(0, 7)
   const kpis = useMemo(() => {
     const pos = (ls) => new Set(ls.map((l) => l.order_id)).size
-    const unconfirmed = scoped.filter((l) => KPI_PICK.unconfirmed(l))
+    const unconfirmed = scoped.filter((l) => KPI_PICK.unconfirmed(l, today))
+    const unconfLater = scoped.filter((l) => KPI_PICK.unconfLater(l, today))
     const waiting = scoped.filter((l) => KPI_PICK.waiting(l))
     const risk = scoped.filter((l) => KPI_PICK.risk(l))
     const late = scoped.filter((l) => KPI_PICK.late(l, today))
@@ -512,7 +526,7 @@ export default function OrderIntake() {
     const noPrice = scoped.filter((l) => KPI_PICK.noPrice(l))
     const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
-    return { unconfirmed, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
+    return { unconfirmed, unconfLater, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
   }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data, moneyQ.error, showMoney])
 
   const lines = useMemo(() => {
@@ -797,6 +811,14 @@ export default function OrderIntake() {
     </label>
   )
   const toggle = (id) => setChecked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // PO 한 번에 고르기 (v4.198.0) — 이 PO 의 보이는 줄을 전부 고르거나 전부 풂 (회신 · 확인 처리를 PO 단위로)
+  const pickPo = (orderId) => setChecked((s) => {
+    const ids = liveVisible.filter((l) => l.order_id === orderId).map((l) => l.id)
+    const n = new Set(s), all = ids.every((id) => n.has(id))
+    ids.forEach((id) => (all ? n.delete(id) : n.add(id)))
+    return n
+  })
+  const poLineN = new Map(); liveVisible.forEach((l) => poLineN.set(l.order_id, (poLineN.get(l.order_id) || 0) + 1))
   const allOn = liveVisible.length > 0 && liveVisible.every((l) => checked.has(l.id))
 
   if (error && /pm_order/.test(error.message || '')) {
@@ -860,8 +882,8 @@ export default function OrderIntake() {
       )}
       {tab === 'list' && <>
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
-        <Kpi tone="red" label="미확인" value={kpis.unconfirmed.length} sub={`PO ${pos(kpis.unconfirmed)}건 · 등록 1영업일 넘게 확인 없음`} {...kpiBtn('unconfirmed')} loading={isLoading}
-          tip="PO 가 등록된 뒤 1영업일(토 · 일 빼고)이 지나도록 구매자재가 회신도 「✓ 확인했음」도 안 한 품목 줄. 예전 데이터 이관 · 발주 예정(Plnd)은 세지 않습니다." />
+        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
+          tip="지금 확인해야 할 PO 수(품목 줄이 아니라 PO). 등록 뒤 1영업일이 지나도록 회신도 「✓ 확인 처리」도 없는 PO 입니다. Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 셉니다 — 그 전은 「확인 예정」. 예전 데이터 이관 · 발주 예정(Plnd)은 세지 않습니다." />
         <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} loading={isLoading}
           tip="진행 중인데 아직 회신(가능 · 조건부 · 불가)이 없는 품목 줄. 고객사가 수량 · 납기를 바꿔 다시 들어와 재회신이 필요한 줄도 여기 들어옵니다." />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
@@ -871,6 +893,14 @@ export default function OrderIntake() {
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
+
+      {kpis.unconfLater.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500" data-unconf-later>
+          <span>🕓 확인 예정 PO <b className="text-slate-700">{pos(kpis.unconfLater)}건</b> (품목 {kpis.unconfLater.length}줄) — Edwards 납기 7주 · 기타 4주 전부터 미확인으로 올라옵니다</span>
+          <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'unconfLater' ? null : 'unconfLater') }} data-unconf-later-btn
+            className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'unconfLater' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'unconfLater' ? '보는 중 ✕' : '보기'}</button>
+        </div>
+      )}
 
       {/* 미납 사유별 (v4.190.0) — 납기 지난 줄을 왜 못 나갔는지로 나눠 본다 · 누르면 그 사유만 */}
       {lateMap && kpis.late.length > 0 && (
@@ -1122,7 +1152,7 @@ export default function OrderIntake() {
               {isLoading && <SkeletonRows cols={9} rows={8} first={1} two={[2, 4]} />}
               {!isLoading && !lines.length && <tr><td colSpan={9} className="p-10 text-center text-slate-400">{orders.length ? '조건에 맞는 품목이 없습니다' : '아직 등록된 PO 가 없습니다 — 「📄 PDF 올리기」로 시작하세요'}</td></tr>}
               {shownLines.map((l) => {
-                const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
+                const late = notConfirmed(l) && confirmSoon(l, today)
                 const [stLabel, stCls] = statusOf(l)
                 return (
                   <tr key={l.id} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${l.st.cancelled ? 'opacity-40' : ''} ${checked.has(l.id) ? 'bg-violet-50/60' : ''}`} data-row={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
@@ -1131,6 +1161,10 @@ export default function OrderIntake() {
                     <td className="px-3 py-3"><CustCell o={l.o} /></td>
                     <td className="px-3 py-3 whitespace-nowrap overflow-hidden">
                       <button type="button" onClick={() => setPoOpen(l.order_id)} className={`font-mono font-bold hover:underline ${l.o.planned ? 'text-violet-600' : 'text-[#5b6ee8]'}`} data-po-link={l.o.po_no}>{l.o.po_no}</button><KindBadge o={l.o} />
+                      {!l.st.cancelled && (poLineN.get(l.order_id) || 0) > 1 && (
+                        <button type="button" onClick={() => pickPo(l.order_id)} data-pick-po={l.o.po_no} title="이 PO 의 보이는 품목을 한 번에 고르기 (다시 누르면 풂)"
+                          className="ml-1.5 px-1.5 py-[1px] rounded border border-slate-300 bg-white text-[10px] font-bold text-slate-500 hover:border-violet-400 hover:text-violet-600 align-middle">PO {poLineN.get(l.order_id)}줄 고르기</button>
+                      )}
                       {l.o.planned
                         ? <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={`Plnd ${l.plnd_no || '—'} · Prod ${l.prod_no || '—'} · ${regTitle(l.o)}`}>{l.plnd_no ? `Plnd ${l.plnd_no}` : '번호 없음'}{mgmtNoOf(l) ? ` · ${mgmtNoOf(l)}` : ''}{regBy(l.o) && <> · <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}</div>
                         : <div className="text-[11px] text-slate-400 mt-0.5 truncate" title={regTitle(l.o)}>Line {l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''} · 접수 {md(l.o.registered_at)}{regBy(l.o) && <> <span className="text-slate-500" data-reg-by>{regBy(l.o)}</span></>}{l.o.migrated ? ' · 이관' : ''}{l.plnd_no ? ` · Plnd ${l.plnd_no}` : ''}</div>}
@@ -1255,7 +1289,7 @@ export default function OrderIntake() {
 // 휴대폰 카드 — 품번별 한 줄 (v4.90.7)
 function LineCard({ l, isBuy, checked, onToggle, onOpen, onOddOk, prodMap }) {
   const [stLabel, stCls] = statusOf(l)
-  const late = l.st.live && !l.st.confirmed && !l.o.migrated && !l.o.planned && bizDaysSince(l.o.registered_at) >= 1
+  const late = notConfirmed(l) && confirmSoon(l)
   const c = ORDER_CUSTOMERS[l.o.customer_code]
   return (
     <div className={`bg-white border rounded-xl p-3 ${checked ? 'border-violet-300 bg-violet-50/40' : 'border-slate-200'} ${l.st.cancelled ? 'opacity-50' : ''}`} data-mcard={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>

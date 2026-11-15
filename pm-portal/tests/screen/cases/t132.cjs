@@ -82,7 +82,7 @@ const base = 'http://localhost:8765/app.html'
   await p.click('[data-cal-mode="week"]'); await p.waitForTimeout(300)
   ok(await p.locator('[data-cal-day]').count() === 7 && /↻ 주간업무보고 확인/.test(await day('2026-11-16')), '주 보기: 7칸 · 다 보인다', await day('2026-11-16'))
   await p.click('[data-cal-next]'); await p.waitForTimeout(200)
-  ok(/11\/23 ~ 11\/29/.test(await p.locator('[data-cal-title]').innerText()), '다음 주로')
+  ok(/11\/22 ~ 11\/28/.test(await p.locator('[data-cal-title]').innerText()), '다음 주로')
   await p.click('[data-cal-add="2026-11-25"]'); await p.waitForTimeout(300)
   ok(await p.locator('input[type=date] >> nth=-1').evaluate((e, _) => true) && (await p.evaluate(() => [...document.querySelectorAll('input[type=date]')].map(e => e.value))).includes('2026-11-25'), '날짜 칸을 누르면 그 날짜로 추가 창')
   await p.click('button:has-text("취소") >> nth=-1'); await p.waitForTimeout(200)
