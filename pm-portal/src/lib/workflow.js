@@ -83,7 +83,7 @@ const F = {
       { name: '도면 확인', note: 'PO Rev 와 도면 Rev 비교 — 다르면 받은 새 도면을 생산기술에 공유', go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
       // v4.200.2 — 회신 한 단계(one_step · SQL 수주확인_한단계) 뒤엔 「회신 대기」 없음 → 확인 예정을 대신 보여 줌
       { name: '구매자재 회신', note: '구매자재가 처리 — PO별 🔍 자재 점검 뒤 가능 · 조건부 · 불가로 회신 (기다리는 단계)', other: '구매자재', go: () => ['/orders?kpi=unconfirmed'], badges: (c) => (c?.ord_one_step ? [['미확인', c?.ord_unconfirmed, 'red'], ['확인 예정', c?.ord_later, 'gray']] : [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']]) },
-      { name: '회신 확인 · 납기 협의', note: '⚠ 특이사항(Rev · 단가 바뀐 줄)은 고객사에 확인 후 ✓ · 납기 지난 줄은 사유 입력 · 조건부 · 불가는 사유 · 가능한 날을 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
+      { name: '회신 확인 · 납기 협의', note: '⚠ 특이사항(Rev · 단가 바뀐 줄)은 고객사에 확인 후 ✓ · 납기 지난 줄은 사유 입력 · 조건부 · 불가는 사유 · 가능한 날을 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [...(c?.ord_odd != null ? [['⚠ 특이사항', c.ord_odd, 'amber']] : []), ['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red'], ...(c?.ord_late_noreason != null ? [['사유 없음', c.ord_late_noreason, 'red']] : [])] },
       { name: '납품', note: '품질 검수가 끝난 호기를 고객사에 납품 (v4.98.0)', go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
     ],
     subs: [
@@ -93,6 +93,8 @@ const F = {
     ],
     inbox: [
       { from: '구매자재', text: '수주대장 회신 — 조건부 · 불가 (고객사 납기 협의)', n: (c) => c?.ord_risk, tone: 'amber', path: '/orders' },
+      { from: '고객사', text: '⚠ 특이사항 — 바로 앞 PO 와 Rev · 단가 바뀐 줄 (고객사 확인 후 ✓)', n: (c) => c?.ord_odd ?? null, tone: 'amber', path: '/orders' },
+      { from: '고객사', text: '납기 지남 — 미납 사유 안 넣은 줄', n: (c) => c?.ord_late_noreason ?? null, tone: 'red', path: '/orders' },
       { from: '각 부서', text: '자료 요청 — 고객사에 도면 · BOM 받아 올리기', n: (c) => c?.doc?.open ?? null, tone: 'amber', path: '/doc-request' },
       { from: '품질', text: '검수 끝 — 납품 대기', n: (c) => c?.prod_ship, tone: 'gray', path: '/production/AX' },
     ],

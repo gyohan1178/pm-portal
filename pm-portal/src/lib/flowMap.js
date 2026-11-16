@@ -19,7 +19,7 @@ export const MAP_NODES = [
   { id: 's1', dept: '영업', col: 0, name: '견적 작성', keys: ['price'], go: () => ['/sales-quote'], badges: (c) => [['작성 가능', c?.rfq_ready, 'violet'], ['회신 D-3', c?.rfq_due, 'red']] },
   { id: 's3', dept: '영업', col: 1, name: '수주 등록', keys: ['po'], go: () => ['/orders'], badges: (c) => [['정식 PO 대기 지남', c?.po_wait, 'red'], ['이번 달 접수', c?.ord_month, 'gray']] },
   { id: 's4', dept: '영업', col: 2, name: '도면 확인', keys: ['dwg'], go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
-  { id: 's6', dept: '영업', col: 3, name: '납기 협의', keys: ['reply'], go: () => ['/orders'], badges: (c) => [['납기 지남', c?.ord_late, 'red'], ['조건부 · 불가', c?.ord_risk, 'amber']] },
+  { id: 's6', dept: '영업', col: 3, name: '납기 협의', keys: ['reply'], go: () => ['/orders'], badges: (c) => [...(c?.ord_odd != null ? [['⚠ 특이사항', c.ord_odd, 'amber']] : []), ['납기 지남', c?.ord_late, 'red'], ...(c?.ord_late_noreason != null ? [['사유 없음', c.ord_late_noreason, 'red']] : []), ['조건부 · 불가', c?.ord_risk, 'amber']] },
   { id: 's10', dept: '영업', col: 7, name: '납품', keys: ['ship'], go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
   { id: 'p1', dept: '구매자재', col: 1, name: '수주 확인·회신', keys: ['po', 'reply'], go: () => ['/orders?kpi=unconfirmed'], badges: (c) => (c?.ord_one_step ? [['미확인', c?.ord_unconfirmed, 'red'], ['확인 예정', c?.ord_later, 'gray']] : [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'amber']]) },
   { id: 'p3', dept: '구매자재', col: 3, name: '구매발주', quiet: true, keys: ['buy'], go: (pcs) => [cs(pcs, 'purchase'), '/control-tower'], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red'], ['발주 필요', ct?.orderNeeded, 'amber']] },

@@ -481,7 +481,7 @@ if (_qs.get('matchk')) {
       row('ED-HARN', 'harness', { name: 'MAIN HARNESS', short: 2 }),
     ] : [row('ED-OK1', 'ok'), row('ED-OK2', 'ok')] })
 }
-if (_qs.get('oc')) S.RPCFN.pm_order_confirm_summary = () => (_qs.get('oc') === '2' ? { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 0, one_step: true } : { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 1 })
+if (_qs.get('oc')) S.RPCFN.pm_order_confirm_summary = () => (_qs.get('oc') === '2' ? { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 0, one_step: true, odd_lines: 4, late_lines: 6, late_noreason: 2 } : { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 1 })
 if (_qs.get('cyc')) Object.assign(S.RPCFN, {
   pm_cell_hold_active: () => S.DATA.holds.map((h) => ({ ...h, neg_cnt: S.DATA.inventory.filter((i) => i.location === h.location && i.qty < 0).length })),
   pm_cell_hold_set: (a) => { const loc = a.p_loc.toUpperCase(); const auto = S.DATA.inventory.some((i) => i.location === loc && i.qty < 0); const ex = S.DATA.holds.find((h) => h.location === loc); if (ex) ex.reason = a.p_reason; else S.DATA.holds.push({ location: loc, reason: a.p_reason, auto_neg: auto, held_date: new Date().toISOString().slice(0, 10), held_name: '김교한' }); return [] },
