@@ -839,6 +839,7 @@ export default function OrderIntake() {
   }
   const m = kpis.money
   const pos = kpis.pos
+  const lateNoReason = lateMap ? kpis.late.filter((l) => !lateMap.get(l.id)?.reason).length : 0   // 납기 지남 중 사유 없는 줄 (v4.200.0)
   const kpiBtn = (key) => ({ on: kpi === key, onClick: () => { setLateF(null); setKpi(kpi === key ? null : key) } })
   const sel = 'text-xs font-semibold border border-slate-200 rounded-lg px-2.5 py-2 bg-white text-slate-600'
 
@@ -889,13 +890,29 @@ export default function OrderIntake() {
         </Suspense>
       )}
       {tab === 'list' && <>
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* 지표 카드 — 보는 사람 할 일 순서로 (v4.200.0). 영업: 특이사항 · 납기 지남 · 조건부 · 불가 먼저 / 구매자재: 미확인 먼저 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3" data-kpi-order={isBuy ? 'buy' : 'sales'}>
+        {isBuy ? <>
         <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
           tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
           tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
-        <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} loading={isLoading}
+        <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기 지났는데 미납${lateNoReason ? ` · 사유 없음 ${lateNoReason}줄` : ''}`} {...kpiBtn('late')} loading={isLoading}
           tip="고객사 납기일이 오늘보다 앞인데 아직 「납품 표시」가 안 된 줄. 실제로 나갔다면 납품 표시를 해 주세요." />
+        <Kpi tone="amber" label="⚠ 특이사항" value={kpis.odd.length} sub={`영업 확인 · Rev ${kpis.odd.filter((l) => l.odd.rev).length} · 단가 ${kpis.odd.filter((l) => l.odd.price).length}${kpis.odd.some((l) => l.odd.note) ? ` · 메모 ${kpis.odd.filter((l) => l.odd.note).length}` : ''}`}
+          on={kpi === 'odd'} onClick={() => { setLateF(null); setKpi(kpi === 'odd' ? null : 'odd'); setMode('line') }} loading={isLoading}
+          tip={`영업이 고객사에 다시 확인할 줄 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 진행 중 줄. 확인했으면 줄의 「✓ 확인」을 누르면 빠집니다.`} />
+        </> : <>
+        <Kpi tone="amber" label="⚠ 특이사항" value={kpis.odd.length} sub={`영업 확인 · Rev ${kpis.odd.filter((l) => l.odd.rev).length} · 단가 ${kpis.odd.filter((l) => l.odd.price).length}${kpis.odd.some((l) => l.odd.note) ? ` · 메모 ${kpis.odd.filter((l) => l.odd.note).length}` : ''}`}
+          on={kpi === 'odd'} onClick={() => { setLateF(null); setKpi(kpi === 'odd' ? null : 'odd'); setMode('line') }} loading={isLoading}
+          tip={`영업이 고객사에 다시 확인할 줄 — 같은 품목의 바로 앞 PO 와 Rev 가 다르거나 · 단가가 ${ODD_PRICE_PCT}% 넘게 다르거나 · 메모에 ⚠ 가 있는 진행 중 줄. 확인했으면 줄의 「✓ 확인」을 누르면 빠집니다.`} />
+        <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기 지났는데 미납${lateNoReason ? ` · 사유 없음 ${lateNoReason}줄` : ''}`} {...kpiBtn('late')} loading={isLoading}
+          tip="고객사 납기일이 오늘보다 앞인데 아직 「납품 표시」가 안 된 줄. 실제로 나갔다면 납품 표시를 해 주세요." />
+        <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
+          tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
+        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
+          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
+        </>}
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
@@ -917,8 +934,8 @@ export default function OrderIntake() {
 
       {/* 미납 사유별 (v4.190.0) — 납기 지난 줄을 왜 못 나갔는지로 나눠 본다 · 누르면 그 사유만 */}
       {lateMap && kpis.late.length > 0 && (
-        <div className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 flex flex-wrap items-center gap-2" data-late-sum>
-          <b className="text-xs text-slate-700 whitespace-nowrap">납기 지남 {kpis.late.length}줄 — 사유별</b>
+        <div className={`rounded-xl border px-4 py-2.5 flex flex-wrap items-center gap-2 ${lateNoReason ? 'border-red-200 bg-red-50/60' : 'border-slate-200 bg-white'}`} data-late-sum>
+          <b className={`text-xs whitespace-nowrap ${lateNoReason ? 'text-red-700' : 'text-slate-700'}`}>⏰ 납기 지남 {kpis.late.length}줄 — 사유별{lateNoReason ? ` · 사유 없음 ${lateNoReason}줄은 영업이 사유를 넣어 주세요` : ''}</b>
           {lateSummary(kpis.late, lateMap).map((x) => {
             const on = kpi === 'late' && lateF === x.reason
             return (
@@ -1167,8 +1184,10 @@ export default function OrderIntake() {
               {shownLines.map((l) => {
                 const late = notConfirmed(l) && confirmSoon(l, today)
                 const [stLabel, stCls] = statusOf(l)
+                // 줄 왼쪽 띠 (v4.200.0) — 납기 지남 빨강 · 특이사항 주황 (영업이 챙길 줄이 목록에서 바로 보이게)
+                const flag = KPI_PICK.late(l, today) ? 'late' : KPI_PICK.odd(l) ? 'odd' : ''
                 return (
-                  <tr key={l.id} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${l.st.cancelled ? 'opacity-40' : ''} ${checked.has(l.id) ? 'bg-violet-50/60' : ''}`} data-row={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
+                  <tr key={l.id} data-row-flag={flag || undefined} className={`border-t border-slate-100 align-top hover:bg-slate-50/70 ${l.st.cancelled ? 'opacity-40' : ''} ${checked.has(l.id) ? 'bg-violet-50/60' : flag === 'late' ? 'bg-red-50/40' : flag === 'odd' ? 'bg-amber-50/40' : ''} ${flag === 'late' ? 'shadow-[inset_3px_0_0_0_#ef4444]' : flag === 'odd' ? 'shadow-[inset_3px_0_0_0_#f59e0b]' : ''}`} data-row={`${l.o.po_no}|${l.line_no}/${l.del_line}`}>
                     <td className="pl-4 py-3">{!l.st.cancelled && <input type="checkbox" checked={checked.has(l.id)} onChange={() => toggle(l.id)} data-check={`${l.o.po_no}|${l.line_no}/${l.del_line}`} />}</td>
                     <td className="px-3 py-3"><DueCell l={l} /></td>
                     <td className="px-3 py-3"><CustCell o={l.o} /></td>

@@ -36,7 +36,7 @@ console.log('② 구매자재 — 지표 ⓘ · 메뉴 숫자 · 회신 칸 안�
  await p.screenshot({path:OUT+'ux_oi_tip.png',clip:{x:240,y:120,width:1000,height:330}});
  await p.mouse.click(1400,950);
  ok(!await p.$('[data-info-tip-body]'),'바깥 누르면 닫힘');
- ok(await p.$$eval('[data-kpi] [data-info-tip]',e=>e.length)===5,'지표 4개(v4.199.0 회신 대기 뺌) + 예상 매출 ⓘ');
+ ok(await p.$$eval('[data-kpi] [data-info-tip]',e=>e.length)===6,'지표 5개(v4.200.0 특이사항 카드) + 예상 매출 ⓘ');
 
  // 회신 — 결론 안 고르고 저장
  await p.click('[data-row="PO2610000242|1/1"] input[type=checkbox]');
