@@ -1,4 +1,4 @@
-// 카톡 아침 알림 — 서버 함수 (v4.205.0)
+// 카톡 아침 알림 — 서버 함수 (v4.206.0 표 모양)
 //   action
 //     config  : 화면이 카카오 로그인 창을 열 때 쓰는 REST API 키 (공개되는 값) · 로그인 필요
 //     connect : 카카오가 돌려준 code → 토큰으로 바꿔 pm_kakao_link 에 저장 + 확인 메시지 1통 · 로그인 필요
@@ -48,8 +48,11 @@ async function tokenCall(params: Record<string, string>) {
   return j as { access_token: string, refresh_token?: string, refresh_token_expires_in?: number, scope?: string }
 }
 
+const LINK = { web_url: `${PORTAL}/todo`, mobile_web_url: `${PORTAL}/todo` }
 async function sendMemo(access: string, text: string) {
-  const tpl = { object_type: 'text', text, link: { web_url: `${PORTAL}/todo`, mobile_web_url: `${PORTAL}/todo` }, button_title: '포털 열기' }
+  return sendTpl(access, { object_type: 'text', text, link: LINK, button_title: '포털 열기' })
+}
+async function sendTpl(access: string, tpl: unknown) {
   const r = await fetch('https://kapi.kakao.com/v2/api/talk/memo/default/send', {
     method: 'POST',
     headers: { Authorization: `Bearer ${access}`, 'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8' },
@@ -59,6 +62,45 @@ async function sendMemo(access: string, text: string) {
   if (!r.ok || j.result_code !== 0) throw new Error(`카톡 보내기 실패: ${j.msg || j.result_code || r.status}${j.code === -402 ? ' (카카오 동의 항목 「카카오톡 메시지 전송」 동의 필요)' : ''}`)
 }
 
+// 표(피드) 모양 — 왼쪽 항목 · 오른쪽 고객사별 숫자 (0 인 고객사는 뺌) · 아래 「내 할 일」 합계
+type Cs = { cs: string, late: number, today: number, week: number, unc: number | null }
+const cut = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
+function feedOf(j: Record<string, any>, withImage: boolean) {
+  const cs: Cs[] = j.cs || []
+  const row = (k: keyof Cs) => cs.filter((c) => Number(c[k]) > 0).map((c) => `${c.cs} ${c[k]}`).join(' · ') || '없음'
+  const items = [
+    { item: '입고 지남', item_op: row('late') },
+    { item: '오늘 입고', item_op: row('today') },
+    { item: '이번 주 입고', item_op: row('week') },
+    { item: '수주 미확인', item_op: row('unc') },
+    { item: '자재·견적 요청', item_op: `${j.req ?? '-'} · ${j.rfq ?? '-'}` },
+  ]
+  const todo = Number(j.todo) || 0
+  const desc = [
+    todo ? `할 일: ${(j.todo_titles || []).map((t: string) => cut(t, 14)).join(', ')}` : '',
+    (j.notes || []).length ? `일정: ${(j.notes || []).map((t: string) => cut(t, 14)).join(', ')}` : '',
+  ].filter(Boolean).join('\n') || '오늘 마감인 할 일 · 일정 없음'
+  return {
+    object_type: 'feed',
+    content: { title: `${j.date}(${j.dow}) 오늘 챙길 일`, description: desc, link: LINK,
+      ...(withImage ? { image_url: `${PORTAL}/kakao-brief.png`, image_width: 800, image_height: 400 } : {}) },
+    item_content: { profile_text: 'JS 포털', items, sum: '내 할 일', sum_op: todo ? `${todo}건${j.todo_over ? ` (지남 ${j.todo_over})` : ''}` : '없음' },
+    buttons: [{ title: '포털 열기', link: LINK }],
+  }
+}
+
+// 표로 보내 보고, 카카오가 받지 않으면 그림 넣은 표 → 그래도 안 되면 글로
+async function sendBrief(access: string, userId: string, text: string) {
+  const { data: j } = await db.rpc('pm_morning_brief_data', { p_user: userId })
+  if (j && typeof j === 'object') {
+    for (const img of [false, true]) {
+      try { await sendTpl(access, feedOf(j, img)); return 'feed' } catch { /* 다음 방법 */ }
+    }
+  }
+  await sendMemo(access, text)
+  return 'text'
+}
+
 // 한 사람에게 보내기 — 갱신 토큰으로 접근 토큰을 받고(새 갱신 토큰이 오면 저장) 글을 만들어 보낸다
 async function sendTo(userId: string, refresh: string) {
   const now = new Date().toISOString()
@@ -66,7 +108,7 @@ async function sendTo(userId: string, refresh: string) {
     const t = await tokenCall({ grant_type: 'refresh_token', refresh_token: refresh })
     const { data: text, error } = await db.rpc('pm_morning_brief', { p_user: userId })
     if (error) throw new Error('글 만들기 실패: ' + error.message)
-    await sendMemo(t.access_token, String(text || '오늘 챙길 일을 만들지 못했습니다'))
+    await sendBrief(t.access_token, userId, String(text || '오늘 챙길 일을 만들지 못했습니다'))
     const patch: Record<string, unknown> = { last_sent_at: now, last_error: null, last_text: text, updated_at: now }
     if (t.refresh_token) { patch.refresh_token = t.refresh_token; if (t.refresh_token_expires_in) patch.refresh_expires_at = new Date(Date.now() + t.refresh_token_expires_in * 1000).toISOString() }
     await db.from('pm_kakao_link').update(patch).eq('user_id', userId)
