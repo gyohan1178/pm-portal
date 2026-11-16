@@ -44,6 +44,8 @@ import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelL
 const CustomerPOUpload = lazy(() => import('./CustomerPOUpload'))
 const EcountMatch = lazy(() => import('./EcountMatch'))
 const OrderCleanup = lazy(() => import('./OrderCleanup'))
+// PO 자재 점검 (v4.199.0) — BOM 전개 · 부족 확인 후 바로 회신. 누를 때만 받는다
+const PoMatCheck = lazy(() => import('./PoMatCheck'))
 
 const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko-KR', { maximumFractionDigits: 2 }))
 const won = (v) => `₩${Math.round(v || 0).toLocaleString('ko-KR')}`
@@ -74,7 +76,11 @@ const KPI_TONE = {
 export const CONFIRM_LEAD = { ED: 49, ETC: 28 }
 const ymdMinus = (ymd, n) => { const d = new Date(String(ymd).slice(0, 10) + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() - n); return d.toISOString().slice(0, 10) }
 export const confirmFrom = (l) => { const n = CONFIRM_LEAD[l.o?.customer_code]; return n && l.due_date ? ymdMinus(l.due_date, n) : null }
-const notConfirmed = (l) => l.st.live && !l.o.migrated && !l.o.planned && !l.st.confirmed && bizDaysSince(l.o.registered_at) >= 1
+// 한 단계 (v4.199.0) — 「확인」 단계 없이 회신이 곧 확인. 미확인 = 회신 없는 줄 · 11월 1일 등록 PO 부터 (그 전 PO 는 「11월 전 회신 없음」으로 따로)
+export const CONFIRM_START = '2026-11-01'
+const regDay = (o) => (o.registered_at ? kst(o.registered_at).slice(0, 10) : '')
+const noReplyBase = (l) => l.st.live && !l.o.migrated && !l.o.planned && !l.reply
+const notConfirmed = (l) => noReplyBase(l) && regDay(l.o) >= CONFIRM_START && bizDaysSince(l.o.registered_at) >= 1
 const confirmSoon = (l, today = todayISO()) => { const f = confirmFrom(l); return !f || today >= f }
 
 // 줄 상태 — 한 칸으로 (회신 결론은 옆 「구매자재 회신」 칸에)
@@ -84,7 +90,7 @@ function statusOf(l) {
   if (l.st.partDelivered) return ['일부 납품', 'bg-blue-50 text-blue-700']
   if (l.st.planned) return ['발주 예정', 'bg-violet-50 text-violet-700']
   if (l.reply) return ['납품 대기', 'bg-slate-100 text-slate-600']
-  if (l.st.confirmed) return ['회신 대기', 'bg-amber-50 text-amber-700']
+  if (!l.o.migrated && regDay(l.o) < CONFIRM_START) return ['회신 없음', 'bg-slate-100 text-slate-500']
   if (!l.o.migrated && !confirmSoon(l)) return ['확인 예정', 'bg-slate-100 text-slate-500']
   return ['확인 대기', 'bg-red-50 text-red-600']
 }
@@ -94,6 +100,7 @@ const KPI_PICK = {
   unconfirmed: (l, today) => notConfirmed(l) && confirmSoon(l, today),
   unconfLater: (l, today) => notConfirmed(l) && !confirmSoon(l, today),
   waiting: (l) => l.st.live && !l.reply,
+  oldNoReply: (l) => noReplyBase(l) && regDay(l.o) < CONFIRM_START,
   risk: (l) => l.st.live && (l.reply === '조건부' || l.reply === '불가'),
   late: (l, today) => l.st.live && !!l.due_date && l.due_date < today,
   noPrice: (l) => !l.st.cancelled && !(+l.unit_price > 0),
@@ -487,6 +494,7 @@ export default function OrderIntake() {
     const unconfirmed = scoped.filter((l) => KPI_PICK.unconfirmed(l, today))
     const unconfLater = scoped.filter((l) => KPI_PICK.unconfLater(l, today))
     const waiting = scoped.filter((l) => KPI_PICK.waiting(l))
+    const oldNoReply = scoped.filter((l) => KPI_PICK.oldNoReply(l))
     const risk = scoped.filter((l) => KPI_PICK.risk(l))
     const late = scoped.filter((l) => KPI_PICK.late(l, today))
     const monthPos = orders.filter((o) => isMonthPo(o, month) && (cust === 'all' || o.customer_code === cust))
@@ -526,7 +534,7 @@ export default function OrderIntake() {
     const noPrice = scoped.filter((l) => KPI_PICK.noPrice(l))
     const odd = scoped.filter((l) => KPI_PICK.odd(l))
     m.yr = yr
-    return { unconfirmed, unconfLater, waiting, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
+    return { unconfirmed, unconfLater, waiting, oldNoReply, risk, late, monthPos, money: m, pos, noPrice, noPriceN: noPriceN ?? noPrice.length, odd }
   }, [scoped, orders, month, today, cust, fx, usingFull, moneyQ.data, moneyQ.error, showMoney])
 
   const lines = useMemo(() => {
@@ -881,11 +889,9 @@ export default function OrderIntake() {
         </Suspense>
       )}
       {tab === 'list' && <>
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
-          tip="지금 확인해야 할 PO 수(품목 줄이 아니라 PO). 등록 뒤 1영업일이 지나도록 회신도 「✓ 확인 처리」도 없는 PO 입니다. Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 셉니다 — 그 전은 「확인 예정」. 예전 데이터 이관 · 발주 예정(Plnd)은 세지 않습니다." />
-        <Kpi tone="amber" label="회신 대기" value={kpis.waiting.length} sub={`PO ${pos(kpis.waiting)}건 · 변경 재회신 포함`} {...kpiBtn('waiting')} loading={isLoading}
-          tip="진행 중인데 아직 회신(가능 · 조건부 · 불가)이 없는 품목 줄. 고객사가 수량 · 납기를 바꿔 다시 들어와 재회신이 필요한 줄도 여기 들어옵니다." />
+          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
           tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
         <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기일 지났는데 미납`} {...kpiBtn('late')} loading={isLoading}
@@ -894,11 +900,18 @@ export default function OrderIntake() {
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
       </div>
 
-      {kpis.unconfLater.length > 0 && (
-        <div className="flex items-center gap-2 flex-wrap text-xs text-slate-500" data-unconf-later>
-          <span>🕓 확인 예정 PO <b className="text-slate-700">{pos(kpis.unconfLater)}건</b> (품목 {kpis.unconfLater.length}줄) — Edwards 납기 7주 · 기타 4주 전부터 미확인으로 올라옵니다</span>
-          <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'unconfLater' ? null : 'unconfLater') }} data-unconf-later-btn
-            className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'unconfLater' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'unconfLater' ? '보는 중 ✕' : '보기'}</button>
+      {(kpis.unconfLater.length > 0 || kpis.oldNoReply.length > 0) && (
+        <div className="flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs text-slate-500">
+          {kpis.unconfLater.length > 0 && <span className="flex items-center gap-2 flex-wrap" data-unconf-later>
+            <span>🕓 확인 예정 PO <b className="text-slate-700">{pos(kpis.unconfLater)}건</b> (품목 {kpis.unconfLater.length}줄) — Edwards 납기 7주 · 기타 4주 전부터 미확인으로 올라옵니다</span>
+            <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'unconfLater' ? null : 'unconfLater') }} data-unconf-later-btn
+              className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'unconfLater' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'unconfLater' ? '보는 중 ✕' : '보기'}</button>
+          </span>}
+          {kpis.oldNoReply.length > 0 && <span className="flex items-center gap-2 flex-wrap" data-old-noreply>
+            <span>📁 11월 전 PO 회신 없음 <b className="text-slate-700">{pos(kpis.oldNoReply)}건</b> (품목 {kpis.oldNoReply.length}줄) — 미확인 숫자에서 뺌</span>
+            <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'oldNoReply' ? null : 'oldNoReply') }} data-old-noreply-btn
+              className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'oldNoReply' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'oldNoReply' ? '보는 중 ✕' : '보기'}</button>
+          </span>}
         </div>
       )}
 
@@ -1113,7 +1126,7 @@ export default function OrderIntake() {
           </label>
           {editable && dueCtl}
           {lateCtl}
-          {editable && <button type="button" disabled={confirmMut.isPending || !checkedLines.some((l) => !l.o.confirmed_at && !l.st.cancelled)} title="회신은 나중에 하더라도 접수 확인만 먼저 — 고른 품목의 PO 중 아직 확인 안 된 것을 한꺼번에 「확인했음」으로 (미확인 숫자에서 빠짐)" onClick={() => confirmMut.mutate({ ls: checkedLines.filter((l) => !l.st.cancelled) })} data-bulk-confirm className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{confirmMut.isPending && <Spin />}✓ 확인 처리</button>}
+          {editable && <button type="button" disabled={replyMut.isPending || !checkedLines.some((l) => !l.st.cancelled && !l.reply)} title="문제 없는 PO 를 한 번에 — 고른 품목 중 회신이 없는 줄을 「가능」으로 회신 (확인은 회신 한 번으로 끝남 · 미확인 숫자에서 빠짐)" onClick={() => replyMut.mutate({ ls: checkedLines.filter((l) => !l.st.cancelled && !l.reply), form: { reply: '가능', date: '', memo: '' } })} data-bulk-confirm className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-emerald-300 text-emerald-700 disabled:opacity-40">✓ 가능 회신</button>}
           {<button type="button" disabled={oddMut.isPending || !checkedLines.some((l) => l.odd)} title="고른 품목 중 특이사항(REV · 단가 다름 등) 있는 것을 확인 처리" onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인</button>}
           <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
@@ -1261,6 +1274,7 @@ export default function OrderIntake() {
           onSlip={(o, slip) => slipMut.mutate({ o, slip })}
           onNote={(o, v) => headMut.mutate({ id: o.id, patch: { note: v.trim() || null }, log: { field: 'note', before_val: o.note || null, after_val: v.trim() || null } })}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
+          onReplyAsync={(ls, form) => replyMut.mutateAsync({ ls, form })} meName={meName}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
           onRev={(l, v) => revMut.mutate({ l: { ...l, o: l.o || byOrder.get(poOpen) }, v })} revBusy={revMut.isPending}
@@ -1373,7 +1387,7 @@ function RevEdit({ l, ax, busy, onSave }) {
   )
 }
 
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, onReplyAsync, meName, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip, onNote }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -1390,6 +1404,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
   const [pick, setPick] = useState(() => new Set())      // 취소할 줄
   const [why, setWhy] = useState('')
   const [whyMemo, setWhyMemo] = useState('')
+  const [matOpen, setMatOpen] = useState(false)          // 🔍 자재 점검 (v4.199.0)
   const c = ORDER_CUSTOMERS[o.customer_code]
   const k = kindOf(o)
   const ls = o.lines.map((l) => ({ ...l, o, st: lineState(l, o) }))
@@ -1466,10 +1481,11 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
             <div className="rounded-xl border border-violet-200 bg-white p-4 space-y-2.5" data-po-reply>
               <div className="flex items-center gap-2">
                 <b className="text-xs text-slate-700">이 PO 진행 중 {live.length}품목 전체에 회신</b>
-                {!o.confirmed_at && <button type="button" onClick={() => onConfirm(o)} data-confirm className="ml-auto px-3 py-1 rounded-lg text-xs font-bold bg-white border border-slate-300">✓ 확인했음</button>}
+                {onReplyAsync && live.length > 0 && !o.planned && <button type="button" onClick={() => setMatOpen(true)} data-mat-check title="BOM 을 풀어 이 PO 가 쓸 자재가 모자란지 보고, 문제 없음 · 있음으로 바로 회신" className="ml-auto px-3 py-1 rounded-lg text-xs font-bold bg-violet-600 text-white">🔍 자재 점검</button>}
+                {live.some((l) => !l.reply) && <button type="button" disabled={replyBusy} onClick={() => onReply(live.filter((l) => !l.reply), { reply: '가능', date: '', memo: '' })} data-confirm title="회신 없는 줄을 모두 「가능」으로 — 확인은 회신 한 번으로 끝남" className={`${onReplyAsync && live.length > 0 && !o.planned ? '' : 'ml-auto '}px-3 py-1 rounded-lg text-xs font-bold bg-white border border-emerald-300 text-emerald-700 disabled:opacity-40`}>✓ 회신 없는 줄 전부 가능</button>}
               </div>
               <ReplyForm count={live.length} unit="품목" busy={replyBusy} onSave={(form) => onReply(live, form)} />
-              <p className="text-[10.5px] text-slate-400">품번마다 다르게 답하려면 목록(품번별)에서 체크해 회신하세요. 자재 가용성 자동 계산은 다음 단계에서 붙습니다.</p>
+              <p className="text-[10.5px] text-slate-400">품번마다 다르게 답하려면 목록(품번별)에서 체크해 회신하세요. 「🔍 자재 점검」은 BOM 을 풀어 부족 · 입고 늦음을 보고 바로 회신합니다.</p>
             </div>
           )}
           {histLoading && <div className="text-[11px] text-slate-400 px-1" data-dline-loading>납품 끝난 · 취소된 줄까지 불러오는 중…</div>}
@@ -1544,6 +1560,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
               ))}
             </div>
           </div>
+          {matOpen && <Suspense fallback={null}><PoMatCheck o={o} live={live} meName={meName} onReplyAsync={onReplyAsync} onClose={() => setMatOpen(false)} /></Suspense>}
           {isBuy && <button type="button" onClick={() => onDelete(o)} data-del className="text-[11px] text-red-500 hover:underline">이 PO 지우기</button>}
         </div>
       </div>

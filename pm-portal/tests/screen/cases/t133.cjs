@@ -9,7 +9,7 @@ const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fa
   await p.goto('http://localhost:8765/app.html?unconf=1&r=' + encodeURIComponent('/orders')); await p.waitForTimeout(3500)
   const kpiTxt = async () => (await p.locator('[data-kpi="미확인"]').innerText()).replace(/\n/g, ' ')
   const k = await kpiTxt()
-  ok(/미확인/.test(k) && /\b4\b/.test(k) && /품목 20줄/.test(k) && /확인 예정 PO 2건/.test(k), '지표: 급한 PO 4건(기본 자료 1 + ED 근접 · 기타 근접 · AX) · 20줄 · 확인 예정 2건 (줄 22개는 빠짐)', k)
+  ok(/미확인/.test(k) && /\b3\b/.test(k) && /품목 19줄/.test(k) && /확인 예정 PO 2건/.test(k), '지표: 급한 PO 3건(ED 근접 · 기타 근접 · AX — 기본 자료 VM 10월 PO 는 v4.199.0 부터 11월 전이라 뺌) · 19줄 · 확인 예정 2건', k)
   const later = await p.locator('[data-unconf-later]').innerText()
   ok(/확인 예정 PO 2건/.test(later) && /품목 22줄/.test(later), '확인 예정 줄', later)
   // 지표 누르기 → 급한 것만

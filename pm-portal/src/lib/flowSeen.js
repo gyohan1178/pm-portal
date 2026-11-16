@@ -14,7 +14,8 @@ export const flowCountsQuery = {
     // 수주 확인 숫자를 PO 기준 · 급한 것만으로 (v4.198.1 · 수주확인_PO기준_반영_261116.sql)
     //   함수가 없으면(SQL 전) 예전 숫자(품목 줄) 그대로
     const { data: oc, error: e2 } = await supabase.rpc('pm_order_confirm_summary')
-    if (!e2 && oc && data) return { ...data, ord_unconfirmed: oc.unconf_po, ord_waiting: oc.waiting_po, ord_later: oc.later_po, ord_by_po: true }
+    //   v4.199.0 한 단계(one_step) — 회신이 곧 확인이라 「회신 대기」는 없다 (0)
+    if (!e2 && oc && data) return { ...data, ord_unconfirmed: oc.unconf_po, ord_waiting: oc.one_step ? 0 : oc.waiting_po, ord_later: oc.later_po, ord_by_po: true, ord_one_step: !!oc.one_step }
     return data || null
   },
   staleTime: 2 * 60 * 1000,

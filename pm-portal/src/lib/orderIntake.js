@@ -688,7 +688,7 @@ export function bizDaysSince(ts, now = new Date()) {
 export const SOURCE_LABEL = { pdf: 'PDF', manual: '직접', ax_import: 'PO 파일', po_file: 'PO 파일', nas: 'NAS 자동', excel: '엑셀 이관' }
 // 특이사항 메모 칸 (pm_order.note) — SQL 전이면 이 안내 (v4.109.0)
 export const NOTE_SQL_HINT = '특이사항 메모 칸이 아직 없습니다 — Supabase SQL Editor 에서 수주대장_특이사항메모_반영_261028.sql 을 먼저 실행해 주세요'
-export const FIELD_LABEL = { customer: '고객사', note: '특이사항 메모', po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV' }
+export const FIELD_LABEL = { customer: '고객사', note: '특이사항 메모', po_no: 'PO 번호', slip_no: '명세서번호', kind: '구분', sales_done: '판매입력 마감', qty: '수량', due_date: '납기', unit_price: '단가', rev: 'Rev', item: '품목', line_add: '줄 추가', line_del: '줄 삭제', reply_reset: '회신 초기화', delivered: '납품', reply: '회신', ship_to: '납품처', plan_link: '발주 확정', release_date: '협력사 불출일', fill: '빈 칸 채움', revive: '취소 → 되살림', odd_ok: '특이사항 확인', brev: 'BREV', mat_check: '자재 점검' }
 
 // 특이사항 — 같은 고객사 · 같은 품목의 「바로 앞 PO」와 Rev · 단가가 다른 줄 + 메모에 ⚠ 가 있는 줄 (v4.90.7)
 //   lines: 펼친 줄({...줄, o: PO 머리}) · 반환 Map(줄 id → { rev?, price?, note? })

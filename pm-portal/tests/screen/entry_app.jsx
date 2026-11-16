@@ -462,7 +462,26 @@ if (_qs.get('sched')) {
 }
 // v4.198.1 — ?flowc=1 : 예전 집계(줄 기준 679 · 679) · ?oc=1 : 새 PO 기준 요약 함수가 있는 DB
 if (_qs.get('flowc')) S.RPCFN.pm_flow_counts = () => ({ ord_unconfirmed: 679, ord_waiting: 679, req_open: 52, rfq_price: 2 })
-if (_qs.get('oc')) S.RPCFN.pm_order_confirm_summary = () => ({ unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 1 })
+// v4.199.0 수주대장 PO 자재 점검 — ?matchk=1 부족 · 입고 늦음 있음 / =2 문제 없음 (unconf=1 과 같이 · uo2 UC-ED-NEAR 15줄)
+if (_qs.get('matchk')) {
+  const bad = _qs.get('matchk') === '1'
+  // 11월 전 PO (회신 없음) — 미확인에서 빠지고 아래 줄로
+  S.DATA.pm_order.push({ id: 'uo9', customer_code: 'ED', po_no: 'UC-OLD-OCT', registered_at: '2026-10-15T01:00:00Z', order_date: '2026-10-15', currency: 'KRW', source: 'pdf', kind: 'po', confirmed_at: null, migrated: false, planned: false })
+  for (let i = 1; i <= 2; i++) S.DATA.pm_order_line.push({ id: 'uold_' + i, order_id: 'uo9', line_no: String(i), del_line: '1', item_id: null, raw_pn: 'OLD-' + i, raw_desc: 'OLD', qty: 1, delivered_qty: 0, due_date: '2026-12-01', unit_price: 1000 })
+  const row = (code, verdict, extra = {}) => ({ item_id: 'mi-' + code, std_code: code, name: code + ' NAME', maker: 'FUJI', parents: 'ED-ASSY', nobom: false, line_ids: ['ue2_1'], need: 4, stock: 10, pend_all: 0, pend_by: 0, prior: 0, short: 0, rel: '2026-11-23', late_at: null, ins: null, verdict, ...extra })
+  S.RPCFN.pm_order_po_check = () => ({ po_no: 'UC-ED-NEAR', customer: 'ED', customer_id: 'cid-ed', lead_days: 35, checked_at: '2026-11-16T01:00:00Z', rel_min: '2026-11-23', unregistered: 0,
+    lines: { live: 15, bom: 13, nobom: 2, issued: 0 },
+    rows: bad ? [
+      row('ED-SHORT1', 'short', { need: 4, stock: 1, short: 3, line_ids: ['ue2_1', 'ue2_2'] }),
+      row('ED-SHORT2', 'short', { need: 2, stock: 0, pend_all: 1, pend_by: 0, short: 1, prior: 0, ins: [{ d: '2027-01-20', q: 1 }], line_ids: ['ue2_3'] }),
+      row('ED-LATE1', 'late', { need: 6, stock: 2, pend_all: 10, late_at: '2026-12-22', ins: [{ d: '2026-12-22', q: 10 }], line_ids: ['ue2_4'] }),
+      row('ED-NOBOM', 'ok', { nobom: true, parents: null, need: 2, stock: 5, line_ids: ['ue2_15'] }),
+      row('ED-SQZ', 'ok', { need: 5, stock: 6, later: 4, later_pos: 'PO-LATER-1', squeeze: true, squeeze_q: 3, line_ids: ['ue2_5'] }),
+      ...Array.from({ length: 8 }, (_, i) => row('ED-OK' + i, 'ok')),
+      row('ED-HARN', 'harness', { name: 'MAIN HARNESS', short: 2 }),
+    ] : [row('ED-OK1', 'ok'), row('ED-OK2', 'ok')] })
+}
+if (_qs.get('oc')) S.RPCFN.pm_order_confirm_summary = () => (_qs.get('oc') === '2' ? { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 0, one_step: true } : { unconf_po: 3, unconf_lines: 19, later_po: 2, waiting_po: 1 })
 if (_qs.get('cyc')) Object.assign(S.RPCFN, {
   pm_cell_hold_active: () => S.DATA.holds.map((h) => ({ ...h, neg_cnt: S.DATA.inventory.filter((i) => i.location === h.location && i.qty < 0).length })),
   pm_cell_hold_set: (a) => { const loc = a.p_loc.toUpperCase(); const auto = S.DATA.inventory.some((i) => i.location === loc && i.qty < 0); const ex = S.DATA.holds.find((h) => h.location === loc); if (ex) ex.reason = a.p_reason; else S.DATA.holds.push({ location: loc, reason: a.p_reason, auto_neg: auto, held_date: new Date().toISOString().slice(0, 10), held_name: '김교한' }); return [] },
