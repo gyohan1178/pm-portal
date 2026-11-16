@@ -1,4 +1,4 @@
-// 카톡 아침 알림 — 서버 함수 (v4.206.1 표 모양 + 오늘~2영업일 뒤 할 일 · 일정)
+// 카톡 아침 알림 — 서버 함수 (v4.206.2 한 통으로: 머리 날짜 · 표 · 아래 할 일 · 일정)
 //   action
 //     config  : 화면이 카카오 로그인 창을 열 때 쓰는 REST API 키 (공개되는 값) · 로그인 필요
 //     connect : 카카오가 돌려준 code → 토큰으로 바꿔 pm_kakao_link 에 저장 + 확인 메시지 1통 · 로그인 필요
@@ -77,44 +77,27 @@ function feedOf(j: Record<string, any>, withImage: boolean) {
     { item: '요청', item_op: `자재 ${j.req ?? '-'} · 견적 ${j.rfq ?? '-'}` },
   ]
   const todo = Number(j.todo) || 0
+  // 아래 칸 = 오늘 ~ 2영업일 뒤 할 일 · 일정 (카톡이 두 줄까지 보여 줘서 두 줄 · 넘치면 「외 N건」)
   const sc = (j.sched || []) as { d: string, k: string, t: string }[]
-  const nT = sc.filter((x) => x.k === 'todo').length, nN = sc.length - nT
-  const desc = sc.length ? `${md(j.end)}까지 할 일 ${nT} · 일정 ${nN} — 아래 메시지` : `${md(j.end)}까지 할 일 · 일정 없음`
+  const one = (x: { d: string, k: string, t: string }) => `${x.d < j.today ? '지남' : x.d === j.today ? '오늘' : md(x.d)} ${x.k === 'note' ? '[일정] ' : ''}${cut(x.t, 16)}`
+  const lines = sc.slice(0, 2).map(one)
+  if (sc.length > 2) lines[1] = `${lines[1]} 외 ${sc.length - 2}건`
   return {
     object_type: 'feed',
-    content: { title: `${j.date}(${j.dow}) 오늘 챙길 일`, description: desc, link: LINK,
+    content: { title: sc.length ? `할 일 · 일정 (~${md(j.end)})` : `~${md(j.end)} 할 일 · 일정 없음`, description: lines.join('\n'), link: LINK,
       ...(withImage ? { image_url: `${PORTAL}/kakao-brief.png`, image_width: 800, image_height: 400 } : {}) },
-    item_content: { profile_text: 'JS 포털', items, sum: '오늘 할 일', sum_op: todo ? `${todo}건${j.todo_over ? ` (지남 ${j.todo_over})` : ''}` : '없음' },
+    item_content: { profile_text: `${j.date}(${j.dow}) 오늘 챙길 일`, items, sum: '오늘 할 일', sum_op: todo ? `${todo}건${j.todo_over ? ` (지남 ${j.todo_over})` : ''}` : '없음' },
     buttons: [{ title: '포털 열기', link: LINK }],
   }
-}
-
-// 오늘 ~ 2영업일 뒤 할 일 · 일정 — 날짜별로 묶은 글 (카톡 글 200자 안에서 · 넘치면 「외 N건」)
-function schedText(j: Record<string, any>) {
-  const sc = (j.sched || []) as { d: string, k: string, t: string }[]
-  if (!sc.length) return ''
-  const dows = ['일', '월', '화', '수', '목', '금', '토']
-  const head = `🗓 오늘~${md(j.end)} 할 일 · 일정`
-  let out = head, last = '', shown = 0
-  for (const x of sc) {
-    const g = x.d < j.today ? '지난 할 일' : `${md(x.d)}(${dows[new Date(x.d + 'T00:00:00Z').getUTCDay()]})${x.d === j.today ? ' 오늘' : ''}`
-    const add = (g !== last ? `\n${g}` : '') + `\n· ${x.k === 'note' ? '[일정] ' : ''}${cut(x.t, 20)}`
-    if ((out + add).length > 185) break
-    out += add; last = g; shown++
-  }
-  if (shown < sc.length) out += `\n… 외 ${sc.length - shown}건 (포털 할 일)`
-  return out
 }
 
 // 표로 보내 보고, 카카오가 받지 않으면 그림 넣은 표 → 그래도 안 되면 글로
 async function sendBrief(access: string, userId: string, text: string) {
   const { data: j } = await db.rpc('pm_morning_brief_data', { p_user: userId })
   if (j && typeof j === 'object') {
-    const sch = schedText(j)
     for (const img of [false, true]) {
       try {
-        await sendTpl(access, feedOf(j, img))
-        if (sch) await sendMemo(access, sch)   // 할 일 · 일정은 바로 아래 글로 한 통 더
+        await sendTpl(access, feedOf(j, img))   // 한 통으로 끝 (할 일 · 일정은 표 아래 칸)
         return 'feed'
       } catch { /* 다음 방법 */ }
     }
