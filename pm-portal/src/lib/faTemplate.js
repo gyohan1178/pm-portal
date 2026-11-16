@@ -34,13 +34,16 @@ const MADE = ['PD', 'ASSY', 'HARNESS']
 // 단계 게이트 — 담당은 기본값 (화면에서 바꿀 수 있게 하려면 여기만 고치면 된다)
 export const FA_GATES = [
   { k: 'g_po', l: 'PO 접수', owner: '영업', t: ALL },
+  // v4.202.0 품질 엑셀(Axcelis FA 진행 v2.0)에 맞춤 — DR 회의 · 실물 검수 추가, 성적서 → FA 성적서, 제출 → 고객사 입회
+  { k: 'g_dr', l: 'DR 회의', owner: '영업 · 생산 · 품질', t: MADE },
   { k: 'g_mat_in', l: '자재 입고', owner: '구매자재', t: ALL },
   { k: 'g_issue', l: '자재 불출', owner: '구매자재', t: MADE },
   { k: 'g_make_start', l: '제작 착수', owner: '생산', t: MADE },
   { k: 'g_make_done', l: '제작 완료', owner: '생산', t: MADE },
   { k: 'g_handover', l: '품질 인계', owner: '생산 → 품질', t: ALL },
-  { k: 'g_report', l: '성적서 작성', owner: '품질', t: ALL },
-  { k: 'g_submit', l: '고객사 제출', owner: '품질 · 영업', t: ALL },
+  { k: 'g_inspect', l: '실물 검수', owner: '품질', t: ALL },
+  { k: 'g_report', l: 'FA 성적서', owner: '품질', t: ALL },
+  { k: 'g_submit', l: '고객사 입회', owner: '품질 · 영업', t: ALL },
   { k: 'g_approve', l: '고객사 승인', owner: '영업', t: ALL },
 ]
 export const gatesOf = (type) => FA_GATES.filter((g) => g.t.includes(type || 'PD'))
@@ -63,6 +66,7 @@ export const FA_STEPS = [
   { k: 'jig_mch', g: 'g_make_start', l: '기능검사 JIG — 가공물 입고', t: ['PD'] },
   { k: 'jig_make', g: 'g_make_start', l: '기능검사 JIG — 제작', t: ['PD'] },
   { k: 'base_jig', g: 'g_make_start', l: 'BASE 판 JIG', t: ['PD'] },
+  { k: 'jig_ready', g: 'g_make_start', l: 'Jig 준비', t: ['ASSY', 'HARNESS'] },
 
   // 제작 완료 — 케이블 · 조립
   { k: 'cable_ac', g: 'g_make_done', l: 'Cable 제작 — AC', kind: 'pct', t: ['PD'] },
@@ -74,6 +78,7 @@ export const FA_STEPS = [
   // 성적서 작성 — 제출 서류
   //   자재 매칭 = 초도품 자재 매칭(FAI Navigator)에서 Part Report 등록 제조사 vs 실제 구매 대조 → 결과를 여기로 반영
   { k: 'mat_match', g: 'g_report', l: '자재 매칭 (Part Report)', link: 'fai', t: ALL },
+  { k: 'test_proc', g: 'g_report', l: '시험절차서', t: MADE },
   { k: 'rpt_assy', g: 'g_report', l: 'ASSY 성적서', kind: 'pct', t: ['PD', 'ASSY'] },
   { k: 'rpt_ac', g: 'g_report', l: '하네스 성적서 — AC 케이블', t: ['PD'] },
   { k: 'rpt_dc', g: 'g_report', l: '하네스 성적서 — DC 케이블', t: ['PD'] },
@@ -104,6 +109,34 @@ export function stepState(step, v) {
   return v.s || ''
 }
 
+// 단계 상태 (v4.202.0) — 품질 엑셀처럼 날짜 없이도 고른다. 실적일이 있으면 완료
+//   steps.g_xxx.s : '' 대기 · doing 진행 중 · done 완료 · hold 보류 · check 확인필요 · na 해당없음
+export const GATE_STATUS = [
+  { k: '', l: '대기', cell: 'bg-white text-slate-400 border-slate-200', dot: 'bg-slate-300' },
+  { k: 'doing', l: '진행 중', cell: 'bg-blue-50 text-blue-700 border-blue-200', dot: 'bg-blue-500' },
+  { k: 'done', l: '완료', cell: 'bg-emerald-50 text-emerald-700 border-emerald-200', dot: 'bg-emerald-500' },
+  { k: 'check', l: '확인필요', cell: 'bg-rose-50 text-rose-700 border-rose-200', dot: 'bg-rose-500' },
+  { k: 'hold', l: '보류', cell: 'bg-amber-50 text-amber-800 border-amber-200', dot: 'bg-amber-500' },
+  { k: 'na', l: '해당없음', cell: 'bg-slate-50 text-slate-300 border-slate-100', dot: 'bg-slate-200' },
+]
+export const gateDone = (v) => !!v?.d || v?.s === 'done' || v?.s === 'na'
+export const gateSt = (v) => (v?.d ? 'done' : v?.s || '')
+export const gateStatus = (k) => GATE_STATUS.find((x) => x.k === (k || '')) || GATE_STATUS[0]
+// 지금 단계 — 마지막으로 끝난 단계 다음의 첫 미완료 (새로 생긴 단계가 비어 있어도 뒤 단계가 끝났으면 건너뜀)
+function curIndex(gates, vals) {
+  let last = -1
+  gates.forEach((g, i) => { if (gateDone(vals[g.k])) last = i })
+  return gates.findIndex((g, i) => i > last && !gateDone(vals[g.k]))
+}
+// 건 마감 사유 (v4.202.0) — 진행 · 지표에서 빠진다 (보류와 다름: 보류는 멈춤, 마감은 끝)
+export const CLOSE_REASONS = [
+  { k: 'cancel', l: '발주 취소', cust: '발주취소' },
+  { k: 'prev_ok', l: '기존 FA 승인', cust: '기존 FA승인 됨' },
+  { k: 'waived', l: '입회 면제', cust: '입회 면제' },
+]
+export const closeLabel = (k) => CLOSE_REASONS.find((x) => x.k === k)?.l || ''
+export const faClosed = (fa) => !!fa?.close_reason
+
 const dnum = (d) => (d ? Date.UTC(+d.slice(0, 4), +d.slice(5, 7) - 1, +d.slice(8, 10)) / 86400000 : null)
 export const dayDiff = (a, b) => (a && b ? dnum(b) - dnum(a) : null)   // b - a (일)
 
@@ -111,15 +144,15 @@ export const dayDiff = (a, b) => (a && b ? dnum(b) - dnum(a) : null)   // b - a 
 export function gateInfo(fa, today) {
   const vals = fa.steps || {}
   const gates = gatesOf(fa.fa_type)
-  const cur = gates.findIndex((g) => !vals[g.k]?.d)
+  const cur = curIndex(gates, vals)
   return gates.map((g, i) => {
     const v = vals[g.k] || {}
     const subs = stepsOf(fa.fa_type, g.k).filter((s) => stepState(s, vals[s.k]) !== 'na')
     const subDone = subs.filter((s) => stepState(s, vals[s.k]) === 'done').length
-    const done = !!v.d
+    const done = gateDone(v)
     const late = !done && v.p && today && v.p < today
     return {
-      ...g, v, i, done, late: !!late, cur: i === cur,
+      ...g, v, i, done, late: !!late, cur: i === cur, st: gateSt(v),
       diff: done ? dayDiff(v.p, v.d) : (late ? dayDiff(v.p, today) : null),
       subs: subs.length, subDone,
     }
@@ -130,17 +163,17 @@ export function gateInfo(fa, today) {
 export function faStage(fa) {
   const gates = gatesOf(fa.fa_type)
   const vals = fa.steps || {}
-  const i = gates.findIndex((g) => !vals[g.k]?.d)
+  const i = curIndex(gates, vals)
   if (i < 0) return { k: 'done', l: '승인 완료', owner: '', idx: gates.length }
   return { ...gates[i], idx: i }
 }
-export const faApproved = (fa) => !!fa.steps?.g_approve?.d
+export const faApproved = (fa) => !!fa.steps?.g_approve?.d || fa.steps?.g_approve?.s === 'done'
 
 // 진척도 — 끝난 단계 수 / 해당 단계 수
 export function faProgress(fa) {
   const gates = gatesOf(fa.fa_type)
   const vals = fa.steps || {}
-  return gates.length ? Math.round((gates.filter((g) => vals[g.k]?.d).length / gates.length) * 100) : 0
+  return gates.length ? Math.round((gates.filter((g) => gateDone(vals[g.k])).length / gates.length) * 100) : 0
 }
 
 // 예정 대비 — 지금 단계가 예정을 넘겼으면 오늘까지, 아니면 마지막으로 끝난 단계의 차이 (+ 늦음)

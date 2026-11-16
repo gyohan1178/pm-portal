@@ -1,0 +1,65 @@
+// v4.202.0 — 초도품 진행표(기본) · 단계 상태 · 마감 · 하위 구성품 · 품질 엑셀 가져오기 · 생산관리 채우기 · 한글 양식
+const { chromium } = require('playwright')
+const path = require('path')
+let pass = 0, fail = 0
+const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fail++; console.log('  ✗ ' + m + ' → ' + JSON.stringify(x ?? '').slice(0, 400)) } }
+;(async () => {
+  const b = await chromium.launch(); const errs = []
+  const p = await b.newPage({ viewport: { width: 1600, height: 1000 }, acceptDownloads: true }); p.on('pageerror', e => errs.push(e.message.slice(0, 150)))
+  await p.clock.setFixedTime(new Date('2026-11-16T01:00:00Z'))
+  await p.goto('http://localhost:8765/app.html?fa3=1&r=' + encodeURIComponent('/quality/fa-progress')); await p.waitForTimeout(2500)
+  ok(await p.locator('[data-fa-grid]').count() === 1, '기본 보기 = 진행표')
+  const rowsTxt = await p.locator('[data-fa-row]').evaluateAll((e) => e.map((x) => x.dataset.faRow))
+  ok(rowsTxt.indexOf('160022953') === rowsTxt.indexOf('100139060') + 1, '하위 구성품이 상위 바로 밑', rowsTxt)
+  ok(!rowsTxt.includes('160024792'), '발주 취소(마감) 건은 진행표에서 빠짐', rowsTxt)
+  ok(/↳/.test(await p.locator('[data-fa-row="160022953"]').innerText()), '하위 줄 ↳ 표시')
+  // 상태 칸
+  ok(await p.locator('[data-fa-cell="160022953|g_handover"][data-fa-st="done"]').count() === 1, '실적일 있는 단계 = 완료 칸')
+  ok(await p.locator('[data-fa-cell="100139060|g_po"][data-fa-st="done"]').count() === 1, '날짜 없이 상태만 완료')
+  await p.selectOption('[data-fa-cell="100139060|g_dr"] select', 'doing'); await p.waitForTimeout(500)
+  ok(await p.evaluate(() => window.__S.DATA.pm_fa.find((x) => x.id === 21).steps.g_dr?.s) === 'doing', '칸에서 상태 바꾸면 저장 (진행 중)')
+  ok(await p.locator('[data-fa-cell="100139060|g_dr"][data-fa-st="doing"]').count() === 1, '화면도 바로 진행 중')
+  // 지표
+  const kp = (await p.locator('[data-fa-kpis]').innerText()).replace(/\s+/g, ' ')
+  ok(/마감 1/.test(kp) && /발주 취소 1/.test(kp), '마감 지표 (발주 취소 1)', kp)
+  ok(/제작 완료 0 \/ 2/.test(kp), '제작 완료 x/N — 하위 구성품 제외', kp)
+  // 마감 보기
+  await p.click('[data-fa-kpi="closed"]'); await p.waitForTimeout(400)
+  ok((await p.locator('[data-fa-row]').evaluateAll((e) => e.map((x) => x.dataset.faRow))).join() === '160024792', '마감 지표 누르면 마감 건만')
+  await p.click('[data-fa-kpi="closed"]'); await p.waitForTimeout(300)
+  // 품질 엑셀 가져오기
+  await p.click('[data-fa-qimport]'); await p.waitForTimeout(300)
+  await p.setInputFiles('[data-fa-qimport-file]', path.join(__dirname, '..', 'fixtures', 'fa_quality_v2.xlsx')); await p.waitForTimeout(1500)
+  const kinds = await p.locator('[data-qi-row]').evaluateAll((e) => e.map((x) => x.dataset.qiRow + ':' + x.dataset.qiKind))
+  ok(kinds.length === 17, '엑셀 17줄 읽음', kinds.length)
+  ok(kinds.includes('100139060:fill') && kinds.includes('160022953:fill') && kinds.includes('160024792:fill') && kinds.filter((k) => /:new$/.test(k)).length === 14, '이미 있는 3건 = 빈 칸 채움 · 나머지 14 새로', kinds.filter((k) => /100139060|160022953|160024792/.test(k)))
+  const before = await p.evaluate(() => window.__S.DATA.pm_fa.length)
+  await p.click('[data-fa-qimport-run]'); await p.waitForTimeout(2500)
+  const D = await p.evaluate(() => window.__S.DATA.pm_fa)
+  ok(D.length === before + 14, '새로 14건 추가 (17 − 기존 3)', [before, D.length])
+  const k = (c) => D.find((x) => x.item_code === c)
+  const kit = k('100139060')
+  ok(kit.steps.g_dr?.s === 'doing' && kit.srev === 'C', '기존 건 — 넣어 둔 값(DR 회의 진행 중 · SREV)은 안 덮음', kit.steps)
+  ok(['160022954', '160022955', '160022957'].every((c) => String(k(c).parent_id) === String(kit.id)), '하위 구성품 3개가 KIT 에 연결', ['160022954', '160022955', '160022957'].map((c) => k(c).parent_id))
+  ok(k('160025671').close_reason === 'cancel' && k('160023026').close_reason === 'prev_ok', '발주 취소 · 기존 FA 승인 마감', [k('160025671').close_reason, k('160023026').close_reason])
+  ok(k('160023424').steps.g_submit?.s === 'doing' && k('160023424').fa_ready_text === '11월 3~4주차 요청 예정', '입회요청 → 고객사 입회 진행 중 · 입회 요청 일정', k('160023424'))
+  // 생산관리 채우기
+  await p.locator('[data-fa-row="110153030"] button').first().click(); await p.waitForTimeout(1500)
+  const ps = await p.locator('[data-fa-prodsync]').innerText().catch(() => '')
+  ok(/#7/.test(ps) && /품질검수/.test(ps) && /제작 완료 완료/.test(ps), '생산관리 호기 · 채울 단계 제안', ps)
+  await p.click('[data-fa-prodsync-apply]'); await p.waitForTimeout(1500)
+  const st = await p.evaluate(() => window.__S.DATA.pm_fa.find((x) => x.id === 24).steps)
+  ok(st.g_po.d === '2026-10-01' && st.g_issue?.s === 'done' && st.g_make_done?.s === 'done' && st.g_inspect?.s === 'doing', '반영 — 실적일 있던 PO 접수는 그대로 · 불출 · 제작 완료 · 실물 검수 진행 중', st)
+  // 한글 양식
+  await p.click('text=← 진행표'); await p.waitForTimeout(800)
+  await p.click('text=📤 고객사 제출용'); await p.waitForTimeout(400)
+  const [dl] = await Promise.all([p.waitForEvent('download', { timeout: 8000 }).catch(() => null), p.click('[data-fa-export-ko]')])
+  const fp = dl && await dl.path()
+  const XLSX = require('/home/claude/pmrepo/pm-portal/node_modules/xlsx')
+  const aoa = fp ? XLSX.utils.sheet_to_json(XLSX.readFile(fp).Sheets['고객사 제출용'], { header: 1, defval: '' }) : []
+  const body = aoa.filter((r) => /^\d+$/.test(String(r[0])))
+  ok(!!dl && body.length >= 14 && body.some((r) => r[3] === '발주취소') && body.some((r) => r[3] === '기존 FA승인 됨') && !body.some((r) => String(r[1]) === '160022953'), '한글 (품질 양식) — 상위만 · 마감 사유', body.slice(0, 4))
+  await p.screenshot({ path: '/tmp/jsportal-test/out/fa_grid.png' })
+  console.log(`pass=${pass} fail=${fail}`, 'errs', errs)
+  await b.close()
+})()

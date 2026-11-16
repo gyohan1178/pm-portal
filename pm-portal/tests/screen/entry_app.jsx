@@ -471,6 +471,18 @@ if (_qs.get('fa2')) {
   ]
   S.DATA.pm_fa_log = []
 }
+// v4.202.0 초도품 진행표 · 품질 엑셀 — ?fa3=1 : 상위 1 + 하위 1 · 취소 1 · ASSY(수주대장 47894KF 줄 l1 → 생산 품질검수 · 불출)
+if (_qs.get('fa3')) {
+  S.DATA.pm_fa = [
+    { id: 21, item_code: '100139060', item_desc: 'KIT SCAN ROBOT', po_number: 'G45875KF', fa_type: 'HARNESS', srev: 'C', brev: 'B', priority: 1, hold: false, steps: { g_po: { s: 'done' } } },
+    { id: 22, item_code: '160022953', item_desc: 'CBL SCAN COVER', po_number: 'G45875KF', fa_type: 'HARNESS', srev: 'A', brev: 'A', parent_id: 21, hold: false, steps: { g_po: { s: 'done' }, g_make_done: { s: 'done' }, g_handover: { d: '2026-11-10' } } },
+    { id: 23, item_code: '160024792', item_desc: 'CBL SOURCE PS', po_number: 'G43585KF', fa_type: 'HARNESS', close_reason: 'cancel', close_note: '내전압 이슈', hold: false, steps: {} },
+    { id: 24, item_code: '110153030', item_desc: 'ASSY MAIN PD', po_number: '47894KF', fa_type: 'ASSY', srev: 'B', brev: 'B', hold: false, steps: { g_po: { d: '2026-10-01' } } },
+  ]
+  S.DATA.pm_fa_log = []
+  S.DATA.production = [...(S.DATA.production || []), { id: 'pdfa', customer_code: 'AX', pn: 'AX-110153030', hogi: '#7', status: '품질검수', part_issue: true, order_line_id: 'l1', missing_parts: [] }]
+  S.RPCFN.pm_fa_step_set = ({ p_id, p_key, p_val }) => { const r = S.DATA.pm_fa.find((x) => String(x.id) === String(p_id)); const st = { ...(r.steps || {}) }; if (p_val) st[p_key] = p_val; else delete st[p_key]; r.steps = st; return st }
+}
 // v4.199.0 수주대장 PO 자재 점검 — ?matchk=1 부족 · 입고 늦음 있음 / =2 문제 없음 (unconf=1 과 같이 · uo2 UC-ED-NEAR 15줄)
 if (_qs.get('matchk')) {
   const bad = _qs.get('matchk') === '1'

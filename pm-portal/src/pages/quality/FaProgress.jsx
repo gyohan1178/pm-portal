@@ -1,5 +1,5 @@
 import PageHead from '../../components/PageHead'
-import { useState, useMemo, useCallback, useEffect } from 'react'
+import { useState, useMemo, useCallback, useEffect, Fragment } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
@@ -11,15 +11,17 @@ import { downloadSheet } from '../../lib/exportSheet'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useCustomer } from '../../hooks/useCustomers'
 import { ResizableTable } from '../../components/ResizableTable'
-import { customerRows, customerSummary, custTone, CUST_COLS, exportFaCustomer } from '../../lib/faCustomerReport'
+import { customerRows, customerSummary, custTone, CUST_COLS, exportFaCustomer, exportFaCustomerKo } from '../../lib/faCustomerReport'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
 import {
   FA_TYPES, FA_GATES, faTypeLabel, faTypeTone, gatesOf, gateInfo, stepsOf, stepLabel, stepState, stepText,
   faProgress, faStage, faApproved, faDelay, dayDiff, parseFaPaste,
+  GATE_STATUS, gateStatus, gateDone, gateSt, CLOSE_REASONS, closeLabel, faClosed,
   FA_ISSUE_CATS, issueTone, CUST_CAT, splitFaLogs, revCheck, revDiff,
 } from '../../lib/faTemplate'
+import { parseQualitySheet, qiMerge } from '../../lib/faQualityImport'
 
 // 초도품(FA) 진행관리
 //
@@ -103,12 +105,13 @@ export default function FaProgress() {
   const [fold, setFold] = useState({})
   const [paste, setPaste] = useState(false)
   const [custOut, setCustOut] = useState(false)   // 고객사 제출용 내보내기
+  const [qImport, setQImport] = useState(false)   // 품질 엑셀 가져오기 (v4.202.0)
   // 보기 · 연 건 — 주소에 남겨 새로고침 · 링크 공유에도 그대로
-  const view = sp.get('v') || 'board'
+  const view = sp.get('v') || 'grid'   // v4.202.0 기본 = 진행표 (품질 엑셀처럼 품목 한 줄 · 단계 칸)
   const openId = sp.get('fa') ? Number(sp.get('fa')) : null
   const setParam = (k, v) => setSp((x) => { const s = new URLSearchParams(x); if (v) s.set(k, String(v)); else s.delete(k); return s })
   const setOpenId = (id) => setParam('fa', id)
-  const setView = (v) => setParam('v', v === 'board' ? '' : v)
+  const setView = (v) => setParam('v', v === 'grid' ? '' : v)
 
   const today = todayISO()
   const in7 = ymdKST(new Date(Date.now() + 6 * 86400000))
@@ -122,6 +125,7 @@ export default function FaProgress() {
 
   const enriched = useMemo(() => rows.map((r) => {
     const approved = faApproved(r)
+    const closed = faClosed(r)   // 마감(발주 취소 · 기존 FA 승인 · 입회 면제) — 진행에서 빠짐
     // 열린 이슈 — 「고객사 문의」가 열려 있으면 문의 필요 (기록을 못 받았으면 표에 남은 값)
     const open = splitFaLogs(logsBy.get(r.id)).open
     const cust = open.filter((i) => i.cat === CUST_CAT)
@@ -129,8 +133,8 @@ export default function FaProgress() {
     const gates = gateInfo(r, today)
     const cur = gates.find((g) => g.cur)
     // FA 가능일은 「고객사 제출」까지의 약속 — 제출이 끝났으면 더 따지지 않는다
-    const readyLate = !approved && !r.hold && !r.steps?.g_submit?.d && r.fa_ready_date && r.fa_ready_date < today
-    const late = !approved && !r.hold && (!!cur?.late || !!readyLate)
+    const readyLate = !approved && !closed && !r.hold && !gateDone(r.steps?.g_submit) && r.fa_ready_date && r.fa_ready_date < today
+    const late = !approved && !closed && !r.hold && (!!cur?.late || !!readyLate)
     const weekGates = gates.filter((g) => !g.done && g.v.p && g.v.p >= today && g.v.p <= in7)
     // 이 단계에 들어온 날 — 앞 단계 실적일
     const prev = stage.idx > 0 ? gates[stage.idx - 1]?.v?.d : null
@@ -139,28 +143,45 @@ export default function FaProgress() {
       inquiry_open: logOk ? cust.length > 0 : !!r.inquiry_open,
       inquiry: logOk ? (cust[0]?.body || null) : r.inquiry,
       _issues: logOk ? open : [],
-      _approved: approved, _stage: stage, _gates: gates, _cur: cur, _pct: faProgress(r), _readyLate: !!readyLate,
+      _approved: approved, _closed: closed, _fin: approved || closed, _stage: stage, _gates: gates, _cur: cur, _pct: faProgress(r), _readyLate: !!readyLate,
       _delay: faDelay(r, today), _late: late, _week: weekGates.length > 0, _weekGates: weekGates,
       _days: prev ? dayDiff(prev, today) : null,
     }
   }), [rows, today, in7, logsBy, logOk])
 
-  const counts = useMemo(() => ({
-    open: enriched.filter((r) => !r._approved).length,
-    late: enriched.filter((r) => r._late).length,
-    inquiry: enriched.filter((r) => !r._approved && r.inquiry_open).length,
-    issue: enriched.filter((r) => !r._approved && (r._issues.length || r.inquiry_open)).length,
-    hold: enriched.filter((r) => !r._approved && r.hold).length,
-    week: enriched.filter((r) => r._week).length,
-    done: enriched.filter((r) => r._approved).length,
-  }), [enriched])
+  const counts = useMemo(() => {
+    const live = enriched.filter((r) => !r._fin)
+    // 품질 엑셀 지표 — 제작 · 검수는 상위 품목만 센다 (하위 구성품 제외) · 마감 건 제외
+    const top = enriched.filter((r) => !r._closed && !r.parent_id)
+    const made = top.filter((r) => gatesOf(r.fa_type).some((g) => g.k === 'g_make_done'))
+    const dn = (r, k) => gateDone(r.steps?.[k])
+    return {
+      open: live.length,
+      late: enriched.filter((r) => r._late).length,
+      inquiry: live.filter((r) => r.inquiry_open).length,
+      issue: live.filter((r) => r._issues.length || r.inquiry_open).length,
+      hold: live.filter((r) => r.hold).length,
+      week: enriched.filter((r) => r._week && !r._fin).length,
+      done: enriched.filter((r) => r._approved && !r._closed).length,
+      closed: enriched.filter((r) => r._closed).length,
+      cancel: enriched.filter((r) => r.close_reason === 'cancel').length,
+      top: top.length, made: made.length,
+      madeDone: made.filter((r) => dn(r, 'g_make_done')).length,
+      inspDone: top.filter((r) => dn(r, 'g_inspect')).length,
+      witness: top.filter((r) => !r._approved && (gateSt(r.steps?.g_submit) === 'doing' || dn(r, 'g_submit'))).length,
+    }
+  }, [enriched])
 
   const base = useMemo(() => {
     const k = q.trim().toUpperCase()
     const big = '9999-12-31'
     return enriched.filter((r) => {
-      if (only === 'done') { if (!r._approved) return false }
-      else if (r._approved) return false
+      if (only === 'done') { if (!r._approved || r._closed) return false }
+      else if (only === 'closed') { if (!r._closed) return false }
+      else if (r._fin) return false
+      if (only === 'made' && !(gateDone(r.steps?.g_make_done) && !r.parent_id)) return false
+      if (only === 'insp' && !(gateDone(r.steps?.g_inspect) && !r.parent_id)) return false
+      if (only === 'witness' && !(gateSt(r.steps?.g_submit) === 'doing' || gateDone(r.steps?.g_submit))) return false
       if (only === 'late' && !r._late) return false
       if (only === 'issue' && !(r._issues.length || r.inquiry_open)) return false
       if (only === 'hold' && !r.hold) return false
@@ -187,7 +208,18 @@ export default function FaProgress() {
     return { ...t, list, avg, late: list.filter((r) => r._late).length }
   }).filter((g) => g.list.length), [base])
   // ◀ ▶ 순서 — 보고 있던 보기의 순서
-  const order = view === 'list' ? groups.flatMap((g) => g.list) : columns.flatMap((c) => c.list)
+  // 진행표 — 구분별 · 하위 구성품은 상위 밑에 (v4.202.0)
+  const gridGroups = useMemo(() => {
+    const inBase = new Set(base.map((r) => r.id))
+    const kids = new Map()
+    base.forEach((r) => { if (r.parent_id && inBase.has(r.parent_id)) { if (!kids.has(r.parent_id)) kids.set(r.parent_id, []); kids.get(r.parent_id).push(r) } })
+    return FA_TYPES.map((t) => {
+      const tops = base.filter((r) => r.fa_type === t.key && !(r.parent_id && inBase.has(r.parent_id)))
+      const rows = tops.flatMap((r) => [{ r, child: false }, ...(kids.get(r.id) || []).map((c) => ({ r: c, child: true }))])
+      return { ...t, rows }
+    }).filter((g) => g.rows.length)
+  }, [base])
+  const order = view === 'list' ? groups.flatMap((g) => g.list) : view === 'grid' ? gridGroups.flatMap((g) => g.rows.map((x) => x.r)) : columns.flatMap((c) => c.list)
 
   const open = enriched.find((r) => r.id === openId) || null
   const reload = () => { qc.invalidateQueries({ queryKey: ['faList'] }); qc.invalidateQueries({ queryKey: ['faLog'] }) }
@@ -279,9 +311,10 @@ export default function FaProgress() {
           }
           FA_GATES.forEach((g) => {
             const v = r.steps?.[g.k]
-            o[g.l] = !g.t.includes(r.fa_type) ? '—' : v?.d ? `실적 ${v.d}` : v?.p ? `예정 ${v.p}` : ''
+            o[g.l] = !g.t.includes(r.fa_type) ? '—' : v?.d ? `완료 ${v.d}` : v?.s ? gateStatus(v.s).l + (v.p ? ` · 예정 ${v.p}` : '') : v?.p ? `예정 ${v.p}` : '대기'
           })
           o['보류'] = r.hold ? 'Y' : ''
+          o['마감'] = r.close_reason ? `${closeLabel(r.close_reason)}${r.close_note ? ` — ${r.close_note}` : ''}` : ''
           o['열린 이슈'] = r._issues.length ? r._issues.map((i) => `[${i.cat || '기타'}] ${i.body}`).join(' / ') : (r.inquiry_open ? (r.inquiry || '고객사 문의') : '')
           o['비고'] = r.note || ''
           return o
@@ -313,7 +346,8 @@ export default function FaProgress() {
         logs={logs.filter((l) => l.fa_id === open.id)}
         pos={i >= 0 ? `${i + 1} / ${order.length}` : ''}
         prev={i > 0 ? order[i - 1] : null} next={i >= 0 && i < order.length - 1 ? order[i + 1] : null}
-        backLabel={{ board: '보드', list: '목록', meet: '주간 회의' }[view] || '보드'}
+        backLabel={{ grid: '진행표', board: '보드', list: '목록', meet: '주간 회의' }[view] || '진행표'}
+        all={enriched}
         onGo={setOpenId} onBack={() => setOpenId(null)}
         onStep={setStep} onSave={saveInfo} onLog={addLog} onIssue={setIssue} onDelete={remove} />
     </>)
@@ -325,12 +359,16 @@ export default function FaProgress() {
     <div className="space-y-4">
       {confirmEl}
       <PageHead crumb="품질" title="초도품(FA) 진행관리"
-        desc="초도품 PO 를 받은 뒤 PO 접수 → 자재 → 제작 → 품질 인계 · 성적서 → 고객사 제출 · 승인까지, 단계마다 예정일과 실적일로 봅니다. 카드를 누르면 그 건의 단계 · 세부 항목 · 이슈 기록이 열립니다.">
+        desc="초도품 PO 접수 → DR 회의 → 자재 → 제작 → 품질 인계 · 실물 검수 → FA 성적서 → 고객사 입회 · 승인까지. 진행표에서 품목마다 단계 칸을 눌러 상태(대기 · 진행 중 · 완료 · 확인필요 · 보류)를 바꾸고, 품번을 누르면 그 건의 예정 · 실적 · 세부 항목 · 이슈 기록이 열립니다.">
         <div className="flex items-center gap-2">
           <button onClick={exportList} title="사내용 — 단계별 예정 · 실적, 비고 · 문의까지"
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">📥 엑셀 (사내)</button>
           <button onClick={() => setCustOut(true)} title="고객사에 보낼 영문 진행 보고 — 사내 비고 · 이슈 · 담당자는 빠집니다"
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 text-indigo-700 bg-indigo-50 hover:bg-indigo-100">📤 고객사 제출용</button>
+          {canEdit && (
+            <button onClick={() => setQImport(true)} data-fa-qimport title="품질팀 「Axcelis FA 진행 대시보드」 엑셀을 그대로 올리면 품목 · 단계 상태 · 마감 · 하위 구성품을 가져옵니다 (포털에 있는 값은 덮지 않음)"
+              className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100">📥 품질 엑셀 가져오기</button>
+          )}
           {canEdit && (
             <button onClick={() => setPaste(true)}
               className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">📋 FA 목록 붙여넣기</button>
@@ -341,20 +379,24 @@ export default function FaProgress() {
       {error && <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">목록을 못 불러왔습니다 — {error.message}</div>}
 
       {/* 지표 — 누르면 그것만 */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2" data-fa-kpis>
         {[
-          ['', '진행 중', counts.open, '승인 전 전체', ''],
+          ['', '진행 중', counts.open, '승인 · 마감 전 전체', ''],
+          ['made', '제작 완료', `${n(counts.madeDone)} / ${n(counts.made)}`, '제작하는 상위 품목 중 (하위 구성품 · 마감 제외)', ''],
+          ['insp', '실물 검수 완료', `${n(counts.inspDone)} / ${n(counts.top)}`, '품질 실물 검수까지 끝 (상위 품목)', ''],
+          ['witness', '입회 요청', counts.witness, '고객사 입회 단계가 진행 중 · 끝 (승인 전)', counts.witness ? 'pr' : ''],
           ['late', '예정일 지남', counts.late, '지금 단계 예정 또는 FA 가능일이 지남 (보류 빼고)', counts.late ? 'warn' : ''],
           ['issue', '열린 이슈', counts.issue, `이슈가 해결 안 된 건 · 고객사 문의 대기 ${counts.inquiry}`, counts.issue ? 'warn' : ''],
           ['hold', '보류', counts.hold, '진행을 멈춘 건', ''],
           ['week', '이번 주 예정', counts.week, `${md(today)} ~ ${md(in7)} 에 예정된 단계가 있는 건`, ''],
+          ['closed', '마감', counts.closed, `발주 취소 ${counts.cancel} · 기존 FA 승인 · 입회 면제`, ''],
           ['done', '승인 완료', counts.done, '고객사 승인까지 끝', 'ok'],
         ].map(([key, t, v, s, tone]) => (
           <button key={t} onClick={() => setOnly(only === key ? '' : key)}
             className={`text-left rounded-xl border p-3 transition ${only === key && key !== '' ? 'ring-2 ring-indigo-400' : ''} ${
-              tone === 'warn' ? 'border-rose-200 bg-rose-50/60' : tone === 'ok' ? 'border-emerald-200 bg-emerald-50/50' : 'border-slate-200 bg-white'}`}>
+              tone === 'warn' ? 'border-rose-200 bg-rose-50/60' : tone === 'ok' ? 'border-emerald-200 bg-emerald-50/50' : tone === 'pr' ? 'border-violet-200 bg-violet-50/60' : 'border-slate-200 bg-white'}`} data-fa-kpi={key || 'open'}>
             <div className="text-[12px] font-semibold text-slate-400">{t}</div>
-            <div className={`text-2xl font-extrabold tabular-nums ${tone === 'warn' ? 'text-rose-600' : tone === 'ok' ? 'text-emerald-700' : 'text-slate-800'}`}>{n(v)}</div>
+            <div className={`text-2xl font-extrabold tabular-nums ${tone === 'warn' ? 'text-rose-600' : tone === 'ok' ? 'text-emerald-700' : tone === 'pr' ? 'text-violet-700' : 'text-slate-800'}`}>{typeof v === 'string' ? v : n(v)}</div>
             <div className="text-[10.5px] text-slate-400 leading-snug">{s}</div>
           </button>
         ))}
@@ -363,7 +405,7 @@ export default function FaProgress() {
       {/* 보기 · 거르기 */}
       <div className="flex items-center gap-2 flex-wrap">
         <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs font-bold">
-          {[['board', '단계 보드'], ['list', '구분별 목록'], ['meet', '주간 회의']].map(([k, l]) => (
+          {[['grid', '진행표'], ['list', '구분별 목록'], ['board', '단계 보드'], ['meet', '주간 회의']].map(([k, l]) => (
             <button key={k} onClick={() => setView(k)} className={chip(view === k)}>{l}</button>
           ))}
         </div>
@@ -390,7 +432,7 @@ export default function FaProgress() {
       </div>
 
       {isLoading ? (
-        view === 'list' ? (
+        view === 'list' || view === 'grid' ? (
           <div className="rounded-xl border border-slate-200 bg-white overflow-hidden"><table className="w-full text-xs"><tbody><SkeletonRows cols={9} rows={8} two={[1]} /></tbody></table></div>
         ) : (
           <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
@@ -408,6 +450,8 @@ export default function FaProgress() {
           </div>
         ) : view === 'meet' ? (
           <Meeting rows={enriched} logs={logs} today={today} in7={in7} canEdit={canEdit} onOpen={setOpenId} onLog={addLog} />
+        ) : view === 'grid' ? (
+          <FaGrid groups={gridGroups} fold={fold} setFold={setFold} canEdit={canEdit} today={today} onOpen={setOpenId} onStep={setStep} />
         ) : view === 'list' ? (
           <FaList groups={groups} fold={fold} setFold={setFold} onOpen={setOpenId} />
         ) : (
@@ -417,6 +461,10 @@ export default function FaProgress() {
       {paste && (
         <PasteModal rows={rows} csId={ax?.id || null} me={me} onClose={() => setPaste(false)}
           onDone={() => { reload(); setPaste(false) }} />
+      )}
+      {qImport && (
+        <QualityImport rows={rows} csId={ax?.id || null} me={me} onClose={() => setQImport(false)}
+          onDone={() => { reload(); setQImport(false) }} />
       )}
       {custOut && (
         <CustomerExport view={base} all={enriched} today={today} filtered={!!(q || typeF || ownerF || only)}
@@ -435,12 +483,23 @@ function CustomerExport({ view, all, today, filtered, onClose }) {
   // 최근 30일 안에 승인된 건 — 고객사도 「끝났다」를 확인할 수 있게
   const recentDone = all.filter((r) => r._approved && (r.steps?.g_approve?.d || '') >= since)
   const list = useMemo(() => {
-    const baseList = scope === 'view' ? view.filter((r) => !r._approved) : all.filter((r) => !r._approved)
+    const baseList = (scope === 'view' ? view : all).filter((r) => !r._approved && !r._closed)
     return withDone ? [...baseList, ...recentDone.filter((r) => !baseList.includes(r))] : baseList
   }, [scope, withDone, view, all, recentDone])
   const rows = useMemo(() => customerRows(list), [list])
   const noNote = list.filter((r) => !r.cust_note && (r.hold || r._late)).length
 
+  // 품질팀 양식(한글) — 마감 건(발주 취소 · 기존 FA 승인)도 사유로 같이 · 하위 구성품은 빠짐 (v4.202.0)
+  async function runKo() {
+    setBusy(true)
+    try {
+      const src = (scope === 'view' ? view : all).filter((r) => !r._approved || recentDone.includes(r))
+      const n = await exportFaCustomerKo(src, { asOf: today })
+      toastSuccess(`품질 양식(한글) ${n}건을 내려받았습니다`)
+      onClose()
+    } catch (e) { toastError(e.message) }
+    finally { setBusy(false) }
+  }
   async function run() {
     setBusy(true)
     try {
@@ -509,6 +568,8 @@ function CustomerExport({ view, all, today, filtered, onClose }) {
         </div>
         <div className="flex gap-2 px-5 py-4 border-t border-slate-100">
           <button onClick={onClose} className="px-4 py-2.5 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">닫기</button>
+          <button onClick={runKo} disabled={busy} data-fa-export-ko title="품질팀 「고객사 제출용」 시트와 같은 한글 양식 — No · Part Number · Description · 진행사항 · 입회 요청 일정"
+            className="px-4 py-2.5 text-sm font-bold rounded-lg border border-violet-300 text-violet-700 bg-violet-50 hover:bg-violet-100 disabled:opacity-40">한글 (품질 양식)</button>
           <button onClick={run} disabled={busy || !rows.length}
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
             {busy ? <span className="inline-flex items-center gap-1.5"><Spin />만드는 중…</span> : `영문 엑셀 내려받기 — ${rows.length}건`}
@@ -575,6 +636,112 @@ function Board({ columns, today, canEdit, onOpen, onPass, showDone }) {
     </div>
   )
 }
+
+/* ───────── 진행표 (v4.202.0) — 품질 엑셀처럼 품목 한 줄 · 단계마다 칸 ─────────
+   구분별로 묶고 하위 구성품은 상위 밑에 들여 씀. 칸 색 = 대기 · 진행 중 · 완료 · 확인필요 · 보류.
+   수정 권한이 있으면 칸을 눌러 바로 상태를 바꾼다 (완료를 고르면 실적일 = 오늘). 품번을 누르면 건 상세 */
+function GateCell({ r, g, canEdit, onStep, today }) {
+  if (!g.t.includes(r.fa_type)) return <td className="px-0.5 py-1 text-center text-slate-200">—</td>
+  const v = r.steps?.[g.k] || {}
+  const st = gateSt(v)
+  const t = gateStatus(st)
+  const late = !gateDone(v) && v.p && v.p < today
+  const sub = v.d ? md(v.d) : v.p ? `예정 ${md(v.p)}` : ''
+  const pick = (k) => {
+    if (k === st) return
+    // 완료 = 실적일 오늘 (이미 있으면 그대로) · 그 밖은 실적일을 비워야 그 상태가 된다
+    const next = k === 'done' ? { ...v, s: 'done', d: v.d || today } : { ...v, s: k, d: '' }
+    onStep(r, g.k, next)
+  }
+  return (
+    <td className="px-0.5 py-1" data-fa-cell={`${r.item_code}|${g.k}`} data-fa-st={st || 'wait'}>
+      <div className={`relative rounded-md border text-center px-1 py-1 ${t.cell} ${late ? 'ring-1 ring-rose-400' : ''}`} title={`${g.l} — ${t.l}${v.d ? ` · 완료 ${v.d}` : ''}${v.p ? ` · 예정 ${v.p}` : ''}${v.m ? `\n${v.m}` : ''}`}>
+        <div className="text-[11px] font-bold leading-tight whitespace-nowrap">{st === 'done' ? '✓ 완료' : t.l}</div>
+        {sub && <div className={`text-[9.5px] leading-tight tabular-nums ${late ? 'text-rose-600 font-bold' : 'opacity-70'}`}>{sub}</div>}
+        {canEdit && (
+          <select value={st} onChange={(e) => pick(e.target.value)} onClick={(e) => e.stopPropagation()} aria-label={`${r.item_code} ${g.l} 상태`}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer">
+            {GATE_STATUS.map((x) => <option key={x.k} value={x.k}>{x.l}</option>)}
+          </select>
+        )}
+      </div>
+    </td>
+  )
+}
+
+function FaGrid({ groups, fold, setFold, canEdit, today, onOpen, onStep }) {
+  if (!groups.length) return <p className="py-10 text-center text-sm text-slate-400">조건에 맞는 건이 없습니다</p>
+  const cols = FA_GATES
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white" data-fa-grid>
+      <div className="px-3 py-2 border-b border-slate-100 flex items-center gap-3 flex-wrap text-[11px] text-slate-500">
+        {GATE_STATUS.filter((x) => x.k !== 'na').map((x) => (
+          <span key={x.k || 'wait'} className="inline-flex items-center gap-1"><span className={`w-2.5 h-2.5 rounded-sm ${x.dot}`} />{x.l}</span>
+        ))}
+        <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm ring-1 ring-rose-400 bg-white" />예정일 지남</span>
+        {canEdit && <span className="ml-auto text-slate-400">칸을 눌러 상태를 바꿉니다 · 「완료」 = 실적일 오늘</span>}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs border-separate border-spacing-0 min-w-[1500px]">
+          <thead>
+            <tr className="text-[10.5px] text-slate-500">
+              <th className="sticky left-0 z-10 bg-slate-50 px-3 py-2 text-left font-bold border-b border-slate-200 w-[230px]">품번 · 품명</th>
+              <th className="bg-slate-50 px-2 py-2 text-left font-bold border-b border-slate-200 w-[64px]">Rev</th>
+              <th className="bg-slate-50 px-2 py-2 text-left font-bold border-b border-slate-200 w-[86px]">FA PO</th>
+              {cols.map((g) => <th key={g.k} className="bg-slate-50 px-0.5 py-2 text-center font-bold border-b border-slate-200 w-[70px] leading-tight" title={g.owner}>{g.l}<div className="text-[9px] font-normal text-slate-400">{g.owner}</div></th>)}
+              <th className="bg-slate-50 px-2 py-2 text-left font-bold border-b border-slate-200 w-[110px]">입회 요청 일정</th>
+              <th className="bg-slate-50 px-2 py-2 text-left font-bold border-b border-slate-200 w-[220px]">이슈 · 비고</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((gr) => (
+              <Fragment key={gr.key}>
+                <tr className="bg-slate-100/80">
+                  <td colSpan={cols.length + 5} className="sticky left-0 px-3 py-1.5 border-b border-slate-200">
+                    <button onClick={() => setFold((f) => ({ ...f, [gr.key]: !f[gr.key] }))} className="flex items-center gap-2 text-left">
+                      <span className="text-slate-400 w-3">{fold[gr.key] ? '▸' : '▾'}</span>
+                      <span className={`px-2 py-0.5 rounded-md text-xs font-extrabold ${faTypeTone(gr.key).badge}`}>{gr.label}</span>
+                      <span className="text-[11px] font-bold text-slate-500">{gr.rows.filter((x) => !x.child).length}건{gr.rows.some((x) => x.child) ? ` · 하위 ${gr.rows.filter((x) => x.child).length}` : ''}</span>
+                    </button>
+                  </td>
+                </tr>
+                {!fold[gr.key] && gr.rows.map(({ r, child }) => (
+                  <tr key={r.id} className={`group ${r.hold ? 'bg-slate-50/80' : ''} ${child ? 'bg-slate-50/40' : ''}`} data-fa-row={r.item_code}>
+                    <td className="sticky left-0 z-[1] bg-white group-hover:bg-indigo-50/50 px-3 py-1.5 border-b border-slate-100">
+                      <button onClick={() => onOpen(r.id)} className={`text-left w-full ${child ? 'pl-4' : ''}`}>
+                        <div className="whitespace-nowrap flex items-center gap-1">
+                          {child && <span className="text-slate-300">↳</span>}
+                          <span className="font-mono font-bold text-indigo-600 hover:underline">{r.item_code}</span>
+                          {r.hold && <span className="px-1 rounded text-[9.5px] font-bold bg-slate-700 text-white">보류</span>}
+                          {r._closed && <span className="px-1 rounded text-[9.5px] font-bold bg-slate-200 text-slate-600">{closeLabel(r.close_reason)}</span>}
+                          {r._late && <span className="px-1 rounded text-[9.5px] font-bold bg-rose-100 text-rose-700">지연</span>}
+                        </div>
+                        <div className="text-[10.5px] text-slate-500 truncate max-w-[210px]" title={r.item_desc || ''}>{r.item_desc}</div>
+                      </button>
+                    </td>
+                    <td className={`px-2 py-1.5 border-b border-slate-100 font-mono whitespace-nowrap ${revUp(r) ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>{r.srev || '-'}/{r.brev || '-'}</td>
+                    <td className="px-2 py-1.5 border-b border-slate-100 font-mono text-[10.5px] text-slate-500 whitespace-nowrap">{r.po_number}</td>
+                    {cols.map((g) => <GateCell key={g.k} r={r} g={g} canEdit={canEdit && !r._closed} onStep={onStep} today={today} />)}
+                    <td className="px-2 py-1.5 border-b border-slate-100 text-[11px] text-slate-600 whitespace-nowrap">
+                      {r.steps?.g_submit?.p ? md(r.steps.g_submit.p) : r.fa_ready_date ? md(r.fa_ready_date) : <span className="text-slate-400">{r.fa_ready_text || '일정 미확정'}</span>}
+                    </td>
+                    <td className="px-2 py-1.5 border-b border-slate-100">
+                      <div className="flex items-center gap-1 overflow-hidden max-w-[220px]">
+                        <IssueBadge r={r} />
+                        <span className="text-[10.5px] text-slate-500 truncate" title={r.close_note || r._issues[0]?.body || r.note || ''}>{r.close_note || r._issues[0]?.body || (r.inquiry_open && r.inquiry) || r.note}</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 
 /* ───────── 구분별 목록 ───────── */
 function FaList({ groups, fold, setFold, onOpen }) {
@@ -777,13 +944,14 @@ function Meeting({ rows, logs, today, in7, canEdit, onOpen, onLog }) {
 }
 
 /* ───────── 한 건 상세 — 단계 예정 · 실적 + 세부 항목 + 이슈 기록 ───────── */
-function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, onBack, onStep, onSave, onLog, onIssue, onDelete }) {
+function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, onBack, onStep, onSave, onLog, onIssue, onDelete, all = [] }) {
   const nav = useNavigate()
   const pick = (f) => ({
     fa_type: f.fa_type || 'PD', priority: f.priority ?? '', fa_ready_date: f.fa_ready_date || '',
     fa_ready_text: f.fa_ready_text || '', note: f.note || '', hold: !!f.hold,
     srev: f.srev || '', brev: f.brev || '', promise_date: f.promise_date || '',
     cust_note: f.cust_note || '',
+    close_reason: f.close_reason || '', close_note: f.close_note || '', parent_id: f.parent_id ? String(f.parent_id) : '',
   })
   const [info, setInfo] = useState(() => pick(fa))
   const [openGate, setOpenGate] = useState(() => fa._stage?.k || null)
@@ -797,6 +965,10 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
       srev: info.srev.trim() || null, brev: info.brev.trim() || null, promise_date: info.promise_date || null,
       // 고객사 코멘트는 고쳤을 때만 보낸다 (칸을 만드는 SQL 을 아직 안 돌렸어도 나머지 저장은 되게)
       ...(info.cust_note !== (fa.cust_note || '') ? { cust_note: info.cust_note.trim() || null } : {}),
+      // 마감 · 상위 품번 (v4.202.0 · SQL 초도품_엑셀맞춤) — 고쳤을 때만 보낸다
+      ...(info.close_reason !== (fa.close_reason || '') ? { close_reason: info.close_reason || null } : {}),
+      ...(info.close_note !== (fa.close_note || '') ? { close_note: info.close_note.trim() || null } : {}),
+      ...(info.parent_id !== (fa.parent_id ? String(fa.parent_id) : '') ? { parent_id: info.parent_id ? Number(info.parent_id) : null } : {}),
     })
     if (ok && info.fa_type !== fa.fa_type) toastSuccess('구분을 바꿔 단계 · 세부 항목이 바뀌었습니다 (넣은 값은 남아 있습니다)')
     // Rev 가 바뀌었으면 기록에 남긴다 — 언제 · 누가 · 무엇에서 무엇으로
@@ -881,6 +1053,7 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
             <span className="mx-2 text-slate-300">|</span>납기 <b className="text-slate-700">{fa.promise_date || '-'}</b>
             <span className="mx-2 text-slate-300">|</span>FA 가능일 <b className="text-slate-700">{fa.fa_ready_date || fa.fa_ready_text || '-'}</b>
             {fa.hold && <span className="ml-2 px-2 py-0.5 rounded text-xs font-bold bg-slate-700 text-white">보류</span>}
+            {fa.close_reason && <span className="ml-2 px-2 py-0.5 rounded text-xs font-bold bg-slate-200 text-slate-700" title={fa.close_note || ''}>마감 · {closeLabel(fa.close_reason)}</span>}
             {fa._issues?.length > 0 && (
               <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${fa.inquiry_open ? 'bg-rose-100 text-rose-700' : 'bg-amber-100 text-amber-800'}`}>
                 열린 이슈 {fa._issues.length}{fa.inquiry_open ? ' · 고객사 문의 대기' : ''}
@@ -930,7 +1103,14 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
               <div key={g.k} className={`border-b border-slate-100 ${g.cur ? 'bg-indigo-50/40' : ''}`}>
                 <div className="grid grid-cols-[150px_142px_142px_56px_1fr] gap-2 px-4 py-2 items-center text-sm">
                   <div className="min-w-0">
-                    <div className={`font-bold ${g.done ? 'text-emerald-700' : g.cur ? 'text-indigo-700' : 'text-slate-700'}`}>{g.done ? '✔ ' : ''}{g.l}</div>
+                    <div className={`font-bold flex items-center gap-1.5 ${g.done ? 'text-emerald-700' : g.cur ? 'text-indigo-700' : 'text-slate-700'}`}>{g.done ? '✔ ' : ''}{g.l}
+                      {/* 상태 (v4.202.0) — 날짜 없이도: 진행 중 · 확인필요 · 보류 · 해당없음. 완료 = 실적일 */}
+                      <select disabled={!canEdit} value={g.st} aria-label={`${g.l} 상태`} data-gate-st={g.k}
+                        onChange={(e) => { const k = e.target.value; onStep(fa, g.k, k === 'done' ? { ...g.v, s: 'done', d: g.v.d || today } : { ...g.v, s: k, d: '' }) }}
+                        className={`px-1 py-0 rounded border text-[10.5px] font-bold ${gateStatus(g.st).cell}`}>
+                        {GATE_STATUS.map((x) => <option key={x.k} value={x.k}>{x.l}</option>)}
+                      </select>
+                    </div>
                     <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
                       {g.owner}
                       {subs.length > 0 && (
@@ -970,12 +1150,13 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
             )
           })}
           <p className="px-4 py-2 text-[11px] text-slate-400">
-            실적일을 넣으면 그 단계가 끝나고 다음 단계로 넘어갑니다. 「세부」를 누르면 품질이 챙기는 하위 항목(도면 · JIG · 케이블 · 성적서 …)이 열립니다.
+            실적일을 넣거나 상태를 「완료」로 고르면 그 단계가 끝나고 다음 단계로 넘어갑니다. 날짜를 모를 땐 상태만 고르세요(진행 중 · 확인필요 · 보류). 「세부」를 누르면 품질이 챙기는 하위 항목(도면 · JIG · 시험절차서 · 성적서 …)이 열립니다.
           </p>
         </div>
 
         {/* 이슈 · 정보 */}
         <div className="space-y-4 xl:sticky xl:top-4">
+          <ProdSync fa={fa} gates={gates} canEdit={canEdit} onStep={onStep} />
           <IssuePanel fa={fa} logs={logs} today={today} canEdit={canEdit} onLog={onLog} onIssue={onIssue} />
 
           <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2 text-xs">
@@ -1006,6 +1187,22 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
             <label className="inline-flex items-center gap-1.5 font-semibold text-slate-700">
               <input disabled={!canEdit} type="checkbox" checked={info.hold} onChange={(e) => set('hold', e.target.checked)} /> 보류
             </label>
+            {/* 상위 품번 · 마감 (v4.202.0) */}
+            <label className="flex flex-col gap-1"><span className="text-slate-400 font-semibold">상위 품번 (하위 구성품이면)</span>
+              <select disabled={!canEdit} value={info.parent_id} onChange={(e) => set('parent_id', e.target.value)} className={inp} data-fa-parent>
+                <option value="">— 없음 (단독 품목) —</option>
+                {all.filter((x) => x.id !== fa.id && !x.parent_id).sort((a, b) => (b.po_number === fa.po_number) - (a.po_number === fa.po_number) || String(a.item_code).localeCompare(String(b.item_code)))
+                  .map((x) => <option key={x.id} value={String(x.id)}>{x.item_code} · {x.po_number}{x.po_number === fa.po_number ? ' (같은 FA PO)' : ''}</option>)}
+              </select></label>
+            <div className="grid grid-cols-[130px_1fr] gap-2">
+              <label className="flex flex-col gap-1"><span className="text-slate-400 font-semibold">마감</span>
+                <select disabled={!canEdit} value={info.close_reason} onChange={(e) => set('close_reason', e.target.value)} className={inp} data-fa-close>
+                  <option value="">진행 중</option>
+                  {CLOSE_REASONS.map((c) => <option key={c.k} value={c.k}>{c.l}</option>)}
+                </select></label>
+              <label className="flex flex-col gap-1"><span className="text-slate-400 font-semibold">마감 사유</span>
+                <input disabled={!canEdit || !info.close_reason} value={info.close_note} placeholder="예: 내전압 이슈(1,000V) 발주 취소" onChange={(e) => set('close_note', e.target.value)} className={inp} /></label>
+            </div>
             {canEdit && (
               <div className="flex gap-2 pt-1">
                 <button onClick={save} disabled={!dirty}
@@ -1021,6 +1218,68 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
   )
 }
 
+
+/* ───────── 생산관리에서 단계 채우기 (v4.202.0) ─────────
+   FA PO → 수주대장 줄(같은 품번) → 연결된 생산관리 호기 상태 · 자재 불출로 단계를 제안한다.
+   누르면 아직 안 끝난 단계만 그 상태로 (끝난 단계 · 넣어 둔 실적일은 그대로). 하네스는 하네스 공정관리라 보통 연결이 없다 */
+const PROD_RANK = { 'PO접수': 0, '자재발주': 1, '제작대기': 2, '제작중': 3, '품질검수': 4, '납품대기': 5, '외주': 3, '현장작업': 3, '완료': 6 }
+export function prodSuggest(prods) {
+  if (!prods?.length) return {}
+  const rank = Math.max(...prods.map((p) => PROD_RANK[p.status] ?? 0))
+  const issued = prods.some((p) => p.part_issue === true || /^(true|1|y)$/i.test(String(p.part_issue ?? '')))
+  const s = { g_po: 'done' }
+  if (rank >= 2 || issued) s.g_mat_in = 'done'; else if (rank === 1) s.g_mat_in = 'doing'
+  if (issued) s.g_issue = 'done'
+  if (rank >= 3) s.g_make_start = 'done'
+  if (rank >= 4) { s.g_make_done = 'done'; s.g_handover = 'done' } else if (rank === 3) s.g_make_done = 'doing'
+  if (rank >= 5) s.g_inspect = 'done'; else if (rank === 4) s.g_inspect = 'doing'
+  return s
+}
+function ProdSync({ fa, gates, canEdit, onStep }) {
+  const [busy, setBusy] = useState(false)
+  const { data, isLoading } = useQuery({
+    queryKey: ['faProd', fa.id, fa.po_number, fa.item_code],
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const os = must(await supabase.from('pm_order').select('id,po_no').eq('po_no', fa.po_number), '수주대장 찾기') || []
+      if (!os.length) return { prods: [], why: '수주대장에 이 FA PO 가 없습니다' }
+      const ls = must(await supabase.from('pm_order_line').select('id,item_id,items(std_code)').in('order_id', os.map((o) => o.id)), '수주 줄') || []
+      const pn = String(fa.item_code).replace(/^AX-/i, '')
+      const mine = ls.filter((l) => String(l.items?.std_code || '').replace(/^AX-/i, '') === pn)
+      if (!mine.length) return { prods: [], why: '수주대장 PO 에 이 품번 줄이 없습니다' }
+      const { data: ps, error } = await supabase.from('production').select('id,hogi,status,part_issue').in('order_line_id', mine.map((l) => l.id))
+      if (error) return { prods: [], why: '생산관리를 읽지 못했습니다' }
+      return { prods: ps || [], why: ps?.length ? '' : '연결된 생산관리 호기가 없습니다' }
+    },
+  })
+  if (isLoading || !data) return null
+  const sug = prodSuggest(data.prods)
+  const byK = new Map(gates.map((g) => [g.k, g]))
+  const RANK = { '': 0, check: 0, hold: 0, doing: 1, done: 2, na: 2 }
+  const ups = Object.entries(sug).filter(([k, st]) => byK.has(k) && !byK.get(k).done && RANK[st] > RANK[byK.get(k).st || '']).map(([k, st]) => ({ g: byK.get(k), st }))
+  async function apply() {
+    setBusy(true)
+    for (const u of ups) await onStep(fa, u.g.k, { ...u.g.v, s: u.st })
+    setBusy(false)
+    toastSuccess(`생산관리 기준으로 ${ups.length}단계를 채웠습니다`)
+  }
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-4 text-xs space-y-1.5" data-fa-prodsync>
+      <div className="text-sm font-extrabold text-slate-800">🏭 생산관리 연결</div>
+      {data.prods.length ? (
+        <>
+          <div className="text-slate-600">호기 {data.prods.map((p) => `${p.hogi || '-'} ${p.status || ''}${p.part_issue && String(p.part_issue) !== 'false' ? ' · 불출' : ''}`).join(' / ')}</div>
+          {ups.length ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-slate-500">채울 단계: {ups.map((u) => `${u.g.l} ${gateStatus(u.st).l}`).join(' · ')}</span>
+              {canEdit && <button onClick={apply} disabled={busy} data-fa-prodsync-apply className="ml-auto px-2.5 py-1 rounded-lg bg-indigo-600 text-white font-bold disabled:opacity-40">{busy ? '채우는 중…' : '단계에 반영'}</button>}
+            </div>
+          ) : <div className="text-emerald-700">단계가 생산관리와 같습니다</div>}
+        </>
+      ) : <div className="text-slate-400">{data.why}{fa.fa_type === 'HARNESS' ? ' — 하네스는 하네스 공정관리에서 진행을 확인하세요' : ''}</div>}
+    </div>
+  )
+}
 /* ───────── 이슈 (건마다 여러 개) + 진행 기록 ───────── */
 function IssuePanel({ fa, logs, today, canEdit, onLog, onIssue }) {
   const { issues, open, notes } = useMemo(() => splitFaLogs(logs), [logs])
@@ -1316,6 +1575,125 @@ function PasteModal({ rows, csId, me, onClose, onDone }) {
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
             {busy ? <span className="inline-flex items-center gap-1.5"><Spin />넣는 중…</span> : `넣기 — 새로 ${news.length} · 갱신 ${upds.length}`}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ───────── 품질 엑셀 가져오기 (v4.202.0) ─────────
+   품질팀이 따로 쓰던 「Axcelis FA 진행 대시보드」 엑셀을 그대로 올린다.
+   새 건은 만들고, 이미 있는 건(FA PO + 품번)은 포털에 비어 있는 칸 · 단계만 채운다 (넣어 둔 값은 안 덮음).
+   하위 구성품(↳)은 바로 위 품목에 묶는다. */
+function QualityImport({ rows, csId, me, onClose, onDone }) {
+  const [parsed, setParsed] = useState(null)
+  const [fileName, setFileName] = useState('')
+  const [busy, setBusy] = useState(false)
+  const exist = useMemo(() => new Map(rows.map((r) => [`${r.po_number}|${r.item_code}`, r])), [rows])
+  async function load(f) {
+    if (!f) return
+    try {
+      const XLSX = await import('xlsx')
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' })
+      let best = { rows: [], bad: ['FA 진행 시트를 찾지 못했습니다'] }
+      for (const n of wb.SheetNames) {
+        const r = parseQualitySheet(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, defval: null, raw: true }))
+        if (r.rows.length > best.rows.length) best = { ...r, sheet: n }
+      }
+      setParsed(best); setFileName(f.name)
+    } catch (e) { toastError('엑셀을 읽지 못했습니다 — ' + e.message) }
+  }
+  const plan = useMemo(() => (parsed?.rows || []).map((x) => {
+    const old = exist.get(`${x.po_number}|${x.item_code}`)
+    if (!old) return { x, kind: 'new' }
+    const m = qiMerge(old, x)
+    const parentFill = x.parent && !old.parent_id
+    return { x, old, kind: Object.keys(m.patch).length || parentFill ? 'fill' : 'same', m }
+  }), [parsed, exist])
+  const nNew = plan.filter((p) => p.kind === 'new').length, nFill = plan.filter((p) => p.kind === 'fill').length
+
+  async function run() {
+    if (!plan.length) return
+    setBusy(true)
+    try {
+      const news = plan.filter((p) => p.kind === 'new').map(({ x }) => ({
+        customer_id: csId, item_code: x.item_code, po_number: x.po_number, ccn: x.ccn, srev: x.srev, brev: x.brev,
+        item_desc: x.item_desc, fa_type: x.fa_type, steps: x.steps, hold: x.hold,
+        close_reason: x.close_reason, close_note: x.close_note, fa_ready_text: x.fa_ready_text, note: x.note,
+        created_name: me?.name || null,
+      }))
+      if (news.length) must(await supabase.from('pm_fa').insert(news), '초도품 등록')
+      for (const p of plan.filter((q) => q.kind === 'fill' && Object.keys(q.m.patch).length)) {
+        must(await supabase.from('pm_fa').update({ ...p.m.patch, updated_at: new Date().toISOString() }).eq('id', p.old.id), '초도품 빈 칸 채우기')
+      }
+      // 하위 구성품 연결 — 상위 · 하위 id 를 다시 읽어 parent_id 를 넣는다 (이미 연결된 건 그대로)
+      const kids = plan.filter((p) => p.x.parent && (p.kind === 'new' || !p.old?.parent_id))
+      if (kids.length) {
+        const pos = [...new Set(kids.map((p) => p.x.po_number))]
+        const got = must(await supabase.from('pm_fa').select('id,item_code,po_number,parent_id').in('po_number', pos), '상위 품목 찾기') || []
+        const idOf = new Map(got.map((g) => [`${g.po_number}|${g.item_code}`, g]))
+        for (const p of kids) {
+          const me2 = idOf.get(`${p.x.po_number}|${p.x.item_code}`), par = idOf.get(`${p.x.po_number}|${p.x.parent}`)
+          if (me2 && par && !me2.parent_id) must(await supabase.from('pm_fa').update({ parent_id: par.id }).eq('id', me2.id), '하위 구성품 연결')
+        }
+      }
+      must(await supabase.from('pm_fa_log').insert({ fa_id: null, kind: '기록', body: `품질 엑셀 가져오기 ${fileName} — 새로 ${nNew} · 빈 칸 채움 ${nFill}`, created_name: me?.name || null }), '기록')
+      toastSuccess(`새로 ${nNew}건 · 빈 칸 채움 ${nFill}건`)
+      onDone()
+    } catch (e) {
+      toastError(/close_reason|parent_id|close_note/.test(e.message || '') ? '마감 · 상위 품번 칸이 아직 없습니다 — 초도품_엑셀맞춤_반영_261116.sql 을 먼저 실행하세요' : e.message)
+    } finally { setBusy(false) }
+  }
+
+  const stTxt = (x) => {
+    const gs = gatesOf(x.fa_type).filter((g) => gateDone(x.steps[g.k]))
+    const last = gs[gs.length - 1]
+    return last ? `${last.l} 까지 완료` : '대기'
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-auto" data-fa-qimport-modal>
+      <div className="bg-white w-full max-w-5xl rounded-2xl my-8" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 pt-4 pb-3 border-b border-slate-100">
+          <h3 className="text-base font-bold text-slate-900">📥 품질 엑셀 가져오기</h3>
+          <p className="text-xs text-slate-500 mt-1">품질팀 「Axcelis FA 진행 대시보드」 엑셀을 그대로 올리세요. 단계 상태(완료 · 진행 중 · 보류 · 확인필요) · 발주 취소 · 기존 FA 승인 · 하위 구성품(↳)까지 가져옵니다.
+            <b className="text-slate-700"> 포털에 이미 있는 건은 비어 있는 칸 · 단계만 채우고, 넣어 둔 값은 덮지 않습니다.</b></p>
+          <input type="file" accept=".xlsx,.xls" onChange={(e) => load(e.target.files?.[0])} data-fa-qimport-file className="mt-2 text-xs" />
+        </div>
+        {parsed && (
+          <div className="px-5 py-3 space-y-2">
+            <div className="flex items-center gap-3 text-xs flex-wrap">
+              <span className="text-slate-500">{fileName} · {parsed.sheet || ''}</span>
+              <span className="px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 font-bold">새로 {nNew}</span>
+              <span className="px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 font-bold">빈 칸 채움 {nFill}</span>
+              <span className="px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 font-bold">그대로 {plan.length - nNew - nFill}</span>
+            </div>
+            {parsed.bad.length > 0 && <div className="text-[11px] text-rose-600">{parsed.bad.join(' · ')}</div>}
+            <div className="max-h-[50vh] overflow-auto rounded-lg border border-slate-200">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-slate-50 text-slate-500"><tr className="text-left">
+                  <th className="px-2 py-1.5">품번</th><th className="px-2 py-1.5">FA PO</th><th className="px-2 py-1.5">구분</th><th className="px-2 py-1.5">진행</th><th className="px-2 py-1.5">마감 · 보류</th><th className="px-2 py-1.5">입회 요청 일정</th><th className="px-2 py-1.5">처리</th>
+                </tr></thead>
+                <tbody>
+                  {plan.map(({ x, kind, m }) => (
+                    <tr key={`${x.po_number}|${x.item_code}`} className="border-t border-slate-100" data-qi-row={x.item_code} data-qi-kind={kind}>
+                      <td className="px-2 py-1 font-mono"><span className={x.parent ? 'pl-3 text-slate-500' : 'font-bold text-slate-800'}>{x.parent ? '↳ ' : ''}{x.item_code}</span><div className="text-[10px] text-slate-400 truncate max-w-[220px]">{x.item_desc}</div></td>
+                      <td className="px-2 py-1 font-mono text-slate-500">{x.po_number}</td>
+                      <td className="px-2 py-1">{faTypeLabel(x.fa_type)}</td>
+                      <td className="px-2 py-1 text-slate-600">{stTxt(x)}</td>
+                      <td className="px-2 py-1">{x.close_reason ? <span className="px-1.5 rounded bg-slate-200 text-slate-600 font-bold">{closeLabel(x.close_reason)}</span> : x.hold ? <span className="px-1.5 rounded bg-slate-700 text-white font-bold">보류</span> : ''}</td>
+                      <td className="px-2 py-1 text-slate-500">{x.fa_ready_text || '—'}</td>
+                      <td className="px-2 py-1 font-bold">{kind === 'new' ? <span className="text-indigo-700">새로</span> : kind === 'fill' ? <span className="text-amber-700" title={Object.keys(m.patch).join(', ')}>빈 칸 채움{m.stepsAdded ? ` (단계 ${m.stepsAdded})` : ''}</span> : <span className="text-slate-400">그대로</span>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+        <div className="px-5 py-3 border-t border-slate-100 flex justify-end gap-2">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">닫기</button>
+          <button onClick={run} disabled={busy || !plan.length || (!nNew && !nFill)} data-fa-qimport-run
+            className="px-4 py-2 text-sm font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">{busy ? '가져오는 중…' : `가져오기 (새로 ${nNew} · 채움 ${nFill})`}</button>
         </div>
       </div>
     </div>

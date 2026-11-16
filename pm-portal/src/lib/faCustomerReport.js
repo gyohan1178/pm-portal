@@ -1,4 +1,4 @@
-import { faStage, faApproved } from './faTemplate'
+import { faStage, faApproved, gateDone, gateSt, faClosed } from './faTemplate'
 
 // 초도품 — 고객사 제출용 진행 보고 (영문 엑셀, 심플판)
 //
@@ -12,9 +12,9 @@ import { faStage, faApproved } from './faTemplate'
 //     고객사에 보일 말은 건마다 「고객사 코멘트」(cust_note)에 영문으로 적은 것만 Remarks 로 나간다.
 
 const STATUS = {
-  g_po: 'Material Prep', g_mat_in: 'Material Prep', g_issue: 'Material Prep',
+  g_po: 'Material Prep', g_dr: 'Material Prep', g_mat_in: 'Material Prep', g_issue: 'Material Prep',
   g_make_start: 'In Build', g_make_done: 'In Build',
-  g_handover: 'Inspection', g_report: 'Inspection', g_submit: 'Inspection',
+  g_handover: 'Inspection', g_inspect: 'Inspection', g_report: 'Inspection', g_submit: 'Inspection',
   g_approve: 'Submitted',
 }
 // 순서 · 색 (엑셀 · 미리보기 같이 씀)
@@ -36,7 +36,7 @@ export function customerRow(fa) {
   const v = (k) => fa.steps?.[k] || {}
   const approved = faApproved(fa)
   // 제출일이 있으면 앞 단계 입력이 비어 있어도 고객사 입장에선 「제출됨」
-  const status = approved ? 'Approved' : fa.hold ? 'On Hold' : v('g_submit').d ? 'Submitted'
+  const status = approved ? 'Approved' : fa.hold ? 'On Hold' : gateDone(v('g_submit')) ? 'Submitted'
     : (STATUS[faStage(fa).k] || 'Material Prep')
   return {
     Item: fa.item_code,
@@ -169,6 +169,74 @@ export async function exportFaCustomer(list, { asOf, supplier = 'Jinsuntech Co.,
   const a = document.createElement('a')
   a.href = url
   a.download = fileName || `FA_Status_Report_${asOf}.xlsx`
+  a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return rows.length
+}
+
+// ── 품질팀 양식 (한글) — 「고객사 제출용」 시트와 같은 모양 (v4.202.0) ──
+//   No. · Part Number · Description · 진행사항 · 입회 요청 일정 / 상위 품목만 (하위 구성품 제외) · 마감 건도 사유로 보임
+export function koStatus(fa) {
+  if (faClosed(fa)) return fa.close_reason === 'cancel' ? '발주취소' : fa.close_reason === 'prev_ok' ? '기존 FA승인 됨' : '입회 면제'
+  const v = (k) => fa.steps?.[k]
+  if (faApproved(fa)) return 'FA 승인'
+  if (gateDone(v('g_submit'))) return '입회 완료'
+  if (gateDone(v('g_report')) || gateSt(v('g_submit')) === 'doing') return '준비 완료'
+  if (fa.hold) return '보류'
+  if (['g_make_start', 'g_make_done', 'g_handover', 'g_inspect'].some((k) => gateDone(v(k)) || gateSt(v(k)) === 'doing')) return '제작 진행 중'
+  return '일정 미확정'
+}
+export function koWitness(fa) {
+  if (fa.close_reason === 'cancel') return fa.close_note || '발주 취소'
+  if (fa.close_reason === 'prev_ok' || fa.close_reason === 'waived') return '해당 없음'
+  return fa.steps?.g_submit?.p || fa.fa_ready_date || fa.fa_ready_text || '일정 미확정'
+}
+export function koRows(list) {
+  return list.filter((f) => !f.parent_id).map((f) => ({ pn: f.item_code, desc: f.item_desc || '', st: koStatus(f), wit: koWitness(f) }))
+}
+export async function exportFaCustomerKo(list, { asOf, fileName } = {}) {
+  const rows = koRows(list)
+  if (!rows.length) throw new Error('내보낼 건이 없습니다')
+  const ExcelJS = (await import('exceljs')).default
+  const NAVY = 'FF1E293B'
+  const LINE = { style: 'thin', color: { argb: 'FFCBD5E1' } }
+  const wb = new ExcelJS.Workbook()
+  const ws = wb.addWorksheet('고객사 제출용', { views: [{ showGridLines: false }], pageSetup: { orientation: 'landscape', paperSize: 9, fitToPage: true, fitToWidth: 1, fitToHeight: 0 } })
+  ;[6, 14, 46, 18, 26].forEach((w, i) => { ws.getColumn(i + 1).width = w })
+  ws.mergeCells(1, 1, 1, 5)
+  ws.getCell(1, 1).value = ' AXCELIS  |  OPEN FA INSPECTION STATUS'
+  ws.getCell(1, 1).font = { bold: true, size: 15, color: { argb: 'FFFFFFFF' } }
+  ws.getCell(1, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY } }
+  ws.getRow(1).height = 30
+  ws.mergeCells(3, 1, 3, 5)
+  ws.getCell(3, 1).value = ` FA 입회검사 대상 품목별 현황   (기준일 ${asOf || ''})`
+  ws.getCell(3, 1).font = { bold: true, size: 11, color: { argb: NAVY } }
+  const head = 5
+  ws.getRow(head).values = ['No.', 'Part Number', 'Description', '진행사항', '입회 요청 일정']
+  ws.getRow(head).eachCell((c) => {
+    c.font = { bold: true, size: 10, color: { argb: 'FFFFFFFF' } }
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF334155' } }
+    c.alignment = { vertical: 'middle', horizontal: 'center' }
+    c.border = { top: LINE, bottom: LINE, left: LINE, right: LINE }
+  })
+  const TONE = { '발주취소': 'FFFEE2E2', '기존 FA승인 됨': 'FFF1F5F9', '준비 완료': 'FFDCFCE7', '입회 완료': 'FFDBEAFE', 'FA 승인': 'FFDCFCE7', '제작 진행 중': 'FFE0E7FF', '보류': 'FFFEF3C7' }
+  rows.forEach((r, i) => {
+    const row = ws.getRow(head + 1 + i)
+    row.values = [i + 1, /^[1-9]\d{0,14}$/.test(String(r.pn)) ? Number(r.pn) : r.pn, r.desc, r.st, r.wit]
+    row.height = 20
+    row.eachCell({ includeEmpty: true }, (c, n) => {
+      c.font = { size: 10 }
+      c.border = { top: LINE, bottom: LINE, left: LINE, right: LINE }
+      c.alignment = { vertical: 'middle', horizontal: n === 3 ? 'left' : 'center' }
+    })
+    if (TONE[r.st]) row.getCell(4).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: TONE[r.st] } }
+  })
+  const buf = await wb.xlsx.writeBuffer()
+  const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = fileName || `Axcelis_FA_입회현황_${asOf || ''}.xlsx`
   a.click()
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return rows.length
