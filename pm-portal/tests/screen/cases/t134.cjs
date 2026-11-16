@@ -8,7 +8,7 @@ const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fa
     const p = await b.newPage({ viewport: { width: 1366, height: 768 } }); p.on('pageerror', e => errs.push(e.message.slice(0, 150)))
     await p.clock.setFixedTime(new Date('2026-11-16T01:00:00Z'))
     await p.goto('http://localhost:8765/app.html?flowc=1&' + (withFn ? q : '') + 'r=' + encodeURIComponent('/todo')); await p.waitForTimeout(2500)
-    const t = await p.locator('a[href="/orders"]:has-text("수주 미확인")').first().innerText().catch(() => '')
+    const t = await p.locator('a[href^="/orders"]:has-text("수주 미확인")').first().innerText().catch(() => '')
     await p.close(); return t.replace(/\n/g, ' ')
   }
   const a = await run(true)

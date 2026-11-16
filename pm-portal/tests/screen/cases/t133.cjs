@@ -14,8 +14,10 @@ const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fa
   ok(/확인 예정 PO 2건/.test(later) && /품목 22줄/.test(later), '확인 예정 줄', later)
   // 지표 누르기 → 급한 것만
   await p.locator('[data-kpi="미확인"]').click(); await p.waitForTimeout(600)
+  ok(await p.locator('[data-mode="po"].bg-white, [data-mode="po"][class*="text-violet"]').count() === 1, 'v4.200.1 미확인 누르면 PO별로')
   const t1 = await p.locator('main').innerText()
   ok(/UC-ED-NEAR/.test(t1) && /UC-ETC-NEAR/.test(t1) && /UC-AX-1/.test(t1) && !/UC-ED-FAR/.test(t1) && !/UC-ETC-FAR/.test(t1), '미확인 보기: 급한 PO 만')
+  await p.click('[data-mode="line"]'); await p.waitForTimeout(400)
   // PO 한 번에 고르기
   const pick = p.locator('[data-pick-po="UC-ED-NEAR"]').first()
   ok(/PO 15줄 고르기/.test(await pick.innerText()), 'PO 15줄 고르기 버튼', await pick.innerText())
@@ -34,6 +36,7 @@ const ok = (c, m, x) => { if (c) { pass++; console.log('  ✓ ' + m) } else { fa
   await p.click('[data-unconf-later-btn]'); await p.waitForTimeout(600)
   const t2 = await p.locator('main').innerText()
   ok(/UC-ED-FAR/.test(t2) && /UC-ETC-FAR/.test(t2) && !/UC-ETC-NEAR/.test(t2), '확인 예정 보기: 먼 PO 만')
+  await p.click('[data-mode="line"]'); await p.waitForTimeout(400)
   ok(await p.locator('[data-status]:has-text("확인 예정")').count() >= 1, '상태 칸 「확인 예정」(회색)')
   ok(!/영업일 미확인/.test(await p.locator('[data-row^="UC-ED-FAR|"]').first().innerText()), '먼 PO 줄엔 「N영업일 미확인」 빨간 글씨 없음')
   const sw = await p.evaluate(() => [document.documentElement.scrollWidth, innerWidth]); ok(sw[0] <= sw[1], 'PC 가로 넘침 없음', sw)

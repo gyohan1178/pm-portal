@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.200.0'
+export const APP_VERSION = 'v4.200.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.200.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.200.1',
+    date: '2026-11-16',
+    changes: [
+      '수주대장 「미확인」 · 「확인 예정」 · 「11월 전 회신 없음」을 누르면 PO별로 바로 — PO 번호를 눌러 🔍 자재 점검 뒤 회신. 할 일 「수주 미확인」 칸에서 들어와도 미확인 PO 를 PO별로 연다',
+    ],
+  },
   {
     version: 'v4.200.0',
     date: '2026-11-16',

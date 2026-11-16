@@ -366,11 +366,14 @@ export default function OrderIntake() {
   const [fxIn, setFxIn] = useState('')
   const fx = Number(fxIn) > 0 ? Number(fxIn) : (qcfg?.sellRate || 1400)
 
-  const [mode, setMode] = useState('line')       // line 품번별 · po PO별
+  // ?kpi=unconfirmed (할 일 「수주 미확인」에서 들어옴) → 미확인 PO 를 PO별로 바로 (v4.200.1)
+  const [sp, setSp] = useSearchParams()
+  const kpiFromUrl = sp.get('kpi') === 'unconfirmed'
+  const [mode, setMode] = useState(kpiFromUrl ? 'po' : 'line')       // line 품번별 · po PO별
   const [cust, setCust] = useState('all')
   const [q, setQ] = useState('')
   const [view, setView] = useState('live')       // live 진행 중 · done 납품 완료 · all
-  const [kpi, setKpi] = useState(null)
+  const [kpi, setKpi] = useState(kpiFromUrl ? 'unconfirmed' : null)
   const [sort, setSort] = useState('due')
   const [iss, setIss] = useState('all')          // 자재불출 거르기 — all · yes 불출 끝 · no 불출 전 (v4.117.0)
   const [checked, setChecked] = useState(() => new Set())
@@ -378,7 +381,6 @@ export default function OrderIntake() {
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
   const [entry, setEntry] = useState(null)       // 'one' 직접 등록 · 'excel' 엑셀로 여러 건 (v4.94.0)
-  const [sp, setSp] = useSearchParams()
   const tab = ['ecount', 'cleanup'].includes(sp.get('tab')) ? sp.get('tab') : 'list'
   const goTab = (t) => { const n = new URLSearchParams(sp); if (t === 'list') n.delete('tab'); else n.set('tab', t); setSp(n, { replace: true }) }
 
@@ -893,8 +895,8 @@ export default function OrderIntake() {
       {/* 지표 카드 — 보는 사람 할 일 순서로 (v4.200.0). 영업: 특이사항 · 납기 지남 · 조건부 · 불가 먼저 / 구매자재: 미확인 먼저 */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3" data-kpi-order={isBuy ? 'buy' : 'sales'}>
         {isBuy ? <>
-        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
-          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
+        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} on={kpi === 'unconfirmed'} onClick={() => { setLateF(null); if (kpi === 'unconfirmed') setKpi(null); else { setKpi('unconfirmed'); setMode('po') } }} loading={isLoading}
+          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 누르면 PO별로 보입니다 — PO 번호를 눌러 「🔍 자재 점검」 뒤 회신. 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
           tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
         <Kpi tone="red" label="납기 지남" value={kpis.late.length} sub={`PO ${pos(kpis.late)}건 · 납기 지났는데 미납${lateNoReason ? ` · 사유 없음 ${lateNoReason}줄` : ''}`} {...kpiBtn('late')} loading={isLoading}
@@ -910,8 +912,8 @@ export default function OrderIntake() {
           tip="고객사 납기일이 오늘보다 앞인데 아직 「납품 표시」가 안 된 줄. 실제로 나갔다면 납품 표시를 해 주세요." />
         <Kpi tone="red" label="조건부 · 불가" value={kpis.risk.length} sub={`PO ${pos(kpis.risk)}건 · 고객사 납기 협의`} {...kpiBtn('risk')} loading={isLoading}
           tip="구매자재가 「조건부」 또는 「불가」로 회신한 진행 중 줄. 영업이 메모(사유)를 보고 고객사와 납기를 협의할 대상입니다." />
-        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} {...kpiBtn('unconfirmed')} loading={isLoading}
-          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
+        <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} on={kpi === 'unconfirmed'} onClick={() => { setLateF(null); if (kpi === 'unconfirmed') setKpi(null); else { setKpi('unconfirmed'); setMode('po') } }} loading={isLoading}
+          tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 누르면 PO별로 보입니다 — PO 번호를 눌러 「🔍 자재 점검」 뒤 회신. 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
         </>}
         <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
           tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
@@ -921,12 +923,12 @@ export default function OrderIntake() {
         <div className="flex items-center gap-x-4 gap-y-1.5 flex-wrap text-xs text-slate-500">
           {kpis.unconfLater.length > 0 && <span className="flex items-center gap-2 flex-wrap" data-unconf-later>
             <span>🕓 확인 예정 PO <b className="text-slate-700">{pos(kpis.unconfLater)}건</b> (품목 {kpis.unconfLater.length}줄) — Edwards 납기 7주 · 기타 4주 전부터 미확인으로 올라옵니다</span>
-            <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'unconfLater' ? null : 'unconfLater') }} data-unconf-later-btn
+            <button type="button" onClick={() => { setLateF(null); if (kpi === 'unconfLater') setKpi(null); else { setKpi('unconfLater'); setMode('po') } }} data-unconf-later-btn
               className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'unconfLater' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'unconfLater' ? '보는 중 ✕' : '보기'}</button>
           </span>}
           {kpis.oldNoReply.length > 0 && <span className="flex items-center gap-2 flex-wrap" data-old-noreply>
             <span>📁 11월 전 PO 회신 없음 <b className="text-slate-700">{pos(kpis.oldNoReply)}건</b> (품목 {kpis.oldNoReply.length}줄) — 미확인 숫자에서 뺌</span>
-            <button type="button" onClick={() => { setLateF(null); setKpi(kpi === 'oldNoReply' ? null : 'oldNoReply') }} data-old-noreply-btn
+            <button type="button" onClick={() => { setLateF(null); if (kpi === 'oldNoReply') setKpi(null); else { setKpi('oldNoReply'); setMode('po') } }} data-old-noreply-btn
               className={`px-2 py-0.5 rounded-md border font-bold ${kpi === 'oldNoReply' ? 'border-slate-700 bg-slate-700 text-white' : 'border-slate-300 bg-white text-slate-600'}`}>{kpi === 'oldNoReply' ? '보는 중 ✕' : '보기'}</button>
           </span>}
         </div>

@@ -65,7 +65,7 @@ export default function TodayAuto({ profile, fold = false }) {
         <Tile k="in-today" to="/inbound" label="오늘 들어올 발주" n={po?.today} tone="violet" note={`${who} · 받을 날 오늘`} />
         <Tile k="in-late" to={`/customer/${pcs}/purchase`} label="입고 지남 · 독촉" n={po?.late} tone="red" note={`${who} · 받을 날 지남`} />
         <Tile k="in-week" to="/inbound" label="이번 주 남은 입고" n={po?.week} tone="gray" note={`${who} · 일요일까지`} />
-        <Tile k="ord" to="/orders" label={c?.ord_one_step ? '수주 미확인 (PO · 회신 전)' : c?.ord_by_po ? '수주 미확인 · 회신 대기 (PO)' : '수주 미확인 · 회신 대기'} n={c ? (Number(c.ord_unconfirmed) || 0) + (Number(c.ord_waiting) || 0) : null} tone="amber" note={c ? (c.ord_one_step ? `11월 등록분 · 급한 것만${c.ord_later ? ` · 예정 ${c.ord_later}` : ''}` : `미확인 ${c.ord_unconfirmed || 0} · 대기 ${c.ord_waiting || 0}${c.ord_by_po && c.ord_later ? ` · 예정 ${c.ord_later}` : ''}`) : '팀 전체'} />
+        <Tile k="ord" to="/orders?kpi=unconfirmed" label={c?.ord_one_step ? '수주 미확인 (PO · 회신 전)' : c?.ord_by_po ? '수주 미확인 · 회신 대기 (PO)' : '수주 미확인 · 회신 대기'} n={c ? (Number(c.ord_unconfirmed) || 0) + (Number(c.ord_waiting) || 0) : null} tone="amber" note={c ? (c.ord_one_step ? `11월 등록분 · 급한 것만${c.ord_later ? ` · 예정 ${c.ord_later}` : ''}` : `미확인 ${c.ord_unconfirmed || 0} · 대기 ${c.ord_waiting || 0}${c.ord_by_po && c.ord_later ? ` · 예정 ${c.ord_later}` : ''}`) : '팀 전체'} />
         <Tile k="req" to="/material-request" label="자재 요청 처리 대기" n={c ? c.req_open : null} tone="amber" note="팀 전체" />
         <Tile k="rfq" to="/quote" label="견적 단가 요청" n={c ? c.rfq_price : null} tone="violet" note="영업 → 구매자재" />
       </div>
