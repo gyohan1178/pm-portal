@@ -12,7 +12,8 @@ import { KpiCard } from '../../components/ui/Kpi'
 import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, Link } from 'react-router-dom'
+import { fetchFaLineMap, designateFa, faKindOfOrder } from '../../lib/orderFa'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
 import { useResizableColumns } from '../../hooks/useResizableColumns'
@@ -413,6 +414,8 @@ export default function OrderIntake() {
   // 생산관리 연결 — 수주 줄 id → 호기 · 자재불출 여부 (SQL 전이면 빈 목록)
   // 호기 연결 · 자재요청 연결 · 불출 자동 회신은 목록이 뜬 다음에 (v4.185.0 — 열 때 한꺼번에 몰려 목록 요청이 줄을 섰다)
   const listReady = !!(fastQ.data || fullQ.data)
+  // 초도품 FA · PPAP 지정된 줄 (v4.203.0) — 줄 id → { id, kind }
+  const { data: faMap } = useQuery({ queryKey: ['orderFaMap'], queryFn: fetchFaLineMap, staleTime: 60 * 1000, enabled: listReady })
   const { data: prodMap } = useQuery({ queryKey: ['lineProdMap'], queryFn: fetchLineProdMap, staleTime: 5 * 60 * 1000, enabled: listReady })
   // 수주 줄에서 만든 자재 요청 (v4.170.0) — 「🙋 자재요청됨 / 요청 불출완료」 표시용
   // 미납 사유 (v4.190.0) — 납기 지난 줄에 왜 못 나갔는지 · 표가 없으면 null (사유 칸을 숨긴다)
@@ -612,6 +615,16 @@ export default function OrderIntake() {
       return null
     }
   }
+  // 초도품 대상 지정 (v4.203.0) — 영업이 고른 줄 → 초도품 진행관리 (Edwards = PPAP) · 품질은 진행관리 「새 접수」로 앎
+  const faMut = useMutation({
+    mutationFn: (ls) => designateFa(ls, meName),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ['orderFaMap'] }); qc.invalidateQueries({ queryKey: ['faList'] })
+      setChecked(new Set())
+      toastSuccess(`초도품 진행관리에 ${r.added}건 등록${r.linked ? ` · 기존 건 연결 ${r.linked}` : ''}${r.skip.length ? ` · 건너뜀 ${r.skip.length} (${r.skip.slice(0, 2).join(', ')})` : ''} — 품질 「새 접수」에 보입니다`)
+    },
+    onError: (e) => toastError(e.message),
+  })
   const replyMut = useMutation({
     // 이 회신으로 처음 「확인」되는 PO — 되돌리면 다시 미확인으로
     mutationFn: ({ ls, form }) => replyLines(ls, form, meName),
@@ -1128,6 +1141,14 @@ export default function OrderIntake() {
           {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
           {editable && <span className="ml-auto flex flex-wrap items-center gap-3">{lateCtl}{dueCtl}</span>}
           {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
+          {editable && (() => {
+            const cand = checkedLines.filter((l) => !l.st.cancelled && !faMap?.get(l.id))
+            const kinds = new Set(cand.map((l) => faKindOfOrder(l.o)))
+            const label = kinds.size > 1 ? 'FA · PPAP 대상' : kinds.has('PPAP') ? 'PPAP 대상' : 'FA 대상'
+            return <button type="button" disabled={faMut.isPending || !cand.length} onClick={() => faMut.mutate(cand)} data-bulk-fa
+              title="고른 줄을 초도품 진행관리에 등록 — AXCELIS 등은 FA, Edwards 는 PPAP. 품질은 진행관리 「새 접수」로 바로 압니다 (이미 지정된 줄은 건너뜀)"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-violet-300 text-violet-700">{faMut.isPending && <Spin />}🧪 {label} 지정</button>
+          })()}
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청</button>
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
           </fieldset>}
@@ -1210,6 +1231,8 @@ export default function OrderIntake() {
                         {!l.items && <span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 text-[10px] font-bold">미등록</span>}
                         <RevChip l={l} ax={l.o.customer_code === 'AX'} />
                         <OddBadges odd={l.odd} onOk={editable && l.odd && !l.st.cancelled ? () => oddMut.mutate({ ls: [l] }) : null} />
+                        {faMap?.get(l.id) && <Link to={`/quality/fa-progress?fa=${faMap.get(l.id).id}${faMap.get(l.id).kind === 'PPAP' ? '&k=PPAP' : ''}`} onClick={(e) => e.stopPropagation()} data-fa-badge={faMap.get(l.id).kind}
+                          title="초도품 진행관리에서 보기" className="px-1.5 py-[1px] rounded bg-violet-600 text-white text-[10px] font-bold whitespace-nowrap hover:bg-violet-700">{faMap.get(l.id).kind}</Link>}
                       </div>
                       <div className="text-[11.5px] text-slate-500 truncate" title={l.items?.name || l.raw_desc || ''}>{l.items?.name || l.raw_desc || '—'}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400 truncate" title={l.note}>{l.note}</div>}
@@ -1295,7 +1318,7 @@ export default function OrderIntake() {
           onSlip={(o, slip) => slipMut.mutate({ o, slip })}
           onNote={(o, v) => headMut.mutate({ id: o.id, patch: { note: v.trim() || null }, log: { field: 'note', before_val: o.note || null, after_val: v.trim() || null } })}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
-          onReplyAsync={(ls, form) => replyMut.mutateAsync({ ls, form })} meName={meName}
+          onReplyAsync={(ls, form) => replyMut.mutateAsync({ ls, form })} meName={meName} faMap={faMap}
           onDlv={(ls, on) => dlvMut.mutate({ ls, on })} dlvBusy={dlvMut.isPending}
           onRelease={(ls, date) => relMut.mutate({ ls, date })}
           onRev={(l, v) => revMut.mutate({ l: { ...l, o: l.o || byOrder.get(poOpen) }, v })} revBusy={revMut.isPending}
@@ -1408,7 +1431,7 @@ function RevEdit({ l, ax, busy, onSave }) {
   )
 }
 
-function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, onReplyAsync, meName, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
+function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, onReplyAsync, meName, faMap, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
   onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip, onNote }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
@@ -1527,7 +1550,7 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
                     {editable && <td className="pl-3 py-2">{cancellable(l) && <input type="checkbox" checked={pick.has(l.id)} onChange={() => togglePick(l.id)} data-pick={`${l.line_no}/${l.del_line}`} />}</td>}
                     <td className="px-3 py-2 font-mono text-slate-500">{o.planned ? (l.plnd_no ? <span title={`Prod ${l.prod_no || '—'}`}>{l.plnd_no}</span> : '—') : <>{l.line_no}{l.del_line !== '1' ? `/${l.del_line}` : ''}</>}{!o.planned && l.plnd_no && <div className="text-[10px] text-slate-400">Plnd {l.plnd_no}</div>}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} />{editable && onRev && !l.st.cancelled && <RevEdit l={l} ax={o.customer_code === 'AX'} busy={revBusy} onSave={(v) => onRev(l, v)} />}<OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} /></div>
+                      <div className="flex items-center gap-1.5">{l.items ? <span className="font-mono font-bold text-slate-800">{l.items.std_code}</span> : <><span className="font-mono text-slate-500">{l.raw_pn || '품번 없음'}</span><span className="px-1.5 py-[1px] rounded bg-amber-50 text-amber-700 font-bold text-[10px]">미등록</span></>}<RevChip l={l} ax={o.customer_code === 'AX'} />{editable && onRev && !l.st.cancelled && <RevEdit l={l} ax={o.customer_code === 'AX'} busy={revBusy} onSave={(v) => onRev(l, v)} />}<OddBadges odd={oddMap?.get(l.id)} done={oddMap?.done?.get(l.id)} onOk={editable && oddMap?.get(l.id) && !l.cancelled ? () => onOddOk([{ ...l, odd: oddMap.get(l.id) }], true) : null} onUndo={editable ? () => onOddOk([l], false) : null} />{faMap?.get(l.id) && <Link to={`/quality/fa-progress?fa=${faMap.get(l.id).id}${faMap.get(l.id).kind === 'PPAP' ? '&k=PPAP' : ''}`} title="초도품 진행관리에서 보기" className="px-1.5 py-[1px] rounded bg-violet-600 text-white text-[10px] font-bold">{faMap.get(l.id).kind}</Link>}</div>
                       <ProdLink ps={prodMap?.get(l.id)} />
                       <div className="text-[11px] text-slate-500">{l.items?.name || l.raw_desc}</div>
                       {l.note && <div className="text-[10.5px] text-slate-400">{l.note}</div>}

@@ -46,7 +46,25 @@ export const FA_GATES = [
   { k: 'g_submit', l: '고객사 입회', owner: '품질 · 영업', t: ALL },
   { k: 'g_approve', l: '고객사 승인', owner: '영업', t: ALL },
 ]
-export const gatesOf = (type) => FA_GATES.filter((g) => g.t.includes(type || 'PD'))
+// PPAP (Edwards · v4.203.0) — 일반 PPAP 레벨 3 기준 단계. Edwards 양식이 오면 여기만 맞춘다
+//   키가 FA 와 같은 단계(g_po · g_mat_in · g_make_done · g_submit · g_approve)는 수주대장 · 생산관리 연결을 같이 쓴다
+export const PPAP_GATES = [
+  { k: 'g_po', l: 'PO 접수', owner: '영업', t: ALL },
+  { k: 'g_dr', l: '사전 협의', owner: '영업 · 품질', t: ALL },
+  { k: 'g_dwg', l: '도면 · 설계기록', owner: '품질', t: ALL },
+  { k: 'g_mat_in', l: '자재 입고', owner: '구매자재', t: ALL },
+  { k: 'g_make_done', l: '샘플 제작', owner: '생산', t: ALL },
+  { k: 'g_dim', l: '치수 성적서', owner: '품질', t: ALL },
+  { k: 'g_matl', l: '재질 · 성능 시험', owner: '품질', t: ALL },
+  { k: 'g_pfmea', l: '공정흐름도 · PFMEA · 관리계획서', owner: '품질 · 생기', t: ALL },
+  { k: 'g_cap', l: '공정능력 · MSA', owner: '품질', t: ALL },
+  { k: 'g_psw', l: 'PSW 작성', owner: '품질', t: ALL },
+  { k: 'g_submit', l: '고객사 제출', owner: '품질 · 영업', t: ALL },
+  { k: 'g_approve', l: '고객사 승인', owner: '영업', t: ALL },
+]
+export const FA_KINDS = [{ k: 'FA', l: '초도품 FA', cust: 'AXCELIS 외' }, { k: 'PPAP', l: 'PPAP', cust: 'Edwards' }]
+export const faKind = (fa) => (fa?.kind === 'PPAP' ? 'PPAP' : 'FA')
+export const gatesOf = (type, kind) => (kind === 'PPAP' ? PPAP_GATES : FA_GATES.filter((g) => g.t.includes(type || 'PD')))
 
 // 하위 항목 — g: 어느 단계 안에 있나 · kind: 'check' | 'pct'
 export const FA_STEPS = [
@@ -95,7 +113,7 @@ export const FA_STEPS = [
 ]
 
 export const stepLabel = (step, type) => step.lt?.[type] || step.l
-export const stepsOf = (type, gate) => FA_STEPS.filter((s) => s.t.includes(type || 'PD') && (!gate || s.g === gate))
+export const stepsOf = (type, gate, kind) => (kind === 'PPAP' ? [] : FA_STEPS.filter((s) => s.t.includes(type || 'PD') && (!gate || s.g === gate)))
 
 // 하위 항목 하나의 상태 — 진척률 항목은 % 로 정한다 (100 = 완료, 1~99 = 진행)
 export function stepState(step, v) {
@@ -143,11 +161,11 @@ export const dayDiff = (a, b) => (a && b ? dnum(b) - dnum(a) : null)   // b - a 
 // 단계 하나 — done(실적 있음) · late(예정 지남) · cur(지금) · todo
 export function gateInfo(fa, today) {
   const vals = fa.steps || {}
-  const gates = gatesOf(fa.fa_type)
+  const gates = gatesOf(fa.fa_type, fa.kind)
   const cur = curIndex(gates, vals)
   return gates.map((g, i) => {
     const v = vals[g.k] || {}
-    const subs = stepsOf(fa.fa_type, g.k).filter((s) => stepState(s, vals[s.k]) !== 'na')
+    const subs = stepsOf(fa.fa_type, g.k, fa.kind).filter((s) => stepState(s, vals[s.k]) !== 'na')
     const subDone = subs.filter((s) => stepState(s, vals[s.k]) === 'done').length
     const done = gateDone(v)
     const late = !done && v.p && today && v.p < today
@@ -161,7 +179,7 @@ export function gateInfo(fa, today) {
 
 // 지금 단계 — 실적이 안 찍힌 첫 단계
 export function faStage(fa) {
-  const gates = gatesOf(fa.fa_type)
+  const gates = gatesOf(fa.fa_type, fa.kind)
   const vals = fa.steps || {}
   const i = curIndex(gates, vals)
   if (i < 0) return { k: 'done', l: '승인 완료', owner: '', idx: gates.length }
@@ -171,7 +189,7 @@ export const faApproved = (fa) => !!fa.steps?.g_approve?.d || fa.steps?.g_approv
 
 // 진척도 — 끝난 단계 수 / 해당 단계 수
 export function faProgress(fa) {
-  const gates = gatesOf(fa.fa_type)
+  const gates = gatesOf(fa.fa_type, fa.kind)
   const vals = fa.steps || {}
   return gates.length ? Math.round((gates.filter((g) => gateDone(vals[g.k])).length / gates.length) * 100) : 0
 }
