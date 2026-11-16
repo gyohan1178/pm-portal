@@ -19,7 +19,7 @@ export default function KakaoBriefBox() {
   return (
     <div className="space-y-2" data-kakao-box>
       <label className="text-sm font-semibold text-slate-700">📱 카톡 아침 알림</label>
-      <p className="text-xs text-slate-400">평일(공휴일 빼고) 아침 8시 50분에 「오늘 챙길 일」(입고 · 수주 미확인 · 자재 요청 · 내 할 일 · 오늘 일정)을 내 카카오톡 「나와의 채팅」으로 보냅니다. 발주 숫자는 위 맨 위 고객사 기준입니다.</p>
+      <p className="text-xs text-slate-400">평일(공휴일 빼고) 아침 8시 50분에 「오늘 챙길 일」을 내 카카오톡 「나와의 채팅」으로 보냅니다 — 고객사별 입고(지남 · 오늘 · 이번 주) · 수주 미확인, 자재 요청 · 견적 요청, 내 할 일 · 오늘 일정. 고객사는 위 표시 순서대로이고 챙길 것이 없는 고객사는 빠집니다. 연결 · 내용은 로그인한 사람마다 따로입니다.</p>
       {isLoading ? <div className="h-9 rounded-lg pm-skel" />
         : st?.noSql ? <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠ {KAKAO_SQL} 실행 후 쓸 수 있습니다</p>
         : !st?.linked ? (
