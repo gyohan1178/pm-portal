@@ -778,6 +778,7 @@ function Meeting({ rows, logs, today, in7, canEdit, onOpen, onLog }) {
 
 /* ───────── 한 건 상세 — 단계 예정 · 실적 + 세부 항목 + 이슈 기록 ───────── */
 function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, onBack, onStep, onSave, onLog, onIssue, onDelete }) {
+  const nav = useNavigate()
   const pick = (f) => ({
     fa_type: f.fa_type || 'PD', priority: f.priority ?? '', fa_ready_date: f.fa_ready_date || '',
     fa_ready_text: f.fa_ready_text || '', note: f.note || '', hold: !!f.hold,
@@ -868,7 +869,11 @@ function FaSheet({ fa, today, canEdit, logs, pos, prev, next, backLabel, onGo, o
             <span>CCN {fa.ccn || '-'} · FA PO <span className="font-mono text-slate-600">{fa.po_number}</span></span>
           </div>
           <div className="mt-1 flex items-baseline gap-3 flex-wrap">
-            <h1 className="text-2xl font-extrabold font-mono text-slate-900">{fa.item_code}</h1>
+            {/* 품번을 누르면 자재 매칭으로 바로 — 그 품번 BOM 을 불러와 판정 (v4.201.0) */}
+            <button type="button" onClick={() => nav(`/quality/fai?fa=${fa.id}`)} data-fa-to-fai title="이 품번으로 초도품 자재 매칭 열기 — BOM 을 바로 불러와 판정합니다"
+              className="text-2xl font-extrabold font-mono text-slate-900 hover:text-violet-700 hover:underline decoration-violet-300">{fa.item_code}</button>
+            <button type="button" onClick={() => nav(`/quality/fai?fa=${fa.id}`)}
+              className="self-center px-2.5 py-1 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-violet-50 hover:bg-violet-100">🧾 자재 매칭 →</button>
             <span className="text-base text-slate-600">{fa.item_desc}</span>
           </div>
           <div className="mt-1 text-sm text-slate-500">

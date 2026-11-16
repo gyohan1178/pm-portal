@@ -12,7 +12,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import { downloadSheet } from '../../lib/exportSheet'
 import { ResizableTable } from '../../components/ResizableTable'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
-import { matMatchText, revCheck, faTypeLabel } from '../../lib/faTemplate'
+import { matMatchText, revCheck, faTypeLabel, faApproved } from '../../lib/faTemplate'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { SkelBar, SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
@@ -180,7 +180,8 @@ export default function FaiNavigator() {
       setRep(r); setSel({}); setOpen({})
       lsSet(LS_REP, { bom: c })
       if (!quiet) toastSuccess(`${r.top.pn} REV ${r.top.rev || '-'} — 포털 BOM 에서 품번 ${r.parts.size.toLocaleString('ko-KR')}개를 불러왔습니다`)
-    } catch (e) { if (!quiet) toastError(e.message) }
+      return true
+    } catch (e) { if (!quiet) toastError(e.message); return false }
     finally { setBomBusy(false) }
   }
   useEffect(() => { if (saved?.bom && !rep) loadBom(saved.bom, true) }, [])   // eslint-disable-line react-hooks/exhaustive-deps
@@ -260,6 +261,31 @@ export default function FaiNavigator() {
   const mm = { rev: rep?.top.rev || '', n: base.length, ok: cnt('ok'), gen: cnt('gen'), chk: cnt('chk'), none: cnt('none'), file: rep?.fileName || '' }
   const rc = faTarget ? revCheck(mm.rev, faTarget) : null
 
+  // 진행관리에서 품번을 눌러 넘어오면(?fa=) 그 품번 BOM 을 바로 불러온다 (v4.201.0)
+  //   지금 불러 둔 것이 같은 품번이면 그대로 (Part Report 를 올려 둔 경우 지우지 않게) · BOM 이 없으면 안내만
+  const autoRef = useRef(new Set())
+  useEffect(() => {
+    if (!faFrom || bomBusy || autoRef.current.has(faFrom.id)) return
+    autoRef.current.add(faFrom.id)
+    setFaSel(null)
+    // BOM 이 없으면 앞 건 결과를 비운다 — 다른 품번 결과가 남아 잘못 반영되지 않게 (Part Report 올리기 안내가 보임)
+    if (!rep || normAx(rep.top.pn) !== normAx(faFrom.item_code)) loadBom(faFrom.item_code).then((ok) => { if (!ok) { setRep(null); setSel({}); setOpen({}) } })
+  }, [faFrom?.id])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 다음 건 — 자재 매칭이 안 끝난 진행 중 초도품 (보류 · 승인 끝 제외) · 우선순위 → 번호 순 (v4.201.0)
+  const { data: faQueue = [] } = useQuery({
+    queryKey: ['faiQueue'],
+    enabled: !!faParam,
+    staleTime: 60 * 1000,
+    queryFn: async () => {
+      const rs = must(await supabase.from('pm_fa').select('id,item_code,po_number,priority,hold,steps').order('id'), '초도품 목록') || []
+      return rs.filter((f) => !f.hold && !faApproved(f) && !['done', 'na'].includes(f.steps?.mat_match?.s))
+        .sort((a, b) => (a.priority ?? 1e9) - (b.priority ?? 1e9) || a.id - b.id)
+    },
+  })
+  const qi = faQueue.findIndex((f) => f.id === faParam)
+  const faNext = (qi >= 0 ? faQueue[qi + 1] : null) || faQueue.find((f) => f.id !== faParam) || null   // 지금 건 다음 · 끝이면 처음으로
+
   async function pushFa() {
     if (!faTarget || faBusy) return
     if (buyLoading || !buy) { toastError('발주 이력을 아직 불러오는 중입니다 — 잠시 뒤 다시 누르세요'); return }
@@ -278,6 +304,7 @@ export default function FaiNavigator() {
       qc.invalidateQueries({ queryKey: ['faList'] })
       qc.invalidateQueries({ queryKey: ['faLog'] })
       qc.invalidateQueries({ queryKey: ['faiFaLink'], exact: false })
+      qc.invalidateQueries({ queryKey: ['faiQueue'] })
       toastSuccess(`${faTarget.item_code} (${faTarget.po_number}) 성적서 단계 「자재 매칭」에 반영했습니다`)
     } catch (e) { toastError(e.message) }
     finally { setFaBusy(false) }
@@ -554,6 +581,11 @@ export default function FaiNavigator() {
           {(faTarget || faFrom) && (
             <button onClick={() => nav(`/quality/fa-progress?fa=${(faTarget || faFrom).id}`)}
               className="px-3 py-1.5 text-xs font-bold rounded-lg border border-violet-200 text-violet-700 bg-white hover:bg-violet-50">진행관리에서 보기 →</button>
+          )}
+          {faParam && faNext && (
+            <button onClick={() => nav(`/quality/fai?fa=${faNext.id}`)} data-fai-next={faNext.item_code}
+              title={`자재 매칭이 안 끝난 다음 초도품 — ${faNext.item_code} (FA PO ${faNext.po_number || '-'}) · 남은 ${faQueue.length}건`}
+              className="px-3 py-1.5 text-xs font-bold rounded-lg bg-slate-800 text-white hover:bg-slate-900">다음 건 매칭 ▶ <span className="font-mono">{faNext.item_code}</span></button>
           )}
         </div>
       )}

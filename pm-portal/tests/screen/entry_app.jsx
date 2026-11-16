@@ -462,6 +462,15 @@ if (_qs.get('sched')) {
 }
 // v4.198.1 — ?flowc=1 : 예전 집계(줄 기준 679 · 679) · ?oc=1 : 새 PO 기준 요약 함수가 있는 DB
 if (_qs.get('flowc')) S.RPCFN.pm_flow_counts = () => ({ ord_unconfirmed: 679, ord_waiting: 679, req_open: 52, rfq_price: 2 })
+// v4.201.0 초도품 진행관리 → 자재 매칭 — ?fa2=1 : 진행 중 초도품 3건 (110153030 BOM 있음 · 999 BOM 없음 · 보류 1)
+if (_qs.get('fa2')) {
+  S.DATA.pm_fa = [
+    { id: 11, item_code: '110153030', item_desc: 'ASSY MAIN PD', po_number: 'FA-PO-1', fa_type: 'new', srev: 'B', brev: 'B', priority: 2, hold: false, steps: {} },
+    { id: 12, item_code: '110999999', item_desc: 'NO BOM PART', po_number: 'FA-PO-2', fa_type: 'new', srev: 'A', brev: 'A', priority: 1, hold: false, steps: {} },
+    { id: 13, item_code: '110777777', item_desc: 'HOLD PART', po_number: 'FA-PO-3', fa_type: 'new', srev: 'A', brev: 'A', priority: 3, hold: true, steps: {} },
+  ]
+  S.DATA.pm_fa_log = []
+}
 // v4.199.0 수주대장 PO 자재 점검 — ?matchk=1 부족 · 입고 늦음 있음 / =2 문제 없음 (unconf=1 과 같이 · uo2 UC-ED-NEAR 15줄)
 if (_qs.get('matchk')) {
   const bad = _qs.get('matchk') === '1'
