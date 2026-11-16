@@ -1,4 +1,7 @@
+import { useState } from 'react'
 import PageHead from '../components/PageHead'
+import { HelpBody } from '../components/PageHelp'
+import { PAGE_HELP } from '../lib/pageHelp'
 // 도움말 / 신규사원 셀프 온보딩 페이지
 // 전체 업무 플로우 + 시작 가이드 + 메뉴별 설명
 
@@ -32,6 +35,8 @@ const START_STEPS = [
   '부족자재 → 구매발주 → 입고 → 출고 순서로 자재가 도는 흐름을 따라가 본다.',
   '현장에서 자재가 필요하면 🙋 자재 요청, 고객사 자료(도면 · BOM · 사양서)가 필요하면 📎 자료 요청 — 권한과 무관하게 누구나 쓸 수 있다.',
   '처음 여는 화면에 뜨는 안내를 끝까지 보고, 나중에 다시 보려면 화면 위 「💡 안내」를 누른다.',
+  '화면마다 오른쪽 위 「❓ 안내」를 누르면 그 화면에서 자주 하는 일이 순서대로 나온다 (아래 「화면별 안내」와 같은 내용).',
+  '구매자재 · 영업은 ⚙ 설정에서 카톡 아침 알림을 연결해 두면 평일 08:50 에 오늘 챙길 일이 카톡으로 온다.',
 ]
 
 // 화면 공통 사용법 (v4.104.0 ~)
@@ -118,6 +123,7 @@ function SysBadge({ sys }) {
 }
 
 export default function Help() {
+  const [openKey, setOpenKey] = useState(() => { try { return new URLSearchParams(window.location.search).get('h') || '' } catch { return '' } })
   return (
     <div className="space-y-6 max-w-3xl">
       <PageHead title="도움말 · 업무 안내" desc="신규 입사자를 위한 셀프 가이드 — 이 포털이 어떤 흐름으로 돌아가는지 정리했습니다." />
@@ -133,6 +139,24 @@ export default function Help() {
             </li>
           ))}
         </ol>
+      </section>
+
+      {/* 화면별 안내 (v4.209.0) — 각 화면 「❓ 안내」와 같은 글 (lib/pageHelp.js) */}
+      <section className="rounded-xl border border-violet-200 bg-white p-4" data-help-pages>
+        <p className="text-sm font-bold text-slate-800 mb-1">화면별 안내</p>
+        <p className="text-xs text-slate-400 mb-3">각 화면 오른쪽 위 「❓ 안내」와 같은 내용입니다. 눌러서 펼치세요.</p>
+        <div className="flex flex-wrap gap-1.5 mb-3">
+          {PAGE_HELP.map((h) => (
+            <button key={h.key} type="button" data-help-page={h.key} onClick={() => setOpenKey(openKey === h.key ? '' : h.key)}
+              className={`h-8 px-3 rounded-full border text-xs font-bold ${openKey === h.key ? 'bg-[#6c5ce7] border-[#6c5ce7] text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{h.icon} {h.name}</button>
+          ))}
+        </div>
+        {PAGE_HELP.filter((h) => h.key === openKey).map((h) => (
+          <div key={h.key} className="rounded-lg border border-slate-100 bg-slate-50/50 p-4" data-help-page-body={h.key}>
+            <p className="text-sm font-extrabold text-slate-800 mb-2">{h.icon} {h.name}</p>
+            <HelpBody h={h} />
+          </div>
+        ))}
       </section>
 
       {/* 화면 공통 사용법 (v4.104.0) */}
