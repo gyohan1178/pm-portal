@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { CUSTOMERS, orderedCustomers } from '../lib/customers'
 import { SCALE_OPTS, getScalePref, setScalePref, scalePct } from '../lib/viewPrefs'
+import KakaoBriefBox from './KakaoBriefBox'
 
 // 우측 상단 ⚙️에서 열리는 개인 설정. profile = 현재 사용자 pm_profiles row.
 export default function SettingsModal({ profile, onClose }) {
@@ -38,7 +39,7 @@ export default function SettingsModal({ profile, onClose }) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/40" />
-      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-5" onClick={e => e.stopPropagation()}>
+      <div className="relative bg-white rounded-2xl shadow-xl w-full max-w-md p-5 space-y-5 max-h-[92vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-slate-900">⚙️ 설정</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl leading-none">×</button>
@@ -78,6 +79,8 @@ export default function SettingsModal({ profile, onClose }) {
             ))}
           </div>
         </div>
+
+        <KakaoBriefBox />
 
         {/* 메뉴 순서 편집 자리 (다음 단계에서 추가) */}
 

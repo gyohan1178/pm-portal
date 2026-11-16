@@ -43,6 +43,7 @@ const SalesQuote = lazy(() => import('./pages/master/SalesQuote'))
 const QuoteHistory = lazy(() => import('./pages/master/QuoteHistory'))
 const ERPExport = lazy(() => import('./pages/ERPExport'))
 const Todo = lazy(() => import('./pages/Todo'))
+const KakaoCallback = lazy(() => import('./pages/KakaoCallback'))
 const AdminDashboard = lazy(() => import('./pages/admin/AdminDashboard'))
 const UserManagement = lazy(() => import('./pages/admin/UserManagement'))
 const Backup = lazy(() => import('./pages/admin/Backup'))
@@ -145,6 +146,7 @@ export default function App() {
       <Route path="/login" element={session ? <Navigate to="/" replace /> : <Login />} />
       <Route path="/board" element={<ProtectedRoute session={session}><BoardPage /></ProtectedRoute>} />
       <Route path="/scan" element={<ProtectedRoute session={session}><ScanPage /></ProtectedRoute>} />
+      <Route path="/kakao/callback" element={<ProtectedRoute session={session}><KakaoCallback /></ProtectedRoute>} />
       <Route element={<ProtectedRoute session={session}><AccessGuard profile={profile}><Layout profile={profile} /></AccessGuard></ProtectedRoute>}>
         {/* 첫 화면 — 업무 흐름 (v4.122.0). 관제탑은 /control-tower (menu_scope 에 'home' 이 있는 계정만) */}
         <Route index element={<Navigate to={landingPath(profile)} replace />} />

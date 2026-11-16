@@ -460,6 +460,20 @@ if (_qs.get('sched')) {
   S.DEF = { ...(S.DEF || {}), pm_todo: () => ({ ...base, dept: ME.dept || '기타', status: '대기', priority: '보통', comment_cnt: 0 }) }
   if (_qs.get('noseen')) S.DATA.pm_todo.forEach((r) => { delete r.seen_at })
 }
+// v4.205.0 카톡 아침 알림 — ?kakao=0 미연결 · ?kakao=1 연결됨 (없으면 SQL 전)
+if (_qs.get('kakao')) {
+  S.K = _qs.get('kakao') === '1' ? { linked: true, enabled: true, nickname: '김교한', last_sent_at: '2026-11-16T23:50:03Z', last_error: null } : { linked: false }
+  S.RPCFN.pm_kakao_my_status = () => S.K
+  S.RPCFN.pm_morning_brief_me = () => '📋 11/17(화) 오늘 챙길 일\n· 입고 지남 1 · 오늘 2 · 이번 주 5 (AX)\n· 수주 미확인 PO 4'
+  S.RPCFN.pm_kakao_set_enabled = ({ p_on }) => { S.K.enabled = p_on; return null }
+  S.RPCFN.pm_kakao_unlink = () => { S.K = { linked: false }; return null }
+  S.FNS = { 'kakao-brief': (b) => {
+    if (b.action === 'config') return { rest_key: 'RESTKEY123' }
+    if (b.action === 'test') { if (!S.K.linked) throw new Error('카카오 연결이 없습니다'); S.K.last_sent_at = new Date().toISOString(); return { ok: true } }
+    if (b.action === 'connect') { if (b.code !== 'abc') throw new Error('카카오 토큰 실패: invalid_grant'); S.K = { linked: true, enabled: true, nickname: '김교한' }; return { ok: true, nickname: '김교한' } }
+    throw new Error('unknown')
+  } }
+}
 // v4.198.1 — ?flowc=1 : 예전 집계(줄 기준 679 · 679) · ?oc=1 : 새 PO 기준 요약 함수가 있는 DB
 if (_qs.get('flowc')) S.RPCFN.pm_flow_counts = () => ({ ord_unconfirmed: 679, ord_waiting: 679, req_open: 52, rfq_price: 2 })
 // v4.201.0 초도품 진행관리 → 자재 매칭 — ?fa2=1 : 진행 중 초도품 3건 (110153030 BOM 있음 · 999 BOM 없음 · 보류 1)

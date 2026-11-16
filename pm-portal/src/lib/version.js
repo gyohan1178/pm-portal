@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.204.1'
+export const APP_VERSION = 'v4.205.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.204.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.205.0',
+    date: '2026-11-16',
+    changes: [
+      '카톡 아침 알림 — 평일(공휴일 빼고) 08:50 에 「오늘 챙길 일」(입고 지남 · 오늘 · 이번 주 · 수주 미확인 PO · 자재 요청 · 견적 단가 요청 · 내 할 일 · 오늘 일정)을 내 카카오톡 「나와의 채팅」으로 보냄. 설정(⚙) → 📱 카톡 아침 알림에서 연결 · 켜기/끄기 · 지금 보내 보기 · 보낼 글 미리보기 (SQL: 카톡아침알림_반영_261116 · 서버 함수 kakao-brief · 설정 순서는 supabase/functions/kakao-brief/README.md)',
+    ],
+  },
   {
     version: 'v4.204.1',
     date: '2026-11-16',

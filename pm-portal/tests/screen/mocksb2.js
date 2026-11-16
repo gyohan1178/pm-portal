@@ -125,5 +125,7 @@ const rpcRun = async (fn, args) => { S.RPC.push({ fn, args }); if (S.RPCFAIL && 
 const rpcB = (fn, args) => { const st = { range: null, ord: [] }; const b = {
   order(c, o) { st.ord.push([c, o?.ascending !== false]); return b }, range(x, y) { st.range = [x, y]; return b }, eq() { return b },
   then(res, rej) { return rpcRun(fn, args).then((r) => { if (Array.isArray(r.data)) { let d = [...r.data]; if (st.ord.length) d.sort((p, q2) => { for (const [c, asc] of st.ord) { const A = p[c], B = q2[c]; if (A === B) continue; return (A > B ? 1 : -1) * (asc ? 1 : -1) } return 0 }); if (st.range) d = d.slice(st.range[0], st.range[1] + 1); if (S.MAXROWS) d = d.slice(0, S.MAXROWS); r = { ...r, data: d } } return r }).then(res, rej) } }; return b }
-export const client = { from: q, rpc: rpcB, auth, channel: () => ({ on() { return this }, subscribe() { return this } }), removeChannel() {} }
+// 서버 함수(Edge Function) 흉내 — S.FNS[이름](body) 가 { data, error } 또는 값을 돌려준다 (v4.205.0)
+const functions = { invoke: async (name, { body } = {}) => { (S.FNCALLS ||= []).push({ name, body }); const f = S.FNS && S.FNS[name]; if (!f) return { data: null, error: { message: 'Failed to send a request to the Edge Function' } }; try { return { data: await f(body), error: null } } catch (e) { return { data: null, error: { message: e.message, context: { json: async () => ({ error: e.message }) } } } } } }
+export const client = { from: q, rpc: rpcB, auth, functions, channel: () => ({ on() { return this }, subscribe() { return this } }), removeChannel() {} }
 export function createClient() { return client }
