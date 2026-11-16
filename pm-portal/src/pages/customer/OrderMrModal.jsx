@@ -67,7 +67,11 @@ export default function OrderMrModal({ lines, meName, onClose, onDone }) {
                   <tr key={r.key} className="border-t border-slate-100" data-mr-row={r.tag}>
                     <td className="px-3 py-2 min-w-0"><div className="font-mono text-[#5b6ee8] truncate">{r.std_code || '—'}</div><div className="text-[11.5px] text-slate-400 truncate max-w-[300px]">{r.item_name || '—'}</div>
                       {!r.item_id && <div className="text-[10.5px] text-amber-700">코드 미등록 — 구매자재가 코드를 붙여 처리</div>}
-                      {prev.has(r.tag) && <div className="text-[10.5px] font-bold text-amber-700" data-mr-prev>이미 요청 {prev.get(r.tag).req_no} · {prev.get(r.tag).status}</div>}</td>
+                      {prev.has(r.tag) && <div className="text-[10.5px] font-bold text-amber-700" data-mr-prev>이미 요청 {prev.get(r.tag).req_no} · {prev.get(r.tag).status}</div>}
+                      {/* 구매자재 회신 코멘트 — 자재 요청 사유에 같이 남는다 (v4.203.1) · 고치거나 지울 수 있음 */}
+                      <input value={r.cmt || ''} onChange={(e) => setRows((rs) => rs.map((x) => (x.key === r.key ? { ...x, cmt: e.target.value } : x)))} data-mr-cmt
+                        placeholder="요청 메모 (구매자재 회신이 있으면 자동으로 들어옴)" title="자재 요청 「사유」에 수주 PO 와 같이 남습니다"
+                        className="mt-1 w-full max-w-[340px] h-7 px-2 text-[11px] border border-violet-200 rounded bg-violet-50/40 text-violet-800 placeholder:text-slate-300" /></td>
                     <td className="px-3 py-2 font-mono text-slate-500 whitespace-nowrap">{r.po}<div className="text-[11px] text-slate-400">{r.due || '납기 없음'}</div></td>
                     <td className="px-3 py-2 text-right"><input type="number" min="0" value={r.qty} onChange={(e) => setRows((rs) => rs.map((x) => (x.key === r.key ? { ...x, qty: e.target.value } : x)))} data-mr-qty className="w-20 h-8 px-2 text-right font-bold border border-slate-200 rounded-lg" /></td>
                     <td className="pr-2 text-center"><button type="button" onClick={() => setRows((rs) => rs.filter((x) => x.key !== r.key))} className="text-slate-300 hover:text-rose-500" title="빼기" data-mr-del>✕</button></td>

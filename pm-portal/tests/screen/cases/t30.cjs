@@ -29,7 +29,7 @@ const mk=async(me,w=1500,extra='')=>{const p=await b.newPage({viewport:{width:w,
  await p.click('[data-mr-submit]'); await W(900);
  const R=await p.evaluate(()=>window.__S.DATA.pm_material_request.filter(r=>/^수주 PO/.test(r.reason||'')));
  ok(R.length===2,'자재 요청 2줄 저장',R.length);
- const a=R.find(r=>r.reason==='수주 PO 47894KF · 2/1')||{};
+ const a=R.find(r=>(r.reason||'').split(' ‖ ')[0]==='수주 PO 47894KF · 2/1')||{};
  ok(a.item_id==='a1'&&a.std_code==='AX-110153030'&&a.qty===2&&a.check_dept==='구매자재팀'&&a.requester_name==='이정민'&&a.need_date==='2026-11-20'&&a.unit==='EA','저장 내용 (품목 · 고친 수량 2 · 확인부서 · 요청자 · 필요일)',a);
  const v=R.find(r=>r.reason==='수주 PO PO2610000242 · 1/1')||{};
  ok(v.item_id==null&&v.std_code==='790-3003-320'&&/EDA PC ETHERNET/.test(v.item_name),'코드 없는 줄은 고객사 품번 · 품명으로',v);

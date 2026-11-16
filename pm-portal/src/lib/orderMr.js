@@ -6,6 +6,15 @@ import { todayISO } from './utils'
 
 // 어느 수주 줄에서 온 요청인지 — 요청 줄의 「사유」에 남긴다 (사람이 읽는 글 · 같은 줄 다시 요청 확인에도 씀)
 export const mrTagOf = (l) => `수주 PO ${l.o?.po_no || ''} · ${l.line_no}/${l.del_line || '1'}`
+// 구매자재 회신 코멘트를 같이 넘긴다 (v4.203.1) — 사유 = 「태그 ‖ 구매자재 회신 …」
+//   같은 줄 다시 요청 확인 · 수주대장 「📦 요청」 표시는 앞쪽 태그로만 맞춘다
+export const MR_SEP = ' ‖ '
+export const mrTagKey = (reason) => String(reason || '').split(MR_SEP)[0]
+const mdOf = (d) => (d ? String(d).slice(5, 10).replace('-', '/') : '')
+export function replyCmtOf(l) {
+  if (!l?.reply && !String(l?.reply_memo || '').trim()) return ''
+  return ['구매자재 회신' + (l.reply ? ` ${l.reply}` : ''), l.reply_date ? `준비 ${mdOf(l.reply_date)}` : '', String(l.reply_memo || '').trim()].filter(Boolean).join(' · ')
+}
 
 // 체크한 수주 줄 → 요청 줄 초안 (남은 수량 = 수량 − 납품)
 export function mrDraftOf(lines) {
@@ -17,6 +26,7 @@ export function mrDraftOf(lines) {
       std_code: l.items?.std_code || String(l.raw_pn || '').trim(),
       item_name: l.items?.name || String(l.raw_desc || '').trim(),
       qty: String(left || +l.qty || 1),
+      cmt: replyCmtOf(l),
     }
   })
 }
@@ -41,10 +51,17 @@ export function mrHeadOf(lines, meName) {
 // 같은 수주 줄로 이미 요청한 것 (반려 · 취소 빼고) — 두 번 요청하지 않게 알려만 준다
 export async function fetchPrevMr(tags) {
   if (!tags?.length) return new Map()
-  const { data, error } = await supabase.from('pm_material_request').select('req_no,status,reason,qty,created_at').in('reason', tags)
-  if (error) return new Map()       // 못 읽어도 요청은 할 수 있게
+  // 사유 뒤에 회신 코멘트가 붙을 수 있어 PO 앞머리로 찾고 태그로 맞춘다 (v4.203.1)
+  const want = new Set(tags)
+  const heads = [...new Set(tags.map((t) => t.replace(/ · [^·]*$/, ' · ')))]
+  const data = []
+  for (const h of heads) {
+    const { data: d, error } = await supabase.from('pm_material_request').select('req_no,status,reason,qty,created_at').like('reason', `${h}%`)
+    if (error) return new Map()       // 못 읽어도 요청은 할 수 있게
+    data.push(...(d || []))
+  }
   const m = new Map()
-  ;(data || []).filter((r) => !['반려', '취소'].includes(r.status)).forEach((r) => { if (!m.has(r.reason)) m.set(r.reason, r) })
+  data.filter((r) => !['반려', '취소'].includes(r.status) && want.has(mrTagKey(r.reason))).forEach((r) => { const k = mrTagKey(r.reason); if (!m.has(k)) m.set(k, r) })
   return m
 }
 
@@ -62,7 +79,7 @@ export async function createMrFromOrder(head, rows) {
     req_kind: head.check_dept === '하네스팀' ? head.req_kind : null,
     product_code: '', product_name: '', unit_no: '', need_date: head.need_date || null,
     item_id: r.item_id, std_code: r.std_code, item_name: r.item_name, maker: '', maker_code: '',
-    qty: Number(r.qty), unit: 'EA', reason: r.tag,
+    qty: Number(r.qty), unit: 'EA', reason: r.cmt ? `${r.tag}${MR_SEP}${String(r.cmt).trim()}` : r.tag,
   }))
   const { data, error } = await supabase.rpc('pm_request_create', { p_rows: payload })
   if (error) throw error
@@ -84,12 +101,13 @@ export async function fetchOrderMrMap() {
   const m = new Map()
   for (const r of rows) {
     if (['반려', '취소'].includes(r.status)) continue
-    const e = m.get(r.reason) || { n: 0, done: 0, partial: 0, reqNos: [], last: r.created_at }
+    const key = mrTagKey(r.reason)
+    const e = m.get(key) || { n: 0, done: 0, partial: 0, reqNos: [], last: r.created_at }
     e.n++
     if (r.status === '완료') e.done++
     else if ((Number(r.issued_qty) || 0) > 0) e.partial++
     if (r.req_no && !e.reqNos.includes(r.req_no)) e.reqNos.push(r.req_no)
-    m.set(r.reason, e)
+    m.set(key, e)
   }
   return m
 }
