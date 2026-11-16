@@ -195,7 +195,7 @@ export default function PoMatCheck({ o, live, meName, onReplyAsync, onClose }) {
             <Kpi tone="gray" label="BOM 없음" value={+lines.nobom || 0} sub="그 품번 재고만 봄 (줄 수)" />
           </div>
           {ed && <div className="mx-5 mt-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800" data-mc-ed-note>⚠ Edwards BOM 은 불출리스트 기준(레벨 구분 없음)이라 빠지거나 겹친 하위가 있을 수 있습니다. 결과는 참고용으로 보고, BOM 정리 뒤 정확해집니다.</div>}
-          <div className="px-5 mt-2 text-[11.5px] text-slate-500" data-mc-basis>기준: 불출일 {md(res.rel_min)} (줄의 협력사 불출일, 없으면 납기 − {res.lead_days}일) 까지 쓸 수 있는 수량 = 현재고 + 그 전에 들어올 미입고 발주 − 불출일이 앞선 다른 PO 가 먼저 쓰는 양</div>
+          <div className="px-5 mt-2 text-[11.5px] text-slate-500" data-mc-basis>기준: 불출일 {md(res.rel_min)} (줄의 협력사 불출일, 없으면 납기 − {res.lead_days}일) 까지 쓸 수 있는 수량 = 현재고 + 그 전에 들어올 미입고 발주 − 고객사 납기가 앞선 다른 PO 가 먼저 쓰는 양</div>
 
           <div className="mx-5 mt-2 flex-1 min-h-0 border border-slate-200 rounded-xl overflow-auto">
             <div className="min-w-[1000px]">

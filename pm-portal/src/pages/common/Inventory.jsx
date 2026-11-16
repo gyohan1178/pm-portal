@@ -78,13 +78,14 @@ const COLS = [
   {key:'type', label:'구분', defaultWidth:75},
   {key:'unit', label:'단위', defaultWidth:45},
   {key:'qty', label:'현재고', defaultWidth:65},
+  // 보관위치 — 현재고 옆으로 (v4.201.1). 예전엔 맨 끝이라 PC 화면 밖으로 밀려 안 보였다 · 눌러서 바로 입력
+  {key:'location', label:'보관위치', defaultWidth:110},
   {key:'purchase_price', label:'매입가', defaultWidth:75},
   {key:'value', label:'재고금액', defaultWidth:90},
   {key:'safety_stock', label:'안전재고', defaultWidth:70},
   {key:'status', label:'상태', defaultWidth:75},
   {key:'stock_managed', label:'재고관리', defaultWidth:75},
   {key:'cs_codes', label:'고객사 코드', defaultWidth:160},
-  {key:'location', label:'보관위치', defaultWidth:80},
 ]
 
 export default function Inventory() {
@@ -193,6 +194,25 @@ export default function Inventory() {
       refreshProcurement(qc)
     },
     onError: (e) => toastError('재고 수정 실패: ' + e.message),
+  })
+
+  // 보관위치 저장 (v4.201.1) — 위치만 고친다(수량은 그대로) · 같은품목 묶음은 대표 품번 줄에서
+  const locMut = useMutation({
+    mutationFn: async ({ row, loc }) => {
+      const sm = await sameMap()
+      if (sm.has(row.item_id)) throw new Error(`같은품목 묶음 품번입니다 — 위치는 대표 품번 ${sm.get(row.item_id).repCode} 에서 넣어 주세요`)
+      const v = String(loc || '').trim() || null
+      const { error } = await supabase.from('inventory').update({ location: v }).eq('id', row.id)
+      if (error) throw error
+      logActivity('update', 'inventory', row.items?.std_code || row.item_id, `보관위치 (재고현황) ${row.location || '(없음)'} → ${v || '(비움)'}`)
+      return { id: row.id, code: row.items?.std_code, from: row.location || '', to: v }
+    },
+    onSuccess: (r) => {
+      qc.setQueryData(['inventory', 'all'], (prev) => (Array.isArray(prev) ? prev.map((x) => (x.id === r.id ? { ...x, location: r.to } : x)) : prev))
+      qc.invalidateQueries({ queryKey: ['outLocMeta'], exact: false })   // 출고 화면 위치 정렬도 바로
+      toastSuccess(`${r.code} 보관위치 ${r.to || '(비움)'}`)
+    },
+    onError: (e) => toastError('위치 저장 실패: ' + e.message),
   })
 
   const stockMgmtMut = useMutation({
@@ -596,6 +616,7 @@ export default function Inventory() {
                     <td className="px-3 py-2 text-slate-500">{r.items?.unit}</td>
                     <QtyCell row={r} canEdit={canEdit} onSave={(qty)=>qtyMut.mutateAsync({ row:r, qty })}
                       cls={status==='zero'?'text-red-600':status==='low'?'text-amber-700':'text-slate-900'} />
+                    <LocCell row={r} canEdit={canEdit} aux={auxAll.get(r.item_id)} onSave={(loc)=>locMut.mutateAsync({ row:r, loc })} />
                     <td className="px-3 py-2 text-right text-slate-500">{r.items?.purchase_price?Number(r.items.purchase_price).toLocaleString():'-'}</td>
                     <td className="px-3 py-2 text-right font-semibold text-slate-700">{itemValue>0?itemValue.toLocaleString():'-'}</td>
                     <td className="px-3 py-2 text-right text-slate-400">{safety||'-'}</td>
@@ -613,7 +634,6 @@ export default function Inventory() {
                       </button>
                     </td>
                     <td className="px-3 py-2"><div className="flex flex-wrap gap-1">{(r.items?.customer_item_codes||[]).map((c,i)=><span key={i} className="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded bg-slate-100 text-slate-500"><span className="text-slate-300">{c.customers?.name}</span>{c.customer_code}</span>)}</div></td>
-                    <td className="px-3 py-2 text-slate-400">{r.location||'-'} <AuxLocs aux={auxAll.get(r.item_id)} /></td>
                   </tr>
                 )
               })}
@@ -657,3 +677,33 @@ function QtyCell({ row, canEdit, onSave, cls }) {
   )
 }
 
+// 보관위치 칸 — 누르면 입력, Enter 저장 · Esc 취소 (v4.201.1). 품목을 검색해서 바로 위치를 넣는다
+function LocCell({ row, canEdit, aux, onSave }) {
+  const [edit, setEdit] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const save = async () => {
+    const v = String(edit ?? '').trim()
+    if (v === String(row.location || '')) { setEdit(null); return }
+    setBusy(true)
+    try { await onSave(v); setEdit(null) } catch { /* 알림은 onError */ } finally { setBusy(false) }
+  }
+  if (edit === null) {
+    return (
+      <td data-inv-loc={row.items?.std_code}
+        onClick={() => canEdit && setEdit(row.location || '')}
+        title={canEdit ? '눌러서 보관위치 입력 (Enter 저장 · Esc 취소) — 예: A-01-02' : ''}
+        className={`px-3 py-2 font-mono text-xs ${row.location ? 'text-slate-700 font-semibold' : 'text-slate-300'} ${canEdit ? 'cursor-pointer hover:bg-indigo-50' : ''}`}>
+        {row.location || (canEdit ? '+ 위치' : '-')} <AuxLocs aux={aux} />
+      </td>
+    )
+  }
+  return (
+    <td className="px-1 py-1">
+      <input autoFocus value={edit} disabled={busy} data-inv-loc-input placeholder="A-01-02"
+        onChange={(e) => setEdit(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEdit(null) }}
+        onBlur={() => { if (!busy) save() }}
+        className="w-full min-w-[80px] px-1.5 py-1 font-mono text-xs uppercase border-2 border-indigo-400 rounded focus:outline-none" />
+    </td>
+  )
+}
