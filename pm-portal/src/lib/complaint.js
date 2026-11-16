@@ -18,6 +18,19 @@ export const DISPOSITIONS = ['Return', 'Scrap', 'Rework', 'Replacement']
 export const CCNS = ['B', 'K']
 export const REASONS = ['대체품 미승인', '제품 불량', '라벨 · 표기 누락', '수량 · 품목 오출하', '기타']
 
+// 처리 상태 (v4.204.0) — 접수 → 조치 중 → 완료. 비어 있으면 「미입력」 (SQL 전 · 예전 이력)
+//   엑셀(고객사 RMA 양식)에는 넣지 않는다 — 우리 쪽 관리용
+export const COMPLAINT_STATUS_SQL = '고객불만_처리상태_반영_261116.sql'
+export const STATUSES = ['접수', '조치중', '완료']
+export const STATUS_LABEL = { 접수: '접수', 조치중: '조치 중', 완료: '완료' }
+export const isOpen = (r) => r?.status !== '완료'
+// 접수 뒤 지난 날 (완료 건은 완료일까지)
+export function daysOpen(r, today) {
+  if (!r?.rma_date) return null
+  const end = r.status === '완료' && r.done_date ? r.done_date : today
+  return Math.max(0, Math.round((new Date(end + 'T00:00:00Z') - new Date(r.rma_date + 'T00:00:00Z')) / 86400000))
+}
+
 // RMA#JS260010 → '26'
 export const yyOf = (r) => {
   const m = String(r?.rma_no || '').match(/JS(\d{2})/i)
@@ -46,9 +59,18 @@ export async function fetchComplaints(cust = 'AX') {
 }
 
 const FIELDS = ['rma_no', 'rma_date', 'vendor_id', 'resp_site', 'case_id', 'qty', 'part_number', 'description', 'case_type', 'disposition', 'ccn', 'reason', 'note']
+const ST_FIELDS = ['status', 'action', 'done_date']
+const noStCol = (e) => /(status|action|done_date)/.test(e?.message || '') && /(does not exist|schema cache|Could not find)/i.test(e?.message || '')
 export async function saveComplaint(row, { cust = 'AX', by } = {}) {
   const v = {}
   for (const k of FIELDS) { const t = String(row[k] ?? '').trim(); v[k] = t || null }
+  // 처리 상태 — 화면에서 손댄 때만 보낸다 (SQL 전에도 다른 칸 저장은 되게)
+  if (row._st) {
+    for (const k of ST_FIELDS) { const t = String(row[k] ?? '').trim(); v[k] = t || null }
+    if (v.status === '완료' && !v.done_date) v.done_date = new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10)
+    if (v.status !== '완료') v.done_date = null
+    v.status_by = row._by || null
+  }
   if (v.part_number) v.part_number = v.part_number.replace(/^AX-/i, '')
   v.updated_at = new Date().toISOString()
   const q = row.id
@@ -57,6 +79,7 @@ export async function saveComplaint(row, { cust = 'AX', by } = {}) {
   const { error } = await q
   if (error) {
     if (noTable(error)) throw new Error(COMPLAINT_SQL_HINT)
+    if (noStCol(error) || /status_by/.test(error.message || '')) throw new Error(`처리 상태 칸이 아직 없습니다 — ${COMPLAINT_STATUS_SQL} 을 먼저 실행하세요`)
     if (/duplicate key|pm_customer_complaint_rma_uq/.test(error.message)) throw new Error(`RMA 번호 「${v.rma_no}」 가 이미 있습니다 — 번호를 바꿔 주세요`)
     throw new Error(error.message)
   }

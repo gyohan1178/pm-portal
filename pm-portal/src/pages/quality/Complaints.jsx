@@ -14,12 +14,14 @@ import { todayISO } from '../../lib/utils'
 import { toastError, toastSuccess } from '../../lib/toast'
 import {
   AX_COLS, AX_DEFAULTS, DISPOSITIONS, CCNS, REASONS, COMPLAINT_SQL_HINT,
+  STATUSES, STATUS_LABEL, COMPLAINT_STATUS_SQL, daysOpen,
   yyOf, nextRmaNo, fetchComplaints, saveComplaint, deleteComplaint, lookupPart, downloadComplaints,
 } from '../../lib/complaint'
 
 const CUSTS = [{ code: 'AX', name: 'AXCELIS', ready: true }, { code: 'ED', name: 'Edwards' }, { code: 'CS', name: 'CSK' }, { code: 'VM', name: 'VM' }]
 const INP = 'w-full h-10 px-3 text-[13px] border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-300'
 const DISP_TONE = { Return: 'bg-sky-50 text-sky-700 border-sky-100', Scrap: 'bg-rose-50 text-rose-600 border-rose-100', Rework: 'bg-amber-50 text-amber-700 border-amber-100', Replacement: 'bg-emerald-50 text-emerald-700 border-emerald-100' }
+const ST_TONE = { 접수: 'bg-amber-50 text-amber-700 border-amber-200', 조치중: 'bg-sky-50 text-sky-700 border-sky-200', 완료: 'bg-emerald-50 text-emerald-700 border-emerald-200' }
 const dispKey = (d) => DISPOSITIONS.find((x) => x.toLowerCase() === String(d || '').trim().toLowerCase()) || ''
 
 export default function Complaints() {
@@ -34,6 +36,7 @@ export default function Complaints() {
 
   const [yy, setYy] = useState('all')
   const [disp, setDisp] = useState('')
+  const [stF, setStF] = useState('')           // '' 전체 · open 미처리 · done 완료 (v4.204.0)
   const [q, setQ] = useState('')
   const qd = useDeferredValue(q).trim().toUpperCase()
   const [form, setForm] = useState(null)
@@ -41,23 +44,32 @@ export default function Complaints() {
 
   const years = useMemo(() => [...new Set(rows.map(yyOf).filter(Boolean))].sort().reverse(), [rows])
   const thisYY = todayISO().slice(2, 4)
+  const today = todayISO()
+  // 처리 상태 칸이 있는지 (SQL 전이면 행에 status 키가 없다)
+  const hasSt = !rows.length || rows.some((r) => 'status' in r)
+  // 미처리 = 접수 · 조치 중 + 올해 건인데 상태를 아직 안 적은 것 (예전 이력의 빈 칸은 세지 않음)
+  const isPending = (r) => r.status === '접수' || r.status === '조치중' || (!r.status && yyOf(r) === thisYY)
   const shown = rows.filter((r) => (yy === 'all' || yyOf(r) === yy)
+    && (!stF || (stF === 'open' ? isPending(r) : r.status === '완료'))
     && (!disp || dispKey(r.disposition) === disp)
-    && (!qd || ['rma_no', 'case_id', 'part_number', 'description', 'reason', 'note'].some((k) => String(r[k] || '').toUpperCase().includes(qd))))
+    && (!qd || ['rma_no', 'case_id', 'part_number', 'description', 'reason', 'note', 'action'].some((k) => String(r[k] || '').toUpperCase().includes(qd))))
   const yr = rows.filter((r) => yyOf(r) === thisYY)
   const kpi = {
     year: yr.length,
     ret: yr.filter((r) => dispKey(r.disposition) === 'Return').length,
     scrap: yr.filter((r) => dispKey(r.disposition) === 'Scrap').length,
     defect: yr.filter((r) => /불량/.test(r.reason || '')).length,
+    pending: rows.filter(isPending).length,
   }
 
   const openNew = () => {
     const d = todayISO()
-    setForm({ ...AX_DEFAULTS, rma_date: d, rma_no: nextRmaNo(rows, d), case_id: '', qty: '', part_number: '', description: '', disposition: '', ccn: '', reason: '', note: '' })
+    setForm({ ...AX_DEFAULTS, ...(hasSt ? { status: '접수', _st: true } : {}), rma_date: d, rma_no: nextRmaNo(rows, d), case_id: '', qty: '', part_number: '', description: '', disposition: '', ccn: '', reason: '', note: '' })
   }
   const set = (k, v) => setForm((f) => {
     const n = { ...f, [k]: v }
+    if (['status', 'action', 'done_date'].includes(k)) n._st = true
+    if (k === 'status' && v === '완료' && !f.done_date) n.done_date = todayISO()
     // 날짜 연도를 바꾸면 새 접수의 RMA 번호도 그 해 번호로
     if (k === 'rma_date' && !f.id && String(v).slice(2, 4) !== String(f.rma_date || '').slice(2, 4)) n.rma_no = nextRmaNo(rows, v)
     return n
@@ -72,7 +84,7 @@ export default function Complaints() {
     if (!form.part_number && !form.description) return toastError('PART_NUMBER 나 DESCRIPTION 중 하나는 있어야 합니다')
     setBusy(true)
     try {
-      await saveComplaint(form, { cust, by: me })
+      await saveComplaint({ ...form, _by: me }, { cust, by: me })
       toastSuccess(`${form.rma_no || '불만 접수'} 저장`)
       setForm(null)
       qc.invalidateQueries({ queryKey: ['complaints', cust] })
@@ -114,7 +126,9 @@ export default function Complaints() {
       {noTable && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800" data-complaint-nosql>⚠ {COMPLAINT_SQL_HINT}</div>}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">불러오지 못했습니다 — {error.message}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+        <KpiCard label="미처리" value={hasSt ? kpi.pending : '—'} note={hasSt ? '접수 · 조치 중 + 올해 상태 미입력 · 누르면 그 건만' : `${COMPLAINT_STATUS_SQL} 실행 후 보임`} tone={kpi.pending ? 'red' : 'green'} loading={isLoading}
+          onClick={hasSt ? () => setStF(stF === 'open' ? '' : 'open') : undefined} on={stF === 'open'} data-complaint-kpi-open />
         <KpiCard label={`올해(${thisYY}) 접수`} value={kpi.year} note="RMA 번호 기준" loading={isLoading} />
         <KpiCard label="Return (반품)" value={kpi.ret} note="올해 · 고객사에서 돌려받은 것" tone="blue" loading={isLoading} />
         <KpiCard label="Scrap (폐기)" value={kpi.scrap} note="올해 · 고객사에서 폐기한 것" tone="red" loading={isLoading} />
@@ -132,22 +146,39 @@ export default function Complaints() {
               className={`h-9 px-3 rounded-full text-[12.5px] font-bold border ${disp === d ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>{d || '전체'}</button>
           ))}
         </div>
+        {hasSt && <div className="flex gap-1" data-complaint-stf>
+          {[['', '처리 전체'], ['open', '미처리'], ['done', '완료']].map(([k, t]) => (
+            <button key={k || 'all'} type="button" onClick={() => setStF(k)} data-complaint-st={k || 'all'}
+              className={`h-9 px-3 rounded-full text-[12.5px] font-bold border ${stF === k ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}>{t}</button>
+          ))}
+        </div>}
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="RMA NO · CASE_ID · 품번 · 품명 · 사유 · 비고 검색" data-complaint-q
           className="h-9 flex-1 min-w-[240px] px-3 text-[13px] border border-slate-200 rounded-[10px] bg-white" />
         <span className="text-[12px] text-slate-400">{shown.length.toLocaleString('ko-KR')}건</span>
       </div>
 
-      <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto">
-        <table className="w-full min-w-[1400px] text-[12.5px]">
-          <thead className="bg-[#f7f8fb] text-slate-600 border-b-2 border-slate-200">
-            <tr>{AX_COLS.map(([k, h]) => <th key={k} className={`px-2.5 py-2.5 font-bold whitespace-nowrap ${k === 'qty' ? 'text-right' : 'text-left'}`}>{h}</th>)}</tr>
+      {/* 표 안에서 위아래 · 옆으로 스크롤 — 가로 스크롤 막대가 화면 안에 늘 보이게, 머리줄은 고정 (v4.204.0) */}
+      <div className="rounded-xl border border-slate-200 bg-white overflow-auto max-h-[calc(100vh-150px)] min-h-[240px]" data-complaint-scroll>
+        <table className="w-full min-w-[1500px] text-[12.5px]">
+          <thead className="sticky top-0 z-10 bg-[#f7f8fb] text-slate-600 shadow-[inset_0_-2px_0_#e2e8f0]">
+            <tr>
+              {hasSt && <th className="px-2.5 py-2.5 font-bold whitespace-nowrap text-left bg-[#f7f8fb]">처리</th>}
+              {AX_COLS.map(([k, h]) => <th key={k} className={`px-2.5 py-2.5 font-bold whitespace-nowrap bg-[#f7f8fb] ${k === 'qty' ? 'text-right' : 'text-left'}`}>{h}</th>)}
+            </tr>
           </thead>
           <tbody>
-            {isLoading && <SkeletonRows rows={6} cols={AX_COLS.length} />}
-            {!isLoading && !shown.length && <tr><td colSpan={AX_COLS.length} className="px-3 py-10 text-center text-slate-400">{noTable ? 'SQL 반영 후 사용할 수 있습니다' : '접수 내역이 없습니다'}</td></tr>}
+            {isLoading && <SkeletonRows rows={6} cols={AX_COLS.length + (hasSt ? 1 : 0)} />}
+            {!isLoading && !shown.length && <tr><td colSpan={AX_COLS.length + (hasSt ? 1 : 0)} className="px-3 py-10 text-center text-slate-400">{noTable ? 'SQL 반영 후 사용할 수 있습니다' : '접수 내역이 없습니다'}</td></tr>}
             {shown.map((r) => (
               <tr key={r.id} onClick={() => editable && setForm({ ...r })} data-complaint-row={r.rma_no || r.id}
                 className={`border-b border-slate-100 ${editable ? 'cursor-pointer hover:bg-violet-50/40' : ''}`}>
+                {hasSt && <td className="px-2.5 py-2 whitespace-nowrap" data-complaint-status={r.status || ''} title={r.action ? `조치: ${r.action}` : ''}>
+                  {r.status
+                    ? <span className={`inline-flex px-2 py-0.5 rounded-full border text-[11px] font-bold ${ST_TONE[r.status] || 'bg-slate-50 text-slate-500 border-slate-200'}`}>{STATUS_LABEL[r.status] || r.status}</span>
+                    : <span className={`text-[11px] ${yyOf(r) === thisYY ? 'font-bold text-rose-500' : 'text-slate-300'}`}>미입력</span>}
+                  {r.status === '완료' && r.done_date ? <span className="ml-1.5 font-mono text-[11px] text-slate-400">{r.done_date.slice(5).replace('-', '/')}</span>
+                    : r.status && daysOpen(r, today) != null ? <span className={`ml-1.5 text-[11px] ${daysOpen(r, today) > 30 ? 'font-bold text-rose-500' : 'text-slate-400'}`}>{daysOpen(r, today)}일째</span> : null}
+                </td>}
                 <td className="px-2.5 py-2 text-slate-400">{yyOf(r)}</td>
                 <td className="px-2.5 py-2 font-mono whitespace-nowrap">{r.rma_date || '—'}</td>
                 <td className="px-2.5 py-2 font-mono font-bold text-[#5b6ee8] whitespace-nowrap">{r.rma_no || '—'}</td>
@@ -174,6 +205,29 @@ export default function Complaints() {
             <div className="px-6 pt-5 pb-3 border-b border-slate-100">
               <div className="text-[11px] text-slate-400">AXCELIS · RMA 대장 양식</div>
               <h2 className="text-lg font-extrabold text-slate-900">{form.id ? `불만 접수 수정 — ${form.rma_no || ''}` : '불만 접수'}</h2>
+            </div>
+            {/* 처리 상태 — 우리 쪽 관리용 (고객사 엑셀에는 안 나감) */}
+            <div className="px-6 py-3 border-b border-slate-100" data-complaint-stbox>
+              {hasSt ? (
+                <div className="grid grid-cols-1 sm:grid-cols-[auto_1fr] gap-x-4 gap-y-2 items-start">
+                  <div>
+                    <span className="block text-[13px] font-bold text-slate-700 mb-1">처리 상태</span>
+                    <div className="flex gap-1">
+                      {STATUSES.map((st) => (
+                        <button key={st} type="button" onClick={() => set('status', st)} data-f-status={st}
+                          className={`h-9 px-3 rounded-lg border text-[12.5px] font-bold ${form.status === st ? ST_TONE[st] + ' ring-2 ring-offset-1 ring-violet-200' : 'bg-white text-slate-400 border-slate-200 hover:bg-slate-50'}`}>{STATUS_LABEL[st]}</button>
+                      ))}
+                    </div>
+                    {form.status === '완료' && <input type="date" value={form.done_date || ''} onChange={(e) => set('done_date', e.target.value)} className={INP + ' mt-2 w-[160px]'} data-f="done_date" title="완료일" />}
+                  </div>
+                  <label className="block">
+                    <span className="block text-[13px] font-bold text-slate-700 mb-1">조치 내용</span>
+                    <textarea value={form.action || ''} onChange={(e) => set('action', e.target.value)} rows={2} data-f="action"
+                      placeholder="예: 11/20 대체품 승인 회신 받음 · 재출하 완료" className="w-full px-3 py-2 text-[13px] border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+                    <span className="block text-[11px] text-slate-400 mt-1">완료를 고르면 완료일이 오늘로 들어갑니다 · 이 칸은 고객사 엑셀에는 나가지 않습니다</span>
+                  </label>
+                </div>
+              ) : <div className="text-[12px] text-amber-700">⚠ 처리 상태(접수 · 조치 중 · 완료)는 {COMPLAINT_STATUS_SQL} 실행 후 쓸 수 있습니다</div>}
             </div>
             <div className="px-6 py-4 bg-[#f9fafc] grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
               <F label="DATE" req help="접수일 — 연도가 바뀌면 RMA 번호도 그 해 번호로 바뀝니다">
