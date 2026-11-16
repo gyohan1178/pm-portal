@@ -81,8 +81,9 @@ const F = {
       { name: 'BOM 확인', note: '견적 · 수주 품목에 BOM 이 없으면 고객사에 요청해 올림', go: (pcs) => [cs(pcs, 'bom'), '/orders?tab=cleanup'], badges: (c) => [['BOM 필요', c?.rfq_bom, 'red']] },
       { name: '수주 등록', note: 'PDF 올리기 · 직접 등록 (구두 발주 · 선진행 · 발주 예정)', go: () => ['/orders'], badges: (c) => [['이번 달 접수', c?.ord_month, 'gray'], ['정식 PO 대기 지남', c?.po_wait, 'red']] },
       { name: '도면 확인', note: 'PO Rev 와 도면 Rev 비교 — 다르면 받은 새 도면을 생산기술에 공유', go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
-      { name: '구매자재 회신', note: '구매자재가 처리 — 기다리는 단계', other: '구매자재', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']] },
-      { name: '회신 확인 · 납기 협의', note: '조건부 · 불가는 사유를 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
+      // v4.200.2 — 회신 한 단계(one_step · SQL 수주확인_한단계) 뒤엔 「회신 대기」 없음 → 확인 예정을 대신 보여 줌
+      { name: '구매자재 회신', note: '구매자재가 처리 — PO별 🔍 자재 점검 뒤 가능 · 조건부 · 불가로 회신 (기다리는 단계)', other: '구매자재', go: () => ['/orders?kpi=unconfirmed'], badges: (c) => (c?.ord_one_step ? [['미확인', c?.ord_unconfirmed, 'red'], ['확인 예정', c?.ord_later, 'gray']] : [['미확인', c?.ord_unconfirmed, 'red'], ['새 PO 회신 대기', c?.ord_waiting, 'gray']]) },
+      { name: '회신 확인 · 납기 협의', note: '⚠ 특이사항(Rev · 단가 바뀐 줄)은 고객사에 확인 후 ✓ · 납기 지난 줄은 사유 입력 · 조건부 · 불가는 사유 · 가능한 날을 보고 고객사와 협의', go: () => ['/orders'], badges: (c) => [['조건부 · 불가', c?.ord_risk, 'amber'], ['납기 지남', c?.ord_late, 'red']] },
       { name: '납품', note: '품질 검수가 끝난 호기를 고객사에 납품 (v4.98.0)', go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
     ],
     subs: [
@@ -96,7 +97,7 @@ const F = {
       { from: '품질', text: '검수 끝 — 납품 대기', n: (c) => c?.prod_ship, tone: 'gray', path: '/production/AX' },
     ],
     outbox: [
-      { from: '구매자재', text: '새 PO 확인 대기 (등록 1영업일 넘음)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders' },
+      { from: '구매자재', text: '새 PO 회신 전 (등록 1영업일 넘음 · 급한 것만)', n: (c) => c?.ord_unconfirmed, tone: 'red', path: '/orders?kpi=unconfirmed' },
       { from: '고객사', text: '구두 발주 · 선진행 — 정식 PO 받을 날 지남', n: (c) => c?.po_wait, tone: 'red', path: '/orders' },
       { from: '구매자재', text: '견적 단가 요청 — 단가 없는 부품', n: (c) => c?.rfq_price, tone: 'amber', path: '/sales-quote' },
       { from: '생산기술', text: '새 Rev 도면 공유 — 사내 배포 대기', n: (c) => c?.dwg_shared, tone: 'violet', path: '/quality/drawing-dist?tab=int' },
@@ -106,8 +107,8 @@ const F = {
     title: '구매자재 — 수주 확인부터 불출까지',
     desc: '수주 확인 → 회신 → 구매발주 → 입고 → 불출',
     steps: [
-      { name: '수주 확인', note: '새로 올라온 PO 확인', go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red']] },
-      { name: '회신', note: '품번마다 가능 · 조건부 · 불가 (조건부 · 불가는 사유 필수)', go: () => ['/orders'], badges: (c) => [['새 PO 회신 대기', c?.ord_waiting, 'amber']] },
+      { name: '수주 확인', note: '미확인 카드 → PO별 → PO 번호 → 🔍 자재 점검 (BOM 전개 · 부족 · 입고 늦음 · 뒤 PO 영향)', go: () => ['/orders?kpi=unconfirmed'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red']] },
+      { name: '회신', note: '점검 결과로 「문제 없음 — 가능」 / 「문제 있음 — 조건부」(사유 · 가능한 날 자동) — 회신하면 확인도 끝', go: () => ['/orders?kpi=unconfirmed'], badges: (c) => (c?.ord_one_step ? [['확인 예정', c?.ord_later, 'gray']] : [['새 PO 회신 대기', c?.ord_waiting, 'amber']]) },
       { name: '구매발주', note: '협력사 발주 · 독촉 = 받을 날 지남 (협력사 변경 납기가 있으면 그 날, 없으면 요청 납기)', go: (pcs) => [cs(pcs, 'purchase')], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red']] },
       { name: '입고', note: '발주 체크 후 입고', go: () => ['/inbound'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
       { name: '불출', note: 'BOM 단위 출고 · 여러 품목 한꺼번에 출고', go: () => ['/outbound', '/issue'], badges: () => [] },

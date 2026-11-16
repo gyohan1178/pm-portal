@@ -21,7 +21,7 @@ export const MAP_NODES = [
   { id: 's4', dept: '영업', col: 2, name: '도면 확인', keys: ['dwg'], go: () => ['/drawings', '/quality/drawing-dist?tab=int'], badges: () => [] },
   { id: 's6', dept: '영업', col: 3, name: '납기 협의', keys: ['reply'], go: () => ['/orders'], badges: (c) => [['납기 지남', c?.ord_late, 'red'], ['조건부 · 불가', c?.ord_risk, 'amber']] },
   { id: 's10', dept: '영업', col: 7, name: '납품', keys: ['ship'], go: () => ['/production/AX'], badges: (c) => [['납품 대기', c?.prod_ship, 'gray']] },
-  { id: 'p1', dept: '구매자재', col: 1, name: '수주 확인·회신', keys: ['po', 'reply'], go: () => ['/orders'], badges: (c) => [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'amber']] },
+  { id: 'p1', dept: '구매자재', col: 1, name: '수주 확인·회신', keys: ['po', 'reply'], go: () => ['/orders?kpi=unconfirmed'], badges: (c) => (c?.ord_one_step ? [['미확인', c?.ord_unconfirmed, 'red'], ['확인 예정', c?.ord_later, 'gray']] : [['미확인', c?.ord_unconfirmed, 'red'], ['회신 대기', c?.ord_waiting, 'amber']]) },
   { id: 'p3', dept: '구매자재', col: 3, name: '구매발주', quiet: true, keys: ['buy'], go: (pcs) => [cs(pcs, 'purchase'), '/control-tower'], badges: (c, ct) => [['독촉 필요', ct?.chaseNeeded, 'red'], ['발주 필요', ct?.orderNeeded, 'amber']] },
   { id: 'p4', dept: '구매자재', col: 4, name: '입고', quiet: true, keys: ['buy'], go: () => ['/inbound', '/control-tower'], badges: (c, ct) => [['입고 지연', ct?.inboundLate, 'red'], ['곧 입고', ct?.inboundSoon, 'gray']] },
   { id: 'p5', dept: '구매자재', col: 5, name: '불출', keys: ['mreq'], go: () => ['/outbound', '/issue'], badges: () => [] },
@@ -75,7 +75,7 @@ function docMine(d, dept) {
 //   부서 사이를 건너가는 일(업무 흐름의 넘어온 일 · 넘긴 일)만 고른다
 export const MAP_REL = {
   영업: {
-    p1: ['내 PO 회신 대기', (c) => c?.ord_waiting],
+    p1: ['내 PO 회신 전', (c) => (c?.ord_one_step ? c?.ord_unconfirmed : c?.ord_waiting)],
     p7: ['내 단가 요청', (c) => c?.rfq_price],
     t1: ['내가 공유한 새 Rev 도면', (c) => c?.dwg_shared],
     p11: ['나에게 온 자료 요청', (c, ct, d) => d?.byDept?.구매자재?.wait],
