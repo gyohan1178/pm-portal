@@ -177,3 +177,12 @@ tr.pm-row-done > td, div.pm-row-done { animation: pm-row-done .9s ease-out both;
   .pm-ring { display: none; }
   .pm-flash-out { animation: none !important; }
 }
+
+/* 넓은 표 — 가로 스크롤 막대가 표 맨 아래에만 있어 끝까지 내려야 보이던 문제 (v4.204.1)
+   옆으로 스크롤되는 표 상자(overflow-x-auto 바로 안에 table)는 화면 높이 안에서 위아래로도 스크롤되게 하고 머리줄을 고정한다.
+   표 상자에 이미 높이를 정한 곳(max-h · flex-1 등)은 그대로. 이 규칙을 빼고 싶은 표 상자는 pm-noclamp */
+@media screen {
+  /* 점수 0(:where) — 화면에서 이미 max-h · sticky 를 정한 표는 그 값이 이긴다 */
+  :where(.overflow-x-auto:has(> table):not(.pm-noclamp)) { max-height: calc(100vh - 150px); overflow-y: auto; }
+  :where(.overflow-x-auto:has(> table):not(.pm-noclamp) > table > thead) { position: sticky; top: 0; z-index: 4; background: #fff; }
+}
