@@ -113,6 +113,8 @@ export default function Todo() {
 
   const saveMut = useMutation({
     mutationFn: async (rec) => {
+      // 대분류만 골라도 저장 (연차 · 반차처럼 내용이 따로 없는 것) — 내용 = 대분류
+      if (!(rec.title || '').trim() && (rec.tag || '').trim() && rec.kind !== 'note') rec = { ...rec, title: rec.tag.trim() }
       if (!(rec.title || '').trim()) { setTitleErr('무엇을 할지 한 줄 적어 주세요'); throw Object.assign(new Error('내용을 적어 주세요'), { inline: true }) }
       const ownerName = (rec.owner || '').trim()
       // 고른 사람이면 그 사람에게 연결, 직접 적은 이름이면 같은 이름의 사람에게 연결
@@ -700,8 +702,22 @@ export default function Todo() {
             </div>
             <div className="p-4 space-y-3">
               {sched && <SchedFields draft={draft} setDraft={setDraft} rows={rows} myDept={myDept} />}
+              <div data-todo-cat className={sched && draft.kind === 'note' ? 'hidden' : ''}>
+                <label className="block text-xs font-bold text-slate-500 mb-1">대분류 <span className="font-normal text-slate-400">— 고르거나 직접 적기 · 달력 · 카톡에 [외근] 처럼 붙음</span></label>
+                <div className="flex flex-wrap gap-1 mb-1.5">
+                  {catOptions(rows).map((c) => (
+                    <button key={c} type="button" data-todo-cat-btn={c}
+                      onClick={() => setDraft(s => ({ ...s, tag: s.tag === c ? '' : c }))}
+                      className={`h-7 px-2.5 rounded-full border text-[12px] font-bold ${draft.tag === c ? 'bg-[#6c5ce7] border-[#6c5ce7] text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{c}</button>
+                  ))}
+                </div>
+                <input value={draft.tag || ''}
+                  onChange={e => setDraft(s => ({ ...s, tag: e.target.value }))}
+                  placeholder="목록에 없으면 직접 적기 (예: 감사 · 설치) — 다음부터 버튼으로 나옴"
+                  className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+              </div>
               <div>
-                <label className="block text-xs font-bold text-slate-500 mb-1">내용 *</label>
+                <label className="block text-xs font-bold text-slate-500 mb-1">내용 {(draft.tag || '').trim() && draft.kind !== 'note' ? <span className="font-normal text-slate-400">— 연차 · 반차처럼 따로 없으면 비워 두세요</span> : '*'}</label>
                 <input value={draft.title || ''} autoFocus
                   onChange={e => { setDraft(s => ({ ...s, title: e.target.value })); if (titleErr) setTitleErr('') }}
                   onKeyDown={e => { if (e.key === 'Enter') saveMut.mutate(draft) }}
@@ -767,20 +783,6 @@ export default function Todo() {
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg">
                     {PRIORITY.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
-                </div>
-                <div className="col-span-2" data-todo-cat>
-                  <label className="block text-xs font-bold text-slate-500 mb-1">대분류 <span className="font-normal text-slate-400">— 고르거나 직접 적기 · 달력 · 카톡에 [외근] 처럼 붙음</span></label>
-                  <div className="flex flex-wrap gap-1 mb-1.5">
-                    {catOptions(rows).map((c) => (
-                      <button key={c} type="button" data-todo-cat-btn={c}
-                        onClick={() => setDraft(s => ({ ...s, tag: s.tag === c ? '' : c }))}
-                        className={`h-7 px-2.5 rounded-full border text-[12px] font-bold ${draft.tag === c ? 'bg-[#6c5ce7] border-[#6c5ce7] text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{c}</button>
-                    ))}
-                  </div>
-                  <input value={draft.tag || ''}
-                    onChange={e => setDraft(s => ({ ...s, tag: e.target.value }))}
-                    placeholder="목록에 없으면 직접 적기 (예: 감사 · 설치) — 다음부터 버튼으로 나옴"
-                    className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
                 </div>
               </div>
               <div className="flex gap-2 pt-1">

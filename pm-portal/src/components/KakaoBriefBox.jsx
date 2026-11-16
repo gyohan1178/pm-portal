@@ -19,9 +19,10 @@ export default function KakaoBriefBox() {
   return (
     <div className="space-y-2" data-kakao-box>
       <label className="text-sm font-semibold text-slate-700">📱 카톡 아침 알림</label>
-      <p className="text-xs text-slate-400">평일(공휴일 빼고) 아침 8시 50분에 「오늘 챙길 일」을 내 카카오톡 「나와의 채팅」으로 보냅니다 — 고객사별 입고(지남 · 오늘 · 이번 주) · 수주 미확인, 자재 요청 · 견적 요청, 내 할 일 · 오늘 일정. 고객사는 위 표시 순서대로이고 챙길 것이 없는 고객사는 빠집니다. 연결 · 내용은 로그인한 사람마다 따로입니다.</p>
+      <p className="text-xs text-slate-400">평일(공휴일 빼고) 아침 8시 50분에 「오늘 챙길 일」을 내 카카오톡 「나와의 채팅」으로 보냅니다. 구매자재는 입고 · 수주 미확인 · 요청, 영업은 납기 지남 · 사유 미입력 · 주간 납기 · 조건부·불가 · 특이사항을 고객사별로 — 아래에 오늘 ~ 모레 할 일 · 일정. <b className="font-semibold text-slate-500">구매자재 · 영업 부서만</b> 연결할 수 있습니다.</p>
       {isLoading ? <div className="h-9 rounded-lg pm-skel" />
         : st?.noSql ? <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">⚠ {KAKAO_SQL} 실행 후 쓸 수 있습니다</p>
+        : st && st.allowed === false && !st.linked ? <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2" data-kakao-denied>지금은 구매자재 · 영업 부서만 쓸 수 있습니다 (조회 · 현장 계정 제외)</p>
         : !st?.linked ? (
           <button type="button" data-kakao-link disabled={!!busy} onClick={() => run('link', kakaoStartLink)}
             className="w-full h-10 rounded-lg bg-[#FEE500] text-[#191919] text-sm font-bold hover:brightness-95 disabled:opacity-50">{busy === 'link' ? '여는 중…' : '카카오톡 연결하기'}</button>

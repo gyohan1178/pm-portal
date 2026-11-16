@@ -1,4 +1,4 @@
-// 카톡 아침 알림 — 서버 함수 (v4.206.3 머리 날짜 · 표 · 할 일 · 일정 — 3건 넘으면 날짜별 목록 한 통 더)
+// 카톡 아침 알림 — 서버 함수 (v4.208.0 부서별: 구매자재 · 영업 · 쓸 수 있는 사람 제한)
 //   action
 //     config  : 화면이 카카오 로그인 창을 열 때 쓰는 REST API 키 (공개되는 값) · 로그인 필요
 //     connect : 카카오가 돌려준 code → 토큰으로 바꿔 pm_kakao_link 에 저장 + 확인 메시지 1통 · 로그인 필요
@@ -62,20 +62,13 @@ async function sendTpl(access: string, tpl: unknown) {
   if (!r.ok || j.result_code !== 0) throw new Error(`카톡 보내기 실패: ${j.msg || j.result_code || r.status}${j.code === -402 ? ' (카카오 동의 항목 「카카오톡 메시지 전송」 동의 필요)' : ''}`)
 }
 
-// 표(피드) 모양 — 왼쪽 항목 · 오른쪽 고객사별 숫자 (0 인 고객사는 뺌) · 아래 「내 할 일」 합계
-type Cs = { cs: string, late: number, today: number, week: number, unc: number | null }
+// 표(피드) 모양 — 줄은 DB(pm_morning_brief_data)가 부서별로 만들어 준다 (왼쪽 항목 · 오른쪽 고객사별 숫자)
 const md = (d: string) => (d ? `${d.slice(5, 7)}/${d.slice(8, 10)}` : '')
 const cut = (t: string, n: number) => (t.length > n ? t.slice(0, n - 1) + '…' : t)
 function feedOf(j: Record<string, any>, withImage: boolean) {
-  const cs: Cs[] = j.cs || []
-  const row = (k: keyof Cs) => cs.filter((c) => Number(c[k]) > 0).map((c) => `${c.cs} ${c[k]}`).join(' · ') || '없음'
-  const items = [
-    { item: '입고 지남', item_op: row('late') },
-    { item: '오늘 입고', item_op: row('today') },
-    { item: '주간 입고', item_op: row('week') },
-    { item: '수주 미확인', item_op: row('unc') },
-    { item: '요청', item_op: `자재 ${j.req ?? '-'} · 견적 ${j.rfq ?? '-'}` },
-  ]
+  const items = ((j.rows || []) as { k: string, v: string }[]).slice(0, 5).map((r) => ({ item: r.k, item_op: r.v }))
+  // 누르면 가는 곳 — 영업은 수주대장, 구매자재는 할 일
+  const L = j.dept === '영업' ? { web_url: `${PORTAL}/orders`, mobile_web_url: `${PORTAL}/orders` } : LINK
   const todo = Number(j.todo) || 0
   // 아래 칸 = 오늘 ~ 2영업일 뒤 할 일 · 일정 (카톡이 두 줄까지 보여 줘서 두 줄 · 넘치면 「외 N건」)
   const sc = (j.sched || []) as { d: string, k: string, t: string }[]
@@ -84,10 +77,10 @@ function feedOf(j: Record<string, any>, withImage: boolean) {
   if (sc.length > 2) lines[1] = `${lines[1]} 외 ${sc.length - 2}건 ↓`
   return {
     object_type: 'feed',
-    content: { title: sc.length ? `할 일 · 일정 (~${md(j.end)})` : `~${md(j.end)} 할 일 · 일정 없음`, description: lines.join('\n'), link: LINK,
+    content: { title: sc.length ? `할 일 · 일정 (~${md(j.end)})` : `~${md(j.end)} 할 일 · 일정 없음`, description: lines.join('\n'), link: L,
       ...(withImage ? { image_url: `${PORTAL}/kakao-brief.png`, image_width: 800, image_height: 400 } : {}) },
     item_content: { profile_text: `${j.date}(${j.dow}) 오늘 챙길 일`, items, sum: '오늘 할 일', sum_op: todo ? `${todo}건${j.todo_over ? ` (지남 ${j.todo_over})` : ''}` : '없음' },
-    buttons: [{ title: '포털 열기', link: LINK }],
+    buttons: [{ title: j.dept === '영업' ? '수주대장 열기' : '포털 열기', link: L }],
   }
 }
 
@@ -129,6 +122,7 @@ async function sendTo(userId: string, refresh: string) {
     const t = await tokenCall({ grant_type: 'refresh_token', refresh_token: refresh })
     const { data: text, error } = await db.rpc('pm_morning_brief', { p_user: userId })
     if (error) throw new Error('글 만들기 실패: ' + error.message)
+    if (text == null) return { ok: false, skipped: true, error: '카톡 알림은 구매자재 · 영업 부서만 받을 수 있습니다' }
     await sendBrief(t.access_token, userId, String(text || '오늘 챙길 일을 만들지 못했습니다'))
     const patch: Record<string, unknown> = { last_sent_at: now, last_error: null, last_text: text, updated_at: now }
     if (t.refresh_token) { patch.refresh_token = t.refresh_token; if (t.refresh_token_expires_in) patch.refresh_expires_at = new Date(Date.now() + t.refresh_token_expires_in * 1000).toISOString() }
@@ -157,7 +151,7 @@ Deno.serve(async (req) => {
     const { data: links } = await db.from('pm_kakao_link').select('user_id,refresh_token').eq('enabled', true)
     const out = []
     for (const l of links || []) out.push({ user: l.user_id, ...(await sendTo(l.user_id, l.refresh_token)) })
-    return json({ sent: out.filter((x) => x.ok).length, failed: out.filter((x) => !x.ok).length })
+    return json({ sent: out.filter((x) => x.ok).length, skipped: out.filter((x) => x.skipped).length, failed: out.filter((x) => !x.ok && !x.skipped).length })
   }
 
   const user = await userOf(req)
@@ -170,6 +164,8 @@ Deno.serve(async (req) => {
     try {
       const t = await tokenCall({ grant_type: 'authorization_code', redirect_uri: body.redirect_uri, code: body.code })
       if (!t.refresh_token) throw new Error('갱신 토큰이 오지 않았습니다')
+      const { data: allowed } = await db.rpc('pm_kakao_allowed', { p_user: user.id })
+      if (!allowed) throw new Error('카톡 알림은 구매자재 · 영업 부서만 연결할 수 있습니다')
       if (t.scope && !/talk_message/.test(t.scope)) throw new Error('「카카오톡 메시지 전송」에 동의하지 않았습니다 — 다시 연결하면서 동의해 주세요')
       let nickname: string | null = null
       try {

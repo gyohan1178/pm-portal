@@ -111,8 +111,8 @@ export function catOptions(rows) {
 export function catTitle(r) {
   const t = String(r?.title || ''), c = String(r?.tag || '').trim()
   if (!c) return t
-  const re = new RegExp('^\\s*' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-:·]\\s*')
-  return `[${c}] ${t.replace(re, '')}`
+  const re = new RegExp('^\\s*' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*(?:[-:·]\\s*|$)')
+  return `[${c}] ${t.replace(re, '')}`.trim()
 }
 // 담당자 이름 (v4.206.3) — 「남기문 대리」 → 「남기문」 · 제목에 이미 이름이 있으면 안 붙임 · 일정(note)은 담당 없음
 export function ownerTag(r) {

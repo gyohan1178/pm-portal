@@ -5,8 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router-dom'
 import { todayISO } from '../lib/utils'
 import { useCustomers } from '../hooks/useCustomers'
-import { useRemember } from '../hooks/useRemember'
-import { primaryCsCode, CUSTOMERS } from '../lib/customers'
+import { orderedCustomers } from '../lib/customers'
 import { flowCountsQuery } from '../lib/flowSeen'
 import { fetchDuePo, tallyPo } from '../lib/todayAuto'
 
@@ -27,15 +26,18 @@ function Tile({ to, label, n, tone, note, k }) {
 export default function TodayAuto({ profile, fold = false }) {
   const [openM, setOpenM] = useState(false)   // 휴대폰 — 한 줄로 접어 둔다 · 눌러서 펼침 (v4.194.0)
   const today = todayISO()
-  const pcs = (primaryCsCode(profile) || 'ax').toLowerCase()
-  const pcsName = CUSTOMERS.find((c) => c.id === pcs)?.name || pcs.toUpperCase()
-  const [scope, setScope] = useRemember('today.scope', 'mine', (v) => v === 'mine' || v === 'all')
+  // 발주 숫자 = 전 고객사 합 · 칸 아래에 고객사별 (AX 56 · CSK 1) — 「내 고객사 / 전체」 고르기는 없앰 (v4.207.1)
+  const pcs = (orderedCustomers(profile)[0]?.id || 'ax').toLowerCase()
   const { data: customers = [] } = useCustomers()
   const { data: rows, isError } = useQuery({ queryKey: ['todayDuePo', today], queryFn: () => fetchDuePo(today), staleTime: 2 * 60 * 1000 })
   const { data: c = null } = useQuery({ ...flowCountsQuery, enabled: !!profile })
-  const myId = customers.find((x) => String(x.code || '').toLowerCase() === pcs)?.id || null
-  const po = rows ? tallyPo(rows, today, scope === 'mine' ? myId : null) : null
-  const who = scope === 'mine' ? pcsName : '전체'
+  const po = rows ? tallyPo(rows, today, null) : null
+  // 고객사별 — 설정의 고객사 순서대로 · 0 인 곳은 뺌
+  const csOrder = orderedCustomers(profile).map((c) => c.id.toUpperCase())
+  const per = rows ? customers
+    .map((c) => ({ code: String(c.code || '').toUpperCase(), n: tallyPo(rows, today, c.id) }))
+    .sort((a, b) => ((csOrder.indexOf(a.code) + 1 || 99) - (csOrder.indexOf(b.code) + 1 || 99))) : []
+  const by = (k) => per.filter((x) => x.n[k] > 0).map((x) => `${x.code} ${x.n[k]}`).join(' · ') || '없음'
   const ordN = c ? (Number(c.ord_unconfirmed) || 0) + (Number(c.ord_waiting) || 0) : null
   if (fold && !openM) {
     const bit = (l, v, cls) => <span className={`whitespace-nowrap ${v > 0 ? cls : 'text-slate-400'}`}>{l} {v == null ? '—' : Number(v).toLocaleString()}</span>
@@ -55,16 +57,11 @@ export default function TodayAuto({ profile, fold = false }) {
     <section className="rounded-2xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 space-y-2" data-today-auto>
       <div className="flex items-center gap-2 flex-wrap">
         <b className="text-xs text-slate-700">오늘 챙길 일 <span className="font-medium text-slate-400">· 자동으로 모은 것 (적지 않아도 나옵니다)</span></b>
-        <span className="ml-auto inline-flex rounded-lg border border-slate-200 bg-white p-0.5 text-[11px] font-bold" title="발주 숫자를 내 고객사로 좁힙니다 — 수주 · 자재 요청은 팀 전체 숫자">
-          {[['mine', `내 고객사 (${pcsName})`], ['all', '전체']].map(([k, l]) => (
-            <button key={k} type="button" onClick={() => setScope(k)} data-today-scope={k} className={`px-2 py-0.5 rounded-md ${scope === k ? 'bg-[#6c5ce7] text-white' : 'text-slate-500'}`}>{l}</button>
-          ))}
-        </span>
       </div>
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
-        <Tile k="in-today" to="/inbound" label="오늘 들어올 발주" n={po?.today} tone="violet" note={`${who} · 받을 날 오늘`} />
-        <Tile k="in-late" to={`/customer/${pcs}/purchase`} label="입고 지남 · 독촉" n={po?.late} tone="red" note={`${who} · 받을 날 지남`} />
-        <Tile k="in-week" to="/inbound" label="이번 주 남은 입고" n={po?.week} tone="gray" note={`${who} · 일요일까지`} />
+        <Tile k="in-today" to="/inbound" label="오늘 들어올 발주" n={po?.today} tone="violet" note={by('today')} />
+        <Tile k="in-late" to={`/customer/${pcs}/purchase`} label="입고 지남 · 독촉" n={po?.late} tone="red" note={by('late')} />
+        <Tile k="in-week" to="/inbound" label="이번 주 남은 입고" n={po?.week} tone="gray" note={by('week')} />
         <Tile k="ord" to="/orders?kpi=unconfirmed" label={c?.ord_one_step ? '수주 미확인 (PO · 회신 전)' : c?.ord_by_po ? '수주 미확인 · 회신 대기 (PO)' : '수주 미확인 · 회신 대기'} n={c ? (Number(c.ord_unconfirmed) || 0) + (Number(c.ord_waiting) || 0) : null} tone="amber" note={c ? (c.ord_one_step ? `11월 등록분 · 급한 것만${c.ord_later ? ` · 예정 ${c.ord_later}` : ''}` : `미확인 ${c.ord_unconfirmed || 0} · 대기 ${c.ord_waiting || 0}${c.ord_by_po && c.ord_later ? ` · 예정 ${c.ord_later}` : ''}`) : '팀 전체'} />
         <Tile k="req" to="/material-request" label="자재 요청 처리 대기" n={c ? c.req_open : null} tone="amber" note="팀 전체" />
         <Tile k="rfq" to="/quote" label="견적 단가 요청" n={c ? c.rfq_price : null} tone="violet" note="영업 → 구매자재" />

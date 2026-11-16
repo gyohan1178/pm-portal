@@ -462,7 +462,7 @@ if (_qs.get('sched')) {
 }
 // v4.205.0 카톡 아침 알림 — ?kakao=0 미연결 · ?kakao=1 연결됨 (없으면 SQL 전)
 if (_qs.get('kakao')) {
-  S.K = _qs.get('kakao') === '1' ? { linked: true, enabled: true, nickname: '김교한', last_sent_at: '2026-11-16T23:50:03Z', last_error: null } : { linked: false }
+  S.K = _qs.get('kakao') === '1' ? { linked: true, allowed: true, enabled: true, nickname: '김교한', last_sent_at: '2026-11-16T23:50:03Z', last_error: null } : _qs.get('kakao') === 'no' ? { linked: false, allowed: false } : { linked: false, allowed: true }
   S.RPCFN.pm_kakao_my_status = () => S.K
   S.RPCFN.pm_morning_brief_me = () => '📋 11/17(화) 오늘 챙길 일\n· 입고 지남 1 · 오늘 2 · 이번 주 5 (AX)\n· 수주 미확인 PO 4'
   S.RPCFN.pm_kakao_set_enabled = ({ p_on }) => { S.K.enabled = p_on; return null }

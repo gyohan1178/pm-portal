@@ -35,4 +35,6 @@ await p.click('[data-kakao-toggle]');await W(700);
 ok(await p.$eval('[data-kakao-linked]',e=>e.dataset.kakaoLinked).catch(()=>null)==='off','끄기');
 await p.click('[data-kakao-unlink]');await W(700);
 ok(await p.$('[data-kakao-link]')!==null,'연결 끊기 → 다시 연결 버튼');
+await p.goto(U('kakao=no','/todo'));await W(1500);await openSet();
+ok(await p.$('[data-kakao-denied]')!==null && await p.$('[data-kakao-link]')===null,'구매자재 · 영업이 아니면 연결 버튼 대신 안내');
 ok(!errs.length,'오류 없음',errs); console.log(`t145 ${pass}/${pass+fail}`); await b.close()})()
