@@ -17,8 +17,12 @@ export function isOwnedBy(r, person) {
   return !!r.owner_id && r.owner_id === person.id
 }
 
-// 고치고 지울 수 있는 일 = 내가 담당이거나 내가 적은 일
-export const canEditTodo = (r, me) => !!me && (isOwnedBy(r, me) || r.created_by === me.id)
+// 고치고 지울 수 있는 일 (v4.210.0)
+//   담당자 · 작성자 / 같은 부서 팀장급 / 관리자
+export const canEditTodo = (r, me) => !!me && !!r && (
+  isOwnedBy(r, me) || r.created_by === me.id || me.role === 'admin'
+  || (me.is_lead === true && !!me.dept && (r.dept || '기타') === me.dept)
+)
 
 // 남이 나에게 맡겼는데 아직 열어 보지 않은 일.
 //   seen_at 칸이 없는 DB(SQL 전)에서는 표시하지 않는다.
