@@ -98,6 +98,22 @@ export function chipKind(r, today) {
   if (r.due_date && String(r.due_date).slice(0, 10) < today) return 'late'
   return r.repeat ? 'rep' : 'todo'
 }
+// 대분류 (v4.207.0) — 할 일의 「태그」 칸을 대분류로 쓴다 (외근 · 미팅 등) · 목록에 없는 것은 직접 적으면 다음부터 버튼으로 나옴
+export const TODO_CATS = ['외근', '내방', '미팅', '연차', '반차', '출장', '교육']
+// 고를 버튼 = 기본 + 지금까지 쓴 대분류 (많이 쓴 순)
+export function catOptions(rows) {
+  const n = new Map()
+  for (const r of rows || []) { const t = String(r?.tag || '').trim(); if (t) n.set(t, (n.get(t) || 0) + 1) }
+  const used = [...n.entries()].sort((a, b) => b[1] - a[1]).map(([t]) => t).filter((t) => !TODO_CATS.includes(t))
+  return [...TODO_CATS, ...used].slice(0, 14)
+}
+// 제목 앞에 같은 대분류를 손으로 적어 둔 것(「외근 - 보명이티씨」)은 겹치지 않게 뺀다
+export function catTitle(r) {
+  const t = String(r?.title || ''), c = String(r?.tag || '').trim()
+  if (!c) return t
+  const re = new RegExp('^\\s*' + c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*[-:·]\\s*')
+  return `[${c}] ${t.replace(re, '')}`
+}
 // 담당자 이름 (v4.206.3) — 「남기문 대리」 → 「남기문」 · 제목에 이미 이름이 있으면 안 붙임 · 일정(note)은 담당 없음
 export function ownerTag(r) {
   if (!r || isNote(r)) return ''
@@ -106,11 +122,12 @@ export function ownerTag(r) {
   return String(r.title || '').replace(/\s+/g, '').includes(nm) ? '' : nm
 }
 const withOwner = (r, text) => { const nm = ownerTag(r); return nm ? `${nm} · ${text}` : text }
+const ttl = (r) => (isNote(r) ? r.title : catTitle(r))
 export function chipText(r, myDept) {
   const t = timeText(r)
-  if (scopeOf(r) === 'all') return withOwner(r, `${r.room ? '대회의실 ' : ''}${t ? t.split('~')[0] + ' ' : ''}${r.room ? (r.dept || '') : r.title}`.trim())
-  if (scopeOf(r) === 'req') return `${r.to_dept === myDept ? '받음' : '보냄'} · ${withOwner(r, r.title)}`
-  return `${r.repeat && !isNote(r) ? '↻ ' : ''}${withOwner(r, r.title)}`
+  if (scopeOf(r) === 'all') return withOwner(r, `${r.room ? '대회의실 ' : ''}${t ? t.split('~')[0] + ' ' : ''}${r.room ? (r.dept || '') : ttl(r)}`.trim())
+  if (scopeOf(r) === 'req') return `${r.to_dept === myDept ? '받음' : '보냄'} · ${withOwner(r, ttl(r))}`
+  return `${r.repeat && !isNote(r) ? '↻ ' : ''}${withOwner(r, ttl(r))}`
 }
 // 그 날 보일 줄 — 전사 공유 → 부서 특이사항 → 요청 → 할 일 순서
 const ORD = { all: 0, note: 1, req: 2, late: 3, rep: 4, todo: 4, done: 5 }

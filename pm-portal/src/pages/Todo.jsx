@@ -15,7 +15,7 @@ import { useUndoSnack } from '../components/ux/UndoSnack'
 import Spin from '../components/ux/Spin'
 import { useCoach } from '../components/ux/CoachMarks'
 import { useRemember } from '../hooks/useRemember'
-import { hasSched, isNote, scopeOf, nextRepeat, REPEAT_LABEL } from '../lib/todoSched'
+import { hasSched, isNote, scopeOf, nextRepeat, REPEAT_LABEL, catOptions } from '../lib/todoSched'
 import { ScopeBadge, SchedStrip, SchedCalendar, SchedFields, NotesList } from '../components/TodoSched'
 
 const STATUS = ['대기', '진행중', '완료', '보류']
@@ -768,11 +768,18 @@ export default function Todo() {
                     {PRIORITY.map(s => <option key={s} value={s}>{s}</option>)}
                   </select>
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-bold text-slate-500 mb-1">태그</label>
+                <div className="col-span-2" data-todo-cat>
+                  <label className="block text-xs font-bold text-slate-500 mb-1">대분류 <span className="font-normal text-slate-400">— 고르거나 직접 적기 · 달력 · 카톡에 [외근] 처럼 붙음</span></label>
+                  <div className="flex flex-wrap gap-1 mb-1.5">
+                    {catOptions(rows).map((c) => (
+                      <button key={c} type="button" data-todo-cat-btn={c}
+                        onClick={() => setDraft(s => ({ ...s, tag: s.tag === c ? '' : c }))}
+                        className={`h-7 px-2.5 rounded-full border text-[12px] font-bold ${draft.tag === c ? 'bg-[#6c5ce7] border-[#6c5ce7] text-white' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{c}</button>
+                    ))}
+                  </div>
                   <input value={draft.tag || ''}
                     onChange={e => setDraft(s => ({ ...s, tag: e.target.value }))}
-                    placeholder="개선 · 확인 등"
+                    placeholder="목록에 없으면 직접 적기 (예: 감사 · 설치) — 다음부터 버튼으로 나옴"
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
                 </div>
               </div>
