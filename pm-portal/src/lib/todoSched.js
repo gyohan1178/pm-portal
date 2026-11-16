@@ -98,11 +98,19 @@ export function chipKind(r, today) {
   if (r.due_date && String(r.due_date).slice(0, 10) < today) return 'late'
   return r.repeat ? 'rep' : 'todo'
 }
+// 담당자 이름 (v4.206.3) — 「남기문 대리」 → 「남기문」 · 제목에 이미 이름이 있으면 안 붙임 · 일정(note)은 담당 없음
+export function ownerTag(r) {
+  if (!r || isNote(r)) return ''
+  const nm = String(r.owner || '').trim().split(/\s+/)[0] || ''
+  if (!nm) return ''
+  return String(r.title || '').replace(/\s+/g, '').includes(nm) ? '' : nm
+}
+const withOwner = (r, text) => { const nm = ownerTag(r); return nm ? `${nm} · ${text}` : text }
 export function chipText(r, myDept) {
   const t = timeText(r)
-  if (scopeOf(r) === 'all') return `${r.room ? '대회의실 ' : ''}${t ? t.split('~')[0] + ' ' : ''}${r.room ? (r.dept || '') : r.title}`.trim()
-  if (scopeOf(r) === 'req') return `${r.to_dept === myDept ? '받음' : '보냄'} · ${r.title}`
-  return `${r.repeat && !isNote(r) ? '↻ ' : ''}${r.title}`
+  if (scopeOf(r) === 'all') return withOwner(r, `${r.room ? '대회의실 ' : ''}${t ? t.split('~')[0] + ' ' : ''}${r.room ? (r.dept || '') : r.title}`.trim())
+  if (scopeOf(r) === 'req') return `${r.to_dept === myDept ? '받음' : '보냄'} · ${withOwner(r, r.title)}`
+  return `${r.repeat && !isNote(r) ? '↻ ' : ''}${withOwner(r, r.title)}`
 }
 // 그 날 보일 줄 — 전사 공유 → 부서 특이사항 → 요청 → 할 일 순서
 const ORD = { all: 0, note: 1, req: 2, late: 3, rep: 4, todo: 4, done: 5 }

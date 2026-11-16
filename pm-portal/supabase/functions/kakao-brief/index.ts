@@ -1,4 +1,4 @@
-// 카톡 아침 알림 — 서버 함수 (v4.206.2 한 통으로: 머리 날짜 · 표 · 아래 할 일 · 일정)
+// 카톡 아침 알림 — 서버 함수 (v4.206.3 머리 날짜 · 표 · 할 일 · 일정 — 3건 넘으면 날짜별 목록 한 통 더)
 //   action
 //     config  : 화면이 카카오 로그인 창을 열 때 쓰는 REST API 키 (공개되는 값) · 로그인 필요
 //     connect : 카카오가 돌려준 code → 토큰으로 바꿔 pm_kakao_link 에 저장 + 확인 메시지 1통 · 로그인 필요
@@ -81,7 +81,7 @@ function feedOf(j: Record<string, any>, withImage: boolean) {
   const sc = (j.sched || []) as { d: string, k: string, t: string }[]
   const one = (x: { d: string, k: string, t: string }) => `${x.d < j.today ? '지남' : x.d === j.today ? '오늘' : md(x.d)} ${x.k === 'note' ? '[일정] ' : ''}${cut(x.t, 16)}`
   const lines = sc.slice(0, 2).map(one)
-  if (sc.length > 2) lines[1] = `${lines[1]} 외 ${sc.length - 2}건`
+  if (sc.length > 2) lines[1] = `${lines[1]} 외 ${sc.length - 2}건 ↓`
   return {
     object_type: 'feed',
     content: { title: sc.length ? `할 일 · 일정 (~${md(j.end)})` : `~${md(j.end)} 할 일 · 일정 없음`, description: lines.join('\n'), link: LINK,
@@ -91,13 +91,29 @@ function feedOf(j: Record<string, any>, withImage: boolean) {
   }
 }
 
+// 할 일 · 일정이 3건 넘을 때 — 날짜별로 묶은 글 한 통 더 (카톡 글 200자 안 · 넘치면 「외 N건」)
+function schedText(j: Record<string, any>) {
+  const sc = (j.sched || []) as { d: string, k: string, t: string }[]
+  const dows = ['일', '월', '화', '수', '목', '금', '토']
+  let out = `🗓 ${j.date}(${j.dow}) ~ ${md(j.end)} 할 일 · 일정`, last = '', shown = 0
+  for (const x of sc) {
+    const g = x.d < j.today ? '지난 할 일' : `${md(x.d)}(${dows[new Date(x.d + 'T00:00:00Z').getUTCDay()]})${x.d === j.today ? ' 오늘' : ''}`
+    const add = (g !== last ? `\n${g}` : '') + `\n· ${x.k === 'note' ? '[일정] ' : ''}${cut(x.t, 30)}`
+    if ((out + add).length > 185) break
+    out += add; last = g; shown++
+  }
+  if (shown < sc.length) out += `\n… 외 ${sc.length - shown}건 (포털 할 일)`
+  return out
+}
+
 // 표로 보내 보고, 카카오가 받지 않으면 그림 넣은 표 → 그래도 안 되면 글로
 async function sendBrief(access: string, userId: string, text: string) {
   const { data: j } = await db.rpc('pm_morning_brief_data', { p_user: userId })
   if (j && typeof j === 'object') {
     for (const img of [false, true]) {
       try {
-        await sendTpl(access, feedOf(j, img))   // 한 통으로 끝 (할 일 · 일정은 표 아래 칸)
+        await sendTpl(access, feedOf(j, img))
+        if ((j.sched || []).length > 2) await sendMemo(access, schedText(j))   // 3건 넘으면 날짜별 목록 한 통 더
         return 'feed'
       } catch { /* 다음 방법 */ }
     }
