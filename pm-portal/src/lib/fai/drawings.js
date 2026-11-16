@@ -4,7 +4,7 @@ import { normAx, normMpn } from './partReport'
 //
 //   PC 의 도면 폴더(Windchill 에서 받은 PDF)를 연결하면 16·17번대 품목에 도면 1장을 붙인다.
 //   파일은 서버에 올리지 않는다 (Supabase 저장공간 한도). 이 PC 브라우저가 폴더 위치만 기억한다.
-//   파일명 예: 110041810_H_0_REL.pdf / 110211211_DRW_E_5_REL.pdf / 110041810_H_0_REL_converted.pdf
+//   파일명 예: 110041810_H_0_REL.pdf / 110211211_DRW_E_5_REL.pdf / 170157056_RL_T_2_REL.pdf / 110041810_H_0_REL_converted.pdf
 
 export const isDwgPart = (P) => /^1[67]/.test(P.pn) // 16번대(하네스)·17번대(가공품)만
 
@@ -15,7 +15,8 @@ const notDrawing = (extra) => /성적|검사|INSP|MILL|밀시트|COC|CERT/i.test
 
 export function parseDwgName(name) {
   const u = stripExt(name).replace(/\s+/g, '_')
-  const m = u.match(/^(.+?)_+(DRW_+)?([A-Z]{1,2}|-)_+(\d+)(?:_+(REL|RELEASED|INWORK|INW|UNDERREVIEW|RES|OBS))?(.*)$/)
+  // 품번_DRW_리비전 · 품번_RL_리비전(판금 · 가공품 도면 · v4.203.2) 둘 다 도면으로 본다
+  const m = u.match(/^(.+?)_+((?:DRW|RL)_+)?([A-Z]{1,2}|-)_+(\d+)(?:_+(REL|RELEASED|INWORK|INW|UNDERREVIEW|RES|OBS))?(.*)$/)
   if (!m) return null
   const extra = m[6].replace(/^[_\s\-.()]+/, '').trim()
   return { pn: normAx(m[1]), drw: !!m[2], rev: m[3], iter: +m[4], state: m[5] || '', extra, base: normName(u.slice(0, u.length - m[6].length)) }

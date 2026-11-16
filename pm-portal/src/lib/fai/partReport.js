@@ -62,11 +62,13 @@ export function parseReport(html, DOMParserImpl = globalThis.DOMParser) {
       if (!owner || owner.lv !== lv - 1) continue
       const num = clean(td[2]), file = clean(td[8])
       if (!/\.pdf$/i.test(file) || /REF_?ONLY/i.test(file)) continue
-      if (num !== owner.pn + '.DRW' && num !== owner.pn) continue
-      // 품번.DRW = 도면, 품번과 같은 번호 = Commercial Part Specification
-      const P = owner.P, key = num.endsWith('.DRW') ? 'dwgDocs' : 'cpsDocs'
+      // 판금 · 가공품은 도면이 「품번_RL」 번호로 올라온다 (110147240 H.8 실물 확인 · v4.203.2)
+      const isRl = num === owner.pn + '_RL'
+      if (num !== owner.pn + '.DRW' && num !== owner.pn && !isRl) continue
+      // 품번.DRW · 품번_RL = 도면, 품번과 같은 번호 = Commercial Part Specification
+      const P = owner.P, key = num.endsWith('.DRW') || isRl ? 'dwgDocs' : 'cpsDocs'
       P[key] = P[key] || []
-      if (!P[key].some((d) => d.file === file)) P[key].push({ file, ver: clean(td[6]), drw: num.endsWith('.DRW') })
+      if (!P[key].some((d) => d.file === file)) P[key].push({ file, ver: clean(td[6]), drw: num.endsWith('.DRW') || isRl })
     } else if (type === 'Mfr Part') {
       const owner = stack[stack.length - 1]
       if (!owner || owner.lv !== lv - 1) continue
