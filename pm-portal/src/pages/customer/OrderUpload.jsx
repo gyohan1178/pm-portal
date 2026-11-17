@@ -184,7 +184,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     // 기타 업체는 업체 이름을 PO 머리에 (직접 등록과 같은 칸)
     const po = etcOf(f.po) ? { ...f.po, extra: { ...(f.po.extra || {}), customer_name: String(f.po.customer_name).trim() } } : f.po
     const r = await saveOrder({ po, lines, existing: fresh, fileName: f.name, migrated: !fresh && (!!f.allDelivered || lines.some((l) => l.deliveredAll)), meName })
-    if (base) await renamePoNo(base.id, f.reissue.base_no, f.po.po_no, meName, !!base.migrated)
+    if (base) await renamePoNo(base.id, f.reissue.base_no, f.po.po_no, meName, { wasMigrated: !!base.migrated, diff: r.diff })
     const label = r.created ? '등록됨' : [r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? '빈 칸 채움' : ''].filter(Boolean).join(' · ')
       || (!f.existing && fresh ? '같은 PO 앞 파일로 등록됨' : '바뀐 것 없음')
     setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label, err: null } : x)))

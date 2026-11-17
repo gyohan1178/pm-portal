@@ -221,16 +221,42 @@ export async function findReissueBase(cust, poNo, custName) {
   return null
 }
 // 기존 PO 의 번호를 재발행 번호로 바꾸고 이력을 남긴다 (변경 반영 뒤에 부른다)
-//   이관(엑셀 · PO 파일) PO 였으면 재발행을 새로 받은 PO 로 본다 — 이관 표시를 풀고 접수일을 오늘로 (구매자재 「미확인」에 잡히게)
-export async function renamePoNo(orderId, before, after, meName, wasMigrated = false) {
+//   이관(엑셀 · PO 파일) PO 에 합칠 때 (v4.212.0)
+//     · 바뀐 줄(수량 · 납기 · Rev · 품목 · 되살림 · 새 줄)만 다시 확인 — 이관 PO 는 원래 회신이 없으므로
+//       바뀐 것이 있으면 이관 표시를 풀어 「미확인」에 잡히게 하고, 안 바뀐 줄은 「이관 — 재발행 변경 없음」 자동 회신
+//     · 바뀐 것이 없으면 번호만 바꾸고 이관 그대로 (확인할 것 없음)
+//   회신이 있던 줄은 saveOrder 가 이미 처리 — 바뀐 줄만 회신을 비우고(이력에 예전 회신) 안 바뀐 줄은 그대로
+const RECHECK_FIELDS = new Set(['qty', 'due_date', 'rev', 'item', 'revive'])
+export function reissueRecheckKeys(diff) {
+  const keys = new Set()
+  ;(diff?.changes || []).forEach((c) => { if (RECHECK_FIELDS.has(c.field)) keys.add(c.line_key) })
+  ;(diff?.added || []).forEach((l) => keys.add(lineKey(l)))
+  return keys
+}
+export async function renamePoNo(orderId, before, after, meName, opt = {}) {
+  const { wasMigrated = false, diff = null } = opt
   const now = new Date().toISOString()
-  const patch = { po_no: after, updated_at: now, ...(wasMigrated ? { migrated: false, registered_at: now, registered_name: meName || null } : {}) }
+  const keys = reissueRecheckKeys(diff)
+  const reopen = wasMigrated && keys.size > 0
+  const patch = { po_no: after, updated_at: now, ...(reopen ? { migrated: false, registered_at: now, registered_name: meName || null } : {}) }
   const { error } = await supabase.from('pm_order').update(patch).eq('id', orderId)
   if (error) {
     if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${after} 가 이미 수주대장에 있어 번호를 못 바꿨습니다 — 변경 내용은 ${before} 에 반영됐습니다`)
     throw error
   }
-  await supabase.from('pm_order_change').insert({ order_id: orderId, line_key: null, field: 'po_no', before_val: before, after_val: `${after} (재발행${wasMigrated ? ' · 이관 PO → 새로 접수' : ''})`, source: 'pdf', changed_name: meName || null })
+  let auto = 0
+  if (reopen) {
+    const { data: ls } = await supabase.from('pm_order_line').select('id,line_no,del_line,qty,delivered_qty,cancelled,reply').eq('order_id', orderId)
+    const ids = (ls || []).filter((l) => !l.cancelled && !l.reply && !(+l.qty > 0 && (+l.delivered_qty || 0) >= +l.qty) && !keys.has(lineKey(l))).map((l) => l.id)
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error: e2 } = await supabase.from('pm_order_line').update({ reply: '가능', reply_memo: '이관 PO — 재발행 변경 없음 (자동)', replied_name: '자동', replied_at: now, updated_at: now }).in('id', ids.slice(i, i + 200))
+      if (e2) throw e2
+    }
+    auto = ids.length
+  }
+  const note = !wasMigrated ? '' : reopen ? ` · 바뀐 ${keys.size}줄만 다시 확인${auto ? ` · 안 바뀐 ${auto}줄 자동 회신` : ''}` : ' · 바뀐 줄 없음'
+  await supabase.from('pm_order_change').insert({ order_id: orderId, line_key: null, field: 'po_no', before_val: before, after_val: `${after} (재발행${note})`, source: 'pdf', changed_name: meName || null })
+  return { recheck: keys.size, auto }
 }
 
 // 등록할 때 이미 납품된 줄(「이미 납품」 체크 · AXCELIS 잔량 0)은 납품 · 판매입력 완료로 넣는다 — 할 일에 안 뜬다
