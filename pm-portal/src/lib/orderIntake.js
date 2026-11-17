@@ -201,6 +201,38 @@ export async function loadOrderByNo(cust, poNo, custName) {
   return data
 }
 
+// 재발행(수정) PO (v4.211.0) — 고객사가 PO 를 고쳐 다시 내면 번호 뒤에 「-1 · -2」가 붙는다 (예: 6001368102-1)
+//   이 번호가 수주대장에 없고 앞 번호(6001368102 · …-1)가 있으면 「기존 PO 의 변경본」 후보로 알려 준다.
+//   반환 { base_no, order } 또는 null — 가장 최근 번호부터 찾는다 (-2 면 -1 → 원번호 순)
+export function reissueCandidates(poNo) {
+  const m = String(poNo || '').trim().match(/^(.{5,}?)-(\d{1,2})$/)
+  if (!m) return []
+  const base = m[1], n = Number(m[2])
+  const out = []
+  for (let k = n - 1; k >= 1; k--) out.push(`${base}-${k}`)
+  out.push(base)
+  return out
+}
+export async function findReissueBase(cust, poNo, custName) {
+  for (const no of reissueCandidates(poNo)) {
+    const o = await loadOrderByNo(cust, no, custName)
+    if (o && !o.cancelled) return { base_no: no, order: o }
+  }
+  return null
+}
+// 기존 PO 의 번호를 재발행 번호로 바꾸고 이력을 남긴다 (변경 반영 뒤에 부른다)
+//   이관(엑셀 · PO 파일) PO 였으면 재발행을 새로 받은 PO 로 본다 — 이관 표시를 풀고 접수일을 오늘로 (구매자재 「미확인」에 잡히게)
+export async function renamePoNo(orderId, before, after, meName, wasMigrated = false) {
+  const now = new Date().toISOString()
+  const patch = { po_no: after, updated_at: now, ...(wasMigrated ? { migrated: false, registered_at: now, registered_name: meName || null } : {}) }
+  const { error } = await supabase.from('pm_order').update(patch).eq('id', orderId)
+  if (error) {
+    if (error.code === '23505' || /duplicate|conflict/i.test(error.message || '')) throw new Error(`${after} 가 이미 수주대장에 있어 번호를 못 바꿨습니다 — 변경 내용은 ${before} 에 반영됐습니다`)
+    throw error
+  }
+  await supabase.from('pm_order_change').insert({ order_id: orderId, line_key: null, field: 'po_no', before_val: before, after_val: `${after} (재발행${wasMigrated ? ' · 이관 PO → 새로 접수' : ''})`, source: 'pdf', changed_name: meName || null })
+}
+
 // 등록할 때 이미 납품된 줄(「이미 납품」 체크 · AXCELIS 잔량 0)은 납품 · 판매입력 완료로 넣는다 — 할 일에 안 뜬다
 const lineRow = (orderId, l) => {
   const q = Number(l.qty) || 0

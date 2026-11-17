@@ -5,7 +5,7 @@ import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 import ItemPicker from '../../components/ItemPicker'
 import { pdfLines, parsePO, FORMAT_LABEL } from '../../lib/poPdf'
-import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan, orderCustName } from '../../lib/orderIntake'
+import { packOf, ORDER_CUSTOMERS, matchLines, loadOrderByNo, diffOrder, saveOrder, lineKey, FIELD_LABEL, fetchPlanned, linkPlanned, planLabel, fillPlan, orderCustName, findReissueBase, renamePoNo } from '../../lib/orderIntake'
 import { fetchEtcNames, ETC_NAME_SEED } from '../../lib/orderEntry'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { fetchSkipRules, saveSkipRules, rulesFor, skipRuleOf, ruleLabel, ruleFromLine } from '../../lib/orderSkip'
@@ -17,9 +17,12 @@ const fmt = (v) => (v == null || v === '' ? '—' : Number(v).toLocaleString('ko
 //   기타 업체(v4.109.0)는 업체마다 PO번호가 겹칠 수 있어 업체 이름까지 맞는 PO 를 찾는다
 const etcOf = (po) => po?.customer === 'ETC'
 const nameOk = (po) => !etcOf(po) || !!String(po.customer_name || '').trim()
-async function prepare(po, raw) {
+//   choice: 재발행 PO 를 어떻게 넣을지 — 'merge' 기존 PO 변경으로 / 'new' 새 PO 로 / 없음 = 아직 안 고름 (v4.211.0)
+async function prepare(po, raw, choice) {
   let lines = await matchLines(po.customer, raw)
-  const existing = nameOk(po) ? await loadOrderByNo(po.customer, po.po_no, po.customer_name) : null
+  let existing = nameOk(po) ? await loadOrderByNo(po.customer, po.po_no, po.customer_name) : null
+  const reissue = !existing && nameOk(po) ? await findReissueBase(po.customer, po.po_no, po.customer_name) : null
+  if (reissue && choice === 'merge') existing = reissue.order
   const planned = await fetchPlanned(po.customer)
   let diff = null
   if (existing) {
@@ -27,7 +30,7 @@ async function prepare(po, raw) {
     lines = linkPlanned(po, lines, planned, (l) => added.has(l))
     diff = diffOrder(existing.pm_order_line || [], lines)
   } else lines = linkPlanned(po, lines, planned)
-  return { lines, existing, diff, planned }
+  return { lines, existing, diff, planned, reissue, reissueChoice: reissue ? (choice || null) : null }
 }
 
 // 빼는 줄 (v4.142.0) — 줄 번호마다 { by:'rule', rule } 규칙으로 뺌 · { by:'manual' } 이번만 뺌 · { by:'keep' } 규칙에 걸렸지만 이번엔 넣음
@@ -52,9 +55,9 @@ async function readFile(file, readLines = pdfLines, rules = []) {
     const po = parsePO(await readLines(file))
     const skip = computeSkip(po, rules)
     let lines = keptOf(po, skip)
-    let existing = null, diff = null, planned = []
-    if (po.customer && po.po_no) ({ lines, existing, diff, planned } = await prepare(po, lines))
-    return { name: file.name, po, lines, skip, existing, diff, planned, ok: true }
+    let r = { existing: null, diff: null, planned: [], reissue: null, reissueChoice: null }
+    if (po.customer && po.po_no) ({ lines, ...r } = await prepare(po, lines))
+    return { name: file.name, po, lines, skip, ...r, ok: true }
   } catch (e) {
     return { name: file.name, po: { kind: null, lines: [], warns: [`읽기 실패 — ${e.message}`] }, lines: [], ok: false }
   }
@@ -95,7 +98,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     try {
       const po = { ...cur.po, customer: code, warns: cur.po.warns.filter((w) => !/고객사를 못 정함/.test(w) && (code === 'ETC' || !/업체 이름을 못 읽음/.test(w))) }
       const skip = computeSkip(po, await loadRules(), cur.skip || {})
-      const r = po.po_no ? await prepare(po, keptOf(po, skip)) : { lines: await matchLines(code, keptOf(po, skip)), existing: null, diff: null, planned: [] }
+      const r = po.po_no ? await prepare(po, keptOf(po, skip), cur.reissueChoice) : { lines: await matchLines(code, keptOf(po, skip)), existing: null, diff: null, planned: [] }
       setCur({ po, skip, ...r })
     } catch (e) { toastError('고객사 바꾸기 실패: ' + e.message) }
     finally { setBusy(false) }   // 실패해도 「읽는 중」에 멈추지 않게 (v4.90.6)
@@ -109,7 +112,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     try {
       const po = { ...cur.po, customer_name: v, warns: cur.po.warns.filter((w) => !/업체 이름을 못 읽음/.test(w) || !v) }
       const skip = computeSkip(po, await loadRules(), cur.skip || {})
-      const r = po.po_no ? await prepare(po, keptOf(po, skip)) : { lines: await matchLines(po.customer, keptOf(po, skip)), existing: null, diff: null, planned: [] }
+      const r = po.po_no ? await prepare(po, keptOf(po, skip), cur.reissueChoice) : { lines: await matchLines(po.customer, keptOf(po, skip)), existing: null, diff: null, planned: [] }
       setCur({ po, skip, ...r })
     } catch (e) { toastError('업체 이름 반영 실패: ' + e.message) }
     finally { setBusy(false) }
@@ -120,11 +123,23 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     try {
       const po = cur.po
       const kept = keptOf(po, skip)
-      const r = po.customer && po.po_no ? await prepare(po, kept) : { lines: po.customer ? await matchLines(po.customer, kept) : kept, existing: cur.existing, diff: null, planned: cur.planned }
+      const r = po.customer && po.po_no ? await prepare(po, kept, cur.reissueChoice) : { lines: po.customer ? await matchLines(po.customer, kept) : kept, existing: cur.existing, diff: null, planned: cur.planned }
       const old = new Map(cur.lines.map((l) => [lineKey(l), l]))
       r.lines = r.lines.map((l) => { const o = old.get(lineKey(l)); return o?.pickedByHand ? { ...l, item: o.item, how: o.how, pickedByHand: true, otherCust: false } : o?.deliveredAll ? { ...l, deliveredAll: true } : l })
       setCur({ skip, ...r })
     } catch (e) { toastError('다시 맞추기 실패: ' + e.message) }
+    finally { setBusy(false) }
+  }
+  // 재발행 PO — 기존 PO 변경으로 넣을지 · 새 PO 로 넣을지 (v4.211.0)
+  async function chooseReissue(v) {
+    setBusy(true)
+    try {
+      const kept = keptOf(cur.po, cur.skip || {})
+      const r = await prepare(cur.po, kept, v)
+      const old = new Map(cur.lines.map((l) => [lineKey(l), l]))
+      r.lines = r.lines.map((l) => { const o = old.get(lineKey(l)); return o?.pickedByHand ? { ...l, item: o.item, how: o.how, pickedByHand: true, otherCust: false } : l })
+      setCur(r)
+    } catch (e) { toastError('다시 비교 실패: ' + e.message) }
     finally { setBusy(false) }
   }
   const skipLine = (l, on) => resetSkip({ ...(cur.skip || {}), [lineKey(l)]: on ? { by: 'manual' } : { by: 'keep' } })
@@ -150,7 +165,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
   const anyEtc = files.some((f) => etcOf(f.po))
   useEffect(() => { if (anyEtc) fetchEtcNames().then(setEtcNames).catch(swallow('수주 올리기 · 기타 업체 이름 읽기')) }, [anyEtc])
 
-  const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || !nameOk(f.po) || (f.po.warns.length > 0 && !f.force)
+  const blocked = (f) => !f.po.kind || !f.po.customer || !f.po.po_no || !f.lines.length || !nameOk(f.po) || (f.po.warns.length > 0 && !f.force) || (!!f.reissue && !f.reissueChoice)
   // 이미 있는 PO — 바뀐 것이 없어도 빈 칸(납품처 · Rev · 품목 연결 …)을 채울 것이 있으면 저장 가능 (v4.90.1)
   const fillOf = (f) => (f?.existing && f.diff ? fillPlan(f.existing, f.po, f.lines, f.diff.pair) : null)
   const canSave = (f) => f && !f.saved && !blocked(f) && !(f.existing && f.diff?.same && !fillOf(f)?.any)
@@ -162,10 +177,14 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
     const lines = f.lines.map((l) => ({ ...l, deliveredAll: l.deliveredAll || f.allDelivered }))
     // 등록 직전에 다시 찾는다 — 같은 PO 파일이 둘(「… (1).pdf」 등)이면 앞 파일이 먼저 등록해
     //   읽을 때는 없던 PO 가 지금은 있다. 그때 새로 넣으면 409(이미 있음)로 실패하므로 변경 반영으로 돌린다 (v4.90.5)
-    const fresh = await loadOrderByNo(f.po.customer, f.po.po_no, f.po.customer_name)
+    let fresh = await loadOrderByNo(f.po.customer, f.po.po_no, f.po.customer_name)
+    // 재발행 PO 를 기존 PO 변경으로 — 기존 PO 에 반영한 뒤 번호를 재발행 번호로 바꾼다 (v4.211.0)
+    const base = !fresh && f.reissueChoice === 'merge' && f.reissue ? await loadOrderByNo(f.po.customer, f.reissue.base_no, f.po.customer_name) : null
+    if (base) fresh = base
     // 기타 업체는 업체 이름을 PO 머리에 (직접 등록과 같은 칸)
     const po = etcOf(f.po) ? { ...f.po, extra: { ...(f.po.extra || {}), customer_name: String(f.po.customer_name).trim() } } : f.po
     const r = await saveOrder({ po, lines, existing: fresh, fileName: f.name, migrated: !fresh && (!!f.allDelivered || lines.some((l) => l.deliveredAll)), meName })
+    if (base) await renamePoNo(base.id, f.reissue.base_no, f.po.po_no, meName, !!base.migrated)
     const label = r.created ? '등록됨' : [r.changed ? `변경 ${r.changed}건 반영` : '', r.fills?.length ? '빈 칸 채움' : ''].filter(Boolean).join(' · ')
       || (!f.existing && fresh ? '같은 PO 앞 파일로 등록됨' : '바뀐 것 없음')
     setFiles((fs) => fs.map((x, i) => (i === idx ? { ...x, saved: label, err: null } : x)))
@@ -264,6 +283,7 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
               const tag = f.err ? ['bg-red-50 text-red-600', '⚠ 등록 실패'] : f.saved ? ['bg-emerald-50 text-emerald-700', `✓ ${f.saved}`]
                 : !f.po.kind ? ['bg-red-50 text-red-600', f.po.scan ? '⚠ 스캔본' : '⚠ 모르는 양식']
                 : f.po.warns.length ? ['bg-amber-50 text-amber-700', `⚠ 확인 ${f.po.warns.length}`]
+                : f.reissue && !f.reissueChoice ? ['bg-violet-50 text-violet-700', '재발행? 선택']
                 : f.existing ? (f.diff?.same ? (fillOf(f)?.any ? ['bg-violet-50 text-violet-700', '빈 칸 채우기'] : ['bg-slate-100 text-slate-500', '변경 없음']) : ['bg-blue-50 text-blue-700', `변경 ${f.diff.changes.length + f.diff.added.length + f.diff.removed.length}`])
                 : ['bg-emerald-50 text-emerald-700', '✓ 점검 통과']
               return (
@@ -325,6 +345,19 @@ export default function OrderUpload({ onClose, onSaved, meName, readLines }) {
                     {cur.po.kind && cur.po.customer && cur.po.po_no && cur.lines.length > 0 && !cur.saved && (
                       <label className="flex items-center gap-1.5 pt-1 font-bold"><input type="checkbox" checked={!!cur.force} onChange={(e) => setCur({ force: e.target.checked })} data-force /> 확인했고 그대로 등록</label>
                     )}
+                  </div>
+                )}
+                {cur.reissue && !cur.saved && (
+                  <div className="px-4 py-3 bg-violet-50 border-b border-violet-100 text-xs text-violet-900 space-y-2" data-reissue>
+                    <div><b>기존 PO {cur.reissue.base_no} 의 재발행(수정) PO 로 보입니다.</b> 기존 PO 에 변경으로 반영할까요?</div>
+                    <div className="text-violet-700/80">「기존 PO 변경으로」 — 바뀐 납기 · 수량 · 줄이 변경 이력으로 남고 회신 · 생산관리 호기가 이어집니다. PO번호는 {cur.po.po_no} 로 바뀝니다. / 「새 PO 로」 — 따로 등록되어 기존 PO 와 같은 줄이 두 번 잡힙니다.</div>
+                    <div className="flex flex-wrap gap-2">
+                      <button type="button" disabled={busy} onClick={() => chooseReissue('merge')} data-reissue-merge
+                        className={`px-3 py-1.5 rounded-lg font-bold border ${cur.reissueChoice === 'merge' ? 'bg-violet-600 text-white border-violet-600' : 'bg-white text-violet-700 border-violet-300'}`}>기존 PO 변경으로 반영</button>
+                      <button type="button" disabled={busy} onClick={() => chooseReissue('new')} data-reissue-new
+                        className={`px-3 py-1.5 rounded-lg font-bold border ${cur.reissueChoice === 'new' ? 'bg-slate-700 text-white border-slate-700' : 'bg-white text-slate-600 border-slate-300'}`}>새 PO 로 따로 등록</button>
+                      {!cur.reissueChoice && <span className="self-center text-rose-600 font-bold">고르기 전에는 등록할 수 없습니다</span>}
+                    </div>
                   </div>
                 )}
                 {cur.po.dueChanged && <div className="px-4 py-2 bg-blue-50 border-b border-blue-100 text-xs text-blue-700">발주서에 「납기일이 변경되었습니다」 표시가 있습니다{cur.existing ? '' : ' — 처음 등록하는 PO 라 비교할 이전 값은 없습니다'}</div>}

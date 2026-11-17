@@ -9,7 +9,12 @@ const KEY = 'pm_legacy_dlv_day'
 const dayKST = () => new Date(Date.now() + 9 * 3600 * 1000).toISOString().slice(0, 10)
 let inflight = null
 
+// v4.211.0 — 끔. 「이관분 납기 지나면 납품 간주」는 10/28 당시 정리용이었고, 지금은 실제 납품만 납품으로 본다.
+//   부르는 곳은 그대로 두고 아무것도 하지 않는다 (DB 함수도 수주대장_자동납품끄기 SQL 로 멈춤)
+export const LEGACY_AUTO_DELIVER_ON = false
+
 export function autoDeliverLegacy() {
+  if (!LEGACY_AUTO_DELIVER_ON) return Promise.resolve(0)
   const day = dayKST()
   try { if (localStorage.getItem(KEY) === day) return Promise.resolve(0) } catch { /* 저장 안 되는 브라우저 — 그래도 부른다 */ }
   if (inflight) return inflight
