@@ -215,7 +215,7 @@ function QuoteOne({ pick }) {
                 </div>
                 <div>
                   <label className="block text-xs font-bold text-slate-500 mb-1">MOQ</label>
-                  <input data-quote-moq type="number" value={moq} onChange={e=>setMoq(e.target.value)} placeholder="최소 주문 수량"
+                  <input data-quote-moq type="number" value={moq} onChange={e=>setMoq(e.target.value)} placeholder="최소 주문 수량 (품목 MOQ 로도 저장)"
                     className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                 </div>
                 <div className="col-span-2" data-quote-note-box>

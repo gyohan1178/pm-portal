@@ -74,7 +74,7 @@ export default function QuoteBulk() {
         updatePrice: x.upd, ltWeeks: applyLt ? ltWeeksOf(leadOf(x)) : null,
       })), { vendorId, quoteDate, validUntil, memo })
       setDone(r)
-      toastSuccess(`견적 ${r.saved}건 저장 · 매입가 ${r.priced}건 갱신${r.lt ? ` · LT ${r.lt}건` : ''}`)
+      toastSuccess(`견적 ${r.saved}건 저장 · 매입가 ${r.priced}건 갱신${r.lt ? ` · LT ${r.lt}건` : ''}${r.moq ? ` · MOQ ${r.moq}건` : ''}`)
       if (r.fallback) toast('납기 · MOQ 는 메모에 적었습니다 — DB 설정(품목단가등록_261023.sql) 뒤에는 따로 저장됩니다')
       qc.invalidateQueries({ queryKey: ['items'], exact: false })
       qc.invalidateQueries({ queryKey: ['quoteHistory'], exact: false })

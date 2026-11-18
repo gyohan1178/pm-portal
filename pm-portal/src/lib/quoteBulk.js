@@ -85,6 +85,7 @@ export async function matchItems(rows) {
 }
 
 // 견적 저장 — quotes 에 넣고, 고른 품목은 최근 매입가(· LT) 갱신
+//   MOQ 를 적었으면 품목 마스터 MOQ 도 갱신 (v4.213.0) — 매출견적서는 items.moq 를 읽는다
 //   lines: [{ item_id, unit_price, lead_time, moq, updatePrice, ltWeeks }]
 //   납기 · MOQ 칸이 아직 없으면(SQL 전) 메모에 붙여 저장한다
 export async function saveQuotes(lines, { vendorId, quoteDate, validUntil, memo }) {
@@ -106,16 +107,18 @@ export async function saveQuotes(lines, { vendorId, quoteDate, validUntil, memo 
     ;({ error } = await supabase.from('quotes').insert(lite))
   }
   if (error) throw error
-  let priced = 0, lt = 0
+  let priced = 0, lt = 0, moqN = 0
   for (const l of list) {
     const patch = {}
     if (l.updatePrice) patch.purchase_price = Number(l.unit_price)
     if (Number(l.ltWeeks) > 0) patch.lt_weeks = Number(l.ltWeeks)
+    if (Number(l.moq) > 0) patch.moq = Number(l.moq)
     if (!Object.keys(patch).length) continue
     const { error: e2 } = await supabase.from('items').update(patch).eq('id', l.item_id)
     if (e2) throw e2
     if (patch.purchase_price != null) priced++
     if (patch.lt_weeks != null) lt++
+    if (patch.moq != null) moqN++
   }
-  return { saved: list.length, priced, lt, fallback }
+  return { saved: list.length, priced, lt, moq: moqN, fallback }
 }
