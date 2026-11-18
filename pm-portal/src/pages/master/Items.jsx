@@ -21,7 +21,7 @@ import ItemMetaPanel from '../../components/ItemMetaPanel'
 import MfrCheckPanel from '../../components/MfrCheckPanel'
 import { swallow } from '../../lib/errorLog'
 
-const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
+const EMPTY = { std_code:'', js_code:'', name:'', type:'자재', unit:'EA', spec:'', lt_weeks:'', moq:'', safety_stock:'', manufacturer:'', manufacturer_code:'', purchase_price:'', dept:'', vendor_id:'', memo:'', prod_managed:false, stock_managed:true, proc_order:false, unit_weight:'', _uw0:'' }
 
 // JS코드 prefix → 세부 분류명
 const CAT_LIST = ['케이블','와이어','커넥터','차단기','전장','판금','어셈블리','하네스','하드웨어','기타']
@@ -200,6 +200,7 @@ export default function Items() {
         unit: data.unit,
         spec: data.spec || null,
         lt_weeks: data.lt_weeks ? Number(data.lt_weeks) : 0,
+        moq: Number(data.moq) > 0 ? Number(data.moq) : null,   // v4.213.0 — 매출견적서가 쓰는 MOQ
         safety_stock: data.safety_stock ? Number(data.safety_stock) : 0,
         manufacturer: data.manufacturer || null,
         manufacturer_code: data.manufacturer_code || null,
@@ -301,7 +302,7 @@ export default function Items() {
       std_code: item.std_code||'', js_code: item.js_code||'', name: item.name||'', type: item.type||'자재',
       proc_order: !!item.proc_order,
       unit: item.unit||'EA', spec: item.spec||'',
-      lt_weeks: item.lt_weeks||'', safety_stock: item.safety_stock||'',
+      lt_weeks: item.lt_weeks||'', moq: item.moq ?? '', safety_stock: item.safety_stock||'',
       manufacturer: item.manufacturer||'', manufacturer_code: item.manufacturer_code||'',
       purchase_price: item.purchase_price||'', dept: item.dept||'',
       vendor_id: item.vendor_id||'', memo: item.memo||'', prod_managed: !!item.prod_managed, stock_managed: item.stock_managed !== false,
@@ -374,7 +375,7 @@ export default function Items() {
       'STD코드':item.std_code || '',
       '고객사코드':(item.customer_item_codes||[]).map(c=>c.customer_code).filter(Boolean).join(', '),
       '품명':item.name, '구분':catOf(item), '자재구분':item.type, '단위':item.unit,
-      'LT(주)':item.lt_weeks, '안전재고':item.safety_stock, '매입가':item.purchase_price||'',
+      'LT(주)':item.lt_weeks, 'MOQ':item.moq ?? '', '안전재고':item.safety_stock, '매입가':item.purchase_price||'',
       '관리부서':item.dept||'', '재고관리':item.stock_managed!==false?'관리':'제외', '규격':item.spec||'', '구매처':item.vendors?.name||'',
       '개당무게(g)':item.unit_weight ?? '',
     }))
@@ -629,6 +630,11 @@ export default function Items() {
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
             </div>
             <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1">MOQ</label>
+              <input type="number" value={form.moq} onChange={f('moq')} placeholder="최소 주문 수량" data-item-moq
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+            </div>
+            <div>
               <label className="block text-xs font-bold text-slate-500 mb-1">안전재고</label>
               <input type="number" value={form.safety_stock} onChange={f('safety_stock')} placeholder="0"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
@@ -794,6 +800,7 @@ export default function Items() {
                     {/* 5. LT */}
                     <td className="px-3 py-2">
                       <span className="px-1.5 py-0.5 rounded text-xs font-semibold bg-slate-100 text-slate-600">{item.lt_weeks||0}W</span>
+                      {Number(item.moq) > 0 && <div className="text-[10px] text-slate-400 mt-0.5 whitespace-nowrap" data-item-moq-cell>MOQ {Number(item.moq).toLocaleString()}</div>}
                     </td>
                     {/* 6. 안전재고 */}
                     <td className="px-3 py-2 text-right text-slate-600">{item.safety_stock||0}</td>
