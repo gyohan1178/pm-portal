@@ -72,8 +72,10 @@ export function collectMissing(rows) {
     for (const m of (Array.isArray(r.missing_parts) ? r.missing_parts : [])) {
       const k = missKey(m)
       if (!k) continue
-      const e = g.get(k) || { key: k, pn: stripPrefix(s(m.std_code) || s(m.pn)), name: '', hogis: [], total: 0 }
+      const e = g.get(k) || { key: k, pn: stripPrefix(s(m.std_code) || s(m.pn)), name: '', maker: '', makerPn: '', hogis: [], total: 0 }
       if (!e.name && s(m.name)) e.name = s(m.name)
+      if (!e.maker && s(m.maker || m.manufacturer)) e.maker = s(m.maker || m.manufacturer)
+      if (!e.makerPn && s(m.makerPn || m.manufacturer_code)) e.makerPn = s(m.makerPn || m.manufacturer_code)
       if (!e.hogis.includes(r.hogi || '-')) e.hogis.push(r.hogi || '-')
       e.total += Number(m.qty) || 0
       g.set(k, e)

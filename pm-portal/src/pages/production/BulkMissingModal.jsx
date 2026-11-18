@@ -19,6 +19,24 @@ import { ymdKST } from '../../lib/utils'
 
 const today = () => ymdKST()
 
+// 품번 목록 → 품목 마스터 { 접두 뗀 품번(대문자): item } — 고객사 접두를 붙인 것 · 그대로 둘 다 본다
+async function lookupItems(pns, csCode) {
+  const cands = [...new Set(pns.flatMap((pn) => codeCandidates(pn, csCode)))]
+  const hit = {}
+  for (let i = 0; i < cands.length; i += 200) {
+    const { data, error } = await supabase.from('items')
+      .select('id,std_code,name,manufacturer,manufacturer_code').in('std_code', cands.slice(i, i + 200))
+    if (error) throw error
+    ;(data || []).forEach((x) => { hit[x.std_code] = x })
+  }
+  const out = {}
+  for (const pn of pns) {
+    const it = codeCandidates(pn, csCode).map((c) => hit[c]).find(Boolean)
+    if (it) out[stripPrefix(pn).toUpperCase()] = it
+  }
+  return out
+}
+
 export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) {
   const qc = useQueryClient()
   const [tab, setTab] = useState('add')
@@ -37,22 +55,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
     queryKey: ['missBulkItems', csCode, pq],
     enabled: !!pq,
     staleTime: 60_000,
-    queryFn: async () => {
-      const cands = [...new Set(pq.split('|').flatMap((pn) => codeCandidates(pn, csCode)))]
-      const hit = {}
-      for (let i = 0; i < cands.length; i += 200) {
-        const { data, error } = await supabase.from('items')
-          .select('id,std_code,name,manufacturer,manufacturer_code').in('std_code', cands.slice(i, i + 200))
-        if (error) throw error
-        ;(data || []).forEach((x) => { hit[x.std_code] = x })
-      }
-      const out = {}
-      for (const pn of pq.split('|')) {
-        const it = codeCandidates(pn, csCode).map((c) => hit[c]).find(Boolean)
-        if (it) out[stripPrefix(pn).toUpperCase()] = it
-      }
-      return out
-    },
+    queryFn: () => lookupItems(pq.split('|'), csCode),
   })
 
   const parts = useMemo(() => parsed.map((p) => {
@@ -77,7 +80,19 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
   const ordered = useMemo(() => orderHogis(rows), [rows])
   const missingLookup = !isFetching && parts.some((p) => !p.found)
   const hasOf = (p) => rows.filter((r) => (r.missing_parts || []).some((m) => missKey(m) === p.key))
-  const bundle = useMemo(() => collectMissing(rows), [rows])
+  const bundleRaw = useMemo(() => collectMissing(rows), [rows])
+  // 해제 탭 — 출고 연동으로 들어간 미불출은 제조사가 비어 있어 품목 마스터에서 채운다 (v4.214.0)
+  const bq = bundleRaw.filter((b) => !b.maker || !b.makerPn || !b.name).map((b) => b.pn).join('|')
+  const { data: bFound = {} } = useQuery({
+    queryKey: ['missBulkItems', csCode, 'clear', bq],
+    enabled: !!bq,
+    staleTime: 60_000,
+    queryFn: () => lookupItems(bq.split('|'), csCode),
+  })
+  const bundle = useMemo(() => bundleRaw.map((b) => {
+    const it = bFound[b.key]
+    return it ? { ...b, name: b.name || it.name || '', maker: b.maker || it.manufacturer || '', makerPn: b.makerPn || it.manufacturer_code || '' } : b
+  }), [bundleRaw, bFound])
 
   const saveMut = useMutation({
     mutationFn: async ({ kind }) => {
@@ -144,7 +159,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
 
   return (
     <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-bulk-missing>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()} data-bulk-missing>
         <div className="px-5 py-3 border-b border-slate-100 flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-sm font-bold text-slate-800">⚠ 미불출 일괄 {tab === 'add' ? '입력' : '해제'}</h3>
@@ -194,9 +209,10 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
 
             {parts.length > 0 && (
               <div className="overflow-x-auto border border-slate-100 rounded-lg">
-                <table className="w-full text-xs min-w-[780px]">
+                <table className="w-full text-xs min-w-[900px]">
                   <thead><tr className="bg-slate-50 text-slate-400">
                     <th className="px-2 py-1.5 text-left">품번</th><th className="px-2 py-1.5 text-left">품명</th><th className="px-2 py-1.5 text-left">제조사</th>
+                    <th className="px-2 py-1.5 text-left">제조사품번</th>
                     <th className="px-2 py-1.5 text-right">대당</th><th className="px-2 py-1.5 text-right">× {n}대</th>
                     <th className="px-2 py-1.5 text-right" title="지금 불출할 수 있는 수량 (합계). 비우면 전부 모자란 것으로 봅니다">있는 수량</th>
                     <th className="px-2 py-1.5 text-right">미불출</th>
@@ -214,6 +230,7 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                               : <span className="text-amber-600 font-semibold">품목 없음 — 품번만 저장</span>}
                           </td>
                           <td className="px-2 py-1.5 text-slate-500 max-w-[110px] truncate">{p.maker || '—'}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-500 max-w-[150px] truncate" title={p.makerPn} data-bulk-missing-makerpn={p.key}>{p.makerPn || '—'}</td>
                           <td className="px-2 py-1.5 text-right">
                             <input type="number" min="0" value={p.qty} onChange={(e) => setO(p.key, { qty: e.target.value === '' ? '' : Number(e.target.value) })}
                               className="w-14 px-1 py-0.5 text-right font-bold border border-slate-200 rounded" />
@@ -262,9 +279,10 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                   <button onClick={() => setClearSel(new Set())} className="px-2 py-1 rounded border border-slate-200 text-slate-500 hover:bg-slate-50">선택 해제</button>
                 </div>
                 <div className="overflow-x-auto border border-slate-100 rounded-lg">
-                  <table className="w-full text-xs min-w-[560px]">
+                  <table className="w-full text-xs min-w-[820px]">
                     <thead><tr className="bg-slate-50 text-slate-400">
                       <th className="px-2 py-1.5 w-8"></th><th className="px-2 py-1.5 text-left">품번</th><th className="px-2 py-1.5 text-left">품명</th>
+                      <th className="px-2 py-1.5 text-left">제조사</th><th className="px-2 py-1.5 text-left">제조사품번</th>
                       <th className="px-2 py-1.5 text-left">걸린 호기</th><th className="px-2 py-1.5 text-right">합계</th>
                       <th className="px-2 py-1.5 text-right" title="들어와서 불출한 수량. 비우면 전부 해제">불출한 수량</th>
                     </tr></thead>
@@ -276,6 +294,8 @@ export default function BulkMissingModal({ rows, csCode, by, onClose, onDone }) 
                           </td>
                           <td className="px-2 py-1.5 font-mono font-bold text-indigo-600">{b.pn}</td>
                           <td className="px-2 py-1.5 text-slate-600 max-w-[200px] truncate">{b.name || '—'}</td>
+                          <td className="px-2 py-1.5 text-slate-500 max-w-[110px] truncate">{b.maker || '—'}</td>
+                          <td className="px-2 py-1.5 font-mono text-slate-500 max-w-[150px] truncate" title={b.makerPn} data-bulk-clear-makerpn={b.key}>{b.makerPn || '—'}</td>
                           <td className="px-2 py-1.5 text-slate-500">{b.hogis.join(' ')}{b.hogis.length < n && <span className="text-slate-300"> · {b.hogis.length}/{n}대</span>}</td>
                           <td className="px-2 py-1.5 text-right font-bold tabular-nums">{b.total}</td>
                           <td className="px-2 py-1.5 text-right">
