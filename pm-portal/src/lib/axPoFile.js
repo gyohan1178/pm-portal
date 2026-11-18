@@ -68,7 +68,7 @@ export function parseAxPoWorkbook(XLSX, wb, from = `${new Date().getFullYear()}-
       desc: s(pick(r, ['itemdesc', 'item desc', '품명'])),
       qty: num(pick(r, ['quantity', '수량', 'qty', '발주량'])), unit_price: num(pick(r, ['unit price', 'unitprice', '단가'])) || null,
       promise_date: dnorm(pick(r, ['promisedate', 'promise date', '약속일', '납기'])), status: '진행중', stText: '',
-      order_date: dnorm(pick(r, ['orderdate', 'order date', '발주일'])),
+      order_date: dnorm(pick(r, ['dateplaced', 'orderdate', 'order date', '발주일'])),   // AX 엑셀은 「Date Placed」 (v4.215.0)
     }
   }).filter((r) => r.pn && r.po_number)
     // 같은 PO · 라인 · 분할이 두 번 나오면 앞 줄만 (insert 가 unique 에 걸리지 않게, v4.90.6)
@@ -87,6 +87,7 @@ export function parseAxPoWorkbook(XLSX, wb, from = `${new Date().getFullYear()}-
       ccn: s(pick(r, ['ccn'])), item_rev: '', desc: s(pick(r, ['itemdesc', 'item desc', '품명'])),
       qty: num(pick(r, ['quantity', '수량', 'qty', '발주량', 'received', 'rcv qty'])), unit_price: num(pick(r, ['unit price', 'unitprice', '단가'])) || null,
       promise_date: dnorm(pick(r, ['promisedate', 'promise date'])),
+      order_date: dnorm(pick(r, ['dateplaced', 'orderdate', 'order date', '발주일'])),
     }
     const k = keyOf(row)
     if (curKeys.has(k)) continue                       // 진행 중 시트에 있는 줄은 그쪽이 우선

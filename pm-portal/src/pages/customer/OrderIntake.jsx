@@ -809,7 +809,7 @@ export default function OrderIntake() {
   }
   async function axRun() {
     setAxBusy(true)
-    try { const r = await axSyncRun(axPrev, meName); toastSuccess(`PO 엑셀 반영 — 새 PO ${r.created}건 · 바뀐 품목 ${r.changed}${r.resets ? ` · 재회신 ${r.resets}` : ''}`); setAxPrev(null); refresh() } catch (e) { toastError('반영 실패: ' + e.message) }
+    try { const r = await axSyncRun(axPrev, meName); toastSuccess(`PO 엑셀 반영 — 새 PO ${r.created}건 · 바뀐 품목 ${r.changed}${r.resets ? ` · 재회신 ${r.resets}` : ''}${r.orderDate ? ` · 발주일 채움 ${r.orderDate}` : ''}`); setAxPrev(null); refresh() } catch (e) { toastError('반영 실패: ' + e.message) }
     setAxBusy(false)
   }
 
@@ -1092,7 +1092,7 @@ export default function OrderIntake() {
 
       {axPrev && (() => {
         const s = axPrev.summary
-        const nothing = !s.newPos && !s.changedPos
+        const nothing = !s.newPos && !s.changedPos && !s.orderDate
         return (
           <div className="rounded-xl border border-violet-200 bg-violet-50/50 p-4 text-sm" data-ax-preview>
             <b>AXCELIS PO 엑셀 → 수주대장 반영</b> <span className="text-xs font-mono text-slate-500">{axPrev.fileName}</span>
@@ -1105,6 +1105,7 @@ export default function OrderIntake() {
                 {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
                 {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · SREV {s.rev}{s.brev ? ` · BREV ${s.brev}` : ''} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
                 {s.fromRcv > 0 && <div>· 그중 Received 시트에서 온 줄 {s.fromRcv} — Current Data 에 없는 지난 납품 · 취소분</div>}
+                {s.orderDate > 0 && <div data-ax-orderdate>· 발주일이 빈 PO <b>{s.orderDate}</b>건 — 엑셀 「Date Placed」 로 채움</div>}
                 {s.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>재회신 필요</b> {s.resets}건</div>}
                 {axPrev.hist.length > 0 && (
                   <div className="mt-2 max-h-40 overflow-y-auto bg-white rounded-lg border border-violet-100 p-2 font-mono text-[11px]">

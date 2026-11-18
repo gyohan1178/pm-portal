@@ -503,7 +503,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
       const ts = r.tpSync
       const tpMsg = ts && (ts.created || ts.updated || ts.unlinked)
         ? ` · 3rd party 생산관리(신규 ${ts.created}, 갱신 ${ts.updated}${ts.unlinked ? `, 연결 해제 ${ts.unlinked}` : ''})` : ''
-      const ordMsg = r.ord ? ` · 수주대장(새 PO ${r.ord.created} · 바뀐 품목 ${r.ord.changed}${r.ord.resets ? ` · 재회신 ${r.ord.resets}` : ''})` : ''
+      const ordMsg = r.ord ? ` · 수주대장(새 PO ${r.ord.created} · 바뀐 품목 ${r.ord.changed}${r.ord.resets ? ` · 재회신 ${r.ord.resets}` : ''}${r.ord.orderDate ? ` · 발주일 채움 ${r.ord.orderDate}` : ''})` : ''
       setResult(`적용 완료 — 변경 ${r.changed}건, 신규 ${r.inserted}건${r.created ? `, 자동등록 ${r.created}건` : ''}${r.done ? `, 납품완료 ${r.done}건` : ''}${r.canceled ? `, 취소 ${r.canceled}건` : ''}${r.priceFilled ? `, 완료건 단가채움 ${r.priceFilled}건` : ''}${syncMsg}${doneMsg}${tpMsg}${ordMsg}`)
       setRows([]); setDiff(null); setDisCheck({}); setTp({ rows: [], skipped: [] })
       qc.invalidateQueries(['cpo']); qc.invalidateQueries(['shortage'])
@@ -577,7 +577,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
               {/* 수주대장도 같이 (v4.101.0) */}
               {(() => {
                 const op = diff.ordPv, sm = op?.summary
-                const none = op && !sm.newPos && !sm.changedPos
+                const none = op && !sm.newPos && !sm.changedPos && !sm.orderDate
                 return (
                   <div data-cpo-ord className={`rounded-xl border px-4 py-3 text-xs ${op ? 'border-violet-200 bg-violet-50/60 text-slate-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
                     <b className="text-violet-700">📨 수주대장도 같이 맞춥니다</b>
@@ -586,6 +586,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
                       : <div className="mt-1 space-y-0.5">
                           {sm.newPos > 0 && <div>· 새 PO <b>{sm.newPos}</b>건 · {sm.newLines}품목</div>}
                           {sm.changedPos > 0 && <div>· 바뀐 PO <b>{sm.changedPos}</b>건 — 납기 {sm.due} · 수량 {sm.qty} · SREV {sm.rev}{sm.brev ? ` · BREV ${sm.brev}` : ''} · 단가 {sm.price} · 납품 {sm.delivered} · 취소 {sm.cancelled}{sm.added ? ` · 품목 추가 ${sm.added}` : ''}</div>}
+                          {sm.orderDate > 0 && <div>· 발주일이 빈 PO <b>{sm.orderDate}</b>건 — 엑셀 「Date Placed」 로 채움</div>}
                           {sm.resets > 0 && <div className="text-red-600">· 납기가 당겨지거나 수량이 늘어 <b>구매자재 재회신 필요</b> {sm.resets}건</div>}
                         </div>}
                     {op && sm.missing > 0 && <div className="mt-1 text-amber-700">· 엑셀 어디에도 없는 수주대장 진행 중 줄 {sm.missing} — 바꾸지 않음</div>}

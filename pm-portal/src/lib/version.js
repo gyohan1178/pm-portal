@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.214.0'
+export const APP_VERSION = 'v4.215.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.214.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.215.0',
+    date: '2026-11-18',
+    changes: [
+      'AX PO 엑셀 — 발주일을 「Date Placed」 칸에서 읽음 (예전엔 칸 이름이 달라 비어 있었음). 새 PO 는 발주일이 들어가고, 이미 있는 PO 중 발주일이 빈 건은 다음 엑셀 반영 때 채움 (있는 값은 그대로)',
+    ],
+  },
   {
     version: 'v4.214.0',
     date: '2026-11-18',

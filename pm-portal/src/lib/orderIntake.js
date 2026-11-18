@@ -499,7 +499,7 @@ export async function axSyncPreview(fileRows) {
   if (!fileRows?.length) throw new Error('PO 엑셀에서 읽은 줄이 없습니다')
   const rows = await axRowsOfFile(fileRows)
   const brevReady = await brevColReady()   // BREV 칸(SQL 전이면 없음) — 없으면 BREV 는 건너뛴다
-  const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no').eq('customer_code', 'AX').order('id'))
+  const heads = await fetchAll(() => supabase.from('pm_order').select('id,po_no,order_date').eq('customer_code', 'AX').order('id'))
   // 3rd party (동신 · 동원파츠 …) PO 는 수주대장에서 「기타」 업체 — AXCELIS 로 다시 들이지 않는다 (v4.111.0)
   //   ① 기타로 등록된 PO 번호 ② 고객사 PO 의 3rd party 줄 PO 번호 — 이 엑셀에 섞여 있어도 건너뛴다
   const skipNos = new Set()
@@ -521,7 +521,7 @@ export async function axSyncPreview(fileRows) {
   rows.forEach((r) => { if (!r.po_number) return; if (!byPo.has(r.po_number)) byPo.set(r.po_number, []); byPo.get(r.po_number).push(r) })
   const headByNo = new Map(heads.map((h) => [h.po_no, h]))
 
-  const newPos = [], upd = [], add = []; const hist = []; let resets = 0, skippedTp = 0
+  const newPos = [], upd = [], add = [], headFill = []; const hist = []; let resets = 0, skippedTp = 0
   for (const [po_no, ls] of byPo) {
     if (skipNos.has(po_no) && !headByNo.has(po_no)) { skippedTp++; continue }
     const h = headByNo.get(po_no)
@@ -529,6 +529,9 @@ export async function axSyncPreview(fileRows) {
       if (ls.some((l) => l.status !== '취소')) newPos.push({ po_no, lines: ls, live: ls.some((l) => l.status === '진행중') })
       continue
     }
+    // 발주일이 빈 PO (엑셀 이관 · 예전 업로드) — 엑셀 「Date Placed」 로 채운다. 이미 있는 값은 그대로 (v4.215.0)
+    const od = ls.map((l) => l.order_date).filter(Boolean).sort()[0]
+    if (od && !h.order_date) { headFill.push({ id: h.id, po_no, order_date: od }); hist.push({ po_no, order_id: h.id, line_key: null, field: 'fill', before_val: null, after_val: `발주일 ${od}` }) }
     const mine = new Map((linesBy.get(h.id) || []).map((l) => [`${l.line_no}/${l.del_line}`, l]))
     for (const r of ls) {
       const k = keyOfPo(r)
@@ -571,13 +574,13 @@ export async function axSyncPreview(fileRows) {
     .map((l) => ({ po_no: noByHead.get(l.order_id), key: `${l.line_no}/${l.del_line}`, due: l.due_date }))
   const cnt = (f) => hist.filter((x) => x.field === f).length
   return {
-    newPos, upd, add, hist, missing, brevReady,
+    newPos, upd, add, headFill, hist, missing, brevReady,
     summary: {
       newPos: newPos.length, newLines: newPos.reduce((a, p) => a + p.lines.length, 0),
       newLive: newPos.filter((p) => p.live).length, newDone: newPos.filter((p) => !p.live).length,
       fromRcv: newPos.reduce((a, p) => a + p.lines.filter((l) => l.fromRcv).length, 0) + add.filter((x) => x.r.fromRcv).length,
       missing: missing.length,
-      changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size,
+      changedPos: new Set([...upd, ...add].map((u) => u.order_id)).size, orderDate: headFill.length,
       due: cnt('due_date'), qty: cnt('qty'), rev: cnt('rev'), brev: cnt('brev'), price: cnt('unit_price'),
       delivered: cnt('delivered'), cancelled: cnt('line_del'), added: add.length, resets, skippedTp,
     },
@@ -618,7 +621,8 @@ export async function axSyncRun(pv, meName) {
     if (e2) { await supabase.from('pm_order').delete().eq('id', o.id); throw e2 }
     created++
   }
-  // 2) 기존 PO 고치기
+  // 2) 기존 PO 고치기 — 빈 발주일 먼저 (v4.215.0)
+  await pool(pv.headFill || [], (f) => supabase.from('pm_order').update({ order_date: f.order_date }).eq('id', f.id).is('order_date', null))
   await pool(pv.upd, (u) => supabase.from('pm_order_line').update({ ...u.patch, updated_at: now }).eq('id', u.id))   // 20줄씩 동시에 (v4.90.6)
   if (pv.add.length) {
     const { error } = await supabase.from('pm_order_line').insert(pv.add.map((a) => importRow(a.order_id, a.r, pv.brevReady)))
@@ -629,10 +633,10 @@ export async function axSyncRun(pv, meName) {
     const { error } = await supabase.from('pm_order_change').insert(all.slice(i, i + 500))
     if (error) throw error
   }
-  const touched = [...new Set([...pv.upd, ...pv.add].map((u) => u.order_id))]
+  const touched = [...new Set([...pv.upd, ...pv.add, ...(pv.headFill || []).map((f) => ({ order_id: f.id }))].map((u) => u.order_id))]
   if (touched.length) await supabase.from('pm_order').update({ updated_at: now }).in('id', touched)
-  logActivity('upload', 'pm_order', pv.fileName || null, `AX PO 엑셀 반영 — 새 PO ${created}건 · 바뀐 품목 ${pv.upd.length + pv.add.length}${pv.summary.resets ? ` · 재회신 ${pv.summary.resets}` : ''}`, null, 'AXCELIS')
-  return { created, changed: pv.upd.length + pv.add.length, logs: all.length, resets: pv.summary.resets }
+  logActivity('upload', 'pm_order', pv.fileName || null, `AX PO 엑셀 반영 — 새 PO ${created}건 · 바뀐 품목 ${pv.upd.length + pv.add.length}${pv.summary.resets ? ` · 재회신 ${pv.summary.resets}` : ''}${pv.headFill?.length ? ` · 발주일 채움 ${pv.headFill.length}` : ''}`, null, 'AXCELIS')
+  return { created, changed: pv.upd.length + pv.add.length, logs: all.length, resets: pv.summary.resets, orderDate: pv.headFill?.length || 0 }
 }
 
 // ── 목록 ────────────────────────────────────────────────────
