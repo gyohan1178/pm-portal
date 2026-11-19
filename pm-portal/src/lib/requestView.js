@@ -84,7 +84,8 @@ const LIVE_CMP = {
 }
 
 // cust (v4.224.0) — 고객사로 거르기 · null 전체 · '__none' 고객사 없음 · 'AX' 같은 코드(대문자)
-export function buildView(list, { who = null, kpi = null, me = '', today = ymdLocal(), top = 4, sort = 'urgent', cust = null } = {}) {
+// q (v4.224.1) — 진행 중 목록 찾기 · 띄어쓰기로 나눈 낱말이 모두 든 요청 (요청번호 · 품번 · 품명 · 제조사 · 요청자 · 처리자 · 목적 · 제품 · 호기 · 고객사)
+export function buildView(list, { who = null, kpi = null, me = '', today = ymdLocal(), top = 4, sort = 'urgent', cust = null, q = '' } = {}) {
   let groups = groupRequests(list).map((g) => decorate(g, today))
   // 품번 순이면 요청 안의 품목 줄도 같은 순서로
   if (sort === 'pnAsc' || sort === 'pnDesc') groups = groups.map((g) => ({ ...g, items: [...g.items].sort((a, b) => (sort === 'pnAsc' ? 1 : -1) * cmp(String(a.std_code || ''), String(b.std_code || ''))) }))
@@ -116,12 +117,14 @@ export function buildView(list, { who = null, kpi = null, me = '', today = ymdLo
     ...[...byCust.entries()].filter(([c]) => c !== '__none').sort((a, b) => b[1] - a[1] || cmp(a[0], b[0])).map(([c, n]) => ({ key: c, label: c, count: n })),
     ...(byCust.get('__none') ? [{ key: '__none', label: '고객사 없음', count: byCust.get('__none'), none: true }] : [])]
   const passCust = (g) => cust === null || (cust === '__none' ? !custOf(g) : custOf(g) === cust)
-  const shown = groups.filter((g) => passWho(g) && passCust(g) && (!kpi || KPI_TEST[kpi](g)))
+  const words = String(q || '').toLowerCase().split(/\s+/).filter(Boolean)
+  const passQ = (g) => !words.length || (() => { const h = g.items.map((r) => HAY_KEYS.map((k) => r[k] ?? '').join(' ')).join(' ').toLowerCase(); return words.every((w) => h.includes(w)) })()
+  const shown = groups.filter((g) => passWho(g) && passCust(g) && passQ(g) && (!kpi || KPI_TEST[kpi](g)))
   const flat = LIVE_CMP[sort]
   const sections = flat
     ? [{ key: 'all', label: LIVE_SORTS.find((x) => x.key === sort).label, tone: 'gray', groups: [...shown].sort(flat) }]
     : BUCKETS.map((b) => ({ ...b, groups: shown.filter((g) => g.bucket === b.key).sort(SORT[b.key]) }))
-  return { groups, shown, counts, chips, custChips, sections, filtered: who !== null || cust !== null || !!kpi || !!flat, items: (list || []).length, sort }
+  return { groups, shown, counts, chips, custChips, sections, filtered: who !== null || cust !== null || words.length > 0 || !!kpi || !!flat, items: (list || []).length, sort }
 }
 
 // ── 완료 · 반려 · 전체 탭 (v4.82.0) — 검색 · 처리유형 · 정렬 ──

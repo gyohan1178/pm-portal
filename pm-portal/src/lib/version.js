@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.224.0'
+export const APP_VERSION = 'v4.224.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.224.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.224.1',
+    date: '2026-11-19',
+    changes: [
+      '자재 요청 — 진행 중 칩 줄에 찾기 칸 (요청번호 · 품번 · 품명 · 제조사 · 요청자 · 처리자 · 고객사). 처리자 · 고객사 칩과 같이 걸림',
+    ],
+  },
   {
     version: 'v4.224.0',
     date: '2026-11-19',

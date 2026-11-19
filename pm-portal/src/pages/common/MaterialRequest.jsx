@@ -118,6 +118,7 @@ export default function MaterialRequest() {
   // 위 칩 줄 — 처리자별 / 고객사별 (v4.224.0)
   const [chipBy, setChipBy] = useState('handler')
   const [custSel, setCustSel] = useState(null)
+  const [liveQ, setLiveQ] = useState('')         // 진행 중 찾기 (v4.224.1)
   const setLiveSort = (v) => { setLiveSortS(v); try { localStorage.setItem('mrLiveSort', v) } catch { /* 저장 못 해도 화면은 바뀜 */ } }
   const [kpi, setKpi] = useState(null)        // overdue · readyLate · unassigned · urgent
   // 처음엔 모두 펼친 상태 (2026-10-06 사용자 요청) — 구간 머리줄 · 「품목 모두 접기」로 접는다
@@ -227,8 +228,8 @@ export default function MaterialRequest() {
   const [dType, setDType] = useState(null)
   const [dSort, setDSort] = useState('handled')
   const reqView = useMemo(
-    () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '', sort: liveTab ? liveSort : 'urgent', cust: liveTab ? custSel : null }),
-    [list, who, kpi, me?.name, liveTab, liveSort, custSel])
+    () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '', sort: liveTab ? liveSort : 'urgent', cust: liveTab ? custSel : null, q: liveTab ? liveQ : '' }),
+    [list, who, kpi, me?.name, liveTab, liveSort, custSel, liveQ])
   const doneV = useMemo(() => doneView(reqView.groups, { q: dQ, type: dType, sort: dSort }), [reqView, dQ, dType, dSort])
 
   // ── 내가 낸 요청 중 아직 안 본 알림 ──
@@ -1875,9 +1876,15 @@ export default function MaterialRequest() {
                   {c.me ? '🧑‍🔧 ' : ''}{c.label} {n(c.count)}
                 </button>
               ))}
+              <span className="ml-auto relative">
+                <input value={liveQ} onChange={e => { setLiveQ(e.target.value); setSel({}) }} type="search" data-req-live-q
+                  placeholder="요청번호 · 품번 · 품명 · 제조사 · 요청자 · 처리자 찾기"
+                  className="w-[300px] h-[30px] pl-2.5 pr-7 text-xs border border-slate-200 rounded-lg bg-white focus:outline-none focus:border-[#6c5ce7]" />
+                {liveQ && <button type="button" onClick={() => setLiveQ('')} aria-label="찾기 지우기" className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 text-xs">✕</button>}
+              </span>
               <select value={liveSort} onChange={e => setLiveSort(e.target.value)} data-req-live-sort
                 title="목록 순서 — 기본은 급한 순 구간(지금 볼 것 → 이번 주 …). 다른 순서를 고르면 구간 없이 한 목록"
-                className="ml-auto h-[30px] px-2 text-xs font-bold border border-slate-200 rounded-lg bg-white text-slate-600">
+                className="h-[30px] px-2 text-xs font-bold border border-slate-200 rounded-lg bg-white text-slate-600">
                 {LIVE_SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
               <button onClick={() => { setAllCards(v => !v); setCardOpen({}) }}
@@ -2238,8 +2245,8 @@ export default function MaterialRequest() {
               if (!reqView.shown.length) {
                 return list.length ? (
                   <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
-                    고른 조건에 맞는 요청이 없습니다
-                    <button onClick={() => { setWho(null); setKpi(null) }} className="ml-2 text-xs font-bold text-indigo-600 hover:underline">조건 풀기</button>
+                    고른 조건에 맞는 요청이 없습니다{liveQ ? ` — 「${liveQ}」` : ''}
+                    <button onClick={() => { setWho(null); setKpi(null); setCustSel(null); setLiveQ('') }} className="ml-2 text-xs font-bold text-indigo-600 hover:underline">조건 풀기</button>
                   </div>
                 ) : null
               }
