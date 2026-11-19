@@ -125,22 +125,38 @@ export default function Items() {
   const qc = useQueryClient()
   const [ask, confirmEl] = useConfirm()
   // 견적용 임시코드(TMP-) → 고객사 정식 코드 (v4.160.0) — 단가 · 이력은 이어지고, 이 품목을 쓰는 견적 접수는 다시 점검
-  async function promote(item) {
-    const m = await ask({ title: `${item.std_code} — 정식 코드로 바꿀까요?`,
-      desc: `고객사 품번(AX- · ED- 등)을 적습니다 — TMP- 를 그대로 두면 안 됩니다. 새 코드가 아직 없으면 이 품목의 기준코드만 바뀝니다 (매입가 · 이력 그대로 · 재고관리 다시 켬). 이미 있는 코드면 견적 부품표를 그 품목으로 옮기고, 그쪽에 매입가가 없으면 넘긴 뒤 임시 품목을 지웁니다.${item.js_code ? ` 고객사가 코드를 정해 주지 않는 품목이면 ${item.js_code} 를 적으세요 (JS 코드가 붙은 임시 품목은 자동으로 바뀝니다).` : ' 고객사가 코드를 정해 주지 않는 품목이면 품목 수정에서 JS 코드만 붙이세요 — 자동으로 JS 코드로 바뀝니다.'}`,
-      items: [[item.name, item.manufacturer, item.manufacturer_code].filter(Boolean).join(' · ')],
-      okText: '정식 코드로', input: { label: '정식 코드', required: true, placeholder: '예: ED-IE0441400 · AX-110173680', rows: 1 } })
-    if (!m) return
+  //   v4.219.0 — 두 갈래: ① 고객사 품번이 있으면 그 품번 ② 고객사가 코드를 안 정해 주면 JS 코드 (있으면 그대로 · 없으면 분류 골라 새로 채번)
+  //   어느 쪽이든 TMP- 임시코드는 없어진다 (기준코드가 바뀜 · 매입가 · 이력 · 견적 부품표는 그대로)
+  const [prom, setProm] = useState(null)        // { item, mode: 'js' | 'cust', code, cat, busy }
+  const promote = (item) => setProm({ item, mode: 'js', code: '', cat: '', busy: false })
+  async function doPromote() {
+    const { item, mode } = prom
+    setProm((p) => ({ ...p, busy: true }))
     try {
-      const r = await promoteTempCode(item, m.value)
+      let code = ''
+      if (mode === 'cust') {
+        code = String(prom.code || '').trim().toUpperCase()
+        if (!code) throw new Error('고객사 품번을 적어 주세요')
+      } else if (item.js_code) code = String(item.js_code).trim().toUpperCase()
+      else {
+        if (!prom.cat) throw new Error('JS 코드 분류를 골라 주세요')
+        const { data, error } = await supabase.rpc('pm_next_js_code', { p_cat: prom.cat })
+        if (error) throw new Error('JS 코드 채번 실패 — ' + error.message)
+        code = String(data || '').trim().toUpperCase()
+        if (!code) throw new Error('JS 코드 채번 결과가 비었습니다')
+        const { error: e2 } = await supabase.from('items').update({ js_code: code }).eq('id', item.id)
+        if (e2) throw e2
+      }
+      const r = await promoteTempCode(item, code)
       for (const id of r.rfqIds) {
         const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
         const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
         if (h) await checkRfq({ ...h, lines: ls || [] }).catch(swallow('단가 등록 뒤 견적 접수 상태 갱신'))
       }
       qc.invalidateQueries(['items'])
-      toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ''}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)
-    } catch (e) { toastError('정식 코드 전환 실패: ' + (e.message || e)) }
+      setProm(null)
+      toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ' · 임시코드 없어짐'}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)
+    } catch (e) { toastError('정식 코드 전환 실패: ' + (e.message || e)); setProm((p) => (p ? { ...p, busy: false } : p)) }
   }
   // 고객사 코드 미지정 임시 품목 → JS 코드로 자동 전환 (v4.218.0) — JS 코드가 붙은 TMP 품목만
   async function autoJs(quiet) {
@@ -252,8 +268,8 @@ export default function Items() {
   // 기준코드 채번 — 분류를 고르면 다음 번호를 제안한다.
   // items 와 pm_code_map(ecount 매핑) 양쪽 최대값을 보므로 번호가 겹치지 않는다.
   const { data: nextCodes = [] } = useQuery({
-    queryKey: ['nextJsCodes', showForm],
-    enabled: !!showForm,
+    queryKey: ['nextJsCodes', showForm, !!prom],
+    enabled: !!showForm || !!prom,
     staleTime: 0,
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_next_js_codes')
@@ -403,6 +419,45 @@ export default function Items() {
   return (
     <div className="space-y-4">
       {confirmEl}
+      {prom && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-tmp-modal>
+          <div className="w-full max-w-lg bg-white rounded-2xl shadow-xl p-5 space-y-3" role="dialog" aria-modal="true">
+            <h3 className="text-[16px] font-extrabold">{prom.item.std_code} — 정식 코드로 바꿉니다</h3>
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-[13px] text-slate-600">{[prom.item.name, prom.item.manufacturer, prom.item.manufacturer_code].filter(Boolean).join(' · ')}</div>
+            <label className={`flex gap-2.5 items-start rounded-xl border p-3 cursor-pointer ${prom.mode === 'js' ? 'border-violet-400 bg-violet-50' : 'border-slate-200'}`}>
+              <input type="radio" className="mt-1" checked={prom.mode === 'js'} onChange={() => setProm((p) => ({ ...p, mode: 'js' }))} />
+              <span className="flex-1 text-[13px]">
+                <b>고객사가 코드를 정해 주지 않음 → JS 코드로</b>
+                {prom.item.js_code
+                  ? <span className="block text-slate-500 mt-0.5">이 품목의 JS 코드 <b className="font-mono text-violet-700">{prom.item.js_code}</b> 가 기준코드가 됩니다.</span>
+                  : (<span className="block mt-1.5">
+                      <span className="block text-slate-500 mb-1">JS 코드가 없습니다 — 분류를 고르면 다음 번호로 새로 붙입니다.</span>
+                      <select value={prom.cat} onChange={(e) => setProm((p) => ({ ...p, mode: 'js', cat: e.target.value }))} data-tmp-cat
+                        className="h-9 px-2 text-[13px] border border-slate-200 rounded-lg bg-white w-full">
+                        <option value="">분류 고르기</option>
+                        {nextCodes.map((c) => <option key={c.code} value={c.code}>{c.code} {c.label} → {c.next_code}</option>)}
+                      </select>
+                    </span>)}
+              </span>
+            </label>
+            <label className={`flex gap-2.5 items-start rounded-xl border p-3 cursor-pointer ${prom.mode === 'cust' ? 'border-violet-400 bg-violet-50' : 'border-slate-200'}`}>
+              <input type="radio" className="mt-1" checked={prom.mode === 'cust'} onChange={() => setProm((p) => ({ ...p, mode: 'cust' }))} />
+              <span className="flex-1 text-[13px]">
+                <b>고객사 품번이 있음</b>
+                <input value={prom.code} onChange={(e) => setProm((p) => ({ ...p, mode: 'cust', code: e.target.value }))} placeholder="예: ED-IE0441400 · AX-110173680" data-tmp-code
+                  className="mt-1.5 w-full h-9 px-2.5 text-[13px] font-mono border border-slate-200 rounded-lg" />
+                <span className="block text-[12px] text-slate-400 mt-1">이미 있는 코드면 견적 부품표를 그 품목으로 옮기고 임시 품목은 지웁니다.</span>
+              </span>
+            </label>
+            <p className="text-[12px] text-slate-400">어느 쪽이든 TMP- 임시코드는 없어지고, 매입가 · 이력 · 견적 부품표는 그대로 이어집니다.</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" onClick={() => setProm(null)} disabled={prom.busy} className="h-[38px] px-4 rounded-[9px] border border-slate-200 text-[13px] font-bold text-slate-600">취소</button>
+              <button type="button" onClick={doPromote} disabled={prom.busy || (prom.mode === 'js' && !prom.item.js_code && !prom.cat) || (prom.mode === 'cust' && !prom.code.trim())} data-tmp-ok
+                className="h-[38px] px-4 rounded-[9px] bg-violet-600 text-white text-[13px] font-bold disabled:opacity-40">{prom.busy ? '바꾸는 중…' : '정식 코드로'}</button>
+            </div>
+          </div>
+        </div>
+      )}
       <PageHead crumb="기초자료" title="기준코드 DB"
         desc="모든 품목의 기준코드(JS-) · 품명 · 제조사 · 구매처를 관리합니다. 고객사 코드와의 연결은 「기준코드 매핑」에서 합니다."></PageHead>
       <div className="flex items-center gap-3 flex-wrap">
