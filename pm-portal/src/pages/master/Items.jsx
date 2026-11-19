@@ -1,5 +1,5 @@
 import { EmptyRow } from '../../components/ui/EmptyState'
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import PageHead from '../../components/PageHead'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
@@ -14,7 +14,7 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
-import { isTempCode, promoteTempCode } from '../../lib/tempCode'
+import { isTempCode, promoteTempCode, autoPromoteTempJs } from '../../lib/tempCode'
 import { checkRfq } from './rfq'
 import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn, CPS_INFO } from '../../lib/itemMeta'
 import ItemMetaPanel from '../../components/ItemMetaPanel'
@@ -127,7 +127,7 @@ export default function Items() {
   // 견적용 임시코드(TMP-) → 고객사 정식 코드 (v4.160.0) — 단가 · 이력은 이어지고, 이 품목을 쓰는 견적 접수는 다시 점검
   async function promote(item) {
     const m = await ask({ title: `${item.std_code} — 정식 코드로 바꿀까요?`,
-      desc: '새 코드가 아직 없으면 이 품목의 기준코드만 바뀝니다 (매입가 · 이력 그대로 · 재고관리 다시 켬). 이미 있는 코드면 견적 부품표를 그 품목으로 옮기고, 그쪽에 매입가가 없으면 넘긴 뒤 임시 품목을 지웁니다.',
+      desc: `고객사 품번(AX- · ED- 등)을 적습니다 — TMP- 를 그대로 두면 안 됩니다. 새 코드가 아직 없으면 이 품목의 기준코드만 바뀝니다 (매입가 · 이력 그대로 · 재고관리 다시 켬). 이미 있는 코드면 견적 부품표를 그 품목으로 옮기고, 그쪽에 매입가가 없으면 넘긴 뒤 임시 품목을 지웁니다.${item.js_code ? ` 고객사가 코드를 정해 주지 않는 품목이면 ${item.js_code} 를 적으세요 (JS 코드가 붙은 임시 품목은 자동으로 바뀝니다).` : ' 고객사가 코드를 정해 주지 않는 품목이면 품목 수정에서 JS 코드만 붙이세요 — 자동으로 JS 코드로 바뀝니다.'}`,
       items: [[item.name, item.manufacturer, item.manufacturer_code].filter(Boolean).join(' · ')],
       okText: '정식 코드로', input: { label: '정식 코드', required: true, placeholder: '예: ED-IE0441400 · AX-110173680', rows: 1 } })
     if (!m) return
@@ -142,6 +142,20 @@ export default function Items() {
       toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ''}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)
     } catch (e) { toastError('정식 코드 전환 실패: ' + (e.message || e)) }
   }
+  // 고객사 코드 미지정 임시 품목 → JS 코드로 자동 전환 (v4.218.0) — JS 코드가 붙은 TMP 품목만
+  async function autoJs(quiet) {
+    try {
+      const r = await autoPromoteTempJs()
+      for (const id of r.rfqIds) {
+        const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
+        const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
+        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(swallow('JS 코드 자동 전환 뒤 견적 접수 상태 갱신'))
+      }
+      if (r.done.length) { qc.invalidateQueries({ queryKey: ['items'] }); toastSuccess(`임시코드 ${r.done.length}건 → JS 코드로 전환 (${r.done.slice(0, 3).map((x) => `${x.from}→${x.code}`).join(', ')}${r.done.length > 3 ? ' …' : ''})`) }
+      if (r.failed.length && !quiet) toastError(`JS 코드 전환 못 함 ${r.failed.length}건 — ${r.failed[0].code}: ${r.failed[0].msg}`)
+    } catch (e) { if (!quiet) toastError('JS 코드 자동 전환 실패: ' + (e.message || e)) }
+  }
+  useEffect(() => { autoJs(true) }, [])   // eslint-disable-line react-hooks/exhaustive-deps -- 화면 열 때 한 번 (예전에 JS 코드가 붙은 임시 품목)
   const [search, setSearch] = useState('')
   const [searchField, setSearchField] = useState('전체')  // 전체/코드/품명/규격/구매처
   const [catFilter, setCatFilter] = useState('전체')
@@ -226,7 +240,7 @@ export default function Items() {
         if (error) throw error
       }
     },
-    onSuccess: () => { qc.invalidateQueries(['items']); setForm(EMPTY); setShowForm(false); setEditId(null) },
+    onSuccess: (_, data) => { qc.invalidateQueries(['items']); setForm(EMPTY); setShowForm(false); setEditId(null); if (isTempCode(data?.std_code) && data?.js_code) autoJs() },
     onError: (e) => toastError('오류: ' + e.message),
   })
 

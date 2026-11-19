@@ -3,6 +3,7 @@ import { useState, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { autoPromoteTempJs } from '../../lib/tempCode'
 import { toastError, toastSuccess } from '../../lib/toast'
 import {
   parseCodeWorkbook, mergeDetail, summarizeCodes, CS_PREFIX,
@@ -93,6 +94,9 @@ export default function CodeMapUpload() {
       const { data, error } = await supabase.rpc('pm_fill_js_code')
       if (error) throw error
       toastSuccess(`기준코드 ${data ?? 0}건 채움`)
+      // JS 코드가 붙은 임시(TMP-) 품목은 JS 코드를 기준코드로 (v4.218.0)
+      const ap = await autoPromoteTempJs().catch(() => null)
+      if (ap?.done.length) toastSuccess(`임시코드 ${ap.done.length}건 → JS 코드로 전환`)
       qc.invalidateQueries({ queryKey: ['codeMapStatus'] })
       setResult({ step: 'js', count: data ?? 0 })
     } catch (e) {

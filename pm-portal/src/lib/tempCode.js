@@ -5,6 +5,7 @@
 //   · 견적 접수 품목에는 그 품목 하나짜리 부품표(paste_parts)를 붙인다 → 단가 없음이면 구매자재 「영업 견적 단가 요청」에 기준코드로 뜨고,
 //     구매자재가 적은 단가는 품목 매입가에 남아 다음 견적 때 그대로 쓴다
 //   · 나중에 고객사 코드(AX- · ED- …)가 나오면 「정식 코드로」 — 이력 · 단가를 그대로 이어서 코드만 바꾸거나, 이미 있는 코드면 그쪽으로 옮긴다
+//   · 고객사가 코드를 정해 주지 않는 품목(v4.218.0) — 임시 품목에 JS 코드가 붙으면 그 JS 코드가 바로 기준코드가 된다 (autoPromoteTempJs)
 import { supabase } from './supabase'
 import { matchPartsPaste, normMpn } from './quotePartsPaste'
 import { prefixOf } from './custPrefix'
@@ -124,4 +125,22 @@ export async function promoteTempCode(item, newCode, meName) {
   }
   logActivity('update', 'items', code, `임시코드 정식 전환 ${item.std_code} → ${code}${target ? ' (이미 있던 품목으로 옮김)' : ''}`)
   return { code, merged: !!target, removed, rfqIds: [...new Set((ls || []).map((l) => l.rfq_id))] }
+}
+
+// 임시 품목 중 JS 코드가 붙은 것 → JS 코드를 기준코드로 (v4.218.0)
+//   고객사가 코드를 정해 주지 않는 품목(발주서에 제조사품번만 오는 경우)은 JS 코드가 곧 정식 코드.
+//   품목 저장 · 일괄수정 · JS 코드 채우기 뒤, 그리고 기준코드 DB 를 열 때 한 번 돈다 — 이미 바뀐 것은 다시 안 건드림.
+//   같은 JS 코드를 기준코드로 쓰는 품목이 이미 있으면 promoteTempCode 가 그쪽으로 합친다 (견적 부품표 · 매입가 이어감)
+export async function autoPromoteTempJs(meName) {
+  const { data, error } = await supabase.from('items').select('id,std_code,js_code,name,memo,purchase_price')
+    .like('std_code', 'TMP-%').not('js_code', 'is', null).limit(200)
+  if (error) throw error
+  const done = [], failed = []
+  for (const it of data || []) {
+    const js = String(it.js_code || '').trim().toUpperCase()
+    if (!js || isTempCode(js)) continue
+    try { done.push({ from: it.std_code, ...(await promoteTempCode(it, js, meName)) }) }
+    catch (e) { failed.push({ code: it.std_code, js, msg: e.message || String(e) }) }
+  }
+  return { done, failed, rfqIds: [...new Set(done.flatMap((r) => r.rfqIds || []))] }
 }
