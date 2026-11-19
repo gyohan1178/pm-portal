@@ -38,6 +38,7 @@ const WorkFlowPage = lazy(() => import('./pages/WorkFlowPage'))
 const FaProgress = lazy(() => import('./pages/quality/FaProgress'))
 const CnHistory = lazy(() => import('./pages/quality/CnHistory'))
 const Complaints = lazy(() => import('./pages/quality/Complaints'))   // 고객사 불만 접수 (v4.181.0)
+const TechDocs = lazy(() => import('./pages/quality/TechDocs'))       // 기술 문서 (v4.216.0)
 const RequestLoad = lazy(() => import('./pages/RequestLoad'))
 const SalesQuote = lazy(() => import('./pages/master/SalesQuote'))
 const QuoteHistory = lazy(() => import('./pages/master/QuoteHistory'))
@@ -166,6 +167,7 @@ export default function App() {
         <Route path="quality/fa-progress" element={<FaProgress />} />
         <Route path="quality/cn" element={<CnHistory />} />
         <Route path="quality/complaints" element={<Complaints />} />
+        <Route path="quality/tech-docs" element={<TechDocs />} />
         <Route path="request-load" element={<RequestLoad />} />
         <Route path="sales-quote"   element={<SalesQuote />} />
         <Route path="orders"        element={<OrderIntake />} />

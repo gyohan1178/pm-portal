@@ -39,6 +39,7 @@ export const MENU = {
   '/quality/drawing-dist?tab=int': '도면 배포이력 · 사내 배포',
   '/quality/cn': '설계변경(CN) 이력',
   '/quality/complaints': '고객사 불만 접수',
+  '/quality/tech-docs': '기술 문서',
   '/quality/fa-progress': '초도품 진행관리',
   '/quality/fai': '초도품 자재 매칭',
   '/quality/lot': '로트 관리',

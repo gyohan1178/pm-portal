@@ -46,6 +46,7 @@ function useFlowFresh(profile, on) {
 const MENU_META = {
   '/restore': ['↩','삭제 기록'],
   '/quality/lot': ['🏷','로트 관리'],
+  '/quality/tech-docs': ['📚','기술 문서'],
   '/lot': ['🏷','로트 관리'],
   '/finder': ['🔎','통합 검색'],          // 예전 즐겨찾기 — 통합 검색으로 이어진다
   '/outbound-history': ['📋','출고 현황'],
@@ -549,6 +550,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/quality/fa-progress" icon="🚦" onNavigate={onNavigate} also={['/quality/fai']}>초도품 (진행 · 자재 매칭)</MenuItem>
           <MenuItem to="/quality/cn" icon="🔁" onNavigate={onNavigate}>설계변경(CN) 이력</MenuItem>
           <MenuItem to="/quality/complaints" icon="🛎" onNavigate={onNavigate}>고객사 불만 접수</MenuItem>
+          <MenuItem to="/quality/tech-docs" icon="📚" onNavigate={onNavigate}>기술 문서</MenuItem>
           <MenuItem to="/quality/drawing-dist" icon="📐" onNavigate={onNavigate}>도면 배포이력</MenuItem>
           <MenuItem to="/quality/lot" icon="🏷" onNavigate={onNavigate}>로트 관리</MenuItem>
         </CollapseSection>
