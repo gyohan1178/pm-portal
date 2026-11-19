@@ -145,7 +145,9 @@ export default function TechDocs() {
       for (const x of ok) { await savePackage(x.pkg, me); n++ }
       toastSuccess(`문서 ${n}건 올림`)
       setUp(null)
-      qc.invalidateQueries({ queryKey: ['techDocs'] })
+      // 목록 · 작업 기준 · 찾기 · 검토 이력까지 새로 (v4.222.1 — 올린 뒤 작업 기준 화면에 예전 Rev · 상태가 남던 것)
+      qc.invalidateQueries({ queryKey: ['techDocs'] }); qc.invalidateQueries({ queryKey: ['workStd'] })
+      qc.invalidateQueries({ queryKey: ['techDocSearch'], exact: false }); qc.invalidateQueries({ queryKey: ['techDocReviews'], exact: false })
       for (const x of ok) { qc.invalidateQueries({ queryKey: ['techDoc', x.pkg.key] }); qc.invalidateQueries({ queryKey: ['techDocFigs', x.pkg.key] }); qc.invalidateQueries({ queryKey: ['techDocPages', x.pkg.key] }) }
     } catch (e) { toastError(`${n}건 올리고 멈춤 — ${e.message || e}`); qc.invalidateQueries({ queryKey: ['techDocs'] }) } finally { setBusy(false) }
   }
