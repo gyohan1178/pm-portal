@@ -66,8 +66,28 @@ export const KPI_TEST = {
 }
 
 // who: null(전체) · '__me' · '__none'(미배정) · '__etc'(그 외) · 처리자 이름
-export function buildView(list, { who = null, kpi = null, me = '', today = ymdLocal(), top = 4 } = {}) {
-  const groups = groupRequests(list).map((g) => decorate(g, today))
+// 보는 순서 (v4.224.0) — 기본은 급한 순 구간. 다른 순서를 고르면 구간 없이 한 목록으로
+export const LIVE_SORTS = [
+  { key: 'urgent', label: '급한 순 (구간)' },
+  { key: 'cust', label: '고객사순' },
+  { key: 'requester', label: '요청자순' },
+  { key: 'pnAsc', label: '품번 오름차순' },
+  { key: 'pnDesc', label: '품번 내림차순' },
+]
+const ko = (a, b) => String(a || '').localeCompare(String(b || ''), 'ko')
+const pnOf = (g) => g.items.map((r) => String(r.std_code || '')).filter(Boolean).sort()[0] || ''
+const LIVE_CMP = {
+  cust: (a, b) => (!a.head.customer_code - !b.head.customer_code) || ko(a.head.customer_code, b.head.customer_code) || SORT.now(a, b),
+  requester: (a, b) => (!a.head.requester - !b.head.requester) || ko(a.head.requester, b.head.requester) || SORT.now(a, b),
+  pnAsc: (a, b) => (!pnOf(a) - !pnOf(b)) || cmp(pnOf(a), pnOf(b)) || cmp(a.key, b.key),
+  pnDesc: (a, b) => (!pnOf(a) - !pnOf(b)) || cmp(pnOf(b), pnOf(a)) || cmp(a.key, b.key),
+}
+
+// cust (v4.224.0) — 고객사로 거르기 · null 전체 · '__none' 고객사 없음 · 'AX' 같은 코드(대문자)
+export function buildView(list, { who = null, kpi = null, me = '', today = ymdLocal(), top = 4, sort = 'urgent', cust = null } = {}) {
+  let groups = groupRequests(list).map((g) => decorate(g, today))
+  // 품번 순이면 요청 안의 품목 줄도 같은 순서로
+  if (sort === 'pnAsc' || sort === 'pnDesc') groups = groups.map((g) => ({ ...g, items: [...g.items].sort((a, b) => (sort === 'pnAsc' ? 1 : -1) * cmp(String(a.std_code || ''), String(b.std_code || ''))) }))
   const counts = { overdue: 0, readyLate: 0, unassigned: 0, urgent: 0 }
   const byHandler = new Map()
   groups.forEach((g) => {
@@ -89,9 +109,19 @@ export function buildView(list, { who = null, kpi = null, me = '', today = ymdLo
     : who === '__none' ? g.handlers.length === 0
     : who === '__etc' ? g.handlers.some((x) => etcNames.has(x))
     : g.handlers.includes(who)
-  const shown = groups.filter((g) => passWho(g) && (!kpi || KPI_TEST[kpi](g)))
-  const sections = BUCKETS.map((b) => ({ ...b, groups: shown.filter((g) => g.bucket === b.key).sort(SORT[b.key]) }))
-  return { groups, shown, counts, chips, sections, filtered: who !== null || !!kpi, items: (list || []).length }
+  const custOf = (g) => String(g.head.customer_code || '').trim().toUpperCase()
+  const byCust = new Map()
+  groups.forEach((g) => { const c = custOf(g) || '__none'; byCust.set(c, (byCust.get(c) || 0) + 1) })
+  const custChips = [{ key: null, label: '전체', count: groups.length },
+    ...[...byCust.entries()].filter(([c]) => c !== '__none').sort((a, b) => b[1] - a[1] || cmp(a[0], b[0])).map(([c, n]) => ({ key: c, label: c, count: n })),
+    ...(byCust.get('__none') ? [{ key: '__none', label: '고객사 없음', count: byCust.get('__none'), none: true }] : [])]
+  const passCust = (g) => cust === null || (cust === '__none' ? !custOf(g) : custOf(g) === cust)
+  const shown = groups.filter((g) => passWho(g) && passCust(g) && (!kpi || KPI_TEST[kpi](g)))
+  const flat = LIVE_CMP[sort]
+  const sections = flat
+    ? [{ key: 'all', label: LIVE_SORTS.find((x) => x.key === sort).label, tone: 'gray', groups: [...shown].sort(flat) }]
+    : BUCKETS.map((b) => ({ ...b, groups: shown.filter((g) => g.bucket === b.key).sort(SORT[b.key]) }))
+  return { groups, shown, counts, chips, custChips, sections, filtered: who !== null || cust !== null || !!kpi || !!flat, items: (list || []).length, sort }
 }
 
 // ── 완료 · 반려 · 전체 탭 (v4.82.0) — 검색 · 처리유형 · 정렬 ──

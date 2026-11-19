@@ -1124,9 +1124,11 @@ export const cskProdMsg = (r) => [
   r?.undone?.length ? `생산관리 ${r.undone.slice(0, 3).join(' · ')}${r.undone.length > 3 ? ` 외 ${r.undone.length - 3}` : ''} 완료 취소` : '',
 ].filter(Boolean).join(' · ')
 
-export async function markDelivered(lines, delivered, meName) {
+// date (v4.224.0) — 실제 납품일. 비우면 오늘. 납기(due_date)는 그대로 두고 납품일만 따로 남긴다
+export async function markDelivered(lines, delivered, meName, date = null) {
   const now = new Date().toISOString()
-  const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: ymdKST(), updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
+  const day = /^\d{4}-\d{2}-\d{2}$/.test(String(date || '')) ? date : ymdKST()
+  const patchOf = (l) => (delivered ? { delivered_qty: l.qty, delivered_at: day, updated_at: now } : { delivered_qty: 0, delivered_at: null, sales_done_at: null, updated_at: now })
   // 예전엔 한 줄씩 차례로 저장해 100줄이면 100번 기다렸다 — 납품 취소는 한 번에, 납품은 20줄씩 동시에 (v4.90.6)
   if (!delivered) {
     const ids = lines.map((l) => l.id)
@@ -1141,7 +1143,7 @@ export async function markDelivered(lines, delivered, meName) {
       if (bad) throw bad.error
     }
   }
-  const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'delivered', before_val: String(+l.delivered_qty || 0), after_val: String(delivered ? +l.qty : 0), source: 'manual', changed_name: meName || null }))
+  const logs = lines.map((l) => ({ order_id: l.order_id, line_key: `${l.line_no}/${l.del_line}`, field: 'delivered', before_val: String(+l.delivered_qty || 0), after_val: delivered ? `${+l.qty} (납품일 ${day})` : '0', source: 'manual', changed_name: meName || null }))
   if (logs.length) { const { error } = await supabase.from('pm_order_change').insert(logs); if (error) throw error }
   if (lines.length) logActivity('update', 'pm_order', poNosOf(lines), `${delivered ? '납품 표시' : '납품 취소'} ${lines.length}품목`, null, custNameOf(lines))
   return { patches: new Map(lines.map((l) => [l.id, patchOf(l)])) }

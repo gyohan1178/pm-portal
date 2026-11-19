@@ -10,7 +10,7 @@ import * as XLSX from 'xlsx'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { useCanEdit, useCanRequest, useMe } from '../../hooks/useProfile'
 import { useTableSort } from '../../hooks/useTableSort'
-import { buildView, doneView, DONE_SORTS, lastHandled, fmtHandled } from '../../lib/requestView'
+import { buildView, LIVE_SORTS, doneView, DONE_SORTS, lastHandled, fmtHandled } from '../../lib/requestView'
 import { ResizableTable } from '../../components/ResizableTable'
 import { todayISO, ymdKST, kstDT } from '../../lib/utils'
 import PoCart, { addToCart, fetchCart } from './PoCart'
@@ -113,6 +113,12 @@ export default function MaterialRequest() {
   const [deptFilter, setDeptFilter] = useRemember('mr.dept', null, (v) => v === null || typeof v === 'string')
   // 담당자가 보기 좋게 (2026-10-06) — 처리자 · 요약 지표로 거르고, 급한 순 구간으로 끊는다
   const [who, setWho] = useState(null)        // null 전체 · '__me' · '__none' · '__etc' · 처리자 이름
+  // 보는 순서 (v4.224.0) — 급한 순(구간) · 고객사 · 요청자 · 품번 오름 · 내림. 이 PC 에 기억
+  const [liveSort, setLiveSortS] = useState(() => { try { return localStorage.getItem('mrLiveSort') || 'urgent' } catch { return 'urgent' } })
+  // 위 칩 줄 — 처리자별 / 고객사별 (v4.224.0)
+  const [chipBy, setChipBy] = useState('handler')
+  const [custSel, setCustSel] = useState(null)
+  const setLiveSort = (v) => { setLiveSortS(v); try { localStorage.setItem('mrLiveSort', v) } catch { /* 저장 못 해도 화면은 바뀜 */ } }
   const [kpi, setKpi] = useState(null)        // overdue · readyLate · unassigned · urgent
   // 처음엔 모두 펼친 상태 (2026-10-06 사용자 요청) — 구간 머리줄 · 「품목 모두 접기」로 접는다
   const [secOpen, setSecOpen] = useState({ now: true, week: true, later: true, none: true })
@@ -221,8 +227,8 @@ export default function MaterialRequest() {
   const [dType, setDType] = useState(null)
   const [dSort, setDSort] = useState('handled')
   const reqView = useMemo(
-    () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '' }),
-    [list, who, kpi, me?.name, liveTab])
+    () => buildView(list, { who: liveTab ? who : null, kpi: liveTab ? kpi : null, me: me?.name || '', sort: liveTab ? liveSort : 'urgent', cust: liveTab ? custSel : null }),
+    [list, who, kpi, me?.name, liveTab, liveSort, custSel])
   const doneV = useMemo(() => doneView(reqView.groups, { q: dQ, type: dType, sort: dSort }), [reqView, dQ, dType, dSort])
 
   // ── 내가 낸 요청 중 아직 안 본 알림 ──
@@ -1844,8 +1850,22 @@ export default function MaterialRequest() {
           {/* 처리자별 — 내 담당 · 미배정이 따로 보인다 (진행 중 목록) */}
           {liveTab && list.length > 0 && (
             <div className="flex items-center gap-1.5 flex-wrap rounded-xl border border-slate-200 bg-white px-3 py-2" data-req-who>
-              <span className="text-[11px] font-bold text-slate-400 mr-1">처리자</span>
-              {reqView.chips.map(c => (
+              <span className="inline-flex rounded-lg bg-slate-100 p-0.5 mr-1 text-[11px] font-bold" data-req-chip-by>
+                {[['handler', '처리자'], ['cust', '고객사']].map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => { setChipBy(k); setWho(null); setCustSel(null); setSel({}) }} data-chip-by={k}
+                    className={`h-6 px-2.5 rounded-md ${chipBy === k ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-400'}`}>{l}</button>
+                ))}
+              </span>
+              {chipBy === 'cust' && reqView.custChips.map(c => (
+                <button key={c.key ?? '_all'} data-cust-chip={c.key ?? ''} onClick={() => { setCustSel(c.key); setSel({}) }}
+                  className={`px-3 py-1.5 text-xs font-bold rounded-full border whitespace-nowrap ${
+                    custSel === c.key ? 'border-slate-800 bg-slate-800 text-white'
+                    : c.none ? 'border-slate-200 bg-slate-50 text-slate-400 hover:bg-slate-100'
+                    : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  {c.label} {n(c.count)}
+                </button>
+              ))}
+              {chipBy === 'handler' && reqView.chips.map(c => (
                 <button key={c.key ?? '_all'} data-who={c.key ?? ''} onClick={() => { setWho(c.key); setSel({}) }}
                   className={`px-3 py-1.5 text-xs font-bold rounded-full border whitespace-nowrap ${
                     who === c.key ? 'border-slate-800 bg-slate-800 text-white'
@@ -1855,9 +1875,14 @@ export default function MaterialRequest() {
                   {c.me ? '🧑‍🔧 ' : ''}{c.label} {n(c.count)}
                 </button>
               ))}
+              <select value={liveSort} onChange={e => setLiveSort(e.target.value)} data-req-live-sort
+                title="목록 순서 — 기본은 급한 순 구간(지금 볼 것 → 이번 주 …). 다른 순서를 고르면 구간 없이 한 목록"
+                className="ml-auto h-[30px] px-2 text-xs font-bold border border-slate-200 rounded-lg bg-white text-slate-600">
+                {LIVE_SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+              </select>
               <button onClick={() => { setAllCards(v => !v); setCardOpen({}) }}
                 title="품목이 여러 줄인 요청의 품목 줄을 한꺼번에 펼치거나 접습니다"
-                className="ml-auto px-2 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 whitespace-nowrap">
+                className="px-2 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 whitespace-nowrap">
                 {allCards ? '품목 모두 접기 ▴' : '품목 모두 펼치기 ▾'}
               </button>
             </div>
@@ -2229,6 +2254,7 @@ export default function MaterialRequest() {
                   ? `필요일 지남 ${n(sec.groups.filter(g => g.overdue).length)} · 긴급 ${n(sec.groups.filter(g => g.urgent).length)} — 긴급 먼저, 오래 지난 순`
                   : sec.key === 'week' ? '이번 주 일요일까지 필요한 것'
                   : sec.key === 'later' ? '다음 주부터 필요한 것'
+                  : sec.key === 'all' ? '급한 순 구간 없이 한 목록 — 오른쪽 위 순서에서 「급한 순」으로 되돌립니다'
                   : '오래된 요청 순'
                 return (
                   <div key={sec.key} data-req-sec={sec.key} className="space-y-2">

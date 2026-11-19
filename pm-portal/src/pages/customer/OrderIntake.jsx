@@ -172,6 +172,15 @@ function DueCell({ l, noRelease = false }) {
     <div className="whitespace-nowrap">
       <div className={`font-mono tabular-nums ${tag && d < 0 ? 'text-red-600 font-semibold' : 'text-slate-700'}`}>{l.due_date || '—'}</div>
       {tag && <span className={`inline-block mt-0.5 px-1.5 py-[1px] rounded text-[10px] font-bold ${tag[0]}`}>{tag[1]}</span>}
+      {/* 실제 납품일 (v4.224.0) — 납기와 따로. 납기보다 먼저 · 늦게 나갔으면 며칠인지 */}
+      {l.delivered_at && +l.delivered_qty > 0 && (() => {
+        const g = l.due_date ? Math.round((new Date(l.due_date) - new Date(String(l.delivered_at).slice(0, 10))) / 86400000) : null
+        return (
+          <div className="text-[10.5px] mt-0.5 font-semibold text-emerald-700" title="실제 납품일 — 납품 표시한 날 (납기와 따로 남음)" data-delivered-date>
+            납품 {md(l.delivered_at)}{g > 0 ? <span className="ml-1 px-1 rounded bg-emerald-50"> {g}일 먼저</span> : g < 0 ? <span className="ml-1 px-1 rounded bg-red-50 text-red-600"> {-g}일 늦게</span> : g === 0 ? ' · 납기일' : ''}
+          </div>
+        )
+      })()}
       {l.release_date && !noRelease && (
         <div className={`text-[10.5px] mt-0.5 ${live && l.release_date < todayISO() ? 'text-red-500 font-semibold' : 'text-slate-400'}`} title="협력사 불출일 — 협력사에 자재를 내줘야 하는 날" data-release-date>
           불출 {md(l.release_date)}{live && l.release_date < todayISO() ? ' 지남' : ''}
@@ -655,7 +664,7 @@ export default function OrderIntake() {
     onError: (e) => toastError(/odd_ok/.test(e.message || '') ? ODD_OK_SQL_HINT : '저장 실패: ' + e.message),
   })
   const dlvMut = useMutation({
-    mutationFn: ({ ls, on }) => markDelivered(ls, on, meName),
+    mutationFn: ({ ls, on, date }) => markDelivered(ls, on, meName, date),
     onSuccess: (r, v) => {
       patchLines((l) => r.patches.get(l.id) || null); setChecked(new Set())
       syncProd(v.ls)   // CSK — 생산관리 호기 완료 · 취소 (결과는 따로 안내)
@@ -699,6 +708,7 @@ export default function OrderIntake() {
   const [relDate, setRelDate] = useState('')
   // 납기 일괄 변경 (v4.141.0, 영업 요청) — 고객사가 납기를 옮겨 달라고 하면 체크한 줄을 한 번에 · 6초 되돌리기
   const [dueDate, setDueDate] = useState('')
+  const [dlvDate, setDlvDate] = useState('')       // 납품일 (v4.224.0) — 비우면 오늘
   const dueMut = useMutation({
     mutationFn: ({ ls, date, reason }) => setDueDates(ls, date, reason, meName),
     onSuccess: (r) => {
@@ -729,6 +739,11 @@ export default function OrderIntake() {
     dueMut.mutate({ ls, date: dueDate, reason: typeof r === 'object' ? r.value : '' })
   }
   // 두 일괄 줄(영업 · 구매자재)에 같이 쓰는 「📅 납기 변경」 칸
+  const dlvDateCtl = (
+    <label className="flex items-center gap-1 text-[11px] font-bold text-slate-500 whitespace-nowrap" title="실제로 납품한 날 — 비우면 오늘. 납기는 그대로 두고 납품일이 따로 남습니다" data-bulk-dlv-date-ctl>납품일
+      <input type="date" value={dlvDate} max={todayISO()} onChange={(e) => setDlvDate(e.target.value)} data-bulk-dlv-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
+    </label>
+  )
   const dueCtl = (
     <label className="flex items-center gap-1.5 text-[11px] font-bold text-slate-500 whitespace-nowrap" title="고객사가 납기를 옮겨 달라고 할 때 — 체크한 품목의 납기를 한 번에 바꿉니다" data-bulk-due-ctl>📅 납기
       <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} data-bulk-due-date className="px-2 py-1 text-xs border border-slate-200 rounded-lg" />
@@ -1158,7 +1173,8 @@ export default function OrderIntake() {
           <span className="text-[11px] text-slate-400">단품으로 바로 납품하는 품목은 체크해서 자재 요청 — 구매자재가 렉에 챙겨 둡니다{editable ? ' · 나간 품목은 「납품 표시」' : ''}</span>
           {/* 영업도 납품 표시 (v4.107.0) — 구매자재 화면과 같은 저장 · 6초 되돌리기 */}
           {editable && <span className="ml-auto flex flex-wrap items-center gap-3">{lateCtl}{dueCtl}</span>}
-          {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
+          {editable && dlvDateCtl}
+          {editable && <button type="button" disabled={dlvMut.isPending || !checkedLines.some((l) => !l.st.delivered && !l.st.cancelled)} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered && !l.st.cancelled), on: true, date: dlvDate }, { onSuccess: () => setDlvDate('') })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}✓ 납품 표시</button>}
           {editable && (() => {
             const cand = checkedLines.filter((l) => !l.st.cancelled && !faMap?.get(l.id))
             const kinds = new Set(cand.map((l) => faKindOfOrder(l.o)))
@@ -1187,7 +1203,8 @@ export default function OrderIntake() {
           {lateCtl}
           {editable && <button type="button" disabled={replyMut.isPending || !checkedLines.some((l) => !l.st.cancelled && !l.reply)} title="문제 없는 PO 를 한 번에 — 고른 품목 중 회신이 없는 줄을 「가능」으로 회신 (확인은 회신 한 번으로 끝남 · 미확인 숫자에서 빠짐)" onClick={() => replyMut.mutate({ ls: checkedLines.filter((l) => !l.st.cancelled && !l.reply), form: { reply: '가능', date: '', memo: '' } })} data-bulk-confirm className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-emerald-300 text-emerald-700 disabled:opacity-40">✓ 가능 회신</button>}
           {<button type="button" disabled={oddMut.isPending || !checkedLines.some((l) => l.odd)} title="고른 품목 중 특이사항(REV · 단가 다름 등) 있는 것을 확인 처리" onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인</button>}
-          <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
+          {dlvDateCtl}
+          <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true, date: dlvDate }, { onSuccess: () => setDlvDate('') })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
           {copyBtn}
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
