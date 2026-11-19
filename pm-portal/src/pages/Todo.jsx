@@ -453,8 +453,8 @@ export default function Todo() {
     { sel: '[data-todo-done]', title: '③ 끝나면 체크', body: '체크하면 완료 묶음으로 옮겨지고, 잘못 눌렀으면 아래 「되돌리기」를 6초 안에 누르세요. 「내일로 · 다음 주」로 기한을 바로 미룰 수도 있습니다.' },
   ], !isLoading)
   const newDraft = (due = '') => setDraft({ status: '대기', priority: '보통', owner: me?.name || '', owner_id_pick: me?.id || '', due_date: due || '', scope: 'dept', kind: 'todo' })
-  // 달력 · 위 줄에서 누른 줄 — 일정은 고칠 수 있으면 수정 창, 아니면 내용만. 할 일은 예전처럼 상세
-  const openItem = (r) => (isNote(r) && canEditNote(r) ? setDraft({ ...r }) : openDetail(r))
+  // 달력 · 위 줄에서 누른 줄 — 일정도 할 일도 먼저 보기 창 (맨 위 「✓ 완료」로 바로 끝냄 · 고칠 땐 「✎ 수정」) (v4.223.1)
+  const openItem = (r) => openDetail(r)
 
   return (
     <div className="space-y-4">
@@ -578,14 +578,21 @@ export default function Todo() {
               {r.agenda && (
                 <span className="px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-600 text-[10px] font-bold">주간회의</span>
               )}
-              {mine && (
+              {/* 바로 완료 (v4.223.1) — 수정 창에 들어가지 않고 끝낸다 · 6초 되돌리기는 목록 체크와 같음 */}
+              {(!isNote(r) || canEditNote(r)) && (
+                <button type="button" data-detail-done onClick={() => { toggleDone(r); if (!done) setDetail(null) }}
+                  className={`ml-auto text-xs font-bold px-3 py-1.5 rounded-lg ${done ? 'border border-slate-200 text-slate-500 bg-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'}`}>
+                  {done ? '↩ 완료 취소' : '✓ 완료'}
+                </button>
+              )}
+              {(isNote(r) ? canEditNote(r) : mine) && (
                 <button onClick={() => { setDraft({ ...r }); setDetail(null) }}
-                  className="ml-auto text-xs font-semibold text-slate-500 px-2 py-1 border border-slate-200 rounded-lg">
+                  className={`${!isNote(r) || canEditNote(r) ? '' : 'ml-auto '}text-xs font-semibold text-slate-500 px-2 py-1 border border-slate-200 rounded-lg`}>
                   ✎ 수정
                 </button>
               )}
               <button onClick={() => setDetail(null)}
-                className={`text-slate-400 text-xl px-2 ${mine ? '' : 'ml-auto'}`}>✕</button>
+                className={`text-slate-400 text-xl px-2 ${(!isNote(r) || canEditNote(r)) ? '' : 'ml-auto'}`}>✕</button>
             </div>
 
             <div className="px-5 py-4 space-y-4">

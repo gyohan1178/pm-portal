@@ -91,10 +91,10 @@ export const shiftMonth = (ym, n) => { const [y, m] = ym.split('-').map(Number);
 // 달력 · 위 줄에 쓰는 종류 — 색을 고른다
 //   all 전사 공유 · req 유관부서 요청 · note 부서 특이사항 · rep 반복 할 일 · late 기한 지남 · done 끝남 · todo 할 일
 export function chipKind(r, today) {
+  if (r.status === '완료') return 'done'   // 끝낸 일정 · 요청도 회색 (v4.223.1)
   if (scopeOf(r) === 'all') return 'all'
   if (scopeOf(r) === 'req') return 'req'
   if (isNote(r)) return 'note'
-  if (r.status === '완료') return 'done'
   if (r.due_date && String(r.due_date).slice(0, 10) < today) return 'late'
   return r.repeat ? 'rep' : 'todo'
 }
