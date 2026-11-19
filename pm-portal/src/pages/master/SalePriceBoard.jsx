@@ -20,13 +20,13 @@ import CustOptions from '../../components/CustOptions'
 //   실적가 = 그 품목의 가장 최근 견적 단가 (단품 줄 단가 · 세부견적으로 나간 부품 단가)
 //   · 견적 화면이 쓰는 값과 같은 규칙 (lib/salePrice · pm_last_sale_price) — 통화별 따로
 //   · 세부견적을 안 낸 견적의 부품 계산값 · ASSY 줄 단가는 이력에만 (견적 화면에서 안 씀 — ASSY 는 하위 합계로)
-//   · 자료: pm_sale_price_hist (매출견적 저장 때 자동 · 단가표 · 엑셀 견적은 가져오기)
+//   · 자료: pm_sale_price_hist (매출견적 저장 때 자동 · 단가표 · 엑셀 견적은 가져오기 · 수주대장 단가 특이사항 「확인」 때 자동 — v4.222.0)
 const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0)
 const money = (v, cur) => (cur === 'KRW' ? Math.round(n(v)).toLocaleString('ko-KR') : n(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
 const usable = (r) => r.kind === 'item' || (r.kind === 'part' && r.detail_sent)
 const newer = (a, b) => (String(a.quote_date || '') !== String(b.quote_date || '') ? String(a.quote_date || '') > String(b.quote_date || '')
   : String(a.created_at || '') !== String(b.created_at || '') ? String(a.created_at || '') > String(b.created_at || '') : n(a.id) > n(b.id))
-const srcLabel = (r) => (r.source === 'quote' ? '포털 견적' : /단가표/.test(r.quote_no || '') ? '단가표' : '엑셀 견적')
+const srcLabel = (r) => (r.source === 'quote' ? '포털 견적' : r.source === 'order' ? '수주 PO' : /단가표/.test(r.quote_no || '') ? '단가표' : '엑셀 견적')   // 수주 PO = 수주대장 단가 특이사항 확인 (v4.222.0)
 const showCode = (k) => (String(k || '').startsWith('MPN:') ? String(k).slice(4) : k)
 
 export default function SalePriceBoard({ custList = [], defaultCode }) {
@@ -236,7 +236,7 @@ export default function SalePriceBoard({ custList = [], defaultCode }) {
                       <div className="text-[11px] text-slate-400">{s.quote_date || ''}{s.kind === 'part' && s.parent_code ? ` · ${String(s.parent_code).replace(/^(AX|VM|CS|ED)-/, '')} 세부` : ''}</div>
                     </td>
                     <td className="px-3 py-2">
-                      <span className={`px-2 py-[1px] rounded-full text-[10.5px] font-bold ${s.source === 'quote' ? 'bg-indigo-50 text-indigo-600' : 'bg-slate-100 text-slate-500'}`}>{srcLabel(s)}</span>
+                      <span className={`px-2 py-[1px] rounded-full text-[10.5px] font-bold ${s.source === 'quote' ? 'bg-indigo-50 text-indigo-600' : s.source === 'order' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>{srcLabel(s)}</span>
                       <span className="ml-1 text-[10.5px] text-slate-400">{kindLabel(s)}</span>
                     </td>
                     {kind === 'use' && <td className="px-3 py-2 text-right font-mono text-slate-500">{g.buy == null ? <span className="text-slate-300">—</span> : Math.round(g.buy).toLocaleString('ko-KR')}</td>}

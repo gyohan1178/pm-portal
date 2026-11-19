@@ -835,7 +835,65 @@ export async function okOddLines(lines, meName, on = true) {
     const { error } = await supabase.from('pm_order_change').insert(logs.slice(i, i + 500))
     if (error) throw error
   }
-  return { n: ls.length, patches }
+  // 단가가 달라서 나온 특이사항을 「확인」 = 그 단가가 맞다 → 매출 실적가로 남김 (v4.222.0)
+  //   매출견적이 다음에 같은 고객사 · 같은 통화 · 같은 품목을 견적할 때 이 PO 단가를 직전 실적가로 쓴다 (매출견적이력 › 판매 실적가)
+  //   실적가 기록이 실패해도 확인은 그대로 (sale.err 로 알려 줌)
+  let sale = { n: 0, skip: 0, err: null }
+  if (on) sale = await recordOrderSalePrices(ls.filter((l) => l.odd?.price), meName).catch((e) => ({ n: 0, skip: 0, err: e.message || String(e) }))
+  return { n: ls.length, patches, sale }
+}
+
+// 수주 줄 단가 → 판매 실적가 (pm_sale_price_hist · source 'order')
+//   고객사 열쇠 = 고객사 id (매출견적과 같은 열쇠) · 기타 고객사는 ETC:이름 · 품목 열쇠 = 기준코드(대문자)
+//   품목 연결이 없는 줄은 열쇠를 못 만들어 건너뜀 · 같은 PO · 같은 품목 · 같은 단가가 이미 있으면 다시 안 넣음
+export async function recordOrderSalePrices(lines, meName) {
+  const ls = (lines || []).filter((l) => +l.unit_price > 0)
+  if (!ls.length) return { n: 0, skip: 0, err: null }
+  const itemIds = [...new Set(ls.map((l) => l.item_id).filter(Boolean))]
+  const items = new Map()
+  for (let i = 0; i < itemIds.length; i += 200) {
+    const { data, error } = await supabase.from('items').select('id,std_code,name').in('id', itemIds.slice(i, i + 200))
+    if (error) throw error
+    ;(data || []).forEach((it) => items.set(it.id, it))
+  }
+  const codes = [...new Set(ls.map((l) => String(l.o?.customer_code || '').toLowerCase()).filter((c) => c && c !== 'etc'))]
+  const custId = new Map()
+  if (codes.length) {
+    const { data, error } = await supabase.from('customers').select('id,code,name').in('code', codes)
+    if (error) throw error
+    ;(data || []).forEach((c) => custId.set(String(c.code).toLowerCase(), c))
+  }
+  const rows = []
+  let skip = 0
+  for (const l of ls) {
+    const o = l.o || {}
+    const it = items.get(l.item_id)
+    const code = String(it?.std_code || '').trim().toUpperCase()
+    const cc = String(o.customer_code || '').toLowerCase()
+    const cust = cc === 'etc' ? null : custId.get(cc)
+    const custKey = cc === 'etc' ? (String(o.customer_name || '').trim() ? 'ETC:' + String(o.customer_name).trim().toUpperCase() : null) : cust?.id || null
+    if (!code || !custKey) { skip++; continue }
+    rows.push({
+      cust_key: custKey, customer_id: cust?.id || null, customer_name: cust?.name || o.customer_name || null,
+      code_key: code, std_code: code, mpn: null, item_name: it?.name || l.raw_desc || null, kind: 'item', parent_code: null,
+      currency: oddUsd(o) ? 'USD' : 'KRW', unit_price: +l.unit_price, qty: +l.qty || null, cost_krw: null, detail_sent: true,
+      quote_id: null, quote_no: o.po_no ? `PO ${o.po_no}` : null, quote_date: kstYmd(o.order_date || o.registered_at) || ymdKST(),
+      source: 'order', created_by: meName || null,
+    })
+  }
+  if (!rows.length) return { n: 0, skip, err: null }
+  // 이미 넣은 것(같은 고객사 · 품목 · PO · 단가)은 빼기
+  const { data: ex, error: e0 } = await supabase.from('pm_sale_price_hist').select('cust_key,code_key,quote_no,unit_price')
+    .eq('source', 'order').in('code_key', [...new Set(rows.map((r) => r.code_key))])
+  if (e0) throw e0
+  const had = new Set((ex || []).map((r) => `${r.cust_key}|${r.code_key}|${r.quote_no}|${+r.unit_price}`))
+  const add = rows.filter((r) => !had.has(`${r.cust_key}|${r.code_key}|${r.quote_no}|${+r.unit_price}`))
+  if (add.length) {
+    const { error } = await supabase.from('pm_sale_price_hist').insert(add)
+    if (error) throw error
+    logActivity('create', 'pm_sale_price_hist', add[0].code_key, `수주대장 단가 확인 → 판매 실적가 ${add.length}건 (${add.slice(0, 3).map((r) => `${r.code_key} ${r.unit_price} ${r.currency}`).join(', ')}${add.length > 3 ? ' …' : ''})`)
+  }
+  return { n: add.length, skip, err: null }
 }
 
 // 줄 상태 — 품번별 화면 (v4.88.0)

@@ -646,7 +646,8 @@ export default function OrderIntake() {
       patchLines((l) => r.patches.get(l.id) || null)
       if (v.on !== false) setChecked((s) => { const n = new Set(s); r.patches.forEach((_, id) => n.delete(id)); return n })
       const prev = v.ls.filter((l) => r.patches.has(l.id))
-      const msg = v.on === false ? `특이사항 확인 취소 ${r.n}줄 — 다시 목록에 나옵니다` : `특이사항 ${r.n}줄 확인 — 목록에서 빠졌습니다`
+      const sl = r.sale && v.on !== false ? (r.sale.err ? ` · 판매 실적가 기록 실패 (${r.sale.err})` : r.sale.n ? ` · 단가 ${r.sale.n}건을 판매 실적가로 저장` : '') + (r.sale.skip ? ` · 품목 연결 없는 ${r.sale.skip}줄은 실적가 못 남김` : '') : ''
+      const msg = (v.on === false ? `특이사항 확인 취소 ${r.n}줄 — 다시 목록에 나옵니다` : `특이사항 ${r.n}줄 확인 — 목록에서 빠졌습니다`) + sl
       if (undoable(prev)) snack.show(msg, () => undoMut(prev, ODD_FIELDS, { field: 'odd_ok', textOf: (l) => l.odd_ok || null, label: '특이사항 확인' }))
       else toastSuccess(msg)
     },
