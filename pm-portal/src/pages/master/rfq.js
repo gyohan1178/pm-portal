@@ -175,6 +175,27 @@ export async function checkRfq(r) {
   await syncPriceDone(r)
 }
 
+// 부품표가 바뀐 품목만 다시 점검 (v4.220.0) — 임시코드 → 정식 코드 전환 뒤
+//   예전엔 그 접수 품목 전부(11개면 11번 · BOM 찾기까지)를 다시 봐서 한 건에 13초쯤 걸렸다.
+//   전환으로 바뀐 것은 그 품목의 부품표(기준코드 · 단가 키)뿐이라 그 줄만 다시 읽고, 접수 끝 여부만 맞춘다.
+export async function recheckPasteLines(lineIds) {
+  const ids = [...new Set(lineIds || [])]
+  if (!ids.length) return
+  const { data: ls, error } = await supabase.from('pm_rfq_line').select('*').in('id', ids)
+  if (error) throw error
+  const rfqIds = [...new Set((ls || []).map((l) => l.rfq_id))]
+  const { data: hs, error: e1 } = await supabase.from('pm_rfq').select('*').in('id', rfqIds)
+  if (e1) throw e1
+  const byId = new Map((hs || []).map((h) => [h.id, h]))
+  const now = new Date().toISOString()
+  await Promise.all((ls || []).filter((l) => !l.quoted_at && l.paste_parts?.parts?.length).map(async (l) => {
+    const res = await checkPasteLine(l, prefixOf(byId.get(l.rfq_id)?.customer_code))
+    const { error: e2 } = await supabase.from('pm_rfq_line').update({ ...res, checked_at: now }).eq('id', l.id)
+    if (e2) throw e2
+  }))
+  await Promise.all((hs || []).map((h) => syncPriceDone(h)))
+}
+
 // 부품표 품목 점검 (v4.149.0) — 포털 품목 단가를 지금 값으로 다시 읽고, 단가 없는 부품을 센다
 //   단가 없는 부품 키: 포털 품목이면 기준코드(구매자재가 품목 매입가로 넣음) · 아니면 「MPN:제조사품번」(요청 목록에서 바로 적음)
 export async function checkPasteLine(l, prefix = '') {

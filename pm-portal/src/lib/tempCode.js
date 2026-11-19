@@ -124,7 +124,7 @@ export async function promoteTempCode(item, newCode, meName) {
     }
   }
   logActivity('update', 'items', code, `임시코드 정식 전환 ${item.std_code} → ${code}${target ? ' (이미 있던 품목으로 옮김)' : ''}`)
-  return { code, merged: !!target, removed, rfqIds: [...new Set((ls || []).map((l) => l.rfq_id))] }
+  return { code, merged: !!target, removed, rfqIds: [...new Set((ls || []).map((l) => l.rfq_id))], lineIds: (ls || []).map((l) => l.id) }
 }
 
 // 임시 품목 중 JS 코드가 붙은 것 → JS 코드를 기준코드로 (v4.218.0)
@@ -142,5 +142,5 @@ export async function autoPromoteTempJs(meName) {
     try { done.push({ from: it.std_code, ...(await promoteTempCode(it, js, meName)) }) }
     catch (e) { failed.push({ code: it.std_code, js, msg: e.message || String(e) }) }
   }
-  return { done, failed, rfqIds: [...new Set(done.flatMap((r) => r.rfqIds || []))] }
+  return { done, failed, rfqIds: [...new Set(done.flatMap((r) => r.rfqIds || []))], lineIds: done.flatMap((r) => r.lineIds || []) }
 }

@@ -15,7 +15,7 @@ import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { Stepper, ProgressBar } from '../../components/ux/Stepper'
 import Spin from '../../components/ux/Spin'
 import { isTempCode, promoteTempCode, autoPromoteTempJs } from '../../lib/tempCode'
-import { checkRfq } from './rfq'
+import { recheckPasteLines } from './rfq'
 import { fetchItemMeta, searchItemIdsByMfr, usableMfrs, inApproved, mfrTone, realPn, CPS_INFO } from '../../lib/itemMeta'
 import ItemMetaPanel from '../../components/ItemMetaPanel'
 import MfrCheckPanel from '../../components/MfrCheckPanel'
@@ -148,11 +148,8 @@ export default function Items() {
         if (e2) throw e2
       }
       const r = await promoteTempCode(item, code)
-      for (const id of r.rfqIds) {
-        const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
-        const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
-        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(swallow('단가 등록 뒤 견적 접수 상태 갱신'))
-      }
+      // 바뀐 부품표 줄만 다시 점검 (v4.220.0 — 예전엔 접수 품목 전부를 다시 봐서 13초쯤)
+      await recheckPasteLines(r.lineIds).catch(swallow('정식 코드 전환 뒤 견적 부품표 다시 점검'))
       qc.invalidateQueries(['items'])
       setProm(null)
       toastSuccess(`${item.std_code} → ${r.code}${r.merged ? (r.removed ? ' — 있던 품목으로 옮기고 임시 품목은 지웠습니다' : ' — 있던 품목으로 옮겼습니다 (임시 품목은 「옮김」 표시로 남김)') : ' · 임시코드 없어짐'}${r.rfqIds.length ? ` · 견적 접수 ${r.rfqIds.length}건 다시 점검` : ''}`)
@@ -162,11 +159,7 @@ export default function Items() {
   async function autoJs(quiet) {
     try {
       const r = await autoPromoteTempJs()
-      for (const id of r.rfqIds) {
-        const { data: h } = await supabase.from('pm_rfq').select('*').eq('id', id).maybeSingle()
-        const { data: ls } = await supabase.from('pm_rfq_line').select('*').eq('rfq_id', id)
-        if (h) await checkRfq({ ...h, lines: ls || [] }).catch(swallow('JS 코드 자동 전환 뒤 견적 접수 상태 갱신'))
-      }
+      await recheckPasteLines(r.lineIds).catch(swallow('JS 코드 자동 전환 뒤 견적 부품표 다시 점검'))
       if (r.done.length) { qc.invalidateQueries({ queryKey: ['items'] }); toastSuccess(`임시코드 ${r.done.length}건 → JS 코드로 전환 (${r.done.slice(0, 3).map((x) => `${x.from}→${x.code}`).join(', ')}${r.done.length > 3 ? ' …' : ''})`) }
       if (r.failed.length && !quiet) toastError(`JS 코드 전환 못 함 ${r.failed.length}건 — ${r.failed[0].code}: ${r.failed[0].msg}`)
     } catch (e) { if (!quiet) toastError('JS 코드 자동 전환 실패: ' + (e.message || e)) }
