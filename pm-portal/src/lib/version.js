@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.222.1'
+export const APP_VERSION = 'v4.222.2'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.222.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.222.2',
+    date: '2026-11-19',
+    changes: [
+      'UL 교육 자료 — 품질 › 기술 문서 상세와 현장 › 작업 기준 보기에 「🔒 사내 교육 전용 · 외부 배포 금지」 안내 (원저작권 UL, 고객사 · 협력사 전달 포함 사외 반출 금지)',
+    ],
+  },
   {
     version: 'v4.222.1',
     date: '2026-11-19',

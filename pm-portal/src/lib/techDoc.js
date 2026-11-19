@@ -25,6 +25,10 @@ export const STATUS_TONE = {
   '검토 전': 'bg-amber-50 text-amber-700 border-amber-200', '검토 완료': 'bg-emerald-50 text-emerald-700 border-emerald-200',
   '원문 없음': 'bg-rose-50 text-rose-600 border-rose-200',
 }
+// 저작권 안내 — UL 교육자료는 UL 약관상 「사내 사용」만 허용 (외부 배포 · 게시 · 판매 금지)
+export const isUlDoc = (r) => !!r && (r.source === 'UL' || /^UL\b/.test(r.series || ''))
+export const UL_COPY_TITLE = '사내 교육 전용 · 외부 배포 금지'
+export const UL_COPY_TEXT = '본 자료는 UL Knowledge Solutions 교육을 바탕으로 사내 교육 목적으로 요약한 것이며, 원저작권은 UL에 있습니다. 사외 반출 · 배포 · 게시 · 판매를 금지합니다 (고객사 · 협력사 전달 포함).'
 export const ACCESS = { all: '전체 (품질 메뉴를 볼 수 있는 사람)', lead: '팀장급 · 관리자만' }
 const LIST_COLS0 = 'id,doc_key,source,kind,series,part_no,sort_no,doc_no,title,title_ko,rev,tr_rev,status,access,uploaded_by,updated_at'
 const LIST_COLS = LIST_COLS0 + ',process,reviewed_by,reviewed_at'

@@ -17,6 +17,7 @@ import { toastError, toastSuccess } from '../lib/toast'
 import {
   fetchWorkStd, fetchDoc, fetchFigs, deleteDoc, saveSop, nextSopNo, photoToJpeg,
   TECHDOC_SQL_HINT, STATUS_TONE, KINDS, KIND_SHORT, KIND_ICON, PROCESSES, safeHtml,
+  isUlDoc, UL_COPY_TITLE, UL_COPY_TEXT,
 } from '../lib/techDoc'
 
 const plain = (t) => String(t || '').replace(/<[^>]+>/g, '')
@@ -204,6 +205,8 @@ function SummaryView({ rows, group, canFull, profile, onChanged }) {
           <div><div className="text-[11.5px] text-slate-400">개정일</div><b>{String(lead.updated_at || '').slice(0, 10)}</b></div>
         </div>
       </section>
+      {isUlDoc(lead) && <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800" data-workstd-copy>
+        <b className="text-[13.5px]">🔒 {UL_COPY_TITLE}</b><p className="mt-0.5 text-rose-700/90">{UL_COPY_TEXT}</p></section>}
       {rows.filter((d) => d.summary?.length).map((d) => (
         <section key={d.doc_key} className="bg-white border border-slate-200 rounded-xl p-5 ws-step">
           {group && <div className="flex items-center gap-2 mb-2"><span className="font-mono font-bold text-violet-600">{d.part_no}</span><b className="text-[15px]">{d.title_ko}</b>

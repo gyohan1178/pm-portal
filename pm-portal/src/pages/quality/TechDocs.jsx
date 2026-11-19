@@ -15,6 +15,7 @@ import { toastError, toastSuccess } from '../../lib/toast'
 import {
   TECHDOC_SQL_HINT, KINDS, STATUS_TONE, ACCESS, fetchDocList, fetchDoc, fetchFigs, fetchPageList, fetchPage, searchDocs,
   readPackage, savePackage, deleteDoc, setAccess, setProcess, PROCESSES, safeHtml, sectionsHtml, TECHDOC_CSS,
+  isUlDoc, UL_COPY_TITLE, UL_COPY_TEXT,
 } from '../../lib/techDoc'
 
 const RULES = [
@@ -275,6 +276,8 @@ export default function TechDocs() {
             </div>
           )}
           {doc && (<>
+            {isUlDoc(doc) && <section className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-800" data-techdoc-copy>
+              <b className="text-[13.5px]">🔒 {UL_COPY_TITLE}</b><p className="mt-0.5 text-rose-700/90">{UL_COPY_TEXT}</p></section>}
             {body.notice && <section className={`rich rounded-xl border px-4 py-3 flex gap-3 text-[13px] text-slate-600 ${edu ? 'bg-amber-50 border-amber-200' : 'bg-rose-50 border-rose-200'}`} dangerouslySetInnerHTML={{ __html: safeHtml(body.notice) }} data-techdoc-notice />}
 
             <section className="bg-white border border-slate-200 rounded-xl p-5" data-techdoc-info>
