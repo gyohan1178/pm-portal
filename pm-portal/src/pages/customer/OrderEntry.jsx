@@ -18,21 +18,22 @@ export async function downloadTemplate() {
   XLSX.writeFile(templateWorkbook(XLSX), '수주등록_양식.xlsx')
 }
 
-export default function OrderEntry({ mode = 'one', onClose, onSaved, meName }) {
+export default function OrderEntry({ mode = 'one', init = null, onClose, onSaved, meName }) {
   return (
     <div className="fixed inset-0 z-40 flex items-start justify-center bg-black/25 overflow-y-auto p-3 md:p-8" data-entry-modal={mode}>
       <div className="w-full max-w-[1100px] bg-[#f7f8fb] rounded-2xl shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        {mode === 'excel' ? <ExcelEntry onClose={onClose} onSaved={onSaved} meName={meName} /> : <OneEntry onClose={onClose} onSaved={onSaved} meName={meName} />}
+        {mode === 'excel' ? <ExcelEntry onClose={onClose} onSaved={onSaved} meName={meName} /> : <OneEntry init={init} onClose={onClose} onSaved={onSaved} meName={meName} />}
       </div>
     </div>
   )
 }
 
 // ── 한 건 ────────────────────────────────────────────────
-function OneEntry({ onClose, onSaved, meName }) {
-  const [kind, setKind] = useState('verbal')
-  const [cust, setCust] = useState('VM')
-  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: '', req_channel: '메일', req_person: '', po_due: '', customer_name: '', note: '' })
+//   init (v4.223.0) — 수주대장에서 고른 품목을 복사해 온 값 { cust, customer_name, ship_to, note, currency, ccn, from:[PO], lines }
+function OneEntry({ init, onClose, onSaved, meName }) {
+  const [kind, setKind] = useState(init ? 'po' : 'verbal')
+  const [cust, setCust] = useState(init?.cust || 'VM')
+  const [f, setF] = useState({ po_no: '', slip_no: '', order_date: todayISO(), ship_to: init?.ship_to || '', req_channel: '메일', req_person: '', po_due: '', customer_name: init?.customer_name || '', note: init?.note || '', currency: init?.currency || undefined, ccn: init?.ccn || undefined })
   // 기타 고객사 (동원파츠 · 동신 · 두웰 …) — 업체 이름 직접 입력 · 전에 쓴 이름은 고르기 목록 (v4.107.0)
   const etc = isManualCust(cust)
   const [etcNames, setEtcNames] = useState(ETC_NAME_SEED)
@@ -41,6 +42,10 @@ function OneEntry({ onClose, onSaved, meName }) {
   const pickCust = (c) => { setCust(c); if (isManualCust(c) && kind === 'planned') setKind('po') }
   const [paste, setPaste] = useState('')
   const [lines, setLines] = useState([])         // matchLines 결과
+  // 복사해 온 품목 — 처음 한 번 포털 코드로 맞춘다
+  useEffect(() => { if (init?.lines?.length) matchLines(init.cust, init.lines).then(setLines).catch(swallow('수주 직접 등록 · 복사한 품목 맞추기')) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const setLine = (i, k, v) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, [k]: v } : l)))
+  const noDue = lines.filter((l) => !l.due).length
   const [one, setOne] = useState({ pn: '', qty: '', price: '', due: '', desc: '', plnd: '' })
   const [busy, setBusy] = useState(false)
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }))
@@ -67,7 +72,7 @@ function OneEntry({ onClose, onSaved, meName }) {
     if (etc && !f.customer_name.trim()) { setTried(true); return }
     setBusy(true)
     try {
-      const r = await registerEntry({ kind, cust, ...f, customer_name: etc ? f.customer_name : null, lines }, meName)
+      const r = await registerEntry({ kind, cust, ...f, customer_name: etc ? f.customer_name : null, lines: lines.map((l) => ({ ...l, qty: Number(l.qty) || 0, price: l.price == null || l.price === '' ? null : Number(l.price) })) }, meName)
       toastSuccess(`${KINDS[kind]} 등록 — ${r.po_no} · 품목 ${r.lines}`)
       onSaved?.(r); onClose()
     } catch (e) { toastError(e.message) }
@@ -81,6 +86,11 @@ function OneEntry({ onClose, onSaved, meName }) {
         <span className="text-[12.5px] text-slate-500">발주서 PDF 없이 한 건씩 — 여러 건은 「엑셀로 여러 건 올리기」</span>
         <button type="button" onClick={onClose} className="ml-auto text-sm font-bold text-slate-400 hover:text-slate-700">✕ 닫기</button>
       </div>
+      {init?.from?.length > 0 && (
+        <div className="mx-4 md:mx-5 mt-4 rounded-xl border border-violet-200 bg-[#eeebfd] px-4 py-2.5 text-[12.5px] text-violet-800" data-entry-copied>
+          <b>📋 {init.from.slice(0, 3).join(' · ')}{init.from.length > 3 ? ` 외 ${init.from.length - 3}건` : ''} 에서 복사</b> — 품번 · 품명 · 수량 · 단가를 가져왔습니다. <b>PO 번호 · 발주일 · 납기</b>를 넣고, 수량 · 단가가 다르면 표에서 바로 고치세요.
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_230px] gap-4 p-4 md:p-5">
         <div className="space-y-4 min-w-0">
           <div>
@@ -173,6 +183,8 @@ function OneEntry({ onClose, onSaved, meName }) {
             <div className="flex flex-wrap items-baseline gap-2 mb-1.5">
               <Label req>품목</Label>
               <span className="text-[11.5px] text-slate-500">엑셀에서 「품번 · 수량 · 단가 · 납기 · 품명」 순서로 복사해 붙여 넣거나 한 줄씩 넣으세요 — 품번은 포털 코드로 바로 찾습니다</span>
+              {lines.length > 1 && <label className="ml-auto inline-flex items-center gap-1.5 text-[11.5px] font-bold text-slate-600">납기 한 번에
+                <input type="date" value="" onChange={(e) => { const v = e.target.value; if (v) setLines((ls) => ls.map((l) => ({ ...l, due: v }))) }} data-entry-due-all className="h-7 px-1.5 text-xs border border-slate-200 rounded font-normal" /></label>}
             </div>
             <div className="flex gap-2 mb-2">
               <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={2} data-entry-paste
@@ -195,9 +207,9 @@ function OneEntry({ onClose, onSaved, meName }) {
                       <td className="px-3 py-2 whitespace-nowrap">{l.item ? <span className="font-mono text-[#5b6ee8]">{l.item.std_code}</span> : <span className="px-1.5 py-[1px] rounded bg-red-50 text-red-600 text-[10.5px] font-bold" data-unreg>미등록</span>}</td>
                       <td className="px-3 py-2 text-slate-600">{l.item?.name || l.desc || '—'}</td>
                       {kind === 'planned' && <td className="px-3 py-2 font-mono">{l.plnd || '—'}</td>}
-                      <td className="px-3 py-2 text-right font-mono tabular-nums">{fmt(l.qty)}</td>
-                      <td className="px-3 py-2 text-right font-mono tabular-nums">{fmt(l.price)}</td>
-                      <td className="px-3 py-2 font-mono">{l.due || '—'}</td>
+                      <td className="px-2 py-1.5 text-right"><input value={l.qty ?? ''} onChange={(e) => setLine(i, 'qty', e.target.value.replace(/[^0-9.]/g, ''))} data-line-qty={i} className="w-16 h-8 px-2 text-xs text-right font-mono tabular-nums border border-slate-200 rounded" /></td>
+                      <td className="px-2 py-1.5 text-right"><input value={l.price == null ? '' : l.price} onChange={(e) => { const v = e.target.value.replace(/[^0-9.]/g, ''); setLine(i, 'price', v === '' ? null : v) }} data-line-price={i} className="w-24 h-8 px-2 text-xs text-right font-mono tabular-nums border border-slate-200 rounded" /></td>
+                      <td className="px-2 py-1.5"><input type="date" value={l.due || ''} onChange={(e) => setLine(i, 'due', e.target.value || null)} data-line-due={i} className={`h-8 px-1.5 text-xs border rounded ${!l.due && init ? 'border-amber-300 bg-amber-50' : 'border-slate-200'}`} /></td>
                       <td className="px-2 text-center"><button type="button" onClick={() => setLines(lines.filter((_, k) => k !== i))} className="text-slate-400 hover:text-red-500" aria-label="빼기">✕</button></td>
                     </tr>
                   ))}
@@ -225,6 +237,7 @@ function OneEntry({ onClose, onSaved, meName }) {
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">고객사</div><div className="text-[15px] font-extrabold text-slate-800 truncate" data-sum-cust>{etc ? (f.customer_name.trim() ? `${f.customer_name.trim()}` : <span className="text-slate-400">업체 이름 —</span>) : ORDER_CUSTOMERS[cust]?.name}{etc && <span className="ml-1.5 px-1.5 py-[1px] rounded bg-slate-200 text-slate-600 text-[10.5px] align-middle">기타</span>}</div></div>
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">품목</div><div className="text-[22px] font-extrabold font-mono" data-sum-lines>{lines.length}</div></div>
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">미등록 품번</div><div className={`text-[22px] font-extrabold font-mono ${unreg ? 'text-red-500' : 'text-slate-800'}`} data-sum-unreg>{unreg}</div></div>
+            {init && <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">납기 안 넣은 품목</div><div className={`text-[22px] font-extrabold font-mono ${noDue ? 'text-amber-600' : 'text-slate-800'}`} data-sum-nodue>{noDue}</div></div>}
             <div className="bg-slate-50 rounded-lg px-3 py-2"><div className="text-[11.5px] text-slate-500">금액</div><div className="text-[17px] font-extrabold font-mono">₩{Math.round(amount).toLocaleString('ko-KR')}</div></div>
           </div>
           <p className="text-[11.5px] text-slate-500 leading-relaxed mt-3">등록하면 구매자재 「수주 확인」에 올라가고, 회신 · 발주는 정식 PO 와 똑같이 진행합니다. 미등록 품번은 등록 뒤 「코드 · BOM 정리」에서 코드를 줘도 됩니다.</p>

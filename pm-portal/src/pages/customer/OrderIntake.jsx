@@ -25,7 +25,7 @@ import { queryRetry, queryRetryDelay } from '../../lib/netStatus'
 import { fetchLineProdMap } from '../../lib/prodTargets'
 import {
   setLineRev,
-  ORDER_CUSTOMERS, orderCustName, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
+  ORDER_CUSTOMERS, orderCustName, orderCustKey, fetchOrders, fetchOrdersFast, fetchOrderLinesFull, fetchOrderMoney, stageOf, lineState, bizDaysSince, axSyncPreview, axSyncRun,
   replyLines, markDelivered, syncCskProdDone, cskPlndsOf, cskProdMsg, setReleaseDate, setDueDates, DUE_FIELDS, restoreLineFields, REPLY_FIELDS, DLV_FIELDS, ODD_FIELDS, replyTextOf, FIELD_LABEL, SOURCE_LABEL, mgmtNoOf, packOf, oddsOf, ODD_PRICE_PCT, okOddLines, ODD_OK_SQL_HINT, NOTE_SQL_HINT,
 } from '../../lib/orderIntake'
 import { LATE_REASONS, LATE_NONE, LATE_TONE, LATE_OWNER, fetchLateMap, setLateReason, lateSummary, confirmOrders, unconfirmOrders } from '../../lib/orderLate'
@@ -382,6 +382,7 @@ export default function OrderIntake() {
   const [poOpen, setPoOpen] = useState(null)
   const [upload, setUpload] = useState(false)
   const [entry, setEntry] = useState(null)       // 'one' 직접 등록 · 'excel' 엑셀로 여러 건 (v4.94.0)
+  const [entryInit, setEntryInit] = useState(null)   // 고른 품목 복사해서 새 등록 (v4.223.0)
   const tab = ['ecount', 'cleanup'].includes(sp.get('tab')) ? sp.get('tab') : 'list'
   const goTab = (t) => { const n = new URLSearchParams(sp); if (t === 'list') n.delete('tab'); else n.set('tab', t); setSp(n, { replace: true }) }
 
@@ -823,6 +824,21 @@ export default function OrderIntake() {
   const totalN = mode === 'line' ? lines.length : poRows.length
   const liveVisible = shownLines.filter((l) => !l.st.cancelled)
   const checkedLines = liveVisible.filter((l) => checked.has(l.id))
+  // 고른 품목 복사 → 직접 등록 (v4.223.0) — 같은 품목이 반복되는 업체(에스엔지 등). 품번 · 품명 · 수량 · 단가를 가져오고 PO번호 · 발주일 · 납기는 새로
+  function copyToEntry() {
+    const keys = new Set(checkedLines.map((l) => orderCustKey(l.o)))
+    if (keys.size > 1) { toastError('같은 고객사(업체) 품목만 골라 주세요 — 지금 ' + [...new Set(checkedLines.map((l) => orderCustName(l.o)))].join(' · ')); return }
+    const ls = checkedLines.slice().sort((a, b) => String(a.o.po_no).localeCompare(String(b.o.po_no)) || String(a.line_no).localeCompare(String(b.line_no)) || String(a.del_line).localeCompare(String(b.del_line)))
+    const o = ls[0].o
+    setEntryInit({
+      cust: o.customer_code, customer_name: o.customer_name || '', ship_to: o.ship_to || '', note: o.note || '', currency: o.currency || null, ccn: o.ccn || null,
+      from: [...new Set(ls.map((l) => l.o.po_no))],
+      lines: ls.map((l) => ({ pn: l.raw_pn || l.items?.std_code || '', desc: l.raw_desc || '', spec: l.spec || null, rev: l.rev || null, qty: Number(l.qty) || 0, price: l.unit_price ?? null, due: '' })),
+    })
+    setEntry('one')
+  }
+  const copyBtn = editable && <button type="button" onClick={copyToEntry} data-bulk-copy title="고른 품목으로 새 PO 를 등록 — 품번 · 품명 · 수량 · 단가를 그대로 가져오고, PO번호 · 발주일 · 납기만 새로 넣습니다 (같은 품목이 반복되는 발주)"
+    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-violet-300 text-violet-700">📋 복사해서 새 등록</button>
   // 두 일괄 줄에 같이 쓰는 「미납 사유」 칸 (v4.190.0) — 고른 줄 중 납기 지난 것에만 들어간다
   const lateChecked = lateMap ? checkedLines.filter((l) => KPI_PICK.late(l, today)) : []
   const lateCtl = lateMap && editable && lateChecked.length > 0 && (
@@ -1152,6 +1168,7 @@ export default function OrderIntake() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-violet-300 text-violet-700">{faMut.isPending && <Spin />}🧪 {label} 지정</button>
           })()}
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`${editable ? '' : 'ml-auto '}px-3 py-1.5 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white`}>📦 자재 요청</button>
+          {copyBtn}
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
           </fieldset>}
         </div>
@@ -1172,6 +1189,7 @@ export default function OrderIntake() {
           {<button type="button" disabled={oddMut.isPending || !checkedLines.some((l) => l.odd)} title="고른 품목 중 특이사항(REV · 단가 다름 등) 있는 것을 확인 처리" onClick={() => oddMut.mutate({ ls: checkedLines.filter((l) => l.odd) })} data-bulk-odd-ok className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-50 border border-amber-300 text-amber-800 disabled:opacity-40">{oddMut.isPending && <Spin />}✓ 특이사항 확인</button>}
           <button type="button" disabled={dlvMut.isPending} onClick={() => dlvMut.mutate({ ls: checkedLines.filter((l) => !l.st.delivered), on: true })} data-bulk-dlv className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 disabled:opacity-40">{dlvMut.isPending && <Spin />}납품 표시</button>
           <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className="px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300">📦 자재 요청</button>
+          {copyBtn}
           <button type="button" onClick={() => setChecked(new Set())} className="text-xs text-slate-400 hover:text-slate-700">선택 해제</button>
           </fieldset>}
         </div>
@@ -1340,7 +1358,7 @@ export default function OrderIntake() {
           }} />
       )}
       {upload && <OrderUpload meName={meName} onClose={() => setUpload(false)} onSaved={refresh} />}
-      {entry && <OrderEntry mode={entry} meName={meName} onClose={() => setEntry(null)} onSaved={refresh} />}
+      {entry && <OrderEntry mode={entry} init={entry === 'one' ? entryInit : null} meName={meName} onClose={() => { setEntry(null); setEntryInit(null) }} onSaved={(r) => { if (entryInit) setChecked(new Set()); refresh(r) }} />}
       </>}
     </div>
   )
