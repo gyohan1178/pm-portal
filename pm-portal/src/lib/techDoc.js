@@ -11,7 +11,14 @@ export const TECHDOC_SQL = '기술문서_반영_261119'
 export const TECHDOC_SQL_HINT = `기술 문서 표가 아직 없습니다 — 「${TECHDOC_SQL}」 SQL 을 먼저 실행하세요`
 const noTable = (e) => /pm_tech_doc/.test(e?.message || '') && /(does not exist|schema cache|Could not find)/i.test(e?.message || '')
 
-export const KINDS = { spec: '고객사 스펙', std: '규격', edu: '교육 자료' }
+export const KINDS = { spec: '고객사 스펙', std: '규격', edu: '교육 자료', sop: 'SOP (작업표준서)' }
+export const KIND_SHORT = { spec: '스펙', std: '규격', edu: '교육', sop: 'SOP' }
+export const KIND_ICON = { spec: '📄', std: '📐', edu: '🎓', sop: '📘' }
+// 적용 공정 (v4.221.0) — 작업 기준을 공정으로 거르고, 나중에 생산관리 · 작업지시서에서 그 공정 기준으로 연결
+export const PROCESSES = ['하네스', '전장 조립', '라벨 · 마킹', '검사 · 시험', '포장', '공통']
+// 검토 · 승인 (v4.221.0) — 검토 완료는 품질 부서 · 팀장급 · 관리자 / 의견은 편집 권한자 누구나
+export const TECHDOC_REVIEW_SQL = '기술문서_검토_작업기준_반영_261119'
+export const canApprove = (p) => !!p && (p.role === 'admin' || p.is_lead === true || p.dept === '품질')
 export const STATUSES = ['번역 중', '검토 전', '검토 완료', '원문 없음', '정리 중']
 export const STATUS_TONE = {
   '번역 중': 'bg-violet-50 text-violet-700 border-violet-200', '정리 중': 'bg-violet-50 text-violet-700 border-violet-200',
@@ -19,27 +26,28 @@ export const STATUS_TONE = {
   '원문 없음': 'bg-rose-50 text-rose-600 border-rose-200',
 }
 export const ACCESS = { all: '전체 (품질 메뉴를 볼 수 있는 사람)', lead: '팀장급 · 관리자만' }
-const LIST_COLS = 'id,doc_key,source,kind,series,part_no,sort_no,doc_no,title,title_ko,rev,tr_rev,status,access,uploaded_by,updated_at'
-
-export async function fetchDocList() {
-  try {
-    return await fetchAll(() => supabase.from('pm_tech_doc').select(LIST_COLS)
-      .order('source').order('series', { nullsFirst: true }).order('sort_no').order('doc_no'))
-  } catch (e) { if (noTable(e)) return null; throw e }
+const LIST_COLS0 = 'id,doc_key,source,kind,series,part_no,sort_no,doc_no,title,title_ko,rev,tr_rev,status,access,uploaded_by,updated_at'
+const LIST_COLS = LIST_COLS0 + ',process,reviewed_by,reviewed_at'
+// 새 칸(process · reviewed_*)은 SQL 전엔 없다 — 그때는 예전 칸만 받아 화면은 그대로 열리게
+const colMissing = (e) => /(process|reviewed_by|reviewed_at)/.test(e?.message || '') && /(does not exist|schema cache|Could not find)/i.test(e?.message || '')
+async function listWith(cols0, cols1) {
+  const q = (c) => fetchAll(() => supabase.from('pm_tech_doc').select(c).order('source').order('series', { nullsFirst: true }).order('sort_no').order('doc_no'))
+  try { return await q(cols1) } catch (e) {
+    if (noTable(e)) return null
+    if (colMissing(e)) { const r = await q(cols0); r.noReviewCols = true; return r }
+    throw e
+  }
 }
+
+export async function fetchDocList() { return listWith(LIST_COLS0, LIST_COLS) }
 export async function fetchDoc(key) {
   const { data, error } = await supabase.from('pm_tech_doc').select('*').eq('doc_key', key).maybeSingle()
   if (error) throw error
   return data
 }
 // 현장 › 작업 기준 — 문서마다 적용 요약만 (본문 · 그림은 안 받음)
-export async function fetchWorkStd() {
-  try {
-    return await fetchAll(() => supabase.from('pm_tech_doc')
-      .select('doc_key,source,kind,series,part_no,sort_no,doc_no,title_ko,status,tr_rev,summary:body->summary,sumTitle:body->sumTitle')
-      .order('source').order('series', { nullsFirst: true }).order('sort_no').order('doc_no'))
-  } catch (e) { if (noTable(e)) return null; throw e }
-}
+const WS0 = 'doc_key,source,kind,series,part_no,sort_no,doc_no,title,title_ko,status,rev,tr_rev,access,updated_at,summary:body->summary,sumTitle:body->sumTitle,stepCount:body->steps'
+export async function fetchWorkStd() { return listWith(WS0, WS0 + ',process,reviewed_by,reviewed_at') }
 // 본문 그림 — 문서 열 때 한 번에
 export async function fetchFigs(key) {
   const { data, error } = await supabase.from('pm_tech_doc_img').select('img_key,data').eq('doc_key', key).eq('kind', 'fig')
@@ -82,6 +90,7 @@ export function readPackage(text, fileName = '') {
       doc_key: String(d.key).trim(), source: d.source || '', kind: d.kind || 'spec', series: d.series || null, part_no: d.part_no || null,
       sort_no: Number(d.sort_no) || 0, doc_no: d.doc_no || '', title: d.title || '', title_ko: d.title_ko || '', rev: d.rev || '', tr_rev: d.tr_rev || '',
       status: d.status || '검토 전', access: d.access === 'lead' ? 'lead' : 'all', body: d.body, search_text: searchText(d),
+      ...(d.process ? { process: d.process } : {}),
     },
     bytes: text.length,
   }
@@ -104,6 +113,20 @@ function searchText(d) {
 
 export async function savePackage(pkg, by) {
   const row = { ...pkg.row, uploaded_by: by || null, updated_at: new Date().toISOString() }
+  // 검토 (v4.221.0) — 같은 번역 Rev 를 다시 올리면 검토 완료 그대로, Rev 가 바뀌면 「검토 전」 으로 돌리고 이력에 남김
+  let prev = null
+  { const { data } = await supabase.from('pm_tech_doc').select('*').eq('doc_key', pkg.key).maybeSingle(); prev = data || null }
+  const hasRev = prev && 'reviewed_at' in prev
+  if (prev && hasRev) {
+    if (!row.process && prev.process) row.process = prev.process
+    if (prev.status === '검토 완료' && String(prev.tr_rev || '') === String(row.tr_rev || '') && row.status === '검토 전') {
+      row.status = '검토 완료'; row.reviewed_by = prev.reviewed_by; row.reviewed_at = prev.reviewed_at
+    } else if (prev.reviewed_at && String(prev.tr_rev || '') !== String(row.tr_rev || '')) {
+      row.reviewed_by = null; row.reviewed_at = null
+      await addReview(pkg.key, 'reset', `번역 Rev ${prev.tr_rev || '—'} → ${row.tr_rev || '—'} 로 다시 올림 — 검토 전으로`, by).catch(() => {})
+    }
+  }
+  if (!hasRev) { delete row.process; delete row.reviewed_by; delete row.reviewed_at }
   const { error } = await supabase.from('pm_tech_doc').upsert(row, { onConflict: 'doc_key' })
   if (error) throw error
   // 그림은 통째로 바꾼다 — 예전 판 그림이 남지 않게
@@ -249,3 +272,83 @@ export const TECHDOC_CSS = `
 [data-techdoc] .rich p{margin:0} [data-techdoc] .rich small{display:block;color:var(--tx3);font-size:11.5px;font-family:var(--mono);margin-top:4px}
 @media (max-width:680px){[data-techdoc] .row{grid-template-columns:minmax(0,1fr)} [data-techdoc] .row .en{border-bottom:1px dashed var(--bdi)}}
 `
+
+// ── 검토 · 승인 (v4.221.0) ──
+//   pm_tech_doc_review: kind = comment(의견) · approve(검토 완료) · reset(다시 올려 검토 전) · unapprove(검토 취소)
+export async function fetchReviews(key) {
+  const { data, error } = await supabase.from('pm_tech_doc_review').select('*').eq('doc_key', key).order('created_at', { ascending: false })
+  if (error) { if (/pm_tech_doc_review/.test(error.message || '')) return null; throw error }
+  return data || []
+}
+export async function addReview(key, kind, text, by) {
+  const { error } = await supabase.from('pm_tech_doc_review').insert({ doc_key: key, kind, body: text || null, by_name: by || null })
+  if (error) throw error
+}
+export async function approveDoc(key, by, note) {
+  const t = new Date().toISOString()
+  const { error } = await supabase.from('pm_tech_doc').update({ status: '검토 완료', reviewed_by: by || null, reviewed_at: t }).eq('doc_key', key)
+  if (error) throw error
+  await addReview(key, 'approve', note || '검토 완료', by)
+}
+export async function unapproveDoc(key, by, why) {
+  const { error } = await supabase.from('pm_tech_doc').update({ status: '검토 전', reviewed_by: null, reviewed_at: null }).eq('doc_key', key)
+  if (error) throw error
+  await addReview(key, 'unapprove', why || '검토 취소', by)
+}
+export async function setProcess(key, process) {
+  const { error } = await supabase.from('pm_tech_doc').update({ process: process || null }).eq('doc_key', key)
+  if (error) throw error
+}
+
+// ── SOP (작업표준서) — 사내 작성 (v4.221.0) ──
+//   pm_tech_doc 한 줄 (kind='sop' · source='사내') + 사진은 pm_tech_doc_img (fig:sop-단계-번호)
+//   body: { target, tools, author, steps: [{ title, text, warn, check, ref, photos: ['키'] }], sections: [] }
+export async function nextSopNo() {
+  const { data } = await supabase.from('pm_tech_doc').select('doc_no').eq('kind', 'sop').like('doc_no', 'JS-SOP-%').order('doc_no', { ascending: false }).limit(1)
+  const n = Number(String(data?.[0]?.doc_no || '').replace(/\D/g, '')) || 0
+  return `JS-SOP-${String(n + 1).padStart(3, '0')}`
+}
+export function sopSearchText(f) {
+  return [f.doc_no, f.title_ko, f.process, f.target, f.tools, ...(f.steps || []).flatMap((s) => [s.title, s.text, s.warn, s.check, s.ref])].filter(Boolean).join(' \n')
+}
+// 사진 → 긴 쪽 1280px JPEG (현장 휴대폰 사진이 수 MB 라 줄여서 넣음)
+export function photoToJpeg(file, max = 1280, q = 0.8) {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.width, img.height))
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k)
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+      URL.revokeObjectURL(url); resolve(c.toDataURL('image/jpeg', q))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error(`${file.name} — 사진을 읽지 못했습니다`)) }
+    img.src = url
+  })
+}
+// 저장 — 새로 쓰면 「검토 전」. 승인(검토 완료)된 SOP 를 고치면 Rev 를 올리고 다시 검토 전으로
+export async function saveSop(f, photos, by, prev) {
+  const key = prev?.doc_key || `SOP-${f.doc_no}`
+  const changed = !!prev
+  const rev = changed ? String((Number(prev.tr_rev) || 0) + (prev.status === '검토 완료' ? 1 : 0)) : '1'
+  const body = { target: f.target || '', tools: f.tools || '', author: f.author || by || '', steps: f.steps, sections: [], summary: (f.steps || []).filter((s) => s.check || s.warn).slice(0, 8).map((s, i) => [`${s.title ? `<b>${String(s.title).replace(/[<>]/g, '')}</b> — ` : ''}${String(s.check || s.warn).replace(/[<>]/g, '')}`, `${i + 1}단계`]) }
+  const row = {
+    doc_key: key, source: '사내', kind: 'sop', series: null, part_no: null, sort_no: 0, doc_no: f.doc_no, title: f.title_ko, title_ko: f.title_ko,
+    rev, tr_rev: rev, status: '검토 전', access: 'all', process: f.process || null, body, search_text: sopSearchText(f),
+    uploaded_by: by || null, updated_at: new Date().toISOString(), reviewed_by: null, reviewed_at: null,
+  }
+  const { error } = await supabase.from('pm_tech_doc').upsert(row, { onConflict: 'doc_key' })
+  if (error) throw error
+  // 사진 — 남긴 것만 두고 새 것은 넣음
+  const keep = new Set((f.steps || []).flatMap((s) => s.photos || []).map((k) => `fig:${k}`))
+  const { data: old } = await supabase.from('pm_tech_doc_img').select('img_key').eq('doc_key', key)
+  const drop = (old || []).map((r) => r.img_key).filter((k) => !keep.has(k))
+  if (drop.length) { const { error: e2 } = await supabase.from('pm_tech_doc_img').delete().eq('doc_key', key).in('img_key', drop); if (e2) throw e2 }
+  const add = Object.entries(photos || {}).filter(([k]) => keep.has(`fig:${k}`))
+  for (const [k, v] of add) {
+    const { error: e3 } = await supabase.from('pm_tech_doc_img').upsert({ doc_key: key, img_key: `fig:${k}`, kind: 'fig', data: v }, { onConflict: 'doc_key,img_key' })
+    if (e3) throw e3
+  }
+  await addReview(key, 'reset', changed ? `SOP 고침 (Rev ${rev}) — 검토 전으로` : 'SOP 새로 등록 — 검토 기다림', by).catch(() => {})
+  return key
+}

@@ -4,16 +4,17 @@
 //   UL 같은 교육 자료는 모듈 하나가 문서 한 건 — 강의를 들은 모듈만 따로 올린다 (series 로 묶여 보임).
 import { useState, useMemo, useEffect, useDeferredValue, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams } from 'react-router-dom'
+import { useSearchParams, useNavigate } from 'react-router-dom'
 import PageHead from '../../components/PageHead'
 import { KpiCard } from '../../components/ui/Kpi'
 import { SkelBar } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { useMyProfile, canEdit } from '../../hooks/useProfile'
+import TechDocReview from '../../components/TechDocReview'
 import { toastError, toastSuccess } from '../../lib/toast'
 import {
   TECHDOC_SQL_HINT, KINDS, STATUS_TONE, ACCESS, fetchDocList, fetchDoc, fetchFigs, fetchPageList, fetchPage, searchDocs,
-  readPackage, savePackage, deleteDoc, setAccess, safeHtml, sectionsHtml, TECHDOC_CSS,
+  readPackage, savePackage, deleteDoc, setAccess, setProcess, PROCESSES, safeHtml, sectionsHtml, TECHDOC_CSS,
 } from '../../lib/techDoc'
 
 const RULES = [
@@ -82,7 +83,9 @@ export default function TechDocs() {
   const edu = doc?.kind === 'edu'
   const [mode, setMode] = useState(() => { try { return localStorage.getItem('techDocMode') || 'both' } catch { return 'both' } })
   const viewMode = body.noOriginal || edu ? 'ko' : mode
-  const pick = (k) => { const n = new URLSearchParams(sp); n.set('doc', k); setSp(n); window.scrollTo?.({ top: 0 }) }
+  const nav = useNavigate()
+  // SOP 는 현장 › 작업 기준에서 봄 (단계 · 사진 카드)
+  const pick = (k) => { if (docs.find((d) => d.doc_key === k)?.kind === 'sop') return nav(`/work-std?doc=${encodeURIComponent(k)}`); const n = new URLSearchParams(sp); n.set('doc', k); setSp(n); window.scrollTo?.({ top: 0 }) }
   const back = () => { const n = new URLSearchParams(sp); n.delete('doc'); setSp(n); window.scrollTo?.({ top: 0 }) }
   const { html: secHtml, shown } = useMemo(() => sectionsHtml(body.sections, qd, figs, pages), [body.sections, qd, figs, pages])
 
@@ -105,6 +108,11 @@ export default function TechDocs() {
     try { await setAccess(cur, v); toastSuccess(`열람 범위 — ${ACCESS[v]}`); qc.invalidateQueries({ queryKey: ['techDocs'] }); qc.invalidateQueries({ queryKey: ['techDoc', cur] }) }
     catch (e) { toastError(e.message || String(e)) }
   }
+  async function changeProcess(v) {
+    try { await setProcess(cur, v); toastSuccess(v ? `적용 공정 — ${v}` : '적용 공정 지움'); qc.invalidateQueries({ queryKey: ['techDocs'] }); qc.invalidateQueries({ queryKey: ['techDoc', cur] }); qc.invalidateQueries({ queryKey: ['workStd'] }) }
+    catch (e) { toastError(e.message || String(e)) }
+  }
+  const reviewChanged = () => { qc.invalidateQueries({ queryKey: ['techDocs'] }); qc.invalidateQueries({ queryKey: ['techDoc', cur] }); qc.invalidateQueries({ queryKey: ['workStd'] }) }
   async function remove() {
     const ok = await ask({ title: `${doc.doc_no || doc.doc_key} ${doc.part_no || ''} 를 지울까요?`, desc: '번역 · 그림 · 원문 쪽 이미지가 같이 지워집니다. 문서 꾸러미(.json)가 있으면 다시 올릴 수 있습니다. NAS 원본은 그대로입니다.', okText: '지우기', danger: true })
     if (!ok) return
@@ -295,6 +303,16 @@ export default function TechDocs() {
                   <button type="button" className={BTN} onClick={copyPath}>원본 경로 복사</button></>}
                 {pages?.length > 0 && <button type="button" className={BTN} onClick={() => openPage(pages[0])}>원문 {pages[0]}쪽 보기</button>}
                 <span className="ml-auto flex items-center gap-2 text-[12px] text-slate-400">
+                  {'process' in doc && (<>
+                    적용 공정
+                    {editable ? (
+                      <select value={doc.process || ''} onChange={(e) => changeProcess(e.target.value)} data-techdoc-process
+                        className="h-[30px] px-2 text-[12.5px] border border-slate-200 rounded-lg bg-white text-slate-600">
+                        <option value="">— 고르기</option>
+                        {PROCESSES.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    ) : <b className="text-slate-600">{doc.process || '—'}</b>}
+                  </>)}
                   열람
                   {isLead ? (
                     <select value={doc.access || 'all'} onChange={(e) => changeAccess(e.target.value)} data-techdoc-access
@@ -307,6 +325,8 @@ export default function TechDocs() {
               </div>
               <div className="text-[11.5px] text-slate-400 mt-2">올린 사람 {doc.uploaded_by || '—'} · {String(doc.updated_at || '').slice(0, 10)}</div>
             </section>
+
+            <TechDocReview doc={doc} profile={profile} editable={editable} onChanged={reviewChanged} />
 
             {body.summary?.length > 0 && (
               <section className="sum rounded-xl border border-amber-200 bg-amber-50 p-5" data-techdoc-summary>
