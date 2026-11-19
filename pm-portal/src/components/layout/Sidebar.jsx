@@ -61,7 +61,7 @@ const MENU_META = {
   '/inbound': ['📥','입고'], '/quote': ['💲','품목 단가 등록'], '/payment-plan': ['💳','결제 계획'],
   '/sales-quote': ['📤','매출견적'], '/orders': ['📨','수주대장'],
   '/field-search': ['🔎','현장 검색'], '/production': ['🏭','공정 현황판'],
-  '/production/AX': ['🔧','생산 관리'], '/production/targets': ['🎯','생산관리 대상'], '/production/harness-release': ['🧵','하네스 출도·불출'], '/drawings': ['📐','도면 조회'],
+  '/production/AX': ['🔧','생산 관리'], '/production/targets': ['🎯','생산관리 대상'], '/production/harness-release': ['🧵','하네스 출도·불출'], '/drawings': ['📐','도면 조회'], '/work-std': ['📋','작업 기준'],
   '/weekly': ['📄','주간업무보고'], '/purchase-dashboard': ['💰','매입 대시보드'],
   '/sales': ['💼','매출 대시보드'], '/cost': ['💵','원가분석'],
   '/request-load': ['🗂','자재요청 업무량'],
@@ -537,6 +537,7 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/material-request" icon="🙋" onNavigate={onNavigate} badge={alerts['/material-request']}>자재 요청</MenuItem>
           <MenuItem to="/doc-request" icon="📎" onNavigate={onNavigate} badge={docBadge}>자료 요청</MenuItem>
           <MenuItem to="/drawings" icon="📐" onNavigate={onNavigate}>도면 조회</MenuItem>
+          <MenuItem to="/work-std" icon="📋" onNavigate={onNavigate}>작업 기준</MenuItem>
           <MenuItem to="/production" end icon="🏭" onNavigate={onNavigate}>공정 현황판</MenuItem>
           <MenuItem to="/production/AX" icon="🔧" onNavigate={onNavigate}>생산 관리</MenuItem>
           <MenuItem to="/production/targets" icon="🎯" onNavigate={onNavigate}>생산관리 대상</MenuItem>

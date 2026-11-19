@@ -50,17 +50,21 @@ export default function TechDocs() {
   const qd = useDeferredValue(q).trim()
   const { data: hitKeys } = useQuery({ queryKey: ['techDocSearch', qd], queryFn: () => searchDocs(qd), enabled: qd.length >= 2, staleTime: 60_000 })
   const [kind, setKind] = useState('')
-  const shownDocs = docs.filter((d) => (!kind || d.kind === kind) && (qd.length < 2 || !hitKeys || hitKeys.has(d.doc_key)))
-  // 묶음: 출처(source) → (series 있으면 그 아래 모듈들)
-  const groups = useMemo(() => {
+  // 대분류 — 고객사(AXCELIS 등) · 규격 · 교육(UL 등). 주소(?cat=)에 남겨 목록으로 돌아와도 그대로
+  const cat = sp.get('cat') || ''
+  const [stF, setStF] = useState('')
+  const cats = useMemo(() => {
     const m = new Map()
-    for (const d of shownDocs) {
-      const g = `${d.source || '기타'} · ${KINDS[d.kind] || d.kind}`
-      if (!m.has(g)) m.set(g, [])
-      m.get(g).push(d)
+    for (const d of docs) {
+      const k = d.source || '기타'
+      if (!m.has(k)) m.set(k, { key: k, kind: d.kind, n: 0 })
+      m.get(k).n++
     }
-    return [...m.entries()]
-  }, [shownDocs])
+    return [...m.values()].sort((a, b) => (a.kind === 'spec' ? 0 : 1) - (b.kind === 'spec' ? 0 : 1) || a.key.localeCompare(b.key))
+  }, [docs])
+  const setCat = (v) => { const n = new URLSearchParams(sp); if (v) n.set('cat', v); else n.delete('cat'); setSp(n, { replace: true }) }
+  const shownDocs = docs.filter((d) => (!kind || d.kind === kind) && (!cat || (d.source || '기타') === cat) && (!stF || d.status === stF)
+    && (qd.length < 2 || !hitKeys || hitKeys.has(d.doc_key)))
 
   const kpi = {
     all: docs.length,
@@ -69,8 +73,8 @@ export default function TechDocs() {
     wait: docs.filter((d) => ['검토 전', '번역 중', '원문 없음', '정리 중'].includes(d.status)).length,
   }
 
-  // 고른 문서 — 처음엔 맨 위 문서
-  const cur = sel || docs[0]?.doc_key || ''
+  // 고른 문서 — 없으면 목록 화면
+  const cur = sel
   const { data: doc, isLoading: docLoading } = useQuery({ queryKey: ['techDoc', cur], queryFn: () => fetchDoc(cur), enabled: !!cur && !noTable, staleTime: 300_000 })
   const { data: figs } = useQuery({ queryKey: ['techDocFigs', cur], queryFn: () => fetchFigs(cur), enabled: !!cur && !noTable, staleTime: 300_000 })
   const { data: pages } = useQuery({ queryKey: ['techDocPages', cur], queryFn: () => fetchPageList(cur), enabled: !!cur && !noTable, staleTime: 300_000 })
@@ -78,7 +82,8 @@ export default function TechDocs() {
   const edu = doc?.kind === 'edu'
   const [mode, setMode] = useState(() => { try { return localStorage.getItem('techDocMode') || 'both' } catch { return 'both' } })
   const viewMode = body.noOriginal || edu ? 'ko' : mode
-  const pick = (k) => { const n = new URLSearchParams(sp); n.set('doc', k); setSp(n, { replace: true }); window.scrollTo?.({ top: 0 }) }
+  const pick = (k) => { const n = new URLSearchParams(sp); n.set('doc', k); setSp(n); window.scrollTo?.({ top: 0 }) }
+  const back = () => { const n = new URLSearchParams(sp); n.delete('doc'); setSp(n); window.scrollTo?.({ top: 0 }) }
   const { html: secHtml, shown } = useMemo(() => sectionsHtml(body.sections, qd, figs, pages), [body.sections, qd, figs, pages])
 
   // 원문 쪽 · 그림 크게 보기 (닫기 버튼으로만 닫힘)
@@ -134,11 +139,11 @@ export default function TechDocs() {
       setUp(null)
       qc.invalidateQueries({ queryKey: ['techDocs'] })
       for (const x of ok) { qc.invalidateQueries({ queryKey: ['techDoc', x.pkg.key] }); qc.invalidateQueries({ queryKey: ['techDocFigs', x.pkg.key] }); qc.invalidateQueries({ queryKey: ['techDocPages', x.pkg.key] }) }
-      if (ok[0] && !sel) pick(ok[0].pkg.key)
     } catch (e) { toastError(`${n}건 올리고 멈춤 — ${e.message || e}`); qc.invalidateQueries({ queryKey: ['techDocs'] }) } finally { setBusy(false) }
   }
 
-  const label = (d) => d.series ? `${d.part_no || ''}` : d.doc_no
+  // 같은 묶음(UL 508A 등)의 다른 모듈
+  const sibs = doc?.series ? docs.filter((d) => d.series === doc.series && d.source === doc.source) : []
   return (
     <div className="space-y-4" data-techdocs>
       <style>{TECHDOC_CSS}</style>
@@ -154,16 +159,64 @@ export default function TechDocs() {
       {noTable && <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[13px] text-amber-800" data-techdoc-nosql>⚠ {TECHDOC_SQL_HINT}</div>}
       {error && <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-[13px] text-rose-700">불러오지 못했습니다 — {error.message}</div>}
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <KpiCard label="등록 문서" value={kpi.all} note="교육 자료는 모듈 하나가 한 건" loading={isLoading} onClick={() => setKind('')} on={!kind} />
-        <KpiCard label="고객사 스펙" value={kpi.spec} note="원문 · 번역 대조" tone="blue" loading={isLoading} onClick={() => setKind(kind === 'spec' ? '' : 'spec')} on={kind === 'spec'} />
-        <KpiCard label="교육 자료" value={kpi.edu} note="UL 등 · 한글 정리본" tone="green" loading={isLoading} onClick={() => setKind(kind === 'edu' ? '' : 'edu')} on={kind === 'edu'} />
-        <KpiCard label="검토 기다림" value={kpi.wait} note="번역 중 · 검토 전 · 원문 없음" tone={kpi.wait ? 'amber' : 'green'} loading={isLoading} />
-      </div>
+      {!cur && (<>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <KpiCard label="등록 문서" value={kpi.all} note="교육 자료는 모듈 하나가 한 건 · 누르면 전체" loading={isLoading} onClick={() => { setKind(''); setStF('') }} on={!kind && !stF} />
+          <KpiCard label="고객사 스펙" value={kpi.spec} note="원문 · 번역 대조" tone="blue" loading={isLoading} onClick={() => setKind(kind === 'spec' ? '' : 'spec')} on={kind === 'spec'} />
+          <KpiCard label="규격 · 교육 자료" value={kpi.edu} note="UL 등 · 한글 정리본" tone="green" loading={isLoading} onClick={() => setKind(kind === 'edu' ? '' : 'edu')} on={kind === 'edu'} />
+          <KpiCard label="검토 기다림" value={kpi.wait} note="번역 중 · 검토 전 · 원문 없음" tone={kpi.wait ? 'amber' : 'green'} loading={isLoading} />
+        </div>
 
+        <div className="flex flex-wrap items-center gap-2" data-techdoc-filter>
+          <select value={cat} onChange={(e) => setCat(e.target.value)} data-techdoc-cat
+            className="h-10 px-3 text-[13px] font-bold border border-slate-200 rounded-[10px] bg-white text-slate-700">
+            <option value="">대분류 — 전체</option>
+            {cats.map((c) => <option key={c.key} value={c.key}>{c.key} ({c.kind === 'spec' ? '고객사' : '규격 · 교육'}) · {c.n}건</option>)}
+          </select>
+          <select value={stF} onChange={(e) => setStF(e.target.value)} data-techdoc-status
+            className="h-10 px-3 text-[13px] border border-slate-200 rounded-[10px] bg-white text-slate-600">
+            <option value="">상태 — 전체</option>
+            {[...new Set(docs.map((d) => d.status).filter(Boolean))].map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <input value={q} onChange={(e) => setQ(e.target.value)} type="search" data-techdoc-q
+            placeholder="문서 내용까지 찾기 — 한글 · 영문 · 번호 (예: 원산지, AWG, 1918540, SCCR)"
+            className="flex-1 min-w-[240px] h-10 px-3.5 text-[13px] border border-slate-200 rounded-[10px] bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
+          <span className="text-[12px] text-slate-400">{shownDocs.length}건{qd.length >= 2 ? ` · 「${qd}」 든 문서` : ''}</span>
+        </div>
+
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden" data-techdoc-list>
+          <div className="overflow-x-auto">
+            <table className="w-full text-[13px]">
+              <thead><tr className="bg-[#f7f8fb] text-slate-500 text-left border-b-2 border-slate-200">
+                {['대분류', '문서 번호', '제목', '구분', '원문 Rev', '번역 Rev', '상태', '열람', '갱신'].map((h) => <th key={h} className="px-3 py-2.5 text-[12px] font-bold whitespace-nowrap">{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {isLoading && <tr><td colSpan={9} className="p-4"><div className="space-y-2">{[90, 70, 80].map((w, i) => <SkelBar key={i} w={w * 8} h={14} />)}</div></td></tr>}
+                {!isLoading && !shownDocs.length && <tr><td colSpan={9} className="px-3 py-10 text-center text-slate-400">{qd.length >= 2 ? `「${qd}」 이(가) 든 문서가 없습니다` : docs.length ? '조건에 맞는 문서가 없습니다' : '올린 문서가 없습니다'}</td></tr>}
+                {shownDocs.map((d) => (
+                  <tr key={d.doc_key} onClick={() => pick(d.doc_key)} className="border-t border-slate-100 hover:bg-violet-50/50 cursor-pointer h-12" data-techdoc-row={d.doc_key}>
+                    <td className="px-3 py-2 whitespace-nowrap"><span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${d.kind === 'spec' ? 'bg-sky-50 text-sky-700' : 'bg-emerald-50 text-emerald-700'}`}>{d.source || '기타'}</span></td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono font-bold text-[#5b6ee8]">{d.series ? `${d.series} · ${d.part_no}` : d.doc_no}</td>
+                    <td className="px-3 py-2"><div className="font-bold text-slate-800">{d.title_ko}</div><div className="text-[11.5px] text-slate-400 truncate max-w-[420px]">{d.title}</div></td>
+                    <td className="px-3 py-2 whitespace-nowrap text-slate-500">{KINDS[d.kind] || d.kind}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{d.rev || '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap font-mono">{d.tr_rev || '—'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap"><span className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${STATUS_TONE[d.status] || 'bg-slate-50 text-slate-400 border-slate-200'}`}>{d.status || '—'}</span></td>
+                    <td className="px-3 py-2 whitespace-nowrap text-[12px] text-slate-500">{d.access === 'lead' ? '🔒 팀장급' : '전체'}</td>
+                    <td className="px-3 py-2 whitespace-nowrap text-[12px] text-slate-400">{String(d.updated_at || '').slice(0, 10)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>)}
+
+      {cur && (<>
       <div className="sticky top-0 z-10 bg-[#f7f8fb] py-2 flex flex-wrap items-center gap-2">
+        <button type="button" onClick={back} className={BTN} data-techdoc-back>← 목록</button>
         <input value={q} onChange={(e) => setQ(e.target.value)} type="search" data-techdoc-q
-          placeholder={`전체 문서에서 찾기 — 한글 · 영문 · 번호 (${body.ph || '예: 원산지, label, 1918540'})`}
+          placeholder={`이 문서에서 찾기 — 한글 · 영문 · 번호 (${body.ph || '예: 원산지, label'})`}
           className="flex-1 min-w-[220px] h-10 px-3.5 text-[13px] border border-slate-200 rounded-[10px] bg-white focus:outline-none focus:ring-2 focus:ring-violet-300" />
         {!(body.noOriginal || edu) && (
           <div className="flex bg-white border border-slate-200 rounded-[10px] p-[3px] gap-0.5" data-techdoc-mode>
@@ -173,46 +226,26 @@ export default function TechDocs() {
             ))}
           </div>
         )}
-        <span className="text-[12px] text-slate-400">{qd.length >= 2 ? `문서 ${shownDocs.length}건 · 이 문서 ${shown}개 항목` : doc ? `본문 ${body.sections?.length || 0}개 항목 · 표 ${body.tables ?? '—'}개` : ''}</span>
+        <span className="text-[12px] text-slate-400">{qd ? `${shown}개 항목` : doc ? `본문 ${body.sections?.length || 0}개 항목 · 표 ${body.tables ?? '—'}개` : ''}</span>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[250px_minmax(0,1fr)] gap-4 items-start">
-        {/* 문서 목록 */}
-        <aside className="lg:sticky lg:top-[60px] space-y-3" data-techdoc-list>
-          <div className="bg-white border border-slate-200 rounded-xl p-3 space-y-1">
-            {isLoading && <div className="space-y-2 p-1">{[90, 70, 80, 60, 75].map((w, i) => <SkelBar key={i} w={w * 2} h={14} />)}</div>}
-            {!isLoading && !groups.length && <p className="text-[12.5px] text-slate-400 p-2">{qd.length >= 2 ? `「${qd}」 이(가) 든 문서가 없습니다` : '올린 문서가 없습니다'}</p>}
-            {groups.map(([g, ds]) => {
-              let lastSeries = null
-              return (
-                <div key={g} className="space-y-0.5">
-                  <div className="text-[11.5px] font-bold text-slate-400 px-1 pt-2">{g}</div>
-                  {ds.map((d) => {
-                    const head = d.series && d.series !== lastSeries ? d.series : null
-                    lastSeries = d.series
-                    return (
-                      <div key={d.doc_key}>
-                        {head && <div className="text-[12.5px] font-extrabold text-slate-700 px-2 pt-1.5">{head}</div>}
-                        <button type="button" onClick={() => pick(d.doc_key)} aria-current={d.doc_key === cur}
-                          className={`w-full text-left px-2.5 py-2 rounded-lg ${d.series ? 'pl-4' : ''} ${d.doc_key === cur ? 'bg-violet-50 text-violet-700' : 'hover:bg-slate-50 text-slate-600'}`}>
-                          <span className="flex items-center gap-1.5">
-                            <b className="font-mono text-[12.5px]">{label(d)}</b>
-                            {d.access === 'lead' && <span title="팀장급 · 관리자만" className="text-[11px]">🔒</span>}
-                            <span className={`ml-auto text-[10.5px] font-bold px-1.5 py-px rounded-full border ${STATUS_TONE[d.status] || 'bg-slate-50 text-slate-400 border-slate-200'}`}>{d.status}</span>
-                          </span>
-                          <span className="block text-[12px] text-slate-500 truncate">{d.title_ko}{d.tr_rev && !d.series ? ` · Rev ${d.tr_rev}` : ''}</span>
-                        </button>
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })}
-          </div>
+      <div className="grid grid-cols-1 lg:grid-cols-[220px_minmax(0,1fr)] gap-4 items-start">
+        <aside className="lg:sticky lg:top-[60px] space-y-3">
+          {sibs.length > 1 && (
+            <div className="bg-white border border-slate-200 rounded-xl p-3" data-techdoc-sibs>
+              <div className="text-[12px] font-bold text-slate-400 mb-1">{doc?.series} 모듈</div>
+              {sibs.map((d) => (
+                <button key={d.doc_key} type="button" onClick={() => pick(d.doc_key)}
+                  className={`w-full flex gap-2 text-left text-[12.5px] px-1.5 py-1 rounded-md ${d.doc_key === cur ? 'bg-violet-50 text-violet-700 font-bold' : 'text-slate-600 hover:bg-slate-50'}`}>
+                  <span className="font-mono min-w-[30px] flex-none">{d.part_no}</span><span className="truncate">{d.title_ko}</span>
+                </button>
+              ))}
+            </div>
+          )}
           {doc && body.sections?.length > 1 && (
             <nav className="bg-white border border-slate-200 rounded-xl p-3 hidden lg:block" data-techdoc-toc>
               <div className="text-[12px] font-bold text-slate-400 mb-1">목차</div>
-              <div className="max-h-[42vh] overflow-y-auto space-y-0.5">
+              <div className="max-h-[60vh] overflow-y-auto space-y-0.5">
                 {body.sections.map((s) => (
                   <button key={s.id} type="button" onClick={() => goSec(s.id)} className="w-full flex gap-2 text-left text-[12.5px] text-slate-600 px-1.5 py-1 rounded-md hover:bg-slate-50">
                     <span className="font-mono text-violet-600 text-[11.5px] min-w-[30px] flex-none">{s.no || '—'}</span><span className="truncate">{s.ko}</span>
@@ -228,7 +261,7 @@ export default function TechDocs() {
           {docLoading && <div className="bg-white border border-slate-200 rounded-xl p-5 space-y-2.5">{[95, 80, 88, 70, 92, 60].map((w, i) => <SkelBar key={i} w={w * 6} h={13} />)}</div>}
           {!docLoading && !doc && !isLoading && !noTable && (
             <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-[13px] text-slate-400">
-              {docs.length ? '왼쪽에서 문서를 고르세요' : <>아직 올린 문서가 없습니다.{editable && <> 「📤 문서 올리기」로 번역 양식 문서 꾸러미(.json)를 올리세요.</>}</>}
+              이 문서를 찾지 못했습니다 — 지워졌거나 열람 범위 밖입니다. 「← 목록」으로 돌아가세요.
             </div>
           )}
           {doc && (<>
@@ -302,6 +335,7 @@ export default function TechDocs() {
           </>)}
         </main>
       </div>
+      </>)}
 
       {/* 원문 쪽 · 그림 크게 보기 */}
       {view && (

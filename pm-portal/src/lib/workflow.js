@@ -40,6 +40,7 @@ export const MENU = {
   '/quality/cn': '설계변경(CN) 이력',
   '/quality/complaints': '고객사 불만 접수',
   '/quality/tech-docs': '기술 문서',
+  '/work-std': '작업 기준',
   '/quality/fa-progress': '초도품 진행관리',
   '/quality/fai': '초도품 자재 매칭',
   '/quality/lot': '로트 관리',

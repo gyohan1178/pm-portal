@@ -68,6 +68,7 @@ const PATH_LABELS = {
   'doc-request':      ['현장', '자료 요청'],
   'field-search':     ['현장', '현장 검색'],
   drawings:           ['현장', '도면 조회'],
+  'work-std':         ['현장', '작업 기준'],
   board:              ['현장', '공정 현황판'],
   'production/qr-demo': ['현장', '공정 현황판'],
   'production/targets': ['현장', '생산관리 대상'],

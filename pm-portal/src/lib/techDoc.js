@@ -32,6 +32,14 @@ export async function fetchDoc(key) {
   if (error) throw error
   return data
 }
+// 현장 › 작업 기준 — 문서마다 적용 요약만 (본문 · 그림은 안 받음)
+export async function fetchWorkStd() {
+  try {
+    return await fetchAll(() => supabase.from('pm_tech_doc')
+      .select('doc_key,source,kind,series,part_no,sort_no,doc_no,title_ko,status,tr_rev,summary:body->summary,sumTitle:body->sumTitle')
+      .order('source').order('series', { nullsFirst: true }).order('sort_no').order('doc_no'))
+  } catch (e) { if (noTable(e)) return null; throw e }
+}
 // 본문 그림 — 문서 열 때 한 번에
 export async function fetchFigs(key) {
   const { data, error } = await supabase.from('pm_tech_doc_img').select('img_key,data').eq('doc_key', key).eq('kind', 'fig')
@@ -130,7 +138,7 @@ export async function setAccess(key, access) {
 export const esc = (t) => String(t ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 export const safeHtml = (t) => esc(t)
   .replace(/&lt;(\/?)(b|small|p|br)&gt;/g, '<$1$2>')
-  .replace(/&lt;span class=&quot;mono&quot;&gt;/g, '<span class="mono">').replace(/&lt;\/span&gt;/g, '</span>')
+  .replace(/&lt;(span|b) class=&quot;mono&quot;&gt;/g, '<$1 class="mono">').replace(/&lt;\/span&gt;/g, '</span>')
 const reQ = (q) => new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi')
 export function makeHi(q) {
   const re = q ? reQ(q) : null

@@ -78,6 +78,7 @@ function buildCommands() {
   push('품질', '초도품 자재 매칭', '/quality/fai', 'fai matching')
   push('품질', '설계변경(CN) 이력', '/quality/cn', 'cn ecn seolgye byeongyeong')
   push('품질', '고객사 불만 접수', '/quality/complaints', 'rma claim complaint bulman gogaek banpum')
+  push('현장', '작업 기준', '/work-std', 'jakeop gijun spec label marking ul summary')
   push('품질', '기술 문서', '/quality/tech-docs', 'spec seupek beonyeok ul 508a gisul munseo 8600780 kyoyuk')
   push('품질', '도면 배포이력', '/quality/drawing-dist', 'drawing dist baepo')
   push('품질', '로트 관리', '/quality/lot', 'lot')
