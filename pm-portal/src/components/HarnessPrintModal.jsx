@@ -6,10 +6,13 @@ import { useMe, myAuthUser } from '../hooks/useProfile'
 import {
   canPickDir, loadDir, saveDir, dirPermission, listPdfs, listFromInput, indexFiles,
   findOcr, findDwg, judge, buildPdf, recordPrinted, fillTokens,
+  fetchDwgRecords, pickDwgRecord, commonDir, fileByPath, revKey,
 } from '../lib/harnessPrint'
 
 // 🖨 작업지시서 · 도면 출력 (v4.230.0) — 하네스 출도 · 불출에서 고른 AXCELIS 줄을 바로 출력
 //   orders: [{ key, order, isNew }] — 부르는 쪽(HarnessRelease)이 공정관리 건과 맞춰 둔 것
+//   mode 'ed' (v4.231.0) — Edwards: 작업지시서 없이 도면만. 파일은 도면 조회 자료(pm_drawings)의 NAS 경로로 바로 연다
+//     ⚠ 지금은 PDF 만 (QR · 공정관리 기록 없음) — 실제 담당자가 따로 출도 중이라 형식만 갖춰 두고 확인 뒤 켠다
 //   ⚠ 창은 닫기 버튼으로만 닫힌다 (바깥을 눌러도 안 닫힘)
 
 const FOLDERS = [
@@ -21,10 +24,11 @@ const HF0 = { header: { on: false, l: '', c: '{프로젝트} {도번} {REV}', r:
 const kept = (k, d) => { try { const v = JSON.parse(localStorage.getItem(k) || 'null'); return v ? { ...d, ...v } : d } catch { return d } }
 const keep = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch { /* 기억 못 해도 그대로 */ } }
 
-function useFolder(key) {
+function useFolder(key, deep = true) {
   const [st, setSt] = useState({ phase: 'load' })   // load · none · ask · scan · ready · err
   const handleRef = useRef(null)
   const scan = async (h, name) => {
+    if (!deep) { setSt({ phase: 'ready', name, handle: h }); return }   // 경로로 바로 여는 폴더 — 훑지 않는다
     setSt({ phase: 'scan', name })
     try {
       const list = await listPdfs(h)
@@ -57,7 +61,7 @@ function useFolder(key) {
   const fromInput = (files) => {
     const list = listFromInput(files || [])
     const name = (files?.[0]?.webkitRelativePath || '').split('/')[0] || '(폴더)'
-    setSt({ phase: 'ready', name, count: list.length, idx: indexFiles(list), temp: true })
+    setSt({ phase: 'ready', name, count: list.length, idx: indexFiles(list), temp: true, files: [...(files || [])] })
   }
   return { st, allow, pick, fromInput }
 }
@@ -73,7 +77,7 @@ function FolderCard({ f, fo }) {
       <div className="mt-1 min-h-[18px]">
         {s.phase === 'load' && <span className="text-slate-400">확인 중…</span>}
         {s.phase === 'scan' && <span className="inline-flex items-center gap-1.5 text-slate-500"><Spin />{s.name} 읽는 중… (파일이 많으면 조금 걸립니다)</span>}
-        {s.phase === 'ready' && <span className="text-emerald-700 font-bold">✓ {s.name} · PDF {s.count.toLocaleString('ko-KR')}개{s.temp ? ' (이번만)' : ''}</span>}
+        {s.phase === 'ready' && <span className="text-emerald-700 font-bold">✓ {s.name}{s.count != null ? ` · PDF ${s.count.toLocaleString('ko-KR')}개` : ' 연결됨'}{s.temp ? ' (이번만)' : ''}</span>}
         {s.phase === 'ask' && <button type="button" onClick={fo.allow} className="px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-bold text-amber-700">🔓 {s.name} 허용</button>}
         {s.phase === 'none' && <span className="text-slate-500">아직 연결 안 됨</span>}
         {s.phase === 'err' && <span className="text-rose-600 font-bold">읽기 실패 — {s.msg}</span>}
@@ -91,7 +95,11 @@ function FolderCard({ f, fo }) {
   )
 }
 
-export default function HarnessPrintModal({ orders, onClose, onDone }) {
+export default function HarnessPrintModal(props) {
+  return props.mode === 'ed' ? <EdPrint {...props} /> : <AxPrint {...props} />
+}
+
+function AxPrint({ orders, onClose, onDone }) {
   const qc = useQueryClient()
   const me = useMe()
   const ocr = useFolder('ocr'), dwg = useFolder('dwg')
@@ -206,16 +214,7 @@ export default function HarnessPrintModal({ orders, onClose, onDone }) {
               </label>
               <span className="ml-auto text-slate-400">공정관리 AXCELIS 기본값 (지시서 1 · 도면 1 · 지시서 먼저)</span>
             </div>
-            {[['header', '머릿말'], ['footer', '꼬리말']].map(([k, t]) => (
-              <div key={k} className="flex items-center gap-2 flex-wrap">
-                <label className="flex items-center gap-1 font-bold text-slate-500 w-16"><input type="checkbox" checked={!!hf[k].on} onChange={(e) => setHF(k, { on: e.target.checked })} />{t}</label>
-                {['l', 'c', 'r'].map((p) => (
-                  <input key={p} value={hf[k][p] || ''} disabled={!hf[k].on} onChange={(e) => setHF(k, { [p]: e.target.value })} placeholder={{ l: '왼쪽', c: '가운데', r: '오른쪽' }[p]}
-                    className="flex-1 min-w-[140px] px-2 py-1 border rounded font-mono text-[11px] disabled:opacity-40" />
-                ))}
-                {hf[k].on && <span className="text-slate-400 basis-full pl-[72px]">예) {['l', 'c', 'r'].map((p) => fillTokens(hf[k][p], sample, 1, 2)).filter(Boolean).join('   |   ') || '(비어 있음)'}</span>}
-              </div>
-            ))}
+            <HfRows hf={hf} setHF={setHF} sample={sample} />
             <div className="text-[11px] text-slate-400">쓸 수 있는 꼬리표: {'{프로젝트} {도번} {REV} {PO} {오더라인} {납품라인} {수량} {납기} {CCN} {불출일} {페이지} {전체}'} · 이 PC 에 기억</div>
           </div>
 
@@ -239,6 +238,170 @@ export default function HarnessPrintModal({ orders, onClose, onDone }) {
           </button>
         </div>
         <div className="px-5 pb-3 text-[11px] text-slate-400">만들면 PDF 가 새 창에 열리고, 공정관리에 건 등록(없으면) + 「출력됨」 표시 + 출력 이력이 남아 이 화면 「출력됨 · 불출 대기」로 넘어갑니다. 현장 폰 스캔은 지금과 같습니다.</div>
+      </div>
+    </div>
+  )
+}
+
+// 머릿말 · 꼬리말 칸 (AXCELIS · Edwards 같이 씀)
+function HfRows({ hf, setHF, sample }) {
+  return [['header', '머릿말'], ['footer', '꼬리말']].map(([k, t]) => (
+    <div key={k} className="flex items-center gap-2 flex-wrap">
+      <label className="flex items-center gap-1 font-bold text-slate-500 w-16"><input type="checkbox" checked={!!hf[k].on} onChange={(e) => setHF(k, { on: e.target.checked })} />{t}</label>
+      {['l', 'c', 'r'].map((p) => (
+        <input key={p} value={hf[k][p] || ''} disabled={!hf[k].on} onChange={(e) => setHF(k, { [p]: e.target.value })} placeholder={{ l: '왼쪽', c: '가운데', r: '오른쪽' }[p]}
+          className="flex-1 min-w-[140px] px-2 py-1 border rounded font-mono text-[11px] disabled:opacity-40" />
+      ))}
+      {hf[k].on && <span className="text-slate-400 basis-full pl-[72px]">예) {['l', 'c', 'r'].map((p) => fillTokens(hf[k][p], sample, 1, 2)).filter(Boolean).join('   |   ') || '(비어 있음)'}</span>}
+    </div>
+  ))
+}
+
+const ED_REC0 = { wo: 0, dwg: 1, first: 'dwg' }
+const ED_HF0 = { header: { on: true, l: '{PO} {오더라인}/{납품라인}', c: '{도번} Rev {REV}', r: '' }, footer: { on: true, l: '', c: '{페이지} / {전체}', r: '수량 {수량} · 납기 {납기}' } }
+
+// Edwards — 도면만 · PDF 만 (v4.231.0)
+function EdPrint({ orders, onClose }) {
+  const root = useFolder('edroot', false)
+  const [recs, setRecs] = useState(null)        // pm_drawings 자료
+  const [files, setFiles] = useState({})        // key → 연 파일 | null
+  const [rec, setRec] = useState(() => kept('hr.print.rec.ed', ED_REC0))
+  const [hf, setHf] = useState(() => kept('hr.print.hf.ed', ED_HF0))
+  const [pick, setPick] = useState(null)
+  const [busy, setBusy] = useState('')
+  const [done, setDone] = useState(null)
+  useEffect(() => keep('hr.print.rec.ed', rec), [rec])
+  useEffect(() => keep('hr.print.hf.ed', hf), [hf])
+  useEffect(() => {
+    let off = false
+    fetchDwgRecords([...new Set(orders.map((x) => x.order.std_code).filter(Boolean))])
+      .then((r) => { if (!off) setRecs(r) }).catch((e) => { if (!off) { setRecs([]); toastError(e.message) } })
+    return () => { off = true }
+  }, [orders])
+  const byCode = useMemo(() => { const m = {}; (recs || []).forEach((r) => { (m[r.std_code] ||= []).push(r) }); return m }, [recs])
+  const rows = useMemo(() => orders.map((x) => ({ ...x, rec: pickDwgRecord(byCode[x.order.std_code], x.order.rev) })), [orders, byCode])
+  const suggest = useMemo(() => commonDir(rows.map((r) => r.rec?.file_path)), [rows])
+  // 연결한 폴더 안에서 경로대로 파일을 연다
+  useEffect(() => {
+    if (root.st.phase !== 'ready' || !recs) return
+    let off = false
+    ;(async () => {
+      const m = {}
+      for (const r of rows) {
+        if (!r.rec) { m[r.key] = null; continue }
+        if (root.st.handle) m[r.key] = await fileByPath(root.st.handle, r.rec.file_path)
+        else {   // 폴더 접근이 안 되는 브라우저 — 고른 파일 목록에서 경로 끝이 같은 것
+          const tail = String(r.rec.file_path).split('\\').slice(-2).join('/')
+          const f = (root.st.files || []).find((x) => (x.webkitRelativePath || '').endsWith(tail))
+          m[r.key] = f ? { name: f.name, get: async () => f } : null
+        }
+      }
+      if (!off) setFiles(m)
+    })()
+    return () => { off = true }
+  }, [root.st, recs, rows])
+  const stOf = (r) => {
+    if (!recs) return ['…', 'bg-slate-100 text-slate-400', 'wait']
+    if (!r.rec) return ['도면 없음 (도면 조회에 없음)', 'bg-rose-50 text-rose-600', 'none']
+    if (root.st.phase !== 'ready') return ['폴더 연결 필요', 'bg-slate-100 text-slate-500', 'wait']
+    if (!(r.key in files)) return ['찾는 중…', 'bg-slate-100 text-slate-400', 'wait']
+    if (!files[r.key]) return ['연결한 폴더 밖 / 파일 없음', 'bg-rose-50 text-rose-600', 'none']
+    if (r.order.rev && revKey(r.order.rev) !== revKey(r.rec.rev)) return ['⚠ REV 다름 (빼 둠)', 'bg-amber-50 text-amber-700', 'rev']
+    return ['✓ 준비', 'bg-emerald-50 text-emerald-700', 'ok']
+  }
+  const allReady = recs && (root.st.phase !== 'ready' || rows.every((r) => !r.rec || r.key in files))
+  useEffect(() => { if (allReady && root.st.phase === 'ready' && pick === null) setPick(new Set(rows.filter((r) => stOf(r)[2] === 'ok').map((r) => r.key))) }, [allReady, files]) // eslint-disable-line react-hooks/exhaustive-deps
+  const sel = pick || new Set()
+  const chosen = rows.filter((r) => sel.has(r.key) && files[r.key])
+  const setHF = (k, patch) => setHf((v) => ({ ...v, [k]: { ...v[k], ...patch } }))
+
+  async function make() {
+    if (!chosen.length) return
+    const w = window.open('', '_blank')
+    setBusy('PDF 만드는 중…')
+    try {
+      const targets = chosen.map((r) => ({ order: { ...r.order, rev: r.order.rev || r.rec.rev }, ocr: null, dwg: files[r.key] }))
+      const { blob } = await buildPdf(targets, { wo: 0, dwg: Math.max(1, rec.dwg), first: 'dwg' }, hf, (i, n) => setBusy(`PDF 만드는 중… ${i + 1} / ${n}`))
+      const url = URL.createObjectURL(blob)
+      const d = new Date(), p2 = (v) => String(v).padStart(2, '0')
+      const name = `도면출력_Edwards_${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}_${p2(d.getHours())}${p2(d.getMinutes())}.pdf`
+      if (w) w.location.href = url
+      setDone({ url, name, n: chosen.length, opened: !!w })
+      toastSuccess(`${chosen.length}건 도면 PDF`)
+    } catch (e) { try { w?.close() } catch { /* 닫힘 */ } toastError('출력 실패: ' + e.message) } finally { setBusy('') }
+  }
+  const copySuggest = async () => { try { await navigator.clipboard.writeText(suggest); toastSuccess('경로를 복사했습니다 — 폴더 고르는 창 주소칸에 붙여넣으세요') } catch { toastError('복사가 막혔습니다') } }
+  const sample = orders[0]?.order || {}
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-harness-print="ed">
+      <div className="bg-white w-full max-w-5xl rounded-2xl overflow-hidden max-h-[92vh] flex flex-col">
+        <div className="px-5 py-3 border-b border-slate-100 flex items-center gap-3">
+          <b className="text-base text-slate-800">🖨 도면 출력 — Edwards {orders.length}줄</b>
+          <span className="px-2 py-0.5 rounded-full bg-amber-50 border border-amber-200 text-amber-700 text-[11px] font-bold">시험 운영 · PDF 만 (공정관리 기록 · QR 없음)</span>
+          <button type="button" onClick={onClose} disabled={!!busy} className="ml-auto px-3 py-1.5 rounded-lg border border-slate-200 text-xs font-bold text-slate-500 disabled:opacity-40">닫기 ✕</button>
+        </div>
+        <div className="p-5 space-y-4 overflow-y-auto text-xs">
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-slate-600">
+            작업지시서 없이 <b>도면만</b> 뽑습니다. 도면 파일은 「📐 도면 조회」와 같은 자료(NAS 스캔)로 경로를 알아 그 파일만 엽니다 — 폴더를 훑지 않습니다.
+            실제 출도는 담당자가 따로 하고 있어 지금은 <b>형식 확인용</b>이고, 공정관리 등록 · QR 은 확인 뒤 켭니다.
+          </div>
+          <FolderCard f={{ key: 'edroot', t: '📐 Edwards 도면 폴더', hint: '아래 경로(또는 그 위 폴더)를 한 번 연결', path: suggest || '(도면 조회 자료를 읽는 중)' }} fo={root} />
+          {suggest && <div className="text-[11px] text-slate-500 -mt-2">이 줄들의 도면이 있는 곳: <span className="font-mono">{suggest}</span> <button type="button" onClick={copySuggest} className="underline">복사</button></div>}
+          <div className="rounded-lg border border-slate-200 overflow-hidden">
+            <table className="w-full">
+              <thead className="bg-slate-50 text-slate-500 text-[11px]">
+                <tr className="text-left">
+                  <th className="px-3 py-2 w-8"><input type="checkbox" checked={rows.some((r) => files[r.key]) && rows.filter((r) => files[r.key]).every((r) => sel.has(r.key))}
+                    onChange={(e) => setPick(e.target.checked ? new Set(rows.filter((r) => files[r.key]).map((r) => r.key)) : new Set())} /></th>
+                  <th className="px-3 py-2">도번</th><th className="px-3 py-2">PO · 라인</th><th className="px-3 py-2 text-right">수량</th><th className="px-3 py-2">납기</th>
+                  <th className="px-3 py-2">REV (PO · 도면)</th><th className="px-3 py-2">파일</th><th className="px-3 py-2">상태</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => {
+                  const o = r.order, t = stOf(r)
+                  return (
+                    <tr key={r.key} className="border-t border-slate-100" data-hp-row={o.dwg_no}>
+                      <td className="px-3 py-2"><input type="checkbox" disabled={!files[r.key]} checked={sel.has(r.key)} onChange={() => setPick((v) => { const x = new Set(v || []); x.has(r.key) ? x.delete(r.key) : x.add(r.key); return x })} /></td>
+                      <td className="px-3 py-2 font-mono font-bold">{o.dwg_no}</td>
+                      <td className="px-3 py-2 font-mono">{o.po} · {o.ord_ln || '-'}/{o.del_ln || '-'}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{o.qty}</td>
+                      <td className="px-3 py-2 tabular-nums">{String(o.due || '').slice(5)}</td>
+                      <td className="px-3 py-2 font-mono">{o.rev || '?'} · {r.rec ? `${r.rec.rev}${r.rec.is_conv ? ' (컨버팅)' : ''}` : '—'}</td>
+                      <td className="px-3 py-2 text-slate-500 truncate max-w-[220px]" title={r.rec?.file_path || ''}>{r.rec?.file_name || '—'}</td>
+                      <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${t[1]}`}>{t[0]}</span></td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 space-y-2">
+            <div className="flex items-center gap-4">
+              <span className="font-bold text-slate-500">부수</span>
+              <label className="flex items-center gap-1">도면 <input type="number" min="1" max="9" value={rec.dwg} onChange={(e) => setRec((v) => ({ ...v, dwg: Math.max(1, Math.min(9, +e.target.value || 1)) }))} className="w-12 px-1.5 py-0.5 border rounded text-right" /></label>
+              <span className="text-slate-400">도면은 A4 로 맞추고 회전을 바로 세웁니다</span>
+            </div>
+            <HfRows hf={hf} setHF={setHF} sample={sample} />
+          </div>
+          {done && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
+              <b className="text-emerald-700">✅ 도면 {done.n}건 PDF — 공정관리에는 기록하지 않았습니다 (시험 운영)</b>
+              <div className="mt-2 flex gap-2">
+                <a href={done.url} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-lg bg-white border font-bold text-slate-700">📄 PDF 열기{done.opened ? ' (새 창에 열림)' : ''}</a>
+                <a href={done.url} download={done.name} className="px-3 py-1.5 rounded-lg bg-white border font-bold text-slate-700">💾 저장</a>
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-3 text-xs">
+          <span className="text-slate-500">고른 {chosen.length}건 = 도면 {chosen.length * rec.dwg}부</span>
+          <button type="button" onClick={make} disabled={!chosen.length || !!busy} data-hp-make
+            className="ml-auto inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#6c5ce7] text-white font-bold disabled:opacity-40">
+            {busy ? <><Spin />{busy}</> : `🖨 도면 PDF 만들기 (${chosen.length}건)`}
+          </button>
+        </div>
       </div>
     </div>
   )

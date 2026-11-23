@@ -12,7 +12,7 @@ import { KpiCard } from '../../components/ui/Kpi'
 import { useState, useMemo, useEffect, useRef, useDeferredValue, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useSearchParams, Link } from 'react-router-dom'
+import { useSearchParams, Link, useNavigate } from 'react-router-dom'
 import { fetchFaLineMap, designateFa, faKindOfOrder } from '../../lib/orderFa'
 import { supabase } from '../../lib/supabase'
 import { useMyProfile, canEdit, isPurchasing } from '../../hooks/useProfile'
@@ -391,6 +391,7 @@ export default function OrderIntake() {
 
   // ?kpi=unconfirmed (할 일 「수주 미확인」에서 들어옴) → 미확인 PO 를 PO별로 바로 (v4.200.1)
   const [sp, setSp] = useSearchParams()
+  const navTo = useNavigate()
   const kpiFromUrl = sp.get('kpi') === 'unconfirmed'
   const [mode, setMode] = useState(kpiFromUrl ? 'po' : 'line')       // line 품번별 · po PO별
   const [cust, setCust] = useState('all')
@@ -1339,6 +1340,15 @@ export default function OrderIntake() {
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-violet-300 text-violet-700">{faMut.isPending && <Spin />}🧪 {faLabel} 지정</button>}
               <button type="button" onClick={() => setMrOpen(true)} data-bulk-mr className={`px-3 py-1.5 rounded-lg text-xs font-bold ${isBuy ? 'bg-white border border-slate-300' : 'bg-[#6c5ce7] text-white'}`}>📦 자재 요청</button>
               {copyBtn}
+              {(() => {   // 🧵 도면 출력으로 (v4.231.0) — 고른 줄(AXCELIS 또는 Edwards 한 고객사)을 들고 하네스 출도 · 불출로
+                const live = checkedLines.filter((l) => l.st.live)
+                const cs = [...new Set(live.map((l) => l.o.customer_code))]
+                const ok = live.length > 0 && cs.length === 1 && (cs[0] === 'AX' || cs[0] === 'ED')
+                return <button type="button" disabled={!ok} data-bulk-to-print
+                  onClick={() => navTo('/production/harness-release', { state: { hrCust: cs[0], hrLines: live.map((l) => l.id) } })}
+                  title={ok ? '고른 줄을 「하네스 출도 · 불출」 화면에서 골라 둔 채로 엽니다 — 거기서 🖨 출력' : 'AXCELIS 또는 Edwards 한 고객사의 진행 중 줄만 고르세요'}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-slate-300 text-slate-700">🧵 도면 출력으로</button>
+              })()}
             </BulkRow>
             </fieldset>
           </div>

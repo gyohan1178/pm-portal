@@ -225,15 +225,14 @@ export async function buildPdf(targets, rec, hf, onStep) {
   for (let ti = 0; ti < targets.length; ti++) {
     const t = targets[ti]
     onStep?.(ti, targets.length)
-    const woBytes = new Uint8Array(await (await t.ocr.get()).arrayBuffer())
+    const woBytes = t.ocr && rec.wo > 0 ? new Uint8Array(await (await t.ocr.get()).arrayBuffer()) : null
     const dwBytes = t.dwg && rec.dwg > 0 ? new Uint8Array(await (await t.dwg.get()).arrayBuffer()) : null
     const cnt = async (b) => (await PDFDocument.load(b, { ignoreEncryption: true })).getPageCount()
-    const woN = await cnt(woBytes), dwN = dwBytes ? await cnt(dwBytes) : 0
-    const total = woN * rec.wo + dwN * (dwBytes ? rec.dwg : 0)
-    const qrUrl = await QRCode.toDataURL(woPayload(t.order), { errorCorrectionLevel: 'M', margin: 2, width: 500 })
-    const qrPng = await out.embedPng(dataBytes(qrUrl))
+    const woN = woBytes ? await cnt(woBytes) : 0, dwN = dwBytes ? await cnt(dwBytes) : 0
+    const total = woN * (woBytes ? rec.wo : 0) + dwN * (dwBytes ? rec.dwg : 0)
+    const qrPng = woBytes ? await out.embedPng(dataBytes(await QRCode.toDataURL(woPayload(t.order), { errorCorrectionLevel: 'M', margin: 2, width: 500 }))) : null
     let no = 1
-    const woPart = async () => { for (let c = 0; c < rec.wo; c++) no += await addWo(out, woBytes, t.order, qrPng, no, total, hf) }
+    const woPart = async () => { if (woBytes) for (let c = 0; c < rec.wo; c++) no += await addWo(out, woBytes, t.order, qrPng, no, total, hf) }
     const dwPart = async () => { if (dwBytes) for (let c = 0; c < rec.dwg; c++) no += await addDwg(out, dwBytes, t.order, no, total, hf) }
     if (rec.first === 'dwg') { await dwPart(); await woPart() } else { await woPart(); await dwPart() }
     t.pages = no - 1; pages += t.pages
@@ -277,4 +276,46 @@ export async function recordPrinted(targets, me, fileName) {
   const { error: he } = await supabase.from('harness_qr_history').insert(hist)
   if (he) throw new Error('출력 이력 기록 실패: ' + he.message)
   return { added: fresh.length, marked: old.length }
+}
+
+// ── Edwards — 도면만 (v4.231.0) ──
+//   도면 조회와 같은 자료(pm_drawings · 스캐너가 NAS 를 읽어 실은 것)로 파일 경로를 안다 → 폴더를 훑지 않고 그 경로만 연다
+//   ⚠ 지금은 PDF 만 — 실제 담당자가 따로 출도하고 있어 공정관리 기록 · QR 은 확인 뒤 켠다
+export async function fetchDwgRecords(codes) {
+  const out = []
+  for (let i = 0; i < codes.length; i += 150) {
+    const { data, error } = await supabase.from('pm_drawings')
+      .select('std_code, rev, edition, rev_order, file_name, file_path, is_latest, missing_since, is_conv')
+      .in('std_code', codes.slice(i, i + 150)).is('missing_since', null)
+    if (error) throw new Error('도면 목록 읽기 실패: ' + error.message)
+    out.push(...(data || []))
+  }
+  return out
+}
+// 한 품번에 쓸 도면 — PO REV 와 같은 것 우선, 없으면 최신. 컨버팅(사내 작업용)이 있으면 그것
+export function pickDwgRecord(recs, rev) {
+  if (!recs?.length) return null
+  const rv = revKey(rev)
+  const pool = (rv && recs.filter((r) => revKey(r.rev) === rv).length) ? recs.filter((r) => revKey(r.rev) === rv) : recs.filter((r) => r.is_latest).length ? recs.filter((r) => r.is_latest) : recs
+  return [...pool].sort((a, b) => (b.is_conv ? 1 : 0) - (a.is_conv ? 1 : 0) || (b.rev_order || 0) - (a.rev_order || 0))[0]
+}
+// 경로들의 공통 앞부분 — 「이 폴더를 연결하세요」 안내용
+export function commonDir(paths) {
+  const segs = paths.filter(Boolean).map((p) => String(p).split('\\').slice(0, -1))
+  if (!segs.length) return ''
+  const first = segs[0]; let n = first.length
+  segs.forEach((s) => { let i = 0; while (i < n && i < s.length && s[i] === first[i]) i++; n = i })
+  return first.slice(0, n).join('\\')
+}
+// 연결한 폴더(root) 안에서 NAS 경로의 파일을 찾는다 — 경로에서 root 이름이 나오는 곳 뒤부터 따라 내려간다
+export async function fileByPath(root, path) {
+  const seg = String(path || '').split('\\').filter(Boolean)
+  const at = seg.lastIndexOf(root.name)
+  if (at < 0) return null
+  let h = root
+  try {
+    for (const d of seg.slice(at + 1, -1)) h = await h.getDirectoryHandle(d)
+    const fh = await h.getFileHandle(seg[seg.length - 1])
+    return { name: seg[seg.length - 1], get: () => fh.getFile() }
+  } catch { return null }
 }

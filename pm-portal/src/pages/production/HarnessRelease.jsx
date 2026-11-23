@@ -1,8 +1,8 @@
-import { useState, useMemo, lazy, Suspense } from 'react'
+import { useState, useMemo, useEffect, lazy, Suspense } from 'react'
 import PageHead from '../../components/PageHead'
 import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import { BTN } from '../../lib/uiText'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -145,6 +145,15 @@ export default function HarnessRelease() {
   const [cust, setCustRaw] = useRemember('hr.cust', 'AX', (v) => CUST_TABS.includes(v))
   const isAx = cust === 'AX'
   const [printOpen, setPrintOpen] = useState(false)
+  // 수주대장 「🧵 도면 출력으로」에서 넘어온 줄 (v4.231.0) — 그 고객사 탭 · 전체 단계로 열고 골라 둔다
+  const loc = useLocation()
+  const [handoff] = useState(() => (loc.state?.hrLines?.length ? { cust: loc.state.hrCust, ids: loc.state.hrLines } : null))
+  useEffect(() => {
+    if (!handoff) return
+    if (CUST_TABS.includes(handoff.cust)) setCustRaw(handoff.cust)
+    setTab('all'); setSel(new Set(handoff.ids))
+    window.history.replaceState({ ...window.history.state, usr: null }, '')   // 새로고침해도 다시 고르지 않게
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(() => new Set())
   const [copied, setCopied] = useState(null)   // { text, n, at }
@@ -285,6 +294,11 @@ export default function HarnessRelease() {
   const printOrders = useMemo(() => {
     if (!printOpen) return []
     const ho = hx?.ho || []
+    if (cust === 'ED') return selRows.map(p => {   // Edwards — 도면만 (v4.231.0) · 도면 조회 자료의 품번(ED-…)으로 찾는다
+      const sc = String(p.items?.std_code || '').trim(), std = /^ED-/i.test(sc) ? sc.toUpperCase() : sc ? 'ED-' + sc.toUpperCase() : ''
+      return { key: p.id, isNew: true, order: { std_code: std, dwg_no: std.replace(/^ED-/, ''), rev: P(p.item_rev), po: String(p.po_number || '').trim(), ord_ln: N(p.order_line), del_ln: N(p.del_line),
+        qty: leftOf(p) || p.qty_ordered || 1, due: String(p.promise_date || '').slice(0, 10), item_name: p.items?.name || '', customer: 'Edwards Korea', project: '', unit: '', release_date: todayKST() } }
+    })
     return selRows.map(p => {
       const o = { dwg_no: pnOf(p.items?.std_code), rev: P(p.item_rev), po: String(p.po_number || '').trim(), ord_ln: N(p.order_line), del_ln: N(p.del_line),
         qty: leftOf(p) || p.qty_ordered || 1, due: String(p.promise_date || '').slice(0, 10), ccn: P(p.ccn), item_name: p.items?.name || '',
@@ -452,10 +466,15 @@ export default function HarnessRelease() {
       </div>
 
       {undoBar}{confirmEl}
+      {handoff && (
+        <div className="rounded-lg border border-violet-200 bg-violet-50 px-3 py-2 text-[12.5px] text-violet-800" data-hr-handoff>
+          🧵 수주대장에서 {n(handoff.ids.length)}줄을 들고 왔습니다 — 이 화면에 보이는 <b>{n(selRows.length)}줄</b>을 골라 뒀습니다{selRows.length < handoff.ids.length ? ' (생산관리 호기 줄 · 자재요청으로 나가는 구매품은 여기 없습니다)' : ''}. 아래 「🖨 출력」을 누르세요.
+        </div>
+      )}
       <PoCart open={cartOpen} onClose={() => setCartOpen(false)} />
       {printOpen && printOrders.length > 0 && (
         <Suspense fallback={null}>
-          <HarnessPrintModal orders={printOrders} onClose={() => setPrintOpen(false)} onDone={() => setSel(new Set())} />
+          <HarnessPrintModal mode={cust === 'ED' ? 'ed' : 'ax'} orders={printOrders} onClose={() => setPrintOpen(false)} onDone={() => setSel(new Set())} />
         </Suspense>
       )}
       {pasteOpen && <PasteIssueModal busy={busy} onClose={() => setPasteOpen(false)}
@@ -481,7 +500,7 @@ export default function HarnessRelease() {
               {ORDER_CUSTOMERS[k]?.name || k} <span className={`text-xs ${cust === k ? 'text-violet-400' : 'text-slate-400'}`}>{k === 'AX' ? (axLoading ? '…' : n(custCnt.AX || 0)) : (otLoading ? '…' : n(custCnt[k] || 0))}</span>
             </button>
           ))}
-          <span className="ml-auto pl-3 text-[11px] text-slate-400 whitespace-nowrap">{isAx ? '🖨 바로 출력: AXCELIS' : 'AXCELIS 밖 줄은 구분이 없어 「미분류」 — 「구분 바꾸기」로 품번마다 정합니다 · 바로 출력은 AXCELIS 확인 뒤'}</span>
+          <span className="ml-auto pl-3 text-[11px] text-slate-400 whitespace-nowrap">{isAx ? '🖨 바로 출력: AXCELIS' : cust === 'ED' ? '🖨 도면만 출력 (시험 운영 · 공정관리 기록 없음) · 줄은 구분이 없어 「미분류」 — 「구분 바꾸기」로 정함' : 'AXCELIS 밖 줄은 구분이 없어 「미분류」 — 「구분 바꾸기」로 품번마다 정합니다 · 바로 출력은 AXCELIS 확인 뒤'}</span>
         </div>
         {/* 구분 — 생산관리 밖 AX PO 전부라 하네스 · 단품을 나눠 본다 (v4.147.0) */}
         <div className="flex flex-wrap items-center gap-1.5 mb-2" data-hr-div-filter>
@@ -514,9 +533,9 @@ export default function HarnessRelease() {
             const has = selRows.length > 0, live = tab !== 'done'
             const B = (on, cls) => `py-1.5 text-xs font-bold rounded-lg border ${on ? cls : 'border-slate-200 bg-white text-slate-300 cursor-not-allowed'}`
             return <>
-              {canEdit && <button data-hr-print disabled={!has || !live || !isAx} onClick={() => setPrintOpen(true)} style={{ width: 168 }}
-                title={!isAx ? 'AXCELIS 먼저 — 다른 고객사는 확인 뒤 차례로 엽니다' : live ? '고른 줄의 작업지시서(공정 QR) · 도면을 NAS 폴더에서 찾아 한 PDF 로 — 공정관리에 건 등록 · 출력 표시까지' : '불출됨 목록에선 쓰지 않습니다'}
-                className={B(has && live && isAx, 'border-[#6c5ce7] bg-[#6c5ce7] text-white hover:bg-[#5b4bd6]')}>🖨 작업지시서 · 도면 출력</button>}
+              {canEdit && <button data-hr-print disabled={!has || !live || !(isAx || cust === 'ED')} onClick={() => setPrintOpen(true)} style={{ width: 168 }}
+                title={cust === 'ED' ? 'Edwards — 작업지시서 없이 도면만 PDF (시험 운영 · 공정관리 기록 없음)' : !isAx ? 'AXCELIS · Edwards 만 — 다른 고객사는 확인 뒤 차례로 엽니다' : live ? '고른 줄의 작업지시서(공정 QR) · 도면을 NAS 폴더에서 찾아 한 PDF 로 — 공정관리에 건 등록 · 출력 표시까지' : '불출됨 목록에선 쓰지 않습니다'}
+                className={B(has && live && (isAx || cust === 'ED'), 'border-[#6c5ce7] bg-[#6c5ce7] text-white hover:bg-[#5b4bd6]')}>{cust === 'ED' ? '🖨 도면 출력 (시험)' : '🖨 작업지시서 · 도면 출력'}</button>}
               <button data-hr-copy disabled={!has || !live || !isAx} onClick={doCopy} style={{ width: 132 }} title={!isAx ? 'AXCELIS 양식만 있습니다' : live ? '하네스 공정관리 「작업지시서 QR → AXCELIS」에 붙여넣을 글자로 복사 (포털에서 바로 뽑지 않을 때)' : '불출됨 목록에선 쓰지 않습니다'}
                 className={B(has && live && isAx, 'border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50')}>📋 공정관리용 복사</button>
               {canEdit && <button data-hr-toissue disabled={!has || !live || !isAx} onClick={() => sendIssue(selRows)} style={{ width: 150 }}
