@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { fetchAll } from './paginate'
 import { must } from './db'
+import { prodLineIds } from './axLines'
 
 // AXCELIS 밖 고객사(Edwards · CSK · VM · 기타)의 수주대장 진행 중 줄 — 하네스 출도 · 불출 고객사 탭 (v4.230.0)
 //   lib/axLines 와 같은 모양으로 맞춘다 (화면이 그대로 쓰게) · 생산관리 호기가 붙은 줄은 그쪽에서 관리하므로 뺀다
@@ -14,6 +15,7 @@ export async function fetchOtherLines() {
   const head = new Map(heads.filter((h) => !h.planned).map((h) => [h.id, h]))
   const inProd = new Set(links.map((k) => k.order_line_id))
   const rows = live.filter((l) => head.has(l.order_id) && !l.cancelled && (Number(l.delivered_qty) || 0) < (Number(l.qty) || 0))
+  ;(await prodLineIds(rows.map((r) => r.id))).forEach((id) => inProd.add(id))   // 호기가 줄 id 로 붙은 것도 (v4.233.0)
   const itemIds = [...new Set(rows.map((r) => r.item_id).filter(Boolean))]
   const items = {}
   for (let i = 0; i < itemIds.length; i += 150) {

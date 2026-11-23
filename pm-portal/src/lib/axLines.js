@@ -17,8 +17,22 @@ export async function fetchAxLines(poNos = null) {
     const part = must(await supabase.from('items').select('id,std_code,name,manufacturer,manufacturer_code').in('id', itemIds.slice(i, i + 150)), '품목 읽기')
     ;(part || []).forEach(it => { items[it.id] = it })
   }
+  // 생산관리 호기가 줄 id(production.order_line_id)로 붙은 줄도 「생산관리 줄」로 (v4.233.0)
+  //   DB 함수의 in_prod 는 호기 연결표(pm_prod_order_link)만 봐서, 생산관리에서 품번을 추가해 줄에 붙인 호기(120003270 등)를 못 봤다
+  const byProd = await prodLineIds(rows.map(r => r.id))
   return rows.map(r => ({ ...r, line: true, qty_ordered: Number(r.qty_ordered) || 0, qty_received: Number(r.qty_received) || 0,
-    qty_remaining: Number(r.qty_remaining) || 0, items: items[r.item_id] || null }))
+    qty_remaining: Number(r.qty_remaining) || 0, items: items[r.item_id] || null, in_prod: !!r.in_prod || byProd.has(r.id) }))
+}
+
+// 생산관리 호기가 붙은 수주대장 줄 id (production.order_line_id) — 하네스 출도 · 불출에서 빼는 데 쓴다
+export async function prodLineIds(ids) {
+  const out = new Set(), list = [...new Set((ids || []).filter(Boolean))]
+  for (let i = 0; i < list.length; i += 150) {
+    const { data, error } = await supabase.from('production').select('order_line_id').in('order_line_id', list.slice(i, i + 150))
+    if (error) return out   // 칸이 없거나 못 읽어도 목록은 그대로
+    ;(data || []).forEach(r => out.add(r.order_line_id))
+  }
+  return out
 }
 
 // SQL(4단계) 전이면 함수가 없다 — 그때는 예전처럼 고객사 PO 를 읽는다 (화면이 SQL 보다 먼저 배포돼도 깨지지 않게)
