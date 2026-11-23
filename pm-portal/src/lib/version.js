@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.228.0'
+export const APP_VERSION = 'v4.229.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.228.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.229.0',
+    date: '2026-11-23',
+    changes: [
+      '하네스 출도 · 불출 — 구매품은 자재요청으로 출고 · 차감되므로 목록에서 뺌. 12번대(120001790 등 출도품)는 그대로 보임',
+    ],
+  },
   {
     version: 'v4.228.0',
     date: '2026-11-23',

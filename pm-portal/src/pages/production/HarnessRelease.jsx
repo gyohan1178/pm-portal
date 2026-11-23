@@ -161,7 +161,7 @@ export default function HarnessRelease() {
   // 진행 중 AXCELIS PO 줄 — 생산관리에 들어간 줄(PO 연동 · production.po_id)만 빼고 전부 (v4.147.0)
   //   예전(v4.146 까지): 구분이 하네스(16번대)인 줄 + 공정관리 등록분 + 「출도 대상 품번」 → 12번대 출도품(120220971~4 등)이 등록 전엔 빠졌다
   //   이제 하네스 · 구매품(12번대 단품) · 전장(11번대 단품) 모두 — 생산관리에서 PD BOX 등으로 관리하는 줄만 뺀다. 위 「구분」 칩으로 거른다
-  const { data: pos = [], isLoading, error } = useQuery({
+  const { data: posRaw = [], isLoading, error } = useQuery({
     queryKey: ['harnessRelease', 'pos'],
     queryFn: async () => {
       // v4.158.0 — 고객사 PO 대신 수주대장 진행 중 줄 (정식 PO · 3rd party 「기타」 AX- 품번 포함)
@@ -177,6 +177,9 @@ export default function HarnessRelease() {
     },
     staleTime: 30 * 1000,
   })
+
+  // 구매품은 자재요청으로 출고 · 차감되므로 여기서 뺀다 (v4.229.0) — 단, 12번대(출도품 · 120001790 등)는 공정관리로 나가므로 그대로
+  const pos = useMemo(() => posRaw.filter(p => { if (divOf(p) !== '구매품') return true; const c = pnOf(p.items?.std_code); return !c || c.startsWith('12') }), [posRaw, divOv]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 하네스 공정관리 기록 (읽기만)
   const poNos = useMemo(() => [...new Set(pos.map(p => String(p.po_number || '').trim()).filter(Boolean))].sort(), [pos])
@@ -383,7 +386,7 @@ export default function HarnessRelease() {
   return (
     <div className="space-y-4">
       <PageHead crumb="자재" title="하네스 출도 · 불출"
-        desc="대상: AXCELIS 수주대장 진행 중 줄 중 생산관리에 들어가지 않은 하네스 · 구매품 · 전장 단품. 아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다. 불출 처리 = 수주대장 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).">
+        desc="대상: AXCELIS 수주대장 진행 중 줄 중 생산관리에 들어가지 않은 하네스 · 전장 단품 · 12번대 구매품 (그 밖의 구매품은 자재요청으로 출고하므로 빠짐). 아직 불출 안 한 하네스 PO 를 골라 하네스 공정관리에 붙여넣고(작업지시서 · 도면 출력), 출력된 건을 현장에 넘길 때(출도) 「🧺 다품목 출고 → 불출」로 자재를 빼고 불출 처리합니다. 불출 처리 = 수주대장 「자재불출」 체크 → 쇼티지 계산에서 빠짐 (재고 수량은 그대로 — 출고는 출고 화면에서).">
         <button onClick={() => excel().catch(e => toastError('엑셀 실패: ' + e.message))} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">{BTN.excel}</button>
       </PageHead>
 
