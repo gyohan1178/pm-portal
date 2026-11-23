@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.237.0'
+export const APP_VERSION = 'v4.238.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,15 @@ export const APP_VERSION = 'v4.237.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.238.0',
+    date: '2026-11-23',
+    changes: [
+      'BOM 양식 필수 칸 정리 — 상위PN · NO · LEVEL · PN · Description · MFG · MFG PN · QTY · UNIT (노랑). Category(다시 넣음) · 관리대상 · REV 는 선택',
+      'BOM 실수량 자동 계산 — QTY × 위 LEVEL 수량 (회색). 올리기 미리보기 · 「📥 엑셀」 내려받기에 표시, 저장은 QTY(상위 1개당) 기준이라 2중 곱셈 없음',
+      'BOM 올리기 — 관리대상 칸을 비우면 Y 로 (예전엔 빈칸이 N 으로 들어갈 수 있었음) · 필수 칸 빈 줄 경고',
+    ],
+  },
   {
     version: 'v4.237.0',
     date: '2026-11-23',

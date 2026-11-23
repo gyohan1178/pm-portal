@@ -9,7 +9,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { downloadBomTemplate, writeBomXlsx, bomRowsForXlsx } from '../../lib/bomXlsx'
+import { downloadBomTemplate, writeBomXlsx, bomRowsForXlsx, calcEffQty, bomQtyOf, bomLevelOf, missingRequired } from '../../lib/bomXlsx'
 import { parseAxcelisReport, parseAxcelisBomSheet, isAxcelisBomSheet, diffBom } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
@@ -286,7 +286,7 @@ export async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
           unit: String(row['UNIT'] ?? row['단위'] ?? 'EA').trim() || 'EA',
           manufacturer: mfg || null, manufacturer_code: mfgpn || null,
           spec: [mfg, mfgpn].filter(Boolean).join(' ') || null,
-          stock_managed: row['관리대상'] != null ? truthyYN(row['관리대상']) : true,
+          stock_managed: String(row['관리대상'] ?? '').trim() ? truthyYN(row['관리대상']) : true,   // 비우면 Y
           memo: String(row['Category'] ?? '').trim() ? `cat:${String(row['Category']).trim()}` : null,
         }
       }
@@ -355,8 +355,9 @@ export async function saveBOMMulti({ rows, customerId, csCode, onProgress }) {
       if (!itemId) { skipped++; continue }
       ;(olderOf[code] ? (olderRows[code] = olderRows[code] || []) : bomRows).push({
         customer_id: customerId, project_id: projId, item_id: itemId,
-        qty_per_unit: parseBomQty(row['실수량'] ?? row['QTY'] ?? row['수량']),
-        level: parseInt(row['LEVEL'] ?? row['LV'] ?? 1) || 1,
+        // QTY = 바로 위 상위 1개당 (v4.238.0) — 실수량(1대당)은 화면 · 출고가 LEVEL 로 곱해 올리므로 넣지 않는다
+        qty_per_unit: bomQtyOf(row),
+        level: bomLevelOf(row),
         seq: ord++,   // 파일(트리) 순서 보존 → 상세에서 레벨 중첩 표시
         // 이 BOM 행이 요구하는 부품 REV — NAS 최신 도면과 대조하는 근거
         item_rev: (() => {
@@ -983,7 +984,7 @@ export default function BOM() {
           if (!groups[p]) groups[p] = { code: withPrefix(p, PARENT_PREFIX[String(csCode || '').toLowerCase()] || ''), name: String(r['상위품명']||'').trim(), rev: String(r['REV']||'A').trim(), count: 0 }
           groups[p].count++
         })
-        setPreview({ total: valid.length, groups: Object.values(groups), rows: valid })
+        setPreview({ total: valid.length, groups: Object.values(groups), rows: valid, eff: calcEffQty(valid, parentKey), miss: missingRequired(valid) })
         setUploading(false)
       }
       reader.readAsBinaryString(file)
@@ -1027,7 +1028,7 @@ export default function BOM() {
           </button>
         )}
         {(!narrow || upOpenM || uploading) && <>
-        <button onClick={downloadBomTemplate} title="BOM 올리기 양식 (엑셀) — 노랑 = 필수(상위PN · PN · 실수량) · 파랑 = 관리대상 Y/N · 「작성법」 시트 참고"
+        <button onClick={downloadBomTemplate} title="BOM 올리기 양식 (엑셀) — 노랑 = 필수(상위PN · NO · LEVEL · PN · Description · MFG · MFG PN · QTY · UNIT) · 회색 실수량은 자동 계산 · 「작성법」 시트 참고"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
           ⬇ 양식 다운로드
         </button>
@@ -1228,6 +1229,11 @@ export default function BOM() {
             </div>
           )}
 
+          {preview.miss && Object.keys(preview.miss).length > 0 && (
+            <p className="text-[11px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+              ⚠ 필수 칸 빈 곳 — {Object.entries(preview.miss).map(([k, n]) => `${k} ${n}줄`).join(' · ')} (저장은 됨 · QTY 가 비면 0, LEVEL 이 비면 1)
+            </p>
+          )}
           {/* 어셈블리 그룹 요약 */}
           <div className="flex flex-wrap gap-2">
             {preview.groups.map((g, i) => (
@@ -1248,7 +1254,8 @@ export default function BOM() {
                   <th className="px-3 py-2 text-left font-bold text-indigo-400">PN</th>
                   <th className="px-3 py-2 text-left font-bold text-indigo-400">품명</th>
                   <th className="px-3 py-2 text-left font-bold text-indigo-400">제조사품번</th>
-                  <th className="px-3 py-2 text-right font-bold text-indigo-400">수량</th>
+                  <th className="px-3 py-2 text-right font-bold text-indigo-400">QTY</th>
+                  <th className="px-3 py-2 text-right font-bold text-indigo-400" title="QTY × 위 LEVEL 수량 — 자동 계산">실수량</th>
                   <th className="px-3 py-2 text-center font-bold text-indigo-400">관리</th>
                 </tr>
               </thead>
@@ -1260,7 +1267,7 @@ export default function BOM() {
                   //   Edwards·CSK BOM 을 올릴 때 AX-ED-… AX-CS-… 로 보였다.
                   const pn = withPrefix(r['PN'] ?? r['하위품번'],
                                         PREFIX[String(csCode || '').toLowerCase()] || '')
-                  const lv = r['LEVEL'] ?? r['LV'] ?? 1
+                  const lv = bomLevelOf(r)
                   return (
                     <tr key={i} className="border-b border-slate-100">
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{parent}</td>
@@ -1268,7 +1275,8 @@ export default function BOM() {
                       <td className="px-3 py-1.5 font-mono text-xs text-indigo-600">{pn}</td>
                       <td className="px-3 py-1.5 text-slate-700 max-w-[200px] truncate">{r['Description'] ?? r['품명'] ?? ''}</td>
                       <td className="px-3 py-1.5 font-mono text-[11px] text-slate-400">{r['MFG PN'] ?? r['제조사품번'] ?? ''}</td>
-                      <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{r['실수량'] ?? r['QTY'] ?? r['수량'] ?? ''}</td>
+                      <td className="px-3 py-1.5 text-right font-semibold text-slate-700">{bomQtyOf(r)}</td>
+                      <td className="px-3 py-1.5 text-right text-slate-500">{preview.eff?.[i] ?? ''}</td>
                       <td className="px-3 py-1.5 text-center text-slate-400">{r['관리대상'] ?? '-'}</td>
                     </tr>
                   )
