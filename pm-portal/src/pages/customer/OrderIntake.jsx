@@ -113,7 +113,8 @@ const inView = (view, l) => (view === 'live' ? l.st.live : view === 'po' ? l.st.
 // 누가 등록했는지 (v4.103.0) — 엑셀로 옮긴 옛 PO 는 「이관」으로만 보인다
 const regBy = (o) => (!o || o.migrated ? '' : String(o.registered_name || '').trim() === '엑셀 이관' ? '' : String(o.registered_name || '').trim())
 const regTitle = (o) => `등록 ${regBy(o) || (o?.migrated ? '이관' : '—')} · ${kstDT(o?.registered_at)}`
-const isMonthPo = (o, month) => kst(o.registered_at).slice(0, 7) === month && !['po_file', 'ax_import', 'excel'].includes(o.source)
+// AX PO 엑셀로 들어온 새 PO 도 진행 중이면 센다 (v4.228.0) — 지난 일로 들인 것(이관)만 뺀다
+const isMonthPo = (o, month) => kst(o.registered_at).slice(0, 7) === month && !o.migrated && !['ax_import', 'excel'].includes(o.source)
 
 // 열 너비 — 머리글 오른쪽 끝을 끌어 조절 (사람마다 이 브라우저에 기억) · 다른 화면 표와 같은 방식
 const LINE_COLS = [['chk', 40], ['due', 112], ['cust', 160], ['po', 170], ['pn', 320], ['qty', 80], ['amt', 130], ['st', 110], ['reply', 230]]
@@ -978,8 +979,8 @@ export default function OrderIntake() {
         <Kpi tone="red" label="미확인" value={pos(kpis.unconfirmed)} sub={`PO 건수 · 품목 ${kpis.unconfirmed.length}줄 · 확인 예정 PO ${pos(kpis.unconfLater)}건 따로`} on={kpi === 'unconfirmed'} onClick={() => { setLateF(null); if (kpi === 'unconfirmed') setKpi(null); else { setKpi('unconfirmed'); setMode('po') } }} loading={isLoading}
           tip="지금 회신해야 할 PO 수(품목 줄이 아니라 PO). 누르면 PO별로 보입니다 — PO 번호를 눌러 「🔍 자재 점검」 뒤 회신. 확인은 회신 한 번으로 끝납니다 — 회신(가능 · 조건부 · 불가)이 없는 줄이 남은 PO 를 셉니다 (등록 1영업일 뒤 · 11월 1일 등록분부터). Edwards 는 납기 7주(불출 기준 2주 전), 기타(남일 · 두웰 등)는 납기 4주 안으로 들어온 것만 — 그 전은 「확인 예정」. 고객사가 바꿔 다시 들어와 회신이 지워진 줄도 여기로 옵니다." />
         </>}
-        <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 PO (이관 제외)" {...kpiBtn('month')} loading={isLoading}
-          tip="이번 달에 PDF 올리기 · 직접 등록으로 새로 들어온 PO 수(품목 줄이 아니라 PO). AX PO 엑셀 반영 · 엑셀 여러 건 · 예전 이관분은 세지 않습니다." />
+        <Kpi tone="violet" label="이번 달 접수" value={kpis.monthPos.length} sub="PDF · 직접 등록 · AX PO 파일 (이관 제외)" {...kpiBtn('month')} loading={isLoading}
+          tip="이번 달에 PDF 올리기 · 직접 등록 · AX PO 엑셀 반영으로 새로 들어온 PO 수(품목 줄이 아니라 PO). 엑셀 여러 건 · 이미 끝난 PO 를 들인 이관분은 세지 않습니다." />
       </div>
 
       {(kpis.unconfLater.length > 0 || kpis.oldNoReply.length > 0) && (
@@ -1149,7 +1150,7 @@ export default function OrderIntake() {
             </div>
             {nothing ? <div className="mt-2 text-xs text-slate-600">바뀐 것이 없습니다.</div> : (
               <div className="mt-2 text-xs text-slate-700 space-y-1">
-                {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
+                {s.newPos > 0 && <div>· 새로 들일 PO <b>{s.newPos}</b>건 · {s.newLines}품목 (진행 중 {s.newLive}건은 「미확인」 · 「이번 달 접수」로 · 납품 끝난 PO {s.newDone}건은 납품 · 판매입력 완료로)</div>}
                 {s.changedPos > 0 && <div>· 바뀐 PO <b>{s.changedPos}</b>건 — 납기 {s.due} · 수량 {s.qty} · SREV {s.rev}{s.brev ? ` · BREV ${s.brev}` : ''} · 단가 {s.price} · 납품 완료 {s.delivered} · 취소 {s.cancelled} · 품목 추가 {s.added}</div>}
                 {s.fromRcv > 0 && <div>· 그중 Received 시트에서 온 줄 {s.fromRcv} — Current Data 에 없는 지난 납품 · 취소분</div>}
                 {s.orderDate > 0 && <div data-ax-orderdate>· 발주일이 빈 PO <b>{s.orderDate}</b>건 — 엑셀 「Date Placed」 로 채움</div>}

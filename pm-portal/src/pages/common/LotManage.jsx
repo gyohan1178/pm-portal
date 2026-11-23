@@ -1,5 +1,5 @@
 import PageHead from '../../components/PageHead'
-import { useState, useMemo, useRef, useCallback } from 'react'
+import { useState, useMemo, useRef, useCallback, Fragment } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
@@ -11,6 +11,8 @@ import { ilikeAny } from '../../lib/pgFilter'
 import { SkelBar } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import Spin from '../../components/ux/Spin'
+import { useRemember } from '../../hooks/useRemember'
+import LotReport, { lotWhere } from '../../components/LotReport'
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -52,6 +54,13 @@ async function fetchOwed(itemId) {
   if (error) return []
   return data || []
 }
+const md = (d) => (d ? String(d).slice(5).replace('-', '/') : '')
+const monthsBetween = (a, b) => {
+  if (!a || !b) return ''
+  const m = (new Date(b) - new Date(a)) / (1000 * 60 * 60 * 24 * 30.4)
+  return m < 1 ? `${Math.max(1, Math.round(m * 30.4))}일` : `${Math.round(m)}개월`
+}
+const makerOf = (x) => String(x?.maker || '').trim() || '기타'
 const owedQty = (s, owedBy) => Number(s.owed_qty ?? (owedBy[s.item_id] || []).reduce((a, o) => a + Number(o.qty || 0), 0)) || 0
 
 export default function LotManage() {
@@ -62,7 +71,12 @@ export default function LotManage() {
   const [addFor, setAddFor] = useState(null)       // 로트 등록 대상
   const [editLot, setEditLot] = useState(null)     // 수정할 로트
   const [shelfFor, setShelfFor] = useState(null)   // 보증기간 고칠 품목
-  const [showDone, setShowDone] = useState(false)  // 소진분 포함
+  // 보기 (v4.228.0) — 제조사별 묶음 / 품목별 · 제조사 칩 · 로트 이력 펼침 · 고객사 보고서
+  const [group, setGroup] = useRemember('lot.group', 'maker', (v) => v === 'maker' || v === 'item')
+  const [mk, setMk] = useState('')                  // 제조사 칩 ('' = 전체)
+  const [shutGroups, setShutGroups] = useState({})  // 접은 제조사 묶음
+  const [openLots, setOpenLots] = useState({})      // 사용 내역을 펼친 로트
+  const [report, setReport] = useState(false)
   const [q, setQ] = useState('')                   // 품번·형번·제조사·시리얼로 찾기
   const [only, setOnly] = useState('')             // '' | 초과 | 임박 | 차이 | 미설정
   const [ask, confirmEl] = useConfirm()            // v4.104.0 — 로트관리 대상 빼기 확인 창
@@ -152,10 +166,11 @@ export default function LotManage() {
   })
 
   const { data: lots = [] } = useQuery({
-    queryKey: ['lotList', showDone],
+    // 소진 로트도 늘 같이 받는다 (v4.228.0) — 이력이 한 표에 보이도록. 예전엔 「소진분 포함」을 켜야 왔다
+    queryKey: ['lotList', 'all'],
     queryFn: async () => {
       const { data, error } = await supabase.rpc('pm_lot_list',
-        { p_item_id: null, p_only_left: !showDone })
+        { p_item_id: null, p_only_left: false })
       if (error) throw error
       return data || []
     },
@@ -170,9 +185,28 @@ export default function LotManage() {
     return m
   }, [owed])
 
+  // 로트별 사용 내역 (언제 · 몇 개 · 어디에)
+  const { data: uses = [] } = useQuery({
+    queryKey: ['lotUses'],
+    queryFn: async () => {
+      const { data, error } = await supabase.rpc('pm_lot_use_list', { p_item_id: null })
+      if (error) throw error
+      return data || []
+    },
+    staleTime: 60 * 1000,
+  })
+  const usesByLot = useMemo(() => {
+    const m = {}
+    uses.forEach((u) => { (m[u.lot_id] ||= []).push(u) })
+    Object.values(m).forEach((a) => a.sort((x, y) => String(y.used_date || '').localeCompare(String(x.used_date || '')) || y.use_id - x.use_id))
+    return m
+  }, [uses])
+
+  // 새 로트가 위 — 지금 쓰는 것 · 지난 소진분이 한 표에
   const byItem = useMemo(() => {
     const m = {}
     lots.forEach(l => { (m[l.item_id] ||= []).push(l) })
+    Object.values(m).forEach((a) => a.sort((x, y) => String(y.in_date || '').localeCompare(String(x.in_date || '')) || y.id - x.id))
     return m
   }, [lots])
 
@@ -180,6 +214,7 @@ export default function LotManage() {
     qc.invalidateQueries({ queryKey: ['lotSummary'] })
     qc.invalidateQueries({ queryKey: ['lotList'], exact: false })
     qc.invalidateQueries({ queryKey: ['lotOwed'], exact: false })
+    qc.invalidateQueries({ queryKey: ['lotUses'] })
   }
 
   const stat = useMemo(() => ({
@@ -199,16 +234,46 @@ export default function LotManage() {
       if (only === '임박' && !(x.next_days != null && x.next_days >= 0 && x.next_days <= 90)) return false
       if (only === '차이' && Number(x.gap) === 0) return false
       if (only === '미설정' && x.shelf_months) return false
+      if (mk && makerOf(x) !== mk) return false
       if (!k) return true
-      // 시리얼로도 찾는다 — 클레임 날 때 「이 로트 어디 있나」를 먼저 보게 된다
-      const serials = (byItem[x.item_id] || []).map((l) => l.serial_no).join(' ')
-      return [x.maker_code, x.std_code, x.item_name, x.maker, serials]
+      // 시리얼 · 사용처(호기 · 출고 메모)로도 찾는다 — 클레임 날 때 「이 로트 어디 있나」 · 「이 호기에 뭐 들어갔나」
+      const ls = byItem[x.item_id] || []
+      const serials = ls.map((l) => l.serial_no).join(' ')
+      const where = ls.flatMap((l) => (usesByLot[l.id] || []).map((u) => `${u.pn || ''} ${u.hogi || ''} ${u.memo || ''}`)).join(' ')
+      return [x.maker_code, x.std_code, x.item_name, x.maker, serials, where]
         .some((v) => String(v || '').toUpperCase().includes(k))
     }
     const rank = (x) => (Number(x.expired_cnt) > 0 ? -1e9 : (x.next_days ?? 1e8))
     return sum.filter(hit).sort((a, b) => rank(a) - rank(b)
       || String(a.maker_code || a.std_code).localeCompare(String(b.maker_code || b.std_code)))
-  }, [sum, q, only, byItem])
+  }, [sum, q, only, mk, byItem, usesByLot])
+
+  // 찾기 칸에 맞는 로트 — 시리얼 · 사용처가 맞으면 그 품목 · 그 로트를 바로 펼친다
+  const qk = q.trim().toUpperCase()
+  const lotHit = useMemo(() => {
+    const m = new Set()
+    if (qk.length < 3) return m
+    lots.forEach((l) => {
+      const where = (usesByLot[l.id] || []).map((u) => `${u.pn || ''} ${u.hogi || ''} ${u.memo || ''}`).join(' ')
+      if (`${l.serial_no || ''} ${where}`.toUpperCase().includes(qk)) m.add(l.id)
+    })
+    return m
+  }, [qk, lots, usesByLot])
+  const itemHit = (id) => (byItem[id] || []).some((l) => lotHit.has(l.id))
+
+  // 제조사 칩 · 묶음
+  const makers = useMemo(() => {
+    const m = new Map()
+    sum.forEach((x) => m.set(makerOf(x), (m.get(makerOf(x)) || 0) + 1))
+    return [...m.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+  }, [sum])
+  const groups = useMemo(() => {
+    if (group !== 'maker') return [{ key: '', items: view }]
+    const m = new Map()
+    view.forEach((x) => { const k2 = makerOf(x); if (!m.has(k2)) m.set(k2, []); m.get(k2).push(x) })
+    return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([key, items]) => ({ key, items }))
+  }, [group, view])
+  const yearNow = String(new Date().getFullYear())
 
   async function exportXl() {
     if (!lots.length) { toastError('내보낼 로트가 없습니다'); return }
@@ -300,11 +365,9 @@ export default function LotManage() {
               title="로트관리할 품목을 고릅니다"
               className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">⚙ 대상 품목</button>
           )}
-          <label className="flex items-center gap-1.5 px-2 py-1.5 text-[11px] text-slate-400 cursor-pointer">
-            <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)}
-              className="w-3.5 h-3.5 accent-indigo-600" />
-            소진분 포함
-          </label>
+          <button onClick={() => setReport(true)} data-lot-report-btn
+            title="고른 제조사 · 품목의 로트 추적 현황을 A4 로 — 인쇄 · PDF (구매처 · 재고 차이 같은 내부 정보는 빠짐)"
+            className="px-2.5 py-1.5 text-[11px] font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">📄 고객사 보고서</button>
           <button onClick={() => setOpenItems(
               Object.keys(openItems).some(k => openItems[k])
                 ? {}
@@ -345,10 +408,23 @@ export default function LotManage() {
         ))}
       </div>
 
-      {/* 찾기 — 클레임 날 때 시리얼로 바로 찾는다 */}
-      <div className="flex items-center gap-2 flex-wrap">
+      {/* 보기 · 제조사 · 찾기 (v4.228.0) — 시리얼 · 사용처로 찾으면 그 로트 이력이 바로 펼쳐진다 */}
+      <div className="flex items-center gap-2 flex-wrap" data-lot-tools>
+        <div className="flex gap-0.5 bg-slate-100 rounded-lg p-0.5 text-xs font-bold" data-lot-group>
+          {[['maker', '🏭 제조사별'], ['item', '📦 품목별']].map(([k2, t]) => (
+            <button key={k2} type="button" onClick={() => setGroup(k2)} data-group={k2}
+              className={`px-3 py-1.5 rounded-md ${group === k2 ? 'bg-white shadow-sm text-violet-700' : 'text-slate-500'}`}>{t}</button>
+          ))}
+        </div>
+        <span className="w-px h-5 bg-slate-200 mx-0.5" />
+        {[['', '전체', sum.length], ...makers.map(([m2, c]) => [m2, m2, c])].map(([k2, t, c]) => (
+          <button key={k2 || 'all'} type="button" onClick={() => setMk(k2)} data-maker-chip={k2 || 'all'}
+            className={`px-3 py-1.5 rounded-full text-xs font-bold border ${mk === k2 ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
+            {t} <span className={mk === k2 ? 'text-slate-300' : 'text-slate-400'}>{c}</span>
+          </button>
+        ))}
         <input value={q} onChange={e => setQ(e.target.value)}
-          placeholder="형번 · 기준코드 · 품명 · 제조사 · 시리얼"
+          placeholder="🔍 형번 · 품명 · 제조사 · 시리얼 · 사용처(호기 · 출고 메모)"
           className="px-3 py-1.5 text-sm border border-slate-200 rounded-lg w-80" />
         {only && (
           <button onClick={() => setOnly('')}
@@ -382,9 +458,30 @@ export default function LotManage() {
       )}
 
       {/* 한 줄에 한 품목 — 급한 것이 위로. 품목이 늘어도 위만 보면 된다. */}
-      <div className="space-y-1.5">
-        {view.map(s => {
-          const open = !!openItems[s.item_id]
+      <div className="space-y-3">
+      {groups.map((g) => {
+        const shut = !!g.key && !!shutGroups[g.key] && !qk
+        const gl = g.items.flatMap((x) => byItem[x.item_id] || [])
+        return (
+      <div key={g.key || 'all'} className={g.key ? 'rounded-xl border border-slate-200 bg-white overflow-hidden' : ''} data-lot-maker-group={g.key || undefined}>
+        {g.key && (
+          <button type="button" onClick={() => setShutGroups((v) => ({ ...v, [g.key]: !v[g.key] }))}
+            className="w-full px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex items-center gap-3 text-xs text-left">
+            <span className={`px-2 py-0.5 rounded font-bold ${makerTone(g.key)}`}>{g.key}</span>
+            <b className="text-slate-700">{g.items.length}품목</b>
+            <span className="text-slate-400">{[
+              `사용 중 로트 ${n(g.items.reduce((a, x) => a + Number(x.lot_cnt || 0), 0))}`,
+              `잔량 ${n(g.items.reduce((a, x) => a + Number(x.total_left || 0), 0))}`,
+              `올해 입고 ${n(gl.filter((l) => String(l.in_date || '').startsWith(yearNow)).length)}로트`,
+              `소진 ${n(g.items.reduce((a, x) => a + Number(x.done_cnt || 0), 0))}`,
+            ].join(' · ')}</span>
+            <span className="ml-auto text-slate-400">{shut ? '펼치기 ▾' : '접기 ▴'}</span>
+          </button>
+        )}
+        {!shut && (
+      <div className={g.key ? 'p-2 space-y-1.5' : 'space-y-1.5'}>
+        {g.items.map(s => {
+          const open = !!openItems[s.item_id] || itemHit(s.item_id)
           const rows = byItem[s.item_id] || []
           const days = s.next_days
           const urgent = Number(s.expired_cnt) > 0
@@ -501,36 +598,90 @@ export default function LotManage() {
                 </div>
               )}
               {open && (
-                <div className="border-t border-slate-100 divide-y divide-slate-50 bg-slate-50/50">
-                  {rows.map(l => (
-                    <div key={l.id}
-                      className={`px-3 py-2 text-xs flex items-center gap-3 flex-wrap ${
-                        Number(l.qty_left) <= 0 ? 'bg-slate-100/70 text-slate-400'
-                          : l.expired ? 'bg-rose-50/60' : ''}`}>
-                      <span className="w-5 text-center text-[10px] font-bold text-slate-400 flex-shrink-0">{l.fifo_rank}</span>
-                      <span className="text-sm font-bold text-slate-800 min-w-[130px]" style={{ fontFamily: MONO }}>{l.serial_no}</span>
-                      <span className="text-slate-400 whitespace-nowrap w-20">{l.made_ym || '제조 미상'}</span>
-                      <span className="text-slate-500 whitespace-nowrap w-28">입고 {l.in_date}</span>
-                      <span className={`whitespace-nowrap w-28 font-semibold ${
-                        l.expired ? 'text-rose-600' : l.days_left <= 90 ? 'text-amber-600' : 'text-slate-500'}`}>
-                        ~ {l.expire_date}
-                      </span>
-                      <span className="text-slate-400 truncate flex-1 min-w-[90px]">{l.vendor_name || '—'}</span>
-                      <span className="whitespace-nowrap tabular-nums">
-                        <b className="text-slate-800">{n(l.qty_left)}</b><span className="text-slate-300"> / {n(l.qty_in)}</span>
-                      </span>
-                      {canEdit && (
-                        <button onClick={() => setEditLot(l)} title="수정 · 삭제"
-                          className="text-slate-300 hover:text-indigo-600 px-1 flex-shrink-0">✎</button>
-                      )}
-                    </div>
-                  ))}
-                  {!rows.length && <p className="px-3 py-3 text-[11px] text-slate-400">남은 로트가 없습니다 — 「소진분 포함」을 켜면 지난 것도 보입니다.</p>}
+                <div className="border-t border-slate-100 bg-slate-50/60 px-3 py-3" data-lot-history>
+                  <table className="w-full text-xs bg-white rounded-lg border border-slate-200 overflow-hidden">
+                    <thead className="bg-slate-50 text-slate-500 text-[11px]">
+                      <tr className="text-left">
+                        <th className="px-3 py-2 font-bold">상태</th><th className="px-3 py-2 font-bold">시리얼</th>
+                        <th className="px-3 py-2 font-bold">제조</th><th className="px-3 py-2 font-bold">입고일</th>
+                        <th className="px-3 py-2 font-bold">구매처</th><th className="px-3 py-2 font-bold text-right">입고</th>
+                        <th className="px-3 py-2 font-bold w-[170px]">사용</th><th className="px-3 py-2 font-bold">보증 만료</th>
+                        <th className="px-3 py-2 font-bold">사용 기간</th><th className="px-3 py-2 font-bold text-right">이력</th>
+                        {canEdit && <th className="w-8" />}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((l) => {
+                        const done = Number(l.qty_left) <= 0
+                        const used = (Number(l.qty_in) || 0) - (Number(l.qty_left) || 0)
+                        const us = usesByLot[l.id] || []
+                        const usedLogged = us.reduce((a, u) => a + Number(u.qty || 0), 0)
+                        const dates = us.map((u) => String(u.used_date || '')).filter(Boolean).sort()
+                        const hit = lotHit.has(l.id)
+                        const showUses = !!openLots[l.id] || hit
+                        const pct = Number(l.qty_in) > 0 ? Math.min(100, Math.round((used / Number(l.qty_in)) * 100)) : 0
+                        const st = done ? ['소진', 'bg-slate-100 text-slate-500'] : l.expired ? ['기한 초과', 'bg-rose-50 text-rose-600'] : l.fifo_rank === 1 ? ['먼저 사용', 'bg-violet-50 text-violet-700'] : ['사용 중', 'bg-emerald-50 text-emerald-700']
+                        return (
+                          <Fragment key={l.id}>
+                            <tr className={`border-t border-slate-100 ${done ? 'text-slate-400' : ''} ${hit ? 'bg-amber-50/70' : !done && l.fifo_rank === 1 ? 'bg-violet-50/30' : ''}`} data-lot-row={l.serial_no}>
+                              <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full font-bold text-[11px] whitespace-nowrap ${st[1]}`}>{st[0]}</span></td>
+                              <td className={`px-3 py-2 font-bold ${done ? '' : 'text-slate-800'}`} style={{ fontFamily: MONO }}>{l.serial_no}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">{l.made_ym || '—'}</td>
+                              <td className="px-3 py-2 whitespace-nowrap tabular-nums">{l.in_date || '—'}</td>
+                              <td className="px-3 py-2 text-slate-500 truncate max-w-[110px]">{l.vendor_name || '—'}</td>
+                              <td className="px-3 py-2 text-right tabular-nums">{n(l.qty_in)}</td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <div className="flex-1 h-1.5 rounded bg-slate-100 overflow-hidden"><div className={`h-1.5 rounded ${done ? 'bg-slate-300' : 'bg-violet-400'}`} style={{ width: `${pct}%` }} /></div>
+                                  <span className="whitespace-nowrap tabular-nums text-slate-500">{n(used)} / {n(l.qty_in)}</span>
+                                </div>
+                              </td>
+                              <td className={`px-3 py-2 whitespace-nowrap tabular-nums ${done ? '' : l.expired ? 'text-rose-600 font-bold' : l.days_left <= 90 ? 'text-amber-600 font-bold' : ''}`}>
+                                {l.expire_date || '—'}{!done && l.days_left != null && <span className="ml-1 text-[10px]">({l.days_left < 0 ? `${-l.days_left}일 지남` : `${l.days_left}일`})</span>}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-slate-500">
+                                {md(l.in_date)} ~ {done ? (dates.length ? `${md(dates[dates.length - 1])} (${monthsBetween(l.in_date, dates[dates.length - 1])})` : '') : ''}
+                                {usedLogged < used && <span className="text-[10px] text-slate-400" title={`사용 ${n(used)}개 중 ${n(used - usedLogged)}개는 자동 차감 전(9/15 이전)이라 내역이 없습니다`}> · 내역 일부 없음</span>}
+                              </td>
+                              <td className="px-3 py-2 text-right">
+                                {us.length > 0
+                                  ? <button type="button" onClick={() => setOpenLots((v) => ({ ...v, [l.id]: !v[l.id] }))} data-lot-uses-btn
+                                      className={`font-bold whitespace-nowrap ${showUses ? 'text-violet-600' : 'text-slate-500 hover:text-violet-600'}`}>{us.length}건 {showUses ? '▾' : '▸'}</button>
+                                  : <span className="text-slate-300">—</span>}
+                              </td>
+                              {canEdit && <td className="px-1 text-center"><button onClick={() => setEditLot(l)} title="수정 · 삭제" className="text-slate-300 hover:text-indigo-600 px-1">✎</button></td>}
+                            </tr>
+                            {showUses && us.length > 0 && (
+                              <tr><td colSpan={canEdit ? 11 : 10} className="px-3 pb-2">
+                                <div className="ml-6 rounded-lg border border-violet-100 bg-violet-50/30 divide-y divide-violet-100 text-[11px]" data-lot-uses>
+                                  {us.map((u) => (
+                                    <div key={u.use_id} className="px-3 py-1.5 flex items-center gap-4">
+                                      <span className="w-20 text-slate-500 tabular-nums">{u.used_date || '—'}</span>
+                                      <b className="w-10 text-right tabular-nums">{n(u.qty)}</b>
+                                      <span className="text-slate-700">{lotWhere(u)}</span>
+                                      {u.pn && <span className="px-1.5 py-[1px] rounded bg-white border border-slate-200 text-slate-500 text-[10px]">{u.pn}</span>}
+                                      {/로트 등록 후 차감/.test(u.memo || '') && <span className="text-amber-600">그때 로트 없이 나감 → 이 로트에서 뺌</span>}
+                                    </div>
+                                  ))}
+                                </div>
+                              </td></tr>
+                            )}
+                          </Fragment>
+                        )
+                      })}
+                      {!rows.length && <tr><td colSpan={canEdit ? 11 : 10} className="px-3 py-3 text-[11px] text-slate-400">등록된 로트가 없습니다.</td></tr>}
+                    </tbody>
+                  </table>
                 </div>
               )}
             </div>
           )
         })}
+      </div>
+        )}
+      </div>
+        )
+      })}
       </div>
 
       {addFor && (
@@ -544,6 +695,10 @@ export default function LotManage() {
       {shelfFor && (
         <ShelfEdit item={shelfFor} onClose={() => setShelfFor(null)}
           onDone={() => { refresh(); setShelfFor(null) }} />
+      )}
+      {report && (
+        <LotReport items={view} byItem={byItem} usesByLot={usesByLot} onClose={() => setReport(false)}
+          scope={[mk || '전체 제조사', only ? `${only}만` : '', qk ? `「${q.trim()}」` : ''].filter(Boolean).join(' · ')} />
       )}
 
       {/* 로트관리 대상 품목 — 화면에서 켜고 끈다 */}

@@ -612,7 +612,9 @@ export async function axSyncRun(pv, meName) {
     const f = p.lines[0]
     const { data: o, error } = await supabase.from('pm_order').insert({
       customer_code: 'AX', po_no: p.po_no, order_date: p.lines.map((l) => l.order_date).filter(Boolean).sort()[0] || null,
-      currency: f.ccn === 'B' ? 'USD' : 'KRW', ccn: f.ccn || null, source: 'po_file', migrated: true, registered_name: meName || null,
+      // 진행 중 줄이 있는 새 PO 는 PDF · 직접 등록처럼 — 「미확인」 · 「이번 달 접수」에 잡혀 회신을 받는다 (v4.228.0)
+      //   이미 다 끝난 PO(Received 에서 온 지난 납품 · 취소)만 「이관」
+      currency: f.ccn === 'B' ? 'USD' : 'KRW', ccn: f.ccn || null, source: 'po_file', migrated: !p.live, registered_name: meName || null,
     }).select('id').single()
     if (error) { if (/duplicate/i.test(error.message || '')) continue; throw error }
     const rows = [...new Map(p.lines.map((l) => [keyOfPo(l), importRow(o.id, l, pv.brevReady)])).values()]
