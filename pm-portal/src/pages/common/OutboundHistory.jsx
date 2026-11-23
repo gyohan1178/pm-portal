@@ -49,7 +49,7 @@ const custCodeOf = (std) => {
 //   · 비고는 DB 에 memo 칸으로 저장된다 (note 칸이 아니다)
 export async function fetchOutboundHistory({ from, to, customerId }) {
   const rows = await fetchAll(() => supabase.from('stock_movements')
-    .select('*, items(std_code,name,unit), purchase_orders(po_number,customer_id,project_id,customers(name,code),projects(code,name))')
+    .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), purchase_orders(po_number,customer_id,project_id,customers(name,code),projects(code,name))')
     .eq('movement_type','출고')
     .gte('movement_date', from)
     .lte('movement_date', to)
@@ -148,11 +148,20 @@ export default function OutboundHistory() {
     queryFn:()=>fetchOutboundHistory({ from:hQuery.from, to:hQuery.to, customerId:hQuery.customerId }),
   })
 
-  const histRows = hKind ? history.filter(r => r._kind === hKind) : history
+  // 찾기 (v4.226.0) — 품번 · 품명 · 제조사 · 제조사품번 · PO. 띄어 쓰면 모두 들어간 줄만
+  const [oq, setOq] = useState('')
+  const oWords = oq.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const hit = (hay) => { const h = hay.toLowerCase(); return oWords.every((w) => h.includes(w)) }
+  const rowHay = (r) => [r.items?.std_code, r.items?.name, r.items?.manufacturer, r.items?.manufacturer_code, r.purchase_orders?.po_number].filter(Boolean).join(' ')
+  const histRows = useMemo(() => {
+    let rows = hKind ? history.filter(r => r._kind === hKind) : history
+    if (oWords.length) rows = rows.filter((r) => hit(rowHay(r)))
+    return rows
+  }, [history, hKind, oq])
   const histTotal = histRows.reduce((a,r)=>a+(Number(r.qty)||0),0)
   const custName = (id) => customers.find(c => c.id === id)?.name || ''
   const histGroups = useMemo(() => groupHistory(histRows), [histRows])
-  const histView = useVisibleRows(histGroups, 300, [hQuery, hKind])
+  const histView = useVisibleRows(histGroups, 300, [hQuery, hKind, oq])
   const [openGroup, setOpenGroup] = useState({})   // 펼친 다품목 묶음
   // 다품목 출고 — 어떤 상위품목을 몇 대분 뺐는지 (v4.183.0 · 기록은 이 버전부터)
   const [mode, setMode] = useRemember('outhist.mode', 'line', (v) => v === 'line' || v === 'assy')         // line 출고 줄 · assy 상위품목 기준
@@ -173,8 +182,9 @@ export default function OutboundHistory() {
         by.set(k, e)
       }
     }
-    return [...by.values()].sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code))
-  }, [history, assyMap])
+    const all = [...by.values()].sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code))
+    return oWords.length ? all.filter((e) => hit(`${e.code} ${e.name || ''}`)) : all
+  }, [history, assyMap, oq])
   const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
 
   function exportHistory() {
@@ -242,6 +252,13 @@ export default function OutboundHistory() {
             <option value="">전체</option>
             {OUT_KINDS.map(k=><option key={k} value={k}>{k}</option>)}
           </select>
+        </div>
+        <div className="relative" data-outhist-search>
+          <label className={LBL}>찾기</label>
+          <input value={oq} onChange={(e) => setOq(e.target.value)} placeholder="🔍 품번 · 품명 · 제조사 · 제조사품번 · PO"
+            className="w-64 px-3 py-2 pr-7 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white" />
+          {oq && <button type="button" onClick={() => setOq('')} title="지우기"
+            className="absolute right-2 bottom-2 text-slate-400 hover:text-slate-600 text-sm">✕</button>}
         </div>
         {/* 기간 빠른 선택 (v4.192.0) — 누르면 날짜가 들어가고 바로 조회 */}
         <PeriodChips from={hFrom} to={hTo} onPick={(r) => { setHFrom(r.from); setHTo(r.to); setHQuery({ from: r.from, to: r.to, customerId: hCustomer }) }} />
