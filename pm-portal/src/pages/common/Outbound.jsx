@@ -25,6 +25,7 @@ import { matcher } from '../../lib/searchMatch'
 import { withNetRetry, isNetErr } from '../../lib/netStatus'
 import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
+import { fetchMfrLists, altOf } from '../../lib/altMfr'
 import { useRemember } from '../../hooks/useRemember'
 import { swallow } from '../../lib/errorLog'
 
@@ -293,6 +294,7 @@ export default function Outbound() {
         ...r,
         qty: Number(outQtys[r.item_id]||0),
         no: noMap.get(r.item_id),
+        alts: altFor(r)?.text || '',
       }))
     if (!rows.length) { toastError('라벨 출력 대상이 없습니다 (전장 자재에 출고수량 입력. 현장재고·하네스·라벨류·미출력 제외).'); return }
 
@@ -503,6 +505,11 @@ export default function Outbound() {
     outOrder.forEach(o => { const v = viewOf(o); c[v] = (c[v] || 0) + 1; if (v !== 'zero' && v !== 'exclude') c.target++ })
     return c
   }, [outOrder, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 고객사 승인 대체품 (v4.236.0) — 화면 · 불출표 · 라벨 맨 아래 「대체 …」
+  const altIds = useMemo(() => [...new Set(outOrder.map(o => o.item_id).filter(Boolean))].sort(), [outOrder])
+  const { data: mfrLists = {} } = useQuery({ queryKey: ['outAlts', altIds.join(',')], enabled: altIds.length > 0, staleTime: 10 * 60 * 1000, queryFn: () => fetchMfrLists(altIds) })
+  const altFor = (r) => altOf(r.makerPn, mfrLists[r.item_id])
+
   const outItems = useMemo(() => {
     let rows = outOrder
     if (view === 'target') rows = rows.filter(o => !['zero', 'exclude'].includes(viewOf(o)))
@@ -532,7 +539,7 @@ export default function Outbound() {
       ].filter(Boolean).join(' · '),
       rows: rows.map(r => ({
         location: r.location, std_code: r.std_code,
-        maker: r.maker, makerPn: r.makerPn, name: r.name,
+        maker: r.maker, makerPn: r.makerPn, alts: altFor(r)?.short || '', name: r.name,
         unit: r.unit || 'EA', qty: qtyFn(r),
         makeType: mtOf(r.item_id), note: noteOf(r.item_id),
       })),
@@ -840,7 +847,8 @@ export default function Outbound() {
                           {/* 제조사·제조사품번이 80/100px 로 못 박혀 있어 긴 것은 뒤가 안 보였다.
                               이제 열 너비로만 잘리고, 헤더를 끌어 넓히면 다 보인다. */}
                           <td className={`px-2 py-2 truncate ${dim?'text-slate-400':'text-slate-500'}`} title={item.maker}>{item.maker||'—'}</td>
-                          <td className="px-2 py-2 font-mono text-xs text-violet-600 truncate" title={item.makerPn}>{item.makerPn||'—'}</td>
+                          <td className="px-2 py-2 overflow-hidden"><div className="font-mono text-xs text-violet-600 truncate" title={item.makerPn}>{item.makerPn||'—'}</div>
+                            {(() => { const a = altFor(item); return a && <div className="text-[10.5px] text-emerald-700 truncate" title={a.title} data-alt-mfr>대체 {a.short}</div> })()}</td>
                           <td className="px-2 py-2 font-mono text-xs text-indigo-600 truncate" title={item.std_code}>{item.std_code}</td>
                           <td className={`px-2 py-2 font-semibold overflow-hidden ${dim?'text-slate-400':'text-slate-800'}`} title={item.name}>
                             <div className="truncate">{item.name}</div>

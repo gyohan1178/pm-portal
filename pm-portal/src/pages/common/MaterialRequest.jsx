@@ -28,6 +28,7 @@ import { useCoach } from '../../components/ux/CoachMarks'
 import { useRemember } from '../../hooks/useRemember'
 import { useNarrow } from '../../hooks/useNarrow'
 import { fetchMrCheck, judgeMr, mrCheckText, MR_RECENT_DAYS, MR_BOM_X } from '../../lib/mrCheck'
+import { fetchMfrLists, altOf } from '../../lib/altMfr'
 
 // 🧾 품목 표 (v4.235.0) — 진행 중 요청 줄을 한 표로. 같은 품번 묶기 · 정렬 · 중복 요청 거르기
 //   묶어도 처리(불출 · 라벨 · 반려)는 요청 줄마다 — 묶음을 체크하면 그 안 요청 줄이 전부 체크된다 (요청자가 다르면 라벨도 따로)
@@ -989,6 +990,9 @@ export default function MaterialRequest() {
       const { data, error } = await supabase.rpc('pm_request_print', { p_ids: checked.map(r => r.id) })
       if (error) throw error
       const { labels, skipped } = requestLabelRows(data || [], checked)
+      // 고객사 승인 대체품 — 라벨 맨 아래 「대체 …」 (v4.236.0)
+      const ml = await fetchMfrLists(labels.map(l => l.item_id))
+      labels.forEach(l => { const a = altOf(l.makerPn, ml[l.item_id]); if (a) l.alts = a.text })
       if (!labels.length) { toastError(`출력할 라벨이 없습니다${skipped.length ? ` (${skipped.map(s => `${s.code || '-'} ${s.why}`).join(', ')})` : ''}`); return }
       const skipTxt = skipped.length ? `\n\n빠지는 줄 ${skipped.length}: ${skipped.slice(0, 5).map(s => `${s.no}. ${s.code || '-'} (${s.why})`).join(', ')}${skipped.length > 5 ? ' …' : ''}` : ''
       if (!(await ask({ title: `라벨 ${labels.length}장을 ZM400 으로 출력할까요?`, desc: 'NO 는 🖨 출력(요청서) 번호와 같습니다.',

@@ -19,7 +19,7 @@ const MT_LABEL = {
  * @param opt.title      제목
  * @param opt.csName     고객사
  * @param opt.meta       부제 (프로젝트·대수 등)
- * @param opt.rows       [{ no, location, std_code, maker, makerPn, name, unit, qty, makeType, note, byAssy }]
+ * @param opt.rows       [{ no, location, std_code, maker, makerPn, name, unit, qty, makeType, note, byAssy, alts? }]
  * @param opt.assyCols   [{ code, qty }]  가로로 늘어놓을 상위품번. 없으면 일반 서식
  * @param opt.gridHtml   랙 배치도 (선택)
  */
@@ -58,7 +58,7 @@ export function buildIssueSheet(opt) {
       <td class="loc">${esc(r.location) || '-'}</td>
       <td class="code">${esc(r.std_code)}</td>
       <td class="mk">${esc(r.maker) || '-'}</td>
-      <td class="code">${esc(r.makerPn) || '-'}</td>
+      <td class="code">${esc(r.makerPn) || '-'}${r.alts ? `<div class="alt">대체 ${esc(r.alts)}</div>` : ''}</td>
       <td class="nm">${esc(r.name)}</td>
       <td class="c">${esc(r.unit) || 'EA'}</td>
       <td class="c b">${esc(r.qty)}</td>
@@ -136,6 +136,7 @@ export function buildIssueSheet(opt) {
   .legend i { color: #6b7280; font-style: normal; }
   tr.grp td { background: #1a3a6b; color: #fff; font-weight: 700; font-size: 8.5pt; padding: 1.2mm 2mm; }
   tr.note td { background: #fffbea; font-size: 8pt; color: #6b5518; }
+  .alt { font-size: 7pt; color: #047857; font-family: inherit; }
   tr { page-break-inside: avoid; }
 
   .sign { margin-top: 6mm; display: flex; gap: 14mm; font-size: 9pt; }

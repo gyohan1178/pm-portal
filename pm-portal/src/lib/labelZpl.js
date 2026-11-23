@@ -51,10 +51,11 @@ const DIV_Y = Y0 + mm(13.2)       // 구분선
 const MK_L1_Y = DIV_Y + mm(1.4)   // 제조사명
 const MK_L2_Y = DIV_Y + mm(6.4)   // 제조사품번
 const QTY_Y = DIV_Y + mm(2.2)     // 수량 — 제조사 줄 옆
+const ALT_Y = DIV_Y + mm(11.0)    // 맨 아래 — 고객사 승인 대체품 한 줄 (v4.236.0)
 
 /**
  * 라벨 1장 ZPL
- * row = { no, std_code, labelQty|qty, part, maker, makerPn, location }
+ * row = { no, std_code, labelQty|qty, part, maker, makerPn, location, alts? }
  */
 export function labelZpl(row) {
   const no = esc(row.no)
@@ -117,6 +118,15 @@ export function labelZpl(row) {
     out.push(`^FO${X0},${y}^A0N,${fit(makerPn)},${fit(makerPn)}^FB${MK_W},1,0,L^FD${makerPn}^FS`)
   }
   if (!maker && !makerPn) out.push(`^FO${X0},${MK_L1_Y}^A0N,${mm(3.6)},${mm(3.6)}^FB${MK_W},1,0,L^FD ^FS`)
+
+  // 맨 아래 — 고객사 승인 대체품 (row.alts). 없으면 예전 라벨 그대로 (v4.236.0)
+  const alts = raw(row.alts)
+  if (alts) {
+    // 라벨 기본 글꼴(^A0)에 한글 · 가운뎃점이 없을 수 있어 영문 ALT · 「/」 로 찍는다
+    const t = `ALT ${alts.replace(/\s*·\s*/g, ' / ')}`
+    const fs = t.length <= 34 ? mm(2.4) : mm(Math.max(1.5, 2.4 * 34 / t.length))
+    out.push(`^FO${X0},${ALT_Y - mm(0.8)}^GB${UW},1,1^FS`, `^FO${X0},${ALT_Y}^A0N,${fs},${fs}^FB${UW},1,0,L^FD${t}^FS`)
+  }
 
   // 수량 — 제조사 줄 오른쪽. 짧아서 좁은 자리로 충분하다.
   out.push(

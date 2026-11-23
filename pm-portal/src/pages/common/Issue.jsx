@@ -23,6 +23,7 @@ import Spin from '../../components/ux/Spin'
 import PageHead from '../../components/PageHead'
 import { EmptyState } from '../../components/ui/EmptyState'
 import { useRemember } from '../../hooks/useRemember'
+import { fetchMfrLists, altOf } from '../../lib/altMfr'
 
 // 숫자 입력: 타이핑 중엔 화면만 바꾸고, 칸을 벗어나거나 Enter 때 한 번만 저장
 function DraftNum({ value, onCommit, ...rest }) {
@@ -487,6 +488,9 @@ export default function Issue() {
     },
   })
 
+  // 고객사 승인 대체품 (v4.236.0) — 화면 · 불출표 · 라벨 맨 아래 「대체 …」
+  const { data: mfrLists = {} } = useQuery({ queryKey: ['issueAlts', metaIds.join(',')], enabled: metaIds.length > 0, staleTime: 10 * 60 * 1000, queryFn: () => fetchMfrLists(metaIds) })
+
   // 라벨 출력 단위 — 건별 덮어쓰기.
   // 화면에서 바꾸면 즉시 품목 마스터(items)에도 저장되어 다음 불출에서도 유지된다.
   // 위치(location)를 저장해 재사용하는 방식과 동일.
@@ -623,6 +627,7 @@ export default function Issue() {
       ...a,
       maker: itemMeta[a.item_id]?.manufacturer || '',
       makerPn: itemMeta[a.item_id]?.manufacturer_code || '',
+      alt: altOf(itemMeta[a.item_id]?.manufacturer_code || '', mfrLists[a.item_id]),
       dept: itemMeta[a.item_id]?.dept || '',
       // 장바구니 담을 당시 품명이 비어 있던 건은 품목 마스터에서 보충
       name: a.name || itemMeta[a.item_id]?.name || '',
@@ -637,7 +642,7 @@ export default function Issue() {
       String(a.makerPn).localeCompare(String(b.makerPn), 'ko') ||
       String(a.std_code).localeCompare(String(b.std_code))
     )
-  }, [itemAgg, itemMeta, locMeta, mtMeta, labelOv, packOv])
+  }, [itemAgg, itemMeta, locMeta, mtMeta, labelOv, packOv, mfrLists])
 
   // 자재 불출표 인쇄 (제외 대상 뺀 것, 제조사→제조사품번 순, 키팅 확인란 포함)
   function printIssueSheet() {
@@ -654,7 +659,7 @@ export default function Issue() {
       meta: assyCols.length ? `다품목 출고 · 상위품번 ${assyCols.length}종` : '다품목 출고',
       rows: rows.map(r => ({
         location: locMeta[r.item_id] || '',
-        std_code: r.std_code, maker: r.maker, makerPn: r.makerPn,
+        std_code: r.std_code, maker: r.maker, makerPn: r.makerPn, alts: r.alt?.short || '',
         name: r.name, unit: r.unit, qty: r.qty,
         makeType: r.makeType, note: r.note,
         byAssy: byAssyMap[r.std_code],
@@ -701,7 +706,7 @@ export default function Issue() {
 
     const rows = sheetRows
       .filter(r => r.makeType === 'normal' && !isLabelLoc(r) && r.labelMode !== 'none')
-      .map(r => ({ ...r, no: noMap.get(r.std_code) }))
+      .map(r => ({ ...r, no: noMap.get(r.std_code), alts: r.alt?.text || '' }))
     const skipped = sheetRows.filter(r => r.makeType !== 'normal' || isLabelLoc(r) || r.labelMode === 'none')
     if (!rows.length) { toastError('출력할 전장 자재가 없습니다 (현장재고·하네스·라벨류·미출력 제외).'); return }
 
@@ -960,7 +965,8 @@ export default function Issue() {
                       : <span className="text-slate-300">—</span>}
                   </td>
                   <td className="px-2 py-1.5 text-slate-500 max-w-[90px] truncate">{a.maker || '—'}</td>
-                  <td className="px-2 py-1.5 font-mono text-violet-600 max-w-[120px] truncate">{a.makerPn || '—'}</td>
+                  <td className="px-2 py-1.5 max-w-[140px]"><div className="font-mono text-violet-600 truncate">{a.makerPn || '—'}</div>
+                    {a.alt && <div className="text-[10.5px] text-emerald-700 truncate" title={a.alt.title} data-alt-mfr>대체 {a.alt.short}</div>}</td>
                   <td className="px-2 py-1.5 font-mono font-semibold text-indigo-600">{a.std_code}</td>
                   <td className="px-2 py-1.5 text-slate-600 max-w-[150px] truncate">
                     {/* 하네스는 창고에서 빼는 게 아니라 만드는 것이라 구분한다 */}

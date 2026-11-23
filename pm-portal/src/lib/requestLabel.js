@@ -15,7 +15,7 @@ export function requestLabelRows(printRows, checked) {
       : !(qty > 0) ? '수량 0' : ''
     if (why) { skipped.push({ no: i + 1, code: r.std_code || r.item_name || '', why }); return }
     labels.push({
-      no: i + 1, std_code: r.std_code, labelQty: qty,
+      no: i + 1, std_code: r.std_code, labelQty: qty, item_id: c?.item_id || r.item_id || null,
       maker: r.maker || '', makerPn: r.maker_code || '', location: r.location || '',
     })
   })
