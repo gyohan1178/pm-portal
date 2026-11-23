@@ -27,6 +27,19 @@ import Spin from '../../components/ux/Spin'
 import { useCoach } from '../../components/ux/CoachMarks'
 import { useRemember } from '../../hooks/useRemember'
 import { useNarrow } from '../../hooks/useNarrow'
+import { fetchMrCheck, judgeMr, mrCheckText, MR_RECENT_DAYS, MR_BOM_X } from '../../lib/mrCheck'
+
+// 요청 타당성 한 줄 (v4.234.0) — 직전 요청 · BOM 1세트분 배수. 기준 넘으면 주황
+function MrCheckLine({ j }) {
+  const parts = mrCheckText(j)
+  if (!parts.length) return null
+  return (
+    <span data-mr-check={j?.warn ? 'warn' : 'ok'} title={`주황 = 직전 요청 뒤 ${MR_RECENT_DAYS}일 안에 또 요청 · 또는 BOM 1세트분(그 품목이 들어가는 어셈블리를 1대씩 만들 때 수량)의 ${MR_BOM_X}배 이상. 공용 소모품은 참고 숫자입니다`}
+      className="block text-[10.5px] leading-tight mt-0.5">
+      {parts.map((p, i) => <span key={i} className={p.warn ? 'font-bold text-amber-700' : 'text-slate-400'}>{i ? ' · ' : ''}{p.warn ? '⚠ ' : ''}{p.t}</span>)}
+    </span>
+  )
+}
 
 const n = (v) => (Number(v) || 0).toLocaleString('ko-KR')
 const today = () => todayISO()
@@ -184,6 +197,12 @@ export default function MaterialRequest() {
     refetchIntervalInBackground: false,   // 화면을 안 보고 있으면 쉰다
     refetchOnWindowFocus: true,
   })
+
+  // 요청 타당성 — 목록 품목 · 입력 중 품목 (v4.234.0)
+  const listItemIds = useMemo(() => [...new Set(list.filter(r => r.item_id && !['완료', '반려'].includes(r.status)).map(r => r.item_id))].sort(), [list])
+  const { data: mrChk } = useQuery({ queryKey: ['mrCheck', listItemIds.join(',')], queryFn: () => fetchMrCheck(listItemIds), enabled: listItemIds.length > 0, staleTime: 5 * 60 * 1000 })
+  const formItemIds = rows.map(r => r.item_id).filter(Boolean).sort()
+  const { data: mrChkForm } = useQuery({ queryKey: ['mrCheck', 'form', formItemIds.join(',')], queryFn: () => fetchMrCheck(formItemIds), enabled: formItemIds.length > 0, staleTime: 5 * 60 * 1000 })
 
   const checked = list.filter(r => sel[r.id])
   // 휴대폰 — 지표 4칸은 한 줄로 접고, 처리 버튼 줄은 요청을 체크했을 때만 (v4.194.0). 없애지 않고 접기만 한다
@@ -1385,6 +1404,18 @@ export default function MaterialRequest() {
                   onChange={e => setRows(v => v.map((x, k) => k === i ? { ...x, reason: e.target.value } : x))}
                   placeholder="필요 사유 (선택) — 예: 기존품 단선"
                   className="w-full px-2.5 py-1.5 text-xs border border-slate-200 rounded-lg" />
+                {/* 요청 전에 보이는 확인 (v4.234.0) — 최근에 받았거나 BOM 대비 많으면 수량을 한 번 더 보게 */}
+                {r.item_id && !r._assy && mrChkForm && (() => {
+                  const j = judgeMr(mrChkForm, r.item_id, r.qty)
+                  if (!j) return null
+                  return (
+                    <div data-mr-form-check className={`rounded-lg px-2.5 py-1.5 text-[11px] ${j.warn ? 'bg-amber-50 border border-amber-200 text-amber-800' : 'bg-slate-50 text-slate-500'}`}>
+                      {j.recent && <div>⚠ <b>{j.gap}일 전 {Number(j.prev.qty).toLocaleString('ko-KR')}개</b>를 요청했습니다{j.prev.status && j.prev.status !== '완료' ? ` (아직 ${j.prev.status})` : ''} — 남은 게 있으면 수량을 줄여 주세요</div>}
+                      {j.big && <div>⚠ BOM 1세트분({Number(j.bomSet).toLocaleString('ko-KR')})의 <b>{Math.round(j.times)}배</b>입니다 — 수량을 다시 확인해 주세요 (필요 사유에 쓰는 곳을 적어 주시면 처리가 빠릅니다)</div>}
+                      {!j.warn && <MrCheckLine j={j} />}
+                    </div>
+                  )
+                })()}
 
                 {(r.std_code || r.item_name) && (
                   <button onClick={() => { setRows(v => v.map((x, k) => k === i ? { ...emptyRow(), key: x.key } : x)); if (r._assy) setAssy(null) }}
@@ -2166,6 +2197,7 @@ export default function MaterialRequest() {
                             {r.reason && (
                               <span className="block text-[11px] text-sky-700 truncate" title={`필요 사유: ${r.reason}`}>💬 {r.reason}</span>
                             )}
+                            {r.item_id && mrChk && !['완료', '반려'].includes(r.status) && <MrCheckLine j={judgeMr(mrChk, r.item_id, r.qty, r.req_date || r.created_at, r.req_no)} />}
                             {rejPerItem && r.status === '반려' && (
                               <span data-item-reject className="block text-[11px] font-bold text-rose-600 break-words">⊗ 반려: {rejectReasonOf(r)}</span>
                             )}
