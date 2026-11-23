@@ -40,7 +40,7 @@ import OrderUpload from './OrderUpload'
 const OrderMrModal = lazy(() => import('./OrderMrModal'))
 import { mrTagOf, fetchOrderMrMap } from '../../lib/orderMr'
 import OrderEntry, { downloadTemplate } from './OrderEntry'
-import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, setSlipNo } from '../../lib/orderEntry'
+import { KINDS, KIND_SHORT, KIND_TONE, kindOf, isTempPo, CANCEL_REASONS, cancelLines, uncancelLines, promotePo, renamePo, setSlipNo } from '../../lib/orderEntry'
 // AX PO 엑셀 — 고객사 PO · 생산관리 · 수주대장을 한 번에 (v4.101.0). 엑셀 읽기가 무거워 누를 때만 받는다
 const CustomerPOUpload = lazy(() => import('./CustomerPOUpload'))
 const EcountMatch = lazy(() => import('./EcountMatch'))
@@ -792,6 +792,11 @@ export default function OrderIntake() {
     onSuccess: (r) => { patchHead([r.id], () => r.patch); toastSuccess(`정식 PO ${r.patch.po_no} 로 바꿨습니다`) },
     onError: (e) => toastError(e.message),
   })
+  const renameMut = useMutation({
+    mutationFn: ({ o, no }) => renamePo(o, no, meName),
+    onSuccess: (r) => { patchHead([r.id], () => r.patch); toastSuccess(`PO 번호를 ${r.patch.po_no} 로 고쳤습니다`) },
+    onError: (e) => toastError(e.message),
+  })
   const slipMut = useMutation({
     mutationFn: ({ o, slip }) => setSlipNo(o, slip, meName),
     onSuccess: (r) => { patchHead([r.id], () => r.patch); toastSuccess('명세서번호 저장') },
@@ -1352,6 +1357,7 @@ export default function OrderIntake() {
           onCancel={(ls, reason, memo, done) => cancelMut.mutate({ ls, reason, memo }, { onSuccess: done })} cancelBusy={cancelMut.isPending}
           onUncancel={(ls) => uncancelMut.mutate(ls)}
           onPromote={(o, no) => promoteMut.mutate({ o, no })} promoteBusy={promoteMut.isPending}
+          onRename={(o, no, done) => renameMut.mutate({ o, no }, { onSuccess: done })} renameBusy={renameMut.isPending}
           onSlip={(o, slip) => slipMut.mutate({ o, slip })}
           onNote={(o, v) => headMut.mutate({ id: o.id, patch: { note: v.trim() || null }, log: { field: 'note', before_val: o.note || null, after_val: v.trim() || null } })}
           onReply={(ls, form) => replyMut.mutate({ ls, form })} replyBusy={replyMut.isPending}
@@ -1469,7 +1475,7 @@ function RevEdit({ l, ax, busy, onSave }) {
 }
 
 function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoading, onClose, onReply, onReplyAsync, meName, faMap, replyBusy, onDlv, dlvBusy, onRelease, onRev, revBusy, onConfirm, onShipTo, onDelete,
-  onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onSlip, onNote }) {
+  onCancel, cancelBusy, onUncancel, onPromote, promoteBusy, onRename, renameBusy, onSlip, onNote }) {
   const { data: changes = [] } = useQuery({
     queryKey: ['orderChanges', o.id, o.updated_at, o.lines.map((l) => l.updated_at || '').join()],
     queryFn: async () => {
@@ -1482,6 +1488,8 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
   const [slip, setSlip] = useState(o.slip_no || '')
   const [note, setNote] = useState(o.note || '')          // 특이사항 메모 (v4.109.0)
   const [newNo, setNewNo] = useState('')
+  const [renOpen, setRenOpen] = useState(false)   // PO 번호 고치기 (v4.225.0)
+  const [renNo, setRenNo] = useState('')
   const [pick, setPick] = useState(() => new Set())      // 취소할 줄
   const [why, setWhy] = useState('')
   const [whyMemo, setWhyMemo] = useState('')
@@ -1506,8 +1514,21 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
             <b className="font-mono text-lg text-slate-800">{o.po_no}</b>
             {o.migrated && <span className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 text-[10px] font-bold">이관</span>}
             {k !== 'po' && <span className={`px-1.5 py-0.5 rounded text-[10.5px] font-bold ${KIND_TONE[k]}`} data-drawer-kind={k}>{KINDS[k]}</span>}
-            <button type="button" onClick={onClose} className="ml-auto text-sm font-bold text-slate-400 hover:text-slate-700">✕ 닫기</button>
+            {editable && !o.planned && !isTempPo(o) && <button type="button" onClick={() => { setRenOpen((v) => !v); setRenNo('') }} data-po-rename-open title="임시로 적은 번호(예: 발주서 별도 발행 예정)를 새로 받은 PO 번호로 — 줄 · 회신 · 호기 연결은 그대로" className="ml-auto h-7 px-2.5 rounded-lg border border-slate-200 bg-white text-[11.5px] font-bold text-slate-600 hover:bg-slate-50">✎ PO 번호 고치기</button>}
+            {editable && <button type="button" onClick={() => onDelete(o)} data-po-del-top title="잘못 넣은 PO 를 통째로 지웁니다 — 생산관리 호기가 연결돼 있으면 지울 수 없습니다" className={`${editable && !o.planned && !isTempPo(o) ? '' : 'ml-auto '}h-7 px-2.5 rounded-lg border border-red-200 bg-white text-[11.5px] font-bold text-red-600 hover:bg-red-50`}>🗑 PO 지우기</button>}
+            <button type="button" onClick={onClose} className={`${editable ? '' : 'ml-auto '}text-sm font-bold text-slate-400 hover:text-slate-700`}>✕ 닫기</button>
           </div>
+          {renOpen && (
+            <div className="mt-3 rounded-lg border border-violet-200 bg-[#eeebfd]/60 px-3 py-2.5" data-po-rename>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[11px] font-bold text-violet-800">새 PO 번호</span>
+                <input value={renNo} onChange={(e) => setRenNo(e.target.value)} placeholder="예: 6001412345" autoFocus data-po-rename-input className="w-52 h-8 px-2 text-xs font-mono border border-slate-200 rounded-lg bg-white" />
+                <button type="button" disabled={!renNo.trim() || renameBusy} onClick={() => onRename(o, renNo, () => setRenOpen(false))} data-po-rename-save className="h-8 px-3 rounded-lg text-xs font-bold bg-[#6c5ce7] text-white disabled:opacity-40">번호 바꾸기</button>
+                <button type="button" onClick={() => setRenOpen(false)} className="h-8 px-2 text-xs text-slate-500">취소</button>
+              </div>
+              <p className="mt-1.5 text-[11px] text-slate-500">품목 · 회신 · 명세서번호 · 호기 연결 · 이력은 그대로 이어지고, 번호를 바꾼 기록이 변경 이력에 남습니다. 새 번호 발주서가 이미 따로 등록돼 있으면 바꿀 수 없으니 이 PO 를 「🗑 PO 지우기」로 지우거나 품목을 「취소」하세요.</p>
+            </div>
+          )}
           <div className="mt-3 grid grid-cols-3 md:grid-cols-6 gap-3">
             <Info k="발주일">{o.order_date || '—'}</Info>
             <Info k={o.customer_code === 'AX' ? '통화 · CCN' : '통화'}>{o.currency}{o.ccn ? ` · CCN ${o.ccn}` : ''}</Info>
@@ -1642,7 +1663,6 @@ function PoDrawer({ o, isBuy, editable, fx, oddMap, onOddOk, prodMap, histLoadin
             </div>
           </div>
           {matOpen && <Suspense fallback={null}><PoMatCheck o={o} live={live} meName={meName} onReplyAsync={onReplyAsync} onClose={() => setMatOpen(false)} /></Suspense>}
-          {isBuy && <button type="button" onClick={() => onDelete(o)} data-del className="text-[11px] text-red-500 hover:underline">이 PO 지우기</button>}
         </div>
       </div>
     </div>

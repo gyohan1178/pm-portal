@@ -285,6 +285,23 @@ export async function promotePo(o, newNo, meName) {
   return { id: o.id, patch }
 }
 
+// PO 번호 고치기 (v4.225.0) — 「발주서 별도 발행 예정」처럼 임시로 적은 번호를 새로 받은 정식 번호로.
+//   줄 · 회신 · 호기 연결 · 이력은 그대로 이어진다. 같은 번호가 이미 있으면 막는다 (그땐 이 PO 를 지우거나 줄을 취소)
+export async function renamePo(o, newNo, meName) {
+  const no = s(newNo)
+  if (!no) throw new Error('새 PO 번호를 넣으세요')
+  if (no === o.po_no) throw new Error('지금 번호와 같습니다')
+  const dup = await loadOrderByNo(o.customer_code, no, o.customer_name)
+  if (dup) throw new Error(`${no} 는 이미 수주대장에 있습니다 — 새 발주서로 이미 등록됐으면 이 PO(${o.po_no})는 「PO 지우기」로 지우거나 품목을 「취소」하세요`)
+  const temp = isTempPo(o)
+  const patch = { po_no: no, ...(temp ? { kind: 'po' } : {}), updated_at: now() }
+  const { error } = await supabase.from('pm_order').update(patch).eq('id', o.id)
+  if (error) throw colHint(error)
+  await supabase.from('pm_order_change').insert({ order_id: o.id, line_key: null, field: 'po_no', before_val: o.po_no, after_val: `${no} (번호 고침)`, source: 'manual', changed_name: meName || null })
+  logActivity('update', 'pm_order', no, `PO 번호 고침 ${o.po_no} → ${no}`, null, orderCustName(o))
+  return { id: o.id, patch }
+}
+
 export async function setSlipNo(o, slip, meName) {
   const v = s(slip) || null
   const was = o.slip_no || null
