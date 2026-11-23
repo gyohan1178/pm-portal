@@ -60,14 +60,39 @@ export async function dirPermission(h, ask = false) {
   if (s !== 'granted' && ask) s = await h.requestPermission({ mode: 'read' })
   return s
 }
-// 폴더 안 PDF 를 훑는다 (하위 폴더 3단까지)
-export async function listPdfs(h, depth = 0, out = []) {
+// 폴더 안 PDF 를 훑는다 (하위 폴더 maxDepth 단까지) — NAS 는 느리다. 진행 수를 알리고, stop() 이 참이면 그만둔다
+export async function listPdfs(h, { maxDepth = 1, onCount, stop } = {}, depth = 0, out = []) {
   for await (const [name, e] of h.entries()) {
-    if (e.kind === 'directory') { if (depth < 3) await listPdfs(e, depth + 1, out) }
-    else if (/\.pdf$/i.test(name) && !/^~\$/.test(name)) out.push({ name, get: () => e.getFile() })
+    if (stop?.()) throw new Error('그만둠')
+    if (e.kind === 'directory') { if (depth < maxDepth) await listPdfs(e, { maxDepth, onCount, stop }, depth + 1, out) }
+    else if (/\.pdf$/i.test(name) && !/^~\$/.test(name)) { out.push({ name, get: () => e.getFile() }); if (out.length % 200 === 0) onCount?.(out.length) }
   }
   return out
 }
+// 파일 이름을 바로 열어 본다 (폴더를 훑지 않음 — 빠르다) · 고른 폴더에 없으면 바로 아래 하위 폴더들에서
+//   names 는 먼저 볼 것부터. 찾으면 { name, get }
+export async function quickFind(root, names, subs) {
+  const tryIn = async (dir) => {
+    for (const n of names) { try { const fh = await dir.getFileHandle(n); return { name: n, get: () => fh.getFile() } } catch { /* 없음 */ } }
+    return null
+  }
+  const hit = await tryIn(root)
+  if (hit) return hit
+  for (const d of subs || []) { const h2 = await tryIn(d); if (h2) return h2 }
+  return null
+}
+export async function subDirs(root, cap = 30) {
+  const out = []
+  try { for await (const [, e] of root.entries()) { if (e.kind === 'directory') { out.push(e); if (out.length >= cap) break } } } catch { /* 못 읽음 */ }
+  return out
+}
+// 작업지시서 파일 이름 후보 — 공정관리 규칙(도번_REV · 도번_PO_라인_납품라인 · 도번)
+export function ocrNames(o) {
+  const d = o.dwg_no, r = String(o.rev || '').trim()
+  const list = [r && `${d}_${r}.pdf`, o.po && o.ord_ln && `${d}_${o.po}_${o.ord_ln}_${o.del_ln || '1'}.pdf`, o.po && `${d}_${o.po}.pdf`, `${d}.pdf`]
+  return [...new Set(list.filter(Boolean))]
+}
+
 // <input webkitdirectory> 로 고른 파일 (폴더 접근이 안 되는 브라우저)
 export const listFromInput = (files) => [...files].filter((f) => /\.pdf$/i.test(f.name) && !/^~\$/.test(f.name)).map((f) => ({ name: f.name, get: async () => f }))
 

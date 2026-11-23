@@ -5,8 +5,9 @@ import Spin from './ux/Spin'
 import { useMe, myAuthUser } from '../hooks/useProfile'
 import {
   canPickDir, loadDir, saveDir, dirPermission, listPdfs, listFromInput, indexFiles,
-  findOcr, findDwg, judge, buildPdf, recordPrinted, fillTokens,
+  findOcr, judge, buildPdf, recordPrinted, fillTokens,
   fetchDwgRecords, pickDwgRecord, commonDir, fileByPath, revKey,
+  quickFind, subDirs, ocrNames, dwgKeysOf,
 } from '../lib/harnessPrint'
 
 // 🖨 작업지시서 · 도면 출력 (v4.230.0) — 하네스 출도 · 불출에서 고른 AXCELIS 줄을 바로 출력
@@ -66,7 +67,7 @@ function useFolder(key, deep = true) {
   return { st, allow, pick, fromInput }
 }
 
-function FolderCard({ f, fo }) {
+function FolderCard({ f, fo, extra }) {
   const s = fo.st
   const inRef = useRef(null)
   const tone = s.phase === 'ready' ? 'border-emerald-200 bg-emerald-50/50' : s.phase === 'ask' ? 'border-amber-200 bg-amber-50/50' : 'border-slate-200 bg-slate-50'
@@ -91,9 +92,12 @@ function FolderCard({ f, fo }) {
         <button type="button" onClick={copyPath} className="underline hover:text-slate-600">NAS 경로 복사</button>
         {canPickDir() && <span>· 이 PC 에 기억</span>}
       </div>
+      {extra}
     </div>
   )
 }
+
+const x_in = (m, k) => k in m
 
 export default function HarnessPrintModal(props) {
   return props.mode === 'ed' ? <EdPrint {...props} /> : <AxPrint {...props} />
@@ -102,7 +106,15 @@ export default function HarnessPrintModal(props) {
 function AxPrint({ orders, onClose, onDone }) {
   const qc = useQueryClient()
   const me = useMe()
-  const ocr = useFolder('ocr'), dwg = useFolder('dwg')
+  // v4.232.0 — 폴더를 통째로 훑지 않는다 (NAS 는 느리다)
+  //   작업지시서: 파일 이름(도번_REV.pdf 등)으로 바로 열어 봄 — 고른 폴더 · 바로 아래 하위 폴더까지
+  //   도면: 도면 조회 자료(pm_drawings)의 NAS 경로로 그 파일만 연다 (컨버팅 우선)
+  const ocr = useFolder('ocr', false), dwg = useFolder('dwg', false)
+  const [ocrMap, setOcrMap] = useState({})      // key → 찾은 지시서 | null
+  const [full, setFull] = useState(null)        // 「폴더 전체 훑기」 결과 { idx } | { n, running }
+  const stopRef = useRef(false)
+  const [recs, setRecs] = useState(null)
+  const [dwgMap, setDwgMap] = useState({})
   const [rec, setRec] = useState(() => kept('hr.print.rec', REC0))
   const [hf, setHf] = useState(() => kept('hr.print.hf', HF0))
   const [pick, setPick] = useState(null)        // 고른 줄 (처음엔 「준비」만)
@@ -111,12 +123,68 @@ function AxPrint({ orders, onClose, onDone }) {
   useEffect(() => keep('hr.print.rec', rec), [rec])
   useEffect(() => keep('hr.print.hf', hf), [hf])
 
-  const ready = ocr.st.phase === 'ready'
+  // 작업지시서 — 이름으로 바로 찾기
+  useEffect(() => {
+    if (ocr.st.phase !== 'ready' || !ocr.st.handle) return
+    let off = false
+    setOcrMap({})
+    ;(async () => {
+      const subs = await subDirs(ocr.st.handle)
+      const m = {}
+      for (const x of orders) {
+        const f = await quickFind(ocr.st.handle, ocrNames(x.order), subs)
+        if (f) { const stem = f.name.replace(/\.pdf$/i, ''); const k = dwgKeysOf(stem)[0]; m[x.key] = { ...f, stem, rev: k?.rev || '' } } else m[x.key] = null
+        if (off) return
+      }
+      if (!off) setOcrMap(m)
+    })()
+    return () => { off = true }
+  }, [ocr.st, orders])
+  // 폴더 전체 훑기 — 이름이 다른(REV 다른) 지시서까지 찾을 때만. 진행 수를 보이고 「그만」 가능
+  async function fullScan() {
+    const h = ocr.st.handle; if (!h) return
+    stopRef.current = false
+    setFull({ n: 0, running: true })
+    try {
+      const list = await listPdfs(h, { maxDepth: 1, onCount: (n) => setFull({ n, running: true }), stop: () => stopRef.current })
+      setFull({ idx: indexFiles(list), n: list.length })
+    } catch (e) { setFull(null); if (!stopRef.current) toastError('훑기 실패: ' + e.message) }
+  }
+  // 도면 — 도면 조회 자료로 경로를 알아 그 파일만
+  useEffect(() => {
+    let off = false
+    fetchDwgRecords([...new Set(orders.map((x) => 'AX-' + x.order.dwg_no))])
+      .then((r) => { if (!off) setRecs(r) }).catch((e) => { if (!off) { setRecs([]); toastError(e.message) } })
+    return () => { off = true }
+  }, [orders])
+  const recOf = useMemo(() => { const m = {}; (recs || []).forEach((r) => { (m[r.std_code] ||= []).push(r) }); return (o) => pickDwgRecord(m['AX-' + o.dwg_no], o.rev) }, [recs])
+  const dwgSuggest = useMemo(() => commonDir(orders.map((x) => recOf(x.order)?.file_path)), [orders, recOf])
+  useEffect(() => {
+    if (dwg.st.phase !== 'ready' || !recs) return
+    let off = false
+    ;(async () => {
+      const m = {}
+      for (const x of orders) {
+        const r = recOf(x.order)
+        if (!r) { m[x.key] = null; continue }
+        let f = null
+        if (dwg.st.handle) f = await fileByPath(dwg.st.handle, r.file_path)
+        else { const tail = String(r.file_path).split('\\').slice(-2).join('/'); const ff = (dwg.st.files || []).find((y) => (y.webkitRelativePath || '').endsWith(tail)); f = ff ? { name: ff.name, get: async () => ff } : null }
+        m[x.key] = f ? { ...f, rev: r.rev } : null
+        if (off) return
+      }
+      if (!off) setDwgMap(m)
+    })()
+    return () => { off = true }
+  }, [dwg.st, recs, orders, recOf])
+
+  const ready = ocr.st.phase === 'ready' && (ocr.st.idx || orders.every((x) => x.key in ocrMap))
   const rows = useMemo(() => orders.map((x) => {
-    const o = ready ? findOcr(ocr.st.idx, x.order) : null
-    const d = dwg.st.phase === 'ready' ? findDwg(dwg.st.idx, x.order) : null
+    const idx = full?.idx || ocr.st.idx
+    const o = idx ? findOcr(idx, x.order) : (ocrMap[x.key] || null)
+    const d = dwg.st.phase === 'ready' ? (dwgMap[x.key] || null) : null
     return { ...x, ocr: o, dwg: d, j: judge(x.order, o, d) }
-  }), [orders, ocr.st, dwg.st, ready])
+  }), [orders, ocr.st, ocrMap, full, dwg.st, dwgMap])
   useEffect(() => { if (ready && pick === null) setPick(new Set(rows.filter((r) => r.j.status === 'ok').map((r) => r.key))) }, [ready, rows, pick])
   const sel = pick || new Set()
   const chosen = rows.filter((r) => sel.has(r.key) && r.ocr)
@@ -165,10 +233,22 @@ function AxPrint({ orders, onClose, onDone }) {
         </div>
         <div className="p-5 space-y-4 overflow-y-auto text-xs">
           {!canPickDir() && <div className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-amber-800">이 브라우저는 폴더를 기억하지 못합니다 — 크롬 · 엣지에서 쓰면 한 번 고른 폴더를 기억합니다. 지금은 매번 고릅니다.</div>}
-          <div className="grid md:grid-cols-2 gap-3">{FOLDERS.map((f) => <FolderCard key={f.key} f={f} fo={f.key === 'ocr' ? ocr : dwg} />)}</div>
+          <div className="grid md:grid-cols-2 gap-3">
+            <FolderCard f={FOLDERS[0]} fo={ocr} extra={ocr.st.phase === 'ready' && ocr.st.handle && (
+              <div className="mt-1.5 text-[11px] text-slate-500">
+                {ocr.st.phase === 'ready' && !ready && <span className="inline-flex items-center gap-1"><Spin />파일 이름으로 찾는 중…</span>}
+                {ready && !full && <>이름(도번_REV 등)으로 바로 찾습니다 · <button type="button" onClick={fullScan} className="underline">🔎 폴더 전체 훑기</button> <span className="text-slate-400">(REV 다른 지시서까지 — 느림)</span></>}
+                {full?.running && <span className="inline-flex items-center gap-1.5"><Spin />훑는 중… {full.n.toLocaleString('ko-KR')}개 <button type="button" onClick={() => { stopRef.current = true }} className="px-1.5 py-0.5 rounded border border-slate-300 bg-white font-bold">그만</button></span>}
+                {full?.idx && <>전체 훑음 · PDF {full.n.toLocaleString('ko-KR')}개 <button type="button" onClick={() => setFull(null)} className="underline">이름으로 찾기로</button></>}
+              </div>
+            )} />
+            <FolderCard f={{ ...FOLDERS[1], hint: '도면 조회 자료의 경로로 그 파일만 엶', path: dwgSuggest || FOLDERS[1].path }} fo={dwg} extra={
+              <div className="mt-1.5 text-[11px] text-slate-500">{recs === null ? '도면 목록 읽는 중…' : dwgSuggest ? <>이 줄들의 도면 위치: <span className="font-mono">{dwgSuggest}</span> — 이 폴더(또는 그 위)를 연결</> : '도면 조회에 이 품번들 도면이 없습니다'}</div>
+            } />
+          </div>
 
           {!ready ? (
-            <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-slate-400">작업지시서 폴더를 연결하면 줄마다 지시서 · 도면을 찾아 REV 를 대조합니다</div>
+            <div className="rounded-xl border border-dashed border-slate-300 p-6 text-center text-slate-400">{ocr.st.phase === 'ready' ? '작업지시서를 이름으로 찾는 중…' : '작업지시서 폴더를 연결하면 줄마다 지시서 · 도면을 찾아 REV 를 대조합니다'}</div>
           ) : (
             <div className="rounded-lg border border-slate-200 overflow-hidden">
               <table className="w-full">
@@ -193,7 +273,7 @@ function AxPrint({ orders, onClose, onDone }) {
                         <td className="px-3 py-2 font-mono">{o.po} · {o.ord_ln || '-'}/{o.del_ln || '-'}</td>
                         <td className="px-3 py-2 text-right tabular-nums">{o.qty}</td>
                         <td className="px-3 py-2 tabular-nums">{String(o.due || '').slice(5)}</td>
-                        <td className="px-3 py-2 font-mono">{r.j.pr || '?'} · <span className={odd(r.j.wr) ? 'text-amber-700 font-bold' : ''}>{r.j.wr || '—'}</span> · <span className={odd(r.j.dr) ? 'text-amber-700 font-bold' : ''}>{dwg.st.phase === 'ready' ? (r.j.dr || '없음') : '—'}</span></td>
+                        <td className="px-3 py-2 font-mono">{r.j.pr || '?'} · <span className={odd(r.j.wr) ? 'text-amber-700 font-bold' : ''}>{r.j.wr || '—'}</span> · <span className={odd(r.j.dr) ? 'text-amber-700 font-bold' : ''}>{dwg.st.phase === 'ready' ? (x_in(dwgMap, r.key) ? (r.j.dr || '없음') : '…') : '—'}</span></td>
                         <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full font-bold whitespace-nowrap ${tag[1]}`}>{tag[0]}</span></td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{r.isNew ? '새로 등록' : '등록된 건'}</td>
                       </tr>
