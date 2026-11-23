@@ -33,7 +33,8 @@ const diffDays = (a, b) => Math.round((new Date(day(a)) - new Date(day(b))) / 86
 export function judgeMr(data, itemId, qty, at, reqNo) {
   if (!data || !itemId) return null
   const when = day(at) || new Date().toISOString().slice(0, 10)
-  const prev = (data.reqs[itemId] || []).find((r) => r.req_no !== reqNo && r.status !== '반려' && day(r.created_at) <= when)
+  const skip = new Set(Array.isArray(reqNo) ? reqNo : [reqNo])   // 묶음이면 그 안 요청들은 빼고 본다
+  const prev = (data.reqs[itemId] || []).find((r) => !skip.has(r.req_no) && r.status !== '반려' && day(r.created_at) <= when)
   const bomSet = data.bom[itemId] || 0
   const q = Number(qty) || 0
   const gap = prev ? diffDays(when, prev.created_at) : null

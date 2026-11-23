@@ -29,6 +29,114 @@ import { useRemember } from '../../hooks/useRemember'
 import { useNarrow } from '../../hooks/useNarrow'
 import { fetchMrCheck, judgeMr, mrCheckText, MR_RECENT_DAYS, MR_BOM_X } from '../../lib/mrCheck'
 
+// 🧾 품목 표 (v4.235.0) — 진행 중 요청 줄을 한 표로. 같은 품번 묶기 · 정렬 · 중복 요청 거르기
+//   묶어도 처리(불출 · 라벨 · 반려)는 요청 줄마다 — 묶음을 체크하면 그 안 요청 줄이 전부 체크된다 (요청자가 다르면 라벨도 따로)
+//   재고는 처리 권한(canEdit)이 있을 때만 (조회 계정에 재고를 보이지 않는 원칙)
+const IT_COLS = [
+  ['std_code', '품번'], ['item_name', '품명'], ['maker', '제조사 · 품번'], ['qty', '요청', 'r'], ['stock', '재고', 'r'],
+  ['req', '요청번호'], ['requester', '요청자'], ['req_date', '요청일'], ['status', '상태'], ['handler', '처리자'], ['chk', '확인'],
+]
+export function ItemTable({ rows, sel, setSel, canEdit, mrChk, stock, onIssue, grouped, dupOnly }) {
+  const [sk, setSk] = useState('std_code')
+  const [sd, setSd] = useState(1)
+  const [open, setOpen] = useState({})
+  const left = (r) => Math.max(0, (Number(r.qty) || 0) - (Number(r.issued_qty) || 0))
+  const keyOf = (r) => r.item_id || r.std_code || `free:${r.item_name || r.id}`
+  const groups = useMemo(() => {
+    const m = new Map()
+    rows.forEach((r) => { const k = keyOf(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r) })
+    return [...m.entries()].map(([k, items]) => {
+      const reqs = [...new Set(items.map((x) => x.req_no))]
+      const dates = items.map((x) => String(x.req_date || '')).filter(Boolean).sort()
+      const f = items[0]
+      return { key: k, items, f, reqs, qty: items.reduce((a, x) => a + (Number(x.qty) || 0), 0), left: items.reduce((a, x) => a + left(x), 0),
+        requesters: [...new Set(items.map((x) => x.requester).filter(Boolean))], handlers: [...new Set(items.map((x) => x.handler).filter(Boolean))],
+        statuses: [...new Set(items.map((x) => x.status))], d0: dates[0] || '', d1: dates[dates.length - 1] || '', stock: f.item_id && stock ? (stock[f.item_id] ?? null) : null }
+    })
+  }, [rows, stock]) // eslint-disable-line react-hooks/exhaustive-deps
+  const shownGroups = dupOnly ? groups.filter((g) => g.reqs.length > 1) : groups
+  const units = grouped ? shownGroups : shownGroups.flatMap((g) => g.items.map((r) => ({ key: r.id, items: [r], f: r, reqs: [r.req_no], qty: Number(r.qty) || 0, left: left(r),
+    requesters: [r.requester].filter(Boolean), handlers: [r.handler].filter(Boolean), statuses: [r.status], d0: String(r.req_date || ''), d1: String(r.req_date || ''), stock: g.stock, dupN: g.reqs.length })))
+  const val = (u) => ({ std_code: u.f.std_code || '', item_name: u.f.item_name || '', maker: u.f.maker || '', qty: u.qty, stock: u.stock ?? -1,
+    req: grouped ? u.reqs.length : u.f.req_no, requester: u.requesters.join(','), req_date: u.d0, status: u.statuses.join(','), handler: u.handlers.join(','), chk: 0 }[sk])
+  const sorted = [...units].sort((a, b) => { const x = val(a), y = val(b); return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), 'ko', { numeric: true })) * sd || String(a.f.std_code || '').localeCompare(String(b.f.std_code || '')) })
+  const ids = (u) => u.items.map((r) => r.id)
+  const on = (u) => ids(u).every((id) => sel[id])
+  const flip = (u) => { const v = !on(u); setSel((s2) => { const x = { ...s2 }; ids(u).forEach((id) => { x[id] = v }); return x }) }
+  const allOn = sorted.length > 0 && sorted.every(on)
+  const cols = IT_COLS.filter(([k]) => k !== 'stock' || canEdit)
+  const n0 = (v) => (Number(v) || 0).toLocaleString('ko-KR')
+  const md = (d) => String(d || '').slice(5)
+  const stCell = (s) => <span className={`px-1.5 py-0.5 rounded border text-[10.5px] font-bold whitespace-nowrap ${(ST[s] || ST['요청']).cls}`}>{s}</span>
+  const issueBtn = (r) => canEdit && r.item_id && !['완료', '반려'].includes(r.status) && (
+    <button onClick={(e) => { e.stopPropagation(); onIssue(r) }} title="이 요청 줄만 불출 — 수량을 정해 일부만 낼 수 있습니다"
+      className="px-1.5 py-0.5 rounded border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 text-[10px] font-bold whitespace-nowrap">불출</button>)
+  if (!sorted.length) return <div className="rounded-xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">{dupOnly ? '두 건 넘게 진행 중인 품번이 없습니다' : '보일 줄이 없습니다'}</div>
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white overflow-x-auto" data-mr-item-table>
+      <table className="w-full text-xs">
+        <thead className="bg-slate-50 text-slate-500 text-[11px] sticky top-0 z-10">
+          <tr className="text-left">
+            <th className="px-2 py-2 w-7"><input type="checkbox" checked={allOn} onChange={() => { const v = !allOn; setSel((s2) => { const x = { ...s2 }; sorted.forEach((u) => ids(u).forEach((id) => { x[id] = v })); return x }) }} className="w-3.5 h-3.5 accent-indigo-600" /></th>
+            {cols.map(([k, t, al]) => (
+              <th key={k} className={`px-2 py-2 font-bold whitespace-nowrap ${al ? 'text-right' : ''}`}>
+                {k === 'chk' ? t : <button type="button" onClick={() => { if (sk === k) setSd(-sd); else { setSk(k); setSd(k === 'qty' || k === 'req' ? -1 : 1) } }} className="hover:text-slate-800">
+                  {grouped && k === 'qty' ? '요청 합' : grouped && k === 'req' ? '요청' : t}{sk === k ? (sd > 0 ? ' ▲' : ' ▼') : ''}</button>}
+              </th>
+            ))}
+            <th className="w-10" />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((u) => {
+            const f = u.f, multi = grouped && u.items.length > 1, isOpen = !!open[u.key]
+            const short = u.stock != null && u.stock < u.left
+            const j = f.item_id && mrChk ? judgeMr(mrChk, f.item_id, multi ? u.qty : f.qty, multi ? u.d1 : (f.req_date || f.created_at), multi ? u.reqs : f.req_no) : null
+            const dupN = grouped ? u.reqs.length : u.dupN
+            return [
+              <tr key={u.key} onClick={() => flip(u)} data-mr-it-row={f.std_code || ''}
+                className={`border-t border-slate-100 cursor-pointer ${on(u) ? 'bg-indigo-50/70' : dupN > 1 ? 'bg-amber-50/40 hover:bg-amber-50' : 'hover:bg-slate-50'}`}>
+                <td className="px-2 py-1.5"><input type="checkbox" checked={on(u)} readOnly className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none" /></td>
+                <td className="px-2 py-1.5 font-mono font-bold text-indigo-600 whitespace-nowrap">{f.std_code || '-'}
+                  {multi && <button type="button" onClick={(e) => { e.stopPropagation(); setOpen((o) => ({ ...o, [u.key]: !o[u.key] })) }} className="ml-1 text-slate-400 hover:text-slate-700">{isOpen ? '▴' : '▾'}</button>}</td>
+                <td className="px-2 py-1.5 max-w-[260px] truncate" title={f.item_name}>{f.item_name}{!multi && f.reason && <span className="block text-[10.5px] text-sky-700 truncate">💬 {f.reason}</span>}</td>
+                <td className="px-2 py-1.5 text-slate-500 whitespace-nowrap max-w-[200px] truncate">{f.maker || ''}{f.maker_code ? <span className="font-mono"> · {f.maker_code}</span> : ''}</td>
+                <td className="px-2 py-1.5 text-right font-bold whitespace-nowrap tabular-nums">{n0(u.qty)}<span className="font-normal text-slate-400 ml-0.5">{f.unit}</span>{u.left !== u.qty && <span className="block text-[10px] text-amber-600">남은 {n0(u.left)}</span>}</td>
+                {canEdit && <td className={`px-2 py-1.5 text-right tabular-nums whitespace-nowrap ${short ? 'text-rose-600 font-bold' : 'text-slate-500'}`}>{u.stock == null ? '—' : n0(u.stock)}</td>}
+                <td className="px-2 py-1.5 whitespace-nowrap">{grouped ? (u.reqs.length > 1 ? <span className="px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold">⚠ {u.reqs.length}건</span> : <span className="font-mono text-slate-500">{u.reqs[0]}</span>)
+                  : <><span className="font-mono text-slate-500">{f.req_no}</span>{dupN > 1 && <span className="ml-1 px-1 rounded bg-amber-100 text-amber-800 text-[10px] font-bold">⚠ {dupN}건 중</span>}</>}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap">{u.requesters.length > 1 ? `${u.requesters[0]} 외 ${u.requesters.length - 1}` : (u.requesters[0] || '')}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap tabular-nums text-slate-500">{u.d0 === u.d1 ? md(u.d0) : `${md(u.d0)} ~ ${md(u.d1)}`}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap">{u.statuses.length === 1 ? stCell(u.statuses[0]) : <span className="text-slate-500">{u.statuses.join(' · ')}</span>}</td>
+                <td className="px-2 py-1.5 whitespace-nowrap text-slate-600">{u.handlers.join(', ') || <span className="text-slate-300">미배정</span>}</td>
+                <td className="px-2 py-1.5 max-w-[240px]">{j && <MrCheckLine j={j} />}</td>
+                <td className="px-2 py-1.5 text-right">{!multi && issueBtn(f)}</td>
+              </tr>,
+              multi && isOpen && u.items.map((r) => (
+                <tr key={r.id} onClick={() => setSel((s2) => ({ ...s2, [r.id]: !s2[r.id] }))} className={`border-t border-slate-100 text-slate-600 cursor-pointer ${sel[r.id] ? 'bg-indigo-50/70' : 'bg-slate-50/60 hover:bg-slate-100'}`} data-mr-it-sub>
+                  <td className="px-2 py-1"><input type="checkbox" checked={!!sel[r.id]} readOnly className="w-3.5 h-3.5 accent-indigo-600 pointer-events-none" /></td>
+                  <td className="px-2 py-1 pl-5 font-mono text-slate-400 whitespace-nowrap">└ {r.req_no}</td>
+                  <td className="px-2 py-1 text-slate-400 max-w-[260px] truncate">{r.reason ? `💬 ${r.reason}` : ''}{r.purpose ? `${r.reason ? ' · ' : ''}${r.purpose}` : ''}</td>
+                  <td />
+                  <td className="px-2 py-1 text-right tabular-nums whitespace-nowrap">{n0(r.qty)}{left(r) !== (Number(r.qty) || 0) && <span className="ml-1 text-[10px] text-amber-600">불출 {n0(r.issued_qty)}</span>}</td>
+                  {canEdit && <td />}
+                  <td />
+                  <td className="px-2 py-1 whitespace-nowrap">{r.requester || ''}</td>
+                  <td className="px-2 py-1 whitespace-nowrap tabular-nums">{md(r.req_date)}</td>
+                  <td className="px-2 py-1">{stCell(r.status)}</td>
+                  <td className="px-2 py-1 whitespace-nowrap">{r.handler || '—'}</td>
+                  <td />
+                  <td className="px-2 py-1 text-right">{issueBtn(r)}</td>
+                </tr>
+              )),
+            ]
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 // 요청 타당성 한 줄 (v4.234.0) — 직전 요청 · BOM 1세트분 배수. 기준 넘으면 주황
 function MrCheckLine({ j }) {
   const parts = mrCheckText(j)
@@ -132,6 +240,9 @@ export default function MaterialRequest() {
   const [chipBy, setChipBy] = useState('handler')
   const [custSel, setCustSel] = useState(null)
   const [liveQ, setLiveQ] = useState('')         // 진행 중 찾기 (v4.224.1)
+  const [liveView, setLiveView] = useRemember('mr.view', 'card', (v) => v === 'card' || v === 'table')   // 요청별 카드 · 품목 표 (v4.235.0)
+  const [itGroup, setItGroup] = useRemember('mr.itGroup', true, (v) => typeof v === 'boolean')
+  const [itDup, setItDup] = useState(false)
   const setLiveSort = (v) => { setLiveSortS(v); try { localStorage.setItem('mrLiveSort', v) } catch { /* 저장 못 해도 화면은 바뀜 */ } }
   const [kpi, setKpi] = useState(null)        // overdue · readyLate · unassigned · urgent
   // 처음엔 모두 펼친 상태 (2026-10-06 사용자 요청) — 구간 머리줄 · 「품목 모두 접기」로 접는다
@@ -202,6 +313,17 @@ export default function MaterialRequest() {
   const listItemIds = useMemo(() => [...new Set(list.filter(r => r.item_id && !['완료', '반려'].includes(r.status)).map(r => r.item_id))].sort(), [list])
   const { data: mrChk } = useQuery({ queryKey: ['mrCheck', listItemIds.join(',')], queryFn: () => fetchMrCheck(listItemIds), enabled: listItemIds.length > 0, staleTime: 5 * 60 * 1000 })
   const formItemIds = rows.map(r => r.item_id).filter(Boolean).sort()
+  const { data: mrStock } = useQuery({
+    queryKey: ['mrStock', listItemIds.join(',')], enabled: canEdit && liveView === 'table' && listItemIds.length > 0, staleTime: 60 * 1000,
+    queryFn: async () => {
+      const m = {}
+      for (let i = 0; i < listItemIds.length; i += 150) {
+        const { data } = await supabase.from('inventory').select('item_id,qty').in('item_id', listItemIds.slice(i, i + 150))
+        ;(data || []).forEach(r => { m[r.item_id] = Number(r.qty) || 0 })
+      }
+      return m
+    },
+  })
   const { data: mrChkForm } = useQuery({ queryKey: ['mrCheck', 'form', formItemIds.join(',')], queryFn: () => fetchMrCheck(formItemIds), enabled: formItemIds.length > 0, staleTime: 5 * 60 * 1000 })
 
   const checked = list.filter(r => sel[r.id])
@@ -1907,6 +2029,23 @@ export default function MaterialRequest() {
                   {c.me ? '🧑‍🔧 ' : ''}{c.label} {n(c.count)}
                 </button>
               ))}
+              <span className="inline-flex rounded-lg bg-slate-100 p-0.5 ml-1 text-[11px] font-bold" data-req-view>
+                {[['card', '🗂 요청별'], ['table', '🧾 품목 표']].map(([k, l]) => (
+                  <button key={k} type="button" onClick={() => setLiveView(k)} data-view={k}
+                    className={`h-6 px-2.5 rounded-md ${liveView === k ? 'bg-white text-violet-700 shadow-sm' : 'text-slate-400'}`}>{l}</button>
+                ))}
+              </span>
+              {liveView === 'table' && <>
+                <label className="flex items-center gap-1 px-2 h-[30px] rounded-lg border border-violet-200 bg-violet-50 text-[11px] font-bold text-violet-700 cursor-pointer whitespace-nowrap" data-req-it-group>
+                  <input type="checkbox" checked={itGroup} onChange={e => setItGroup(e.target.checked)} className="w-3.5 h-3.5 accent-violet-600" />같은 품번 묶기</label>
+                {(() => {
+                  const m = new Map()
+                  reqView.shown.flatMap(g => g.items).forEach(r => { const k = r.item_id || r.std_code || r.item_name; if (!m.has(k)) m.set(k, new Set()); m.get(k).add(r.req_no) })
+                  const dupN = [...m.values()].filter(v => v.size > 1).length
+                  return <button type="button" onClick={() => { setItDup(v => !v); setSel({}) }} data-req-it-dup disabled={!dupN && !itDup}
+                    className={`px-2.5 h-[30px] rounded-full border text-[11px] font-bold whitespace-nowrap disabled:opacity-40 ${itDup ? 'border-amber-500 bg-amber-500 text-white' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>⚠ 중복 요청 품번 {n(dupN)}{itDup ? ' ✕' : ''}</button>
+                })()}
+              </>}
               <span className="ml-auto relative">
                 <input value={liveQ} onChange={e => { setLiveQ(e.target.value); setSel({}) }} type="search" data-req-live-q
                   placeholder="요청번호 · 품번 · 품명 · 제조사 · 요청자 · 처리자 찾기"
@@ -1918,11 +2057,11 @@ export default function MaterialRequest() {
                 className="h-[30px] px-2 text-xs font-bold border border-slate-200 rounded-lg bg-white text-slate-600">
                 {LIVE_SORTS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
               </select>
-              <button onClick={() => { setAllCards(v => !v); setCardOpen({}) }}
+              {liveView === 'card' && <button onClick={() => { setAllCards(v => !v); setCardOpen({}) }}
                 title="품목이 여러 줄인 요청의 품목 줄을 한꺼번에 펼치거나 접습니다"
                 className="px-2 py-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 whitespace-nowrap">
                 {allCards ? '품목 모두 접기 ▴' : '품목 모두 펼치기 ▾'}
-              </button>
+              </button>}
             </div>
           )}
 
@@ -1961,7 +2100,7 @@ export default function MaterialRequest() {
 
           <div className="space-y-2">
             {/* 품목 칸 이름 — 한 번만 (넓은 화면) */}
-            {list.length > 0 && (
+            {list.length > 0 && !(liveTab && liveView === 'table') && (
               <div data-req-colhead className={`hidden px-3.5 pt-1 text-[10px] font-bold text-slate-400 ${ITEM_GRID}`}>
                 <span /><span>품번</span><span>품명 · 필요 사유</span><span>제조사 · 제조사 품번</span>
                 <span className="text-right">수량</span><span className="text-right">예정</span><span />
@@ -2282,6 +2421,10 @@ export default function MaterialRequest() {
                   </div>
                 ) : null
               }
+              if (liveView === 'table') return (
+                <ItemTable rows={reqView.shown.flatMap(g => g.items).filter(r => !['완료', '반려'].includes(r.status))} sel={sel} setSel={setSel} canEdit={canEdit}
+                  mrChk={mrChk} stock={mrStock} onIssue={(r) => doIssue(false, r)} grouped={itGroup} dupOnly={itDup} />
+              )
               const secs = reqView.sections.filter(sec => sec.groups.length > 0)
               // 펼쳐진 구간에 아무것도 없으면(급한 게 없는 날) 맨 위 구간은 펼쳐 둔다 — 빈 화면으로 보이지 않게
               const noneOpen = !secs.some(sec => secOpen[sec.key] === true)
