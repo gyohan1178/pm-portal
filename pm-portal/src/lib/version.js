@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.229.0'
+export const APP_VERSION = 'v4.230.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,15 @@ export const APP_VERSION = 'v4.229.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.230.0',
+    date: '2026-11-23',
+    changes: [
+      '하네스 출도 · 불출 — 고객사 탭 (AXCELIS · Edwards · CSK · VM · 기타). AXCELIS 밖 줄은 구분이 없어 「미분류」 — 「구분 바꾸기」로 품번마다',
+      '하네스 출도 · 불출 — 「🖨 작업지시서 · 도면 출력」 (AXCELIS): NAS 작업지시서(OCR) · 도면(Conversion) 폴더를 한 번 연결하면 기억, 줄마다 PO · 지시서 · 도면 REV 대조, 공정 QR 넣은 작업지시서 + A4 도면을 한 PDF 로. 공정관리에 건 등록 · 출력 표시 · 출력 이력까지 (현장 스캔 그대로)',
+      '하네스 공정관리 「작업지시서 QR → AXCELIS」와 같은 규칙 · QR 글자 · 부수(지시서 1 · 도면 1) · 머릿말 꼬리표',
+    ],
+  },
   {
     version: 'v4.229.0',
     date: '2026-11-23',
