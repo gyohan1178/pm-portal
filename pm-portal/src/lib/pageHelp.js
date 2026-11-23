@@ -203,7 +203,7 @@ export const PAGE_HELP = [
   { key: 'dist', name: '도면 배포이력', icon: '📤', match: re('^/quality/drawing-dist'),
     what: '외주 가공처 · 협력사에 도면을 보낼 때마다 한 줄 기록.', steps: ['보낸 도면 · 받는 곳 · REV 를 적기'] },
   { key: 'lot', name: '로트 관리', icon: '🏷', match: re('^/quality/lot|^/lot'),
-    what: '시리얼 · 보증기간이 있는 품목 — 오래된 것부터 내보내기.', steps: ['입고 때 시리얼 · 수량 등록', '불출 때 오래된 로트부터 안내'] },
+    what: '시리얼 · 보증기간이 있는 품목 — 오래된 것부터 내보내기.', steps: ['입고 때 시리얼 · 수량 등록', '불출 때 오래된 로트부터 안내', '재고가 마이너스일 때 나간 출고처럼 로트에서 못 뺀 수량은 「⏳ 로트 없이 나감」으로 남고, 그 품목 로트를 등록하면 거기서 먼저 빠집니다 (사용이력엔 원래 출고 날짜로)'], tips: ['빨간 「⚠ 재고와 차이」는 원인을 모르는 차이 — 실사표로 확인'] },
 ]
 
 export function helpFor(pathname) {

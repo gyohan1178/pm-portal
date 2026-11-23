@@ -44,6 +44,16 @@ const makerTone = (name) => {
 //   보증은 입고일(거래명세서 작성일) 기준이며 형번마다 기간이 다르다.
 //     BECKHOFF·SCHISCHEK·KEYENCE  1년
 //     ROOTECH ACCURA MD-GAS       2년
+// 로트 없이 나간 출고 (v4.227.0) — 표가 아직 없으면(SQL 실행 전) 빈 목록
+async function fetchOwed(itemId) {
+  let q = supabase.from('pm_lot_owed').select('id,item_id,movement_id,mv_qty,qty,qty_total,used_date,memo').gt('qty', 0).order('used_date').order('id')
+  if (typeof itemId === 'string') q = q.eq('item_id', itemId)
+  const { data, error } = await q
+  if (error) return []
+  return data || []
+}
+const owedQty = (s, owedBy) => Number(s.owed_qty ?? (owedBy[s.item_id] || []).reduce((a, o) => a + Number(o.qty || 0), 0)) || 0
+
 export default function LotManage() {
   const qc = useQueryClient()
   const canEdit = useCanEdit()
@@ -152,6 +162,14 @@ export default function LotManage() {
     staleTime: 60 * 1000,
   })
 
+  // 로트 없이 나간 출고 (v4.227.0) — 출고 때 남은 로트가 모자라 못 뺀 수량. 다음 로트를 등록하면 거기서 먼저 빠진다
+  const { data: owed = [] } = useQuery({ queryKey: ['lotOwed'], queryFn: fetchOwed, staleTime: 60 * 1000 })
+  const owedBy = useMemo(() => {
+    const m = {}
+    owed.forEach((o) => { (m[o.item_id] ||= []).push(o) })
+    return m
+  }, [owed])
+
   const byItem = useMemo(() => {
     const m = {}
     lots.forEach(l => { (m[l.item_id] ||= []).push(l) })
@@ -161,6 +179,7 @@ export default function LotManage() {
   function refresh() {
     qc.invalidateQueries({ queryKey: ['lotSummary'] })
     qc.invalidateQueries({ queryKey: ['lotList'], exact: false })
+    qc.invalidateQueries({ queryKey: ['lotOwed'], exact: false })
   }
 
   const stat = useMemo(() => ({
@@ -425,8 +444,13 @@ export default function LotManage() {
                     로트 {s.lot_cnt}
                     {Number(s.done_cnt) > 0 && <span className="text-slate-300"> · 소진 {s.done_cnt}</span>}
                   </p>
+                  {owedQty(s, owedBy) > 0 && (
+                    <p className="text-[10px] font-bold text-amber-700 whitespace-nowrap" data-lot-owed title="출고 때 남은 로트가 모자라 못 뺀 수량 — 다음에 이 품목 로트를 등록하면 거기서 먼저 빠집니다">
+                      ⏳ 로트 없이 나감 {n(owedQty(s, owedBy))}
+                    </p>
+                  )}
                   {Number(s.gap) !== 0 && (
-                    <p className="text-[10px] font-bold text-rose-600 whitespace-nowrap" title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}`}>
+                    <p className="text-[10px] font-bold text-rose-600 whitespace-nowrap" title={`재고 ${n(s.stock_qty)} · 로트 ${n(s.total_left)}${owedQty(s, owedBy) ? ` · 로트 없이 나감 ${n(owedQty(s, owedBy))}` : ''} — 원인 모르는 차이, 실사로 확인`}>
                       ⚠ 재고와 {Number(s.gap) > 0 ? '+' : ''}{n(s.gap)}
                     </p>
                   )}
@@ -465,6 +489,17 @@ export default function LotManage() {
               </div>
 
               {/* 펼친 로트 — 한 줄에 다 들어간다 (2열이 아니라 가로가 넓다) */}
+              {open && (owedBy[s.item_id] || []).length > 0 && (
+                <div className="border-t border-amber-100 bg-amber-50/60 px-3 py-2 text-[11px] text-amber-800 space-y-0.5" data-lot-owed-rows>
+                  {owedBy[s.item_id].map((o) => (
+                    <div key={o.id}>
+                      ⏳ <b>로트 없이 나간 출고</b> {o.used_date} 출고 {n(o.mv_qty ?? o.qty_total)}개 중 <b>{n(o.qty)}개</b> — 그때 남은 로트가 모자라 못 뺌
+                      {o.memo && <span className="text-amber-600"> · {o.memo}</span>}
+                    </div>
+                  ))}
+                  <div className="text-amber-600">다음에 이 품목 로트를 등록하면 거기서 먼저 빠지고, 사용이력엔 원래 출고 날짜로 남습니다</div>
+                </div>
+              )}
               {open && (
                 <div className="border-t border-slate-100 divide-y divide-slate-50 bg-slate-50/50">
                   {rows.map(l => (
@@ -610,6 +645,9 @@ export default function LotManage() {
 //   입고하면서 바로 넣으므로, 품목을 고르면 시리얼·수량만 치면 되게 했다.
 function LotAdd({ preset, onClose, onDone }) {
   const [item, setItem] = useState(preset?.item_id ? preset : null)
+  const itemId = item?.item_id || item?.id
+  const { data: owedRows = [] } = useQuery({ queryKey: ['lotOwed', itemId], queryFn: () => fetchOwed(itemId), enabled: !!itemId })
+  const owedSum = owedRows.reduce((a, o) => a + Number(o.qty || 0), 0)
   const [serial, setSerial] = useState('')
   const [madeYm, setMadeYm] = useState('')
   const [qty, setQty] = useState('')
@@ -782,6 +820,12 @@ function LotAdd({ preset, onClose, onDone }) {
                 </div>
               </div>
 
+              {owedSum > 0 && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-800" data-lot-owed-note>
+                  ⏳ 로트 없이 나간 <b>{n(owedSum)}개</b>({[...new Set(owedRows.map((o) => String(o.used_date || '').slice(5).replace('-', '/')))].join(' · ')})가 이 로트에서 먼저 빠집니다
+                  {Number(qty) > 0 && <> → 등록 후 잔량 <b>{n(Math.max(0, Number(qty) - owedSum))}</b>{Number(qty) < owedSum ? ` (남은 ${n(owedSum - Number(qty))}개는 다음 로트에서)` : ''}</>}
+                </div>
+              )}
               <button onClick={submit} disabled={busy}
                 className="w-full py-3 text-sm font-bold rounded-xl bg-indigo-600 text-white disabled:opacity-40">
                 {busy ? <span className="inline-flex items-center gap-1.5"><Spin />등록 중…</span> : '등록하고 이어서 입력'}
