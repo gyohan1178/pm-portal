@@ -9,7 +9,7 @@ import { useCustomer } from '../../hooks/useCustomers'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
+import { downloadBomTemplate, writeBomXlsx, bomRowsForXlsx } from '../../lib/bomXlsx'
 import { parseAxcelisReport, parseAxcelisBomSheet, isAxcelisBomSheet, diffBom } from '../../lib/axcelisBomReport'
 import { fetchDrawingRevs, compareRev, REV_STATE } from '../../lib/revCompare'
 import { supabase } from '../../lib/supabase'
@@ -76,7 +76,7 @@ async function fetchBOMDetail(customerId, projectId) {
   if (!projectId) return []
   const data = await fetchAll(() => supabase
     .from('bom')
-    .select('*, items!bom_item_id_fkey(std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code, dept)')
+    .select('*, items!bom_item_id_fkey(std_code, name, type, category, unit, lt_weeks, manufacturer, manufacturer_code, dept, stock_managed)')
     .eq('customer_id', customerId)
     .eq('project_id', projectId)
     .order('seq')
@@ -84,18 +84,11 @@ async function fetchBOMDetail(customerId, projectId) {
   return data || []
 }
 
-// BOM 세부항목 CSV 추출
+// BOM 세부항목 내려받기 (v4.237.0) — 올리기 양식과 같은 칸 · 음영의 엑셀. 고쳐서 그대로 다시 올릴 수 있다
 function exportDetailCSV(rows, assembly) {
   if (!rows?.length) return
-  const data = rows.map(b => ({
-    LV: b.level, 코드: b.items?.std_code || '', 품명: b.items?.name || '',
-    구분: b.items?.category || b.items?.type || '', 단위: b.items?.unit || '',
-    제조사: b.items?.manufacturer || '', 제조사코드: b.items?.manufacturer_code || '',
-    소요량: b.qty_per_unit,
-  }))
-  const wb = XLSX.utils.book_new()
-  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(data), 'BOM')
-  XLSX.writeFile(wb, `BOM_${assembly?.code || 'export'}.csv`)
+  const code = assembly?.code || 'export'
+  writeBomXlsx(bomRowsForXlsx(rows, String(code).replace(/_REV.*$/, '')), `BOM_${code}.xlsx`)
 }
 
 // 어셈블리 전체 삭제 (BOM 전체 + project)
@@ -1034,12 +1027,12 @@ export default function BOM() {
           </button>
         )}
         {(!narrow || upOpenM || uploading) && <>
-        <button onClick={() => downloadCsvTemplate(TEMPLATES.bom.filename, TEMPLATES.bom.headers, TEMPLATES.bom.samples)}
+        <button onClick={downloadBomTemplate} title="BOM 올리기 양식 (엑셀) — 노랑 = 필수(상위PN · PN · 실수량) · 파랑 = 관리대상 Y/N · 「작성법」 시트 참고"
           className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-indigo-200 text-indigo-600 bg-white hover:bg-indigo-50">
           ⬇ 양식 다운로드
         </button>
         <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50 cursor-pointer ${uploading?'opacity-50':''}`}>
-          {uploading ? <Spin /> : '📤'} {uploading ? '파싱 중...' : 'BOM CSV 업로드'}
+          {uploading ? <Spin /> : '📤'} {uploading ? '파싱 중...' : 'BOM 업로드 (엑셀 · CSV)'}
           <input type="file" accept=".xlsx,.csv,.xls" className="hidden" onChange={handleFile} disabled={uploading} />
         </label>
         <label className={`inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-sky-200 text-sky-600 bg-white hover:bg-sky-50 cursor-pointer ${uploading?'opacity-50':''}`}
@@ -1404,7 +1397,7 @@ export default function BOM() {
                   </button>
                   )}
                   <button onClick={()=>exportDetailCSV(bomDetail, verObj ? { ...selAssembly, code: `${selAssembly.code}_REV${verObj.rev}` } : selAssembly)} disabled={!bomDetail.length}
-                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40">📥 CSV</button>
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 disabled:opacity-40" title="이 BOM 을 올리기 양식과 같은 엑셀로 — 고쳐서 그대로 다시 올릴 수 있음">📥 엑셀</button>
                   <button data-bom-img-open onClick={()=>setImgOpen(true)} disabled={!bomDetail.length}
                     title="도면에 붙일 BOM 을 흑백 이미지로 — 클립보드 복사 · PNG 저장"
                     className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-bold rounded-lg border border-slate-300 text-slate-700 bg-white hover:bg-slate-50 disabled:opacity-40">📐 도면용 이미지</button>

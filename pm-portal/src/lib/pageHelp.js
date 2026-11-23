@@ -179,7 +179,7 @@ export const PAGE_HELP = [
   { key: 'missing', name: '결품 현황', icon: '⚠️', match: re('^/missing'),
     what: '불출 못 한 부품 모아 보기 (전 고객사 · 완료 호기 제외).', steps: ['입고되면 해당 호기로 불출'] },
   { key: 'bom', name: 'BOM', icon: '🧩', match: re('^/customer/[^/]+/bom|^/bom'),
-    what: '고객사 어셈블리별 하위 부품.', steps: ['ASSY 품번으로 조회 · 하위 펼치기', 'CSV · AXCELIS 리포트로 올리면 하위 ASSY BOM 도 같이'] },
+    what: '고객사 어셈블리별 하위 부품.', steps: ['ASSY 품번으로 조회 · 하위 펼치기', '엑셀 · CSV · AXCELIS 리포트로 올리면 하위 ASSY BOM 도 같이', '「⬇ 양식 다운로드」 엑셀 — 노랑 = 필수(상위PN · PN · 실수량) · 파랑 = 관리대상 Y/N · 「작성법」 시트. Category 칸은 안 써도 됨', '어셈블리 BOM 「📥 엑셀」은 같은 양식이라 고쳐서 그대로 다시 올릴 수 있음'] },
   { key: 'quote', name: '매출견적', icon: '💰', match: re('^/sales-quote|^/quote-history'),
     what: '견적 요청 접수 → BOM · 단가 점검 → 견적서 작성 · 제출 · 수주/실주.',
     steps: ['견적 접수 → 단가 없는 부품은 구매자재에 단가 요청', '견적서 작성(국문/영문 · 원화/달러) → 인쇄 · 엑셀'] },

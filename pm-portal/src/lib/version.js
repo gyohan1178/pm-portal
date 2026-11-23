@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.236.0'
+export const APP_VERSION = 'v4.237.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,14 @@ export const APP_VERSION = 'v4.236.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.237.0',
+    date: '2026-11-23',
+    changes: [
+      'BOM 올리기 양식 — 엑셀(.xlsx)로. 필수 칸(상위PN · PN · 실수량) 노랑 · 관리대상(Y/N) 파랑 음영, 「작성법」 시트. Category 칸 뺌 (예전 파일에 있으면 그대로 읽음)',
+      'BOM 상세 「📥 엑셀」 — 올리기 양식과 같은 칸 · 음영으로 내려받아 고쳐서 그대로 다시 올릴 수 있음 (관리대상 · REV 포함)',
+    ],
+  },
   {
     version: 'v4.236.0',
     date: '2026-11-23',
