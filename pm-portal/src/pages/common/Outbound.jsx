@@ -292,15 +292,23 @@ export default function Outbound() {
 
   // ── 부족 라벨 (v4.239.0) — 출고수량보다 재고가 모자란 전장 품목만, 수량 = 부족분 ──
   //   일부 부족(10개 중 4개만 있음)도 잡는다 → 6 EA · NEED 10 / OUT 4
-  const labelTarget = (r) => mtOf(r.item_id) === 'normal' && String(r.location || '').trim() !== '라벨' && Number(outQtys[r.item_id] || 0) > 0
-  function shortRows(stock) {
+  //   v4.240.1 — 필요 = BOM/대 × 출고 대수. 출고수량을 필요보다 적게 적으면(재고가 있어도) 그 차이도 부족분
+  //     예) 필요 6 · 출고수량 2 → 부족 4 / 필요 12 · 재고 8 → 부족 4
+  const r4 = (v) => Math.round(v * 10000) / 10000
+  const labelTarget = (r) => mtOf(r.item_id) === 'normal' && String(r.location || '').trim() !== '라벨' && Number(r.bom_qty) > 0
+  //   mode 'skip' (부족 제외 출고) — 출고수량보다 재고가 적은 품목은 통째로 안 나간다 → 나간 수 0
+  function shortOf(r, stock, mode) {
+    const need = r4((Number(r.bom_qty) || 0) * (Number(outUnits) || 1))
+    const want = Number(outQtys[r.item_id] || 0)
+    const have = Math.max(0, Number(stock?.[r.item_id]) || 0)
+    const out = mode === 'skip' && want > have ? 0 : r4(Math.max(0, Math.min(want, have)))
+    return { need, out, short: r4(Math.max(0, need - out)) }
+  }
+  function shortRows(stock, mode) {
     const noMap = sheetNo
     // 보기 · 검색 조건과 상관없이 BOM 전체에서 (출고는 전체가 나간다)
     return outOrder.filter(labelTarget).map((r) => {
-      const need = Number(outQtys[r.item_id] || 0)
-      const have = Math.max(0, Number(stock?.[r.item_id]) || 0)
-      const out = Math.min(need, have)
-      const short = Math.round((need - out) * 10000) / 10000
+      const { need, out, short } = shortOf(r, stock, mode)
       return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out } } : null
     }).filter(Boolean)
   }
@@ -398,9 +406,8 @@ export default function Outbound() {
       }
       // 부족 라벨용 — 출고 직전 재고로 부족 품목을 떠 둔다 (v4.239.0) · 실패해도 출고는 진행
       let shortSnap = null
-      try { shortSnap = shortRows(await readStock(outItemIds)) } catch { shortSnap = null }
-      // 「부족 제외 출고」는 모자란 품목을 통째로 안 뺀다 → 전량이 부족분 (OUT 0)
-      if (shortSnap && mode === 'skip') shortSnap = shortSnap.map(r => ({ ...r, qty: r.short.need, labelQty: r.short.need, short: { need: r.short.need, out: 0 } }))
+      // 「부족 제외 출고」는 모자란 품목을 통째로 안 뺀다 → 그 품목은 전량이 부족분 (OUT 0)
+      try { shortSnap = shortRows(await readStock(outItemIds), mode) } catch { shortSnap = null }
       // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
       const itemIds = lines.map(l => l.item_id)
       const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(swallow('출고 · 되돌리기용 이전 기록 떠 두기')) : null
@@ -967,9 +974,9 @@ export default function Outbound() {
                               className="w-16 px-1.5 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100"/>
                             {mt==='normal' && stockReady && (() => {
                               const st = Number(stockMeta[item.item_id]) || 0
-                              const need = Number(outQtys[item.item_id] || 0)
-                              const sh = need - Math.max(0, st)
-                              return <div data-out-stock className={`text-[10.5px] mt-0.5 whitespace-nowrap ${sh > 0 ? (st > 0 ? 'text-amber-600 font-bold' : 'text-rose-600 font-bold') : 'text-slate-400'}`}>
+                              const { out, short: sh } = labelTarget(item) ? shortOf(item, stockMeta) : { out: 0, short: 0 }
+                              return <div data-out-stock title={sh > 0 ? '부족 = BOM/대 × 출고 대수 − 실제 나가는 수(출고수량 · 재고 중 작은 값)' : undefined}
+                                className={`text-[10.5px] mt-0.5 whitespace-nowrap ${sh > 0 ? (out > 0 ? 'text-amber-600 font-bold' : 'text-rose-600 font-bold') : 'text-slate-400'}`}>
                                 재고 {st.toLocaleString('ko-KR')}{sh > 0 ? `·부족 ${Math.round(sh * 100) / 100}` : ''}</div>
                             })()}
                           </td>
