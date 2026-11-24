@@ -132,10 +132,13 @@ export function labelZpl(row) {
 
   // 맨 아래 — 고객사 승인 대체품 (row.alts). 없으면 예전 라벨 그대로 (v4.236.0)
   const alts = raw(row.alts)
-  if (alts) {
+  // 부족 라벨 — 맨 아래 왼쪽에 상위품번 (v4.240.3) · 대체품이 있으면 같은 줄 뒤에 붙인다
+  const assy = short ? raw(row.assy) : ''
+  if (alts || assy) {
     // 라벨 기본 글꼴(^A0)에 한글 · 가운뎃점이 없을 수 있어 영문 ALT · 「/」 로 찍는다
-    const t = `ALT ${alts.replace(/\s*·\s*/g, ' / ')}`
-    const fs = t.length <= 34 ? mm(2.4) : mm(Math.max(1.5, 2.4 * 34 / t.length))
+    const t = [assy && `ASSY ${assy}`, alts && `ALT ${alts.replace(/\s*·\s*/g, ' / ')}`].filter(Boolean).join('  |  ')
+    const base = assy && !alts ? 2.8 : 2.4   // 상위품번만이면 조금 크게
+    const fs = t.length <= 34 ? mm(base) : mm(Math.max(1.5, base * 34 / t.length))
     out.push(`^FO${X0},${ALT_Y - mm(0.8)}^GB${UW},1,1^FS`, `^FO${X0},${ALT_Y}^A0N,${fs},${fs}^FB${UW},1,0,L^FD${t}^FS`)
   }
 

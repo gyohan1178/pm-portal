@@ -76,6 +76,7 @@ export async function callOutboundRpc(base, extra) {
   return data
 }
 
+const escHtml = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 // 재고 수량 맵 { item_id: qty } — 오류를 삼키지 않는다
 async function readStock(ids) {
   if (!ids.length) return {}
@@ -306,7 +307,7 @@ export default function Outbound() {
     // 보기 · 검색 조건과 상관없이 BOM 전체에서 (출고는 전체가 나간다)
     return outOrder.filter(labelTarget).map((r) => {
       const { need, out, short } = shortOf(r)
-      return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out } } : null
+      return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out }, assy: curProj?.code || '' } : null
     }).filter(Boolean)
   }
   // 상위품번 라벨 — 맨 앞 1장
@@ -610,6 +611,8 @@ export default function Outbound() {
         unit: r.unit || 'EA', qty: qtyFn(r),
         makeType: mtOf(r.item_id), note: noteOf(r.item_id),
       })),
+      // 쪽마다 맨 아래 상위품번 (v4.240.3) — 불출표가 여러 장이어도 어느 ASSY 것인지 보이게
+      footer: curProj?.code ? `상위품번 <span class="fc">${escHtml(curProj.code)}</span>${revTxt ? ` · ${escHtml(revTxt)}` : ''}${curProj.name ? ` · ${escHtml(curProj.name)}` : ''}${extraMeta ? ` · ${escHtml(extraMeta)}` : ''}` : '',
     })
   }
   const openPrint = (html) => openSheet(html, toastError)

@@ -25,7 +25,7 @@ const MT_LABEL = {
  */
 export function buildIssueSheet(opt) {
   const { title = '자재 불출표', csName = '', meta = '', rows = [],
-          assyCols = [], gridHtml = '' } = opt
+          assyCols = [], gridHtml = '', footer = '' } = opt
   // 열이 열 개라 세로 A4 로는 좁다. 늘 가로로 낸다.
   //   기준코드(CS-ECK000000047-01)와 제조사명이 잘리지 않아야 한다.
   const wide = true
@@ -138,6 +138,9 @@ export function buildIssueSheet(opt) {
   tr.note td { background: #fffbea; font-size: 8pt; color: #6b5518; }
   .alt { font-size: 7pt; color: #047857; font-family: inherit; }
   tr { page-break-inside: avoid; }
+  /* 쪽마다 맨 아래 상위품번 (v4.240.3) — tfoot 은 인쇄할 때 쪽마다 반복된다 */
+  tfoot td { border: 0; border-top: 1.5px solid #1a3a6b; padding: 1.6mm 1mm 0; font-size: 8.5pt; color: #1a3a6b; }
+  tfoot .fc { font-family: Consolas, "Courier New", monospace; font-weight: 700; font-size: 10pt; }
 
   .sign { margin-top: 6mm; display: flex; gap: 14mm; font-size: 9pt; }
   .sign span { border-top: 1px solid #9ca3af; padding-top: 1.5mm; min-width: 32mm; text-align: center; }
@@ -166,6 +169,7 @@ export function buildIssueSheet(opt) {
       <th class="c">키팅<br>확인</th>
     </tr></thead>
     <tbody>${body}</tbody>
+    ${footer ? `<tfoot><tr><td colspan="${fixed.length + assyCols.length}">${footer}</td></tr></tfoot>` : ''}
   </table>
 
   ${gridHtml}
