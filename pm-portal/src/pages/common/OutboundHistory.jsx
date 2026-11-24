@@ -1,6 +1,6 @@
 import ItemLink from '../../components/ItemLink'
 import { useState, useMemo, Fragment } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
@@ -133,7 +133,10 @@ const KIND_TONE = {
   '실사 조정': 'bg-slate-100 text-slate-500',
 }
 
+const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
+
 export default function OutboundHistory() {
+  const navigate = useNavigate()
   const compact = useCompact()
   const LBL = compact ? 'hidden' : 'block text-xs font-bold text-slate-500 mb-1'   // 노트북에선 칸 이름 줄을 빼고 한 줄로 (v4.64.0)
   const [tblRef, tblH] = useFillHeight(true, 360)
@@ -169,6 +172,8 @@ export default function OutboundHistory() {
   const { data: assyMap = new Map() } = useQuery({ queryKey: ['outboundAssys', hQuery], queryFn: () => fetchIssueAssys(hQuery) })
   const assysOf = (r) => (r && r._kind === '다품목 출고' ? assyMap.get(assyKey(r.processed_at, r._custId)) : null) || null
   // 상위품목 기준 — 기간 안에서 상위품목마다 몇 대분 · 몇 번 (고객사 조건 반영)
+  //   v4.241.0 — ASSY 출고(프로젝트로 뺀 것)도 같이. 한 번 처리한 줄(처리 시각 · 프로젝트 같음)을 한 번으로 묶는다
+  //     대수는 v4.241.0 부터 기록 · 그 전 ASSY 출고는 대수 없이(—) 나오고 「부족 라벨 · 미불출」 화면에서 추정
   const assyRows = useMemo(() => {
     const by = new Map()
     for (const g of groupHistory(history)) {
@@ -176,16 +181,34 @@ export default function OutboundHistory() {
       if (!list) continue
       for (const a of list) {
         const k = `${r._custId || ''}|${a.code}`
-        const e = by.get(k) || { key: k, code: a.code, name: a.name, custId: r._custId, qty: 0, batches: [] }
+        const e = by.get(k) || { key: k, code: a.code, name: a.name, custId: r._custId, qty: 0, batches: [], kind: '다품목 출고' }
         e.qty += a.qty
         e.batches.push({ key: g.key, date: r.movement_date, at: r.processed_at, qty: a.qty, who: r._who || a.by || '', lines: g.rows.length, others: list.filter((x) => x.code !== a.code).map((x) => `${x.code} ×${x.qty}`) })
         by.set(k, e)
       }
     }
+    const asg = new Map()
+    for (const r of history) {
+      if (r._kind !== 'ASSY 출고' || !r.project_id || !r._projCode) continue
+      const k = `${r.processed_at || r.movement_date}|${r._custId || ''}|${r.project_id}`
+      const g = asg.get(k) || { key: 'a:' + k, rows: [] }
+      g.rows.push(r); asg.set(k, g)
+    }
+    for (const g of asg.values()) {
+      const r = g.rows[0]
+      const rec = (assyMap.get(assyKey(r.processed_at, r._custId)) || []).find((a) => a.code === r._projCode)
+      const k = `${r._custId || ''}|${r._projCode}|ASSY`
+      const e = by.get(k) || { key: k, code: r._projCode, name: r._projName, custId: r._custId, qty: 0, batches: [], kind: 'ASSY 출고', unknown: 0 }
+      if (rec) e.qty += rec.qty; else e.unknown += 1
+      const items = {}
+      g.rows.forEach((x) => { if (x.item_id) items[x.item_id] = (items[x.item_id] || 0) + (Number(x.qty) || 0) })
+      e.batches.push({ key: g.key, date: r.movement_date, at: r.processed_at, qty: rec ? rec.qty : null, who: r._who || '', lines: g.rows.length, others: [],
+        replay: { custId: r._custId, projId: r.project_id, at: r.processed_at, date: r.movement_date, time: timeOf(r.processed_at), who: r._who || '', units: rec ? rec.qty : null, items } })
+      by.set(k, e)
+    }
     const all = [...by.values()].sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code))
     return oWords.length ? all.filter((e) => hit(`${e.code} ${e.name || ''}`)) : all
   }, [history, assyMap, oq])
-  const timeOf = (ts) => ts ? new Date(ts).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Asia/Seoul' }) : ''
 
   function exportHistory() {
     if (mode === 'assy') {
@@ -277,36 +300,41 @@ export default function OutboundHistory() {
       {mode === 'assy' ? (
         <div className="rounded-xl border border-slate-200 overflow-hidden bg-white" data-assy-view>
           <div className="px-4 py-2.5 text-[12px] text-slate-500 bg-slate-50 border-b border-slate-200">
-            다품목 출고에서 ASSY 로 전개해 뺀 것을 상위품목마다 모았습니다 · 줄을 누르면 출고한 날마다 나옵니다.
-            <span className="text-slate-400"> 11월 13일(v4.183.0) 이후 다품목 출고부터 기록됩니다 · 단품으로 담은 것 · 호기 키팅은 세지 않습니다.</span>
+            ASSY 출고 · 다품목 출고(ASSY 로 전개해 뺀 것)를 상위품목마다 모았습니다 · 줄을 누르면 출고한 날마다 나옵니다.
+            <span className="text-slate-400"> ASSY 출고 대수는 11월 24일(v4.241.0)부터 기록 — 그 전은 「—」 · 펼친 줄의 「🏷 부족 라벨 · 미불출」로 그때 덜 뺀 것을 다시 뽑거나 생산관리 미불출로 넣을 수 있습니다.</span>
           </div>
           <table className="w-full text-xs">
             <thead><tr className="bg-slate-50 border-b border-slate-200 text-slate-400">
-              <th className="px-3 py-2.5 text-left font-bold">상위품목</th><th className="px-3 py-2.5 text-left font-bold">품명</th>
+              <th className="px-3 py-2.5 text-left font-bold">상위품목</th><th className="px-3 py-2.5 text-left font-bold">구분</th><th className="px-3 py-2.5 text-left font-bold">품명</th>
               <th className="px-3 py-2.5 text-left font-bold">고객사</th><th className="px-3 py-2.5 text-right font-bold">출고 대수</th>
               <th className="px-3 py-2.5 text-right font-bold">출고 횟수</th><th className="px-3 py-2.5 text-left font-bold">마지막 출고</th>
             </tr></thead>
             <tbody>
-              {histLoading ? <SkeletonRows cols={6} rows={6} />
-                : !assyRows.length ? <EmptyRow cols={6} icon="🧩" title="상위품목 기록이 없습니다" desc="이 기간에 ASSY 를 전개해 다품목 출고한 기록이 없습니다 (v4.183.0 이전 출고는 기록이 없습니다)." />
+              {histLoading ? <SkeletonRows cols={7} rows={6} />
+                : !assyRows.length ? <EmptyRow cols={7} icon="🧩" title="상위품목 기록이 없습니다" desc="이 기간에 ASSY 출고 · ASSY 를 전개해 다품목 출고한 기록이 없습니다." />
                 : assyRows.map((e) => {
                   const op = !!openAssy[e.key], last = e.batches.reduce((a, b) => (String(b.at || b.date) > String(a.at || a.date) ? b : a), e.batches[0])
                   return (
                     <Fragment key={e.key}>
                       <tr className="border-b border-slate-100 hover:bg-slate-50 cursor-pointer" onClick={() => setOpenAssy((o) => ({ ...o, [e.key]: !o[e.key] }))} data-assy-row={e.code}>
                         <td className="px-3 py-2 font-mono text-indigo-600 whitespace-nowrap"><span className="text-slate-300 mr-1">{op ? '▾' : '▸'}</span>{e.code}</td>
+                        <td className="px-3 py-2 whitespace-nowrap"><span className={`px-1.5 py-0.5 rounded text-[11px] font-bold ${KIND_TONE[e.kind] || ''}`}>{e.kind}</span></td>
                         <td className="px-3 py-2 font-semibold text-slate-800">{e.name || '—'}</td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{custName(e.custId) || '—'}</td>
-                        <td className="px-3 py-2 text-right font-extrabold text-violet-700 tabular-nums" data-assy-qty>{e.qty.toLocaleString('ko-KR')}대</td>
+                        <td className="px-3 py-2 text-right font-extrabold text-violet-700 tabular-nums" data-assy-qty>{e.qty ? `${e.qty.toLocaleString('ko-KR')}대` : ''}{e.unknown ? <span className="text-slate-400 font-normal" title="대수 기록 전 출고">{e.qty ? ' + ' : ''}—</span> : null}</td>
                         <td className="px-3 py-2 text-right text-slate-600 tabular-nums">{e.batches.length}번</td>
                         <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{last.date} <span className="text-slate-400">{timeOf(last.at)}</span></td>
                       </tr>
                       {op && e.batches.map((b, i) => (
                         <tr key={e.key + i} className="border-b border-slate-100 bg-violet-50/30 text-slate-600">
                           <td className="px-3 py-1.5 text-slate-300 pl-8">└</td>
-                          <td className="px-3 py-1.5" colSpan={2}>{b.date} <span className="text-slate-400">{timeOf(b.at)}</span> · {b.who || '—'} · 부품 {b.lines}줄{b.others.length ? <span className="text-slate-400"> · 같이: {b.others.join(', ')}</span> : null}</td>
-                          <td className="px-3 py-1.5 text-right font-bold tabular-nums">{b.qty.toLocaleString('ko-KR')}대</td>
-                          <td colSpan={2} />
+                          <td className="px-3 py-1.5" colSpan={3}>{b.date} <span className="text-slate-400">{timeOf(b.at)}</span> · {b.who || '—'} · 부품 {b.lines}줄{b.others.length ? <span className="text-slate-400"> · 같이: {b.others.join(', ')}</span> : null}</td>
+                          <td className="px-3 py-1.5 text-right font-bold tabular-nums">{b.qty != null ? `${b.qty.toLocaleString('ko-KR')}대` : '—'}</td>
+                          <td colSpan={2} className="px-3 py-1.5">{b.replay && (
+                            <button data-assy-replay onClick={(ev) => { ev.stopPropagation(); navigate('/outbound', { state: { replay: b.replay } }) }}
+                              title="ASSY 출고 화면을 그때 뺀 수량으로 채워 엽니다 — 덜 뺀 품목 부족 라벨 · 생산관리 미불출 넣기 (출고는 안 됨)"
+                              className="px-2 py-0.5 rounded bg-rose-50 border border-rose-200 text-rose-600 font-bold hover:bg-rose-100 whitespace-nowrap">🏷 부족 라벨 · 미불출</button>
+                          )}</td>
                         </tr>
                       ))}
                     </Fragment>

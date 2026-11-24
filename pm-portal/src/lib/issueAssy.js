@@ -59,3 +59,9 @@ export async function fetchIssueAssys({ from, to }) {
   return m
 }
 export const assyKey = (at, custId) => `${at ? new Date(at).getTime() : ''}|${custId || ''}`
+
+// ASSY 출고 (v4.241.0) — 출고 처리 시각에 상위품목 · 대수를 바로 적는다 (출고 현황 「상위품목 기준」에 대수가 나오게)
+export async function recordAssyBatch(customerId, code, name, qty, byName, at) {
+  if (!customerId || !code || !at || !(Number(qty) > 0)) return
+  await soft(supabase.from(T).insert({ customer_id: customerId, assy_code: code, assy_name: name || null, qty: Number(qty), created_name: byName || null, batch_at: at }))
+}

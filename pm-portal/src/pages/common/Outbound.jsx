@@ -6,12 +6,12 @@ import { EmptyState, EmptyRow } from '../../components/ui/EmptyState'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { refreshProcurement } from '../../lib/refresh'
 import { useState, useEffect, useMemo, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { useCustomers } from '../../hooks/useCustomers'
 import { fetchBomVersions, fetchBomVersionRows } from '../../lib/bomVersion'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { useCanEdit } from '../../hooks/useProfile'
+import { useCanEdit, useMe } from '../../hooks/useProfile'
 import { useCompact } from '../../hooks/useCompact'
 import { useRowSelect } from '../../hooks/useRowSelect'
 import { ResizableTable } from '../../components/ResizableTable'
@@ -27,6 +27,8 @@ import { bomSupplyTree } from '../../lib/bomSupply'
 import { buildIssueSheet, openPrint as openSheet } from '../../lib/issueSheet'
 import { fetchMfrLists, altOf } from '../../lib/altMfr'
 import { useRemember } from '../../hooks/useRemember'
+import { fetchProjHogis, defaultHogis, writeHogiMissing, restoreHogis } from '../../lib/assyHogi'
+import { recordAssyBatch } from '../../lib/issueAssy'
 import { swallow } from '../../lib/errorLog'
 
 async function fetchProjects(customerId) {
@@ -151,6 +153,20 @@ export default function Outbound() {
   const [selProject, setSelProject] = useState('')
   const [projSearch, setProjSearch] = useState('')
   const [outUnits, setOutUnits] = useState(1)
+  // 지난 출고 불러오기 (v4.241.0) — 출고 현황 「상위품목 기준」에서 넘어옴. 부족 라벨 · 미불출 넣기용, 출고 처리는 막는다
+  //   { custId, projId, at, date, who, units, items: { item_id: 뺀 수량 } }
+  const loc = useLocation()
+  const [replay, setReplay] = useState(() => loc.state?.replay || null)
+  const [replayUnitsSet, setReplayUnitsSet] = useState(false)
+  useEffect(() => {
+    const rp = loc.state?.replay
+    if (!rp) return
+    setReplay(rp); setReplayUnitsSet(false)
+    setSelCustomer(rp.custId || ''); setSelProject(rp.projId || ''); setSelCPO(null)
+    if (Number(rp.units) > 0) { setOutUnits(Number(rp.units)); setReplayUnitsSet(true) }
+    try { window.history.replaceState({}, '') } catch { /* 새로고침 때 다시 불러오지 않게 */ }
+  }, [loc.key])   // eslint-disable-line react-hooks/exhaustive-deps
+  const me = useMe()
   const [selCPO, setSelCPO] = useState(null)
   const [outQtys, setOutQtys] = useState({})
   const [note, setNote] = useState('')
@@ -169,6 +185,16 @@ export default function Outbound() {
   const [selVer, setSelVer] = useState('')
   useEffect(() => { setSelVer('') }, [selCustomer, selProject])
   const curProj = projects.find(p => p.id === selProject) || null
+  // 생산관리 호기 (v4.241.0) — 이 상위품번의 진행 중 호기. 고르면 덜 뺀 수량이 그 호기 미불출로 · 파트 불출 체크
+  const { data: hogis = [] } = useQuery({
+    queryKey: ['outHogis', curProj?.code || ''],
+    enabled: !!curProj?.code,
+    queryFn: () => fetchProjHogis(curProj.code),
+  })
+  const [hogiSel, setHogiSel] = useState([])
+  const [hogiTouched, setHogiTouched] = useState(false)
+  useEffect(() => { setHogiTouched(false) }, [selProject])
+  useEffect(() => { if (!hogiTouched) setHogiSel(defaultHogis(hogis, outUnits)) }, [hogis, outUnits, hogiTouched])
   const { data: versions=[] } = useQuery({
     queryKey:['bomVersions',selProject,curProj?.rev], queryFn:()=>fetchBomVersions(selProject, curProj?.rev), enabled:!!selProject,
   })
@@ -310,6 +336,27 @@ export default function Outbound() {
       return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out }, assy: curProj?.code || '' } : null
     }).filter(Boolean)
   }
+  // 생산관리 미불출로 넘길 품목 — 대당 · 이번에 뺀 수 (v4.241.0)
+  function hogiParts() {
+    return outOrder.filter(labelTarget).map((r) => ({ std_code: r.std_code, item_id: r.item_id, name: r.name, maker: r.maker, makerPn: r.makerPn,
+      per: r4(Number(r.bom_qty) || 0), have: r4(Math.max(0, Number(outQtys[r.item_id] || 0))) }))
+  }
+  const hogiName = (id) => { const h = hogis.find((x) => x.id === id); return h ? (h.hogi || '-') : '' }
+  // 지난 출고 → 미불출만 넣기 (재고는 이미 빠졌으니 안 건드린다)
+  const replayMissMut = useMutation({
+    mutationFn: async () => {
+      if (!guardEdit()) throw new Error('__READONLY__')
+      return writeHogiMissing(hogiSel, hogiParts(), { by: me?.name, label: `ASSY 출고 ${replay?.date || ''} (지난 출고)`, markIssued: true })
+    },
+    onSuccess: (h) => {
+      toastSuccess(`생산관리 ${h.touched}대 — 미불출 ${h.lines}줄 · 파트 불출 체크`)
+      remember(`미불출 ${h.touched}대`, async () => { await restoreHogis(h.before); return `호기 ${h.before.length}대 미불출 · 불출 체크를 되돌렸습니다` },
+        { note: '방금 넣은 미불출 · 파트 불출 체크를 넣기 전으로 돌립니다', after: () => { qc.invalidateQueries({ queryKey: ['production'] }); qc.invalidateQueries({ queryKey: ['outHogis'] }) } })
+      qc.invalidateQueries({ queryKey: ['production'] }); qc.invalidateQueries({ queryKey: ['outHogis'] })
+    },
+    onError: (e) => { if (e.message !== '__READONLY__') toastError('미불출 저장 오류: ' + e.message) },
+  })
+
   // 상위품번 라벨 — 맨 앞 1장
   function headLabel(title, items, count) {
     const d = new Date()
@@ -386,6 +433,7 @@ export default function Outbound() {
   const outMut = useMutation({
     mutationFn: async ({ mode }) => {
       if (!guardEdit()) throw new Error('__READONLY__')
+      if (replay) throw new Error('지난 출고를 불러온 화면입니다 — 「닫고 새로 출고」 후 출고하세요')
       // 품목당 한 줄 — BOM 에 같은 품목이 여러 줄이어도 한 번만 뺀다.
       //   outQtys 는 이미 품목별 합계(BOM 여러 줄 합 × 대수)라, 예전처럼 BOM 줄마다 보내면
       //   같은 합계가 줄 수만큼 빠졌다 (2026-06~09 에 198건 · 9,000여 개 더 빠짐).
@@ -400,6 +448,7 @@ export default function Outbound() {
       }
       // 부족 라벨용 — 출고 직전 출고수량으로 부족 품목을 떠 둔다 (출고 뒤 출고수량 칸이 비워진다)
       const shortSnap = shortRows()
+      const hogiPartsSnap = hogiParts()
       // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
       const itemIds = lines.map(l => l.item_id)
       const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(swallow('출고 · 되돌리기용 이전 기록 떠 두기')) : null
@@ -410,6 +459,19 @@ export default function Outbound() {
         try { res._moveIds = pickNew(before, await moveRows({ type: '출고', itemIds, since: sinceYesterday() }), lines.map(l => ({ item_id: l.item_id, qty: l.qty }))) } catch { /* 되돌리기만 못 한다 */ }
       }
       if (res && typeof res === 'object') res._short = shortSnap
+      // 생산관리 호기 · 상위품목 기록 (v4.241.0) — 실패해도 출고는 이미 끝났으니 알리기만
+      if (res && !res.aborted) {
+        const hp = hogiPartsSnap
+        if (hogiSel.length) {
+          try { res._hogi = await writeHogiMissing(hogiSel, hp, { by: me?.name, label: `ASSY 출고 ${outUnits}대`, markIssued: true }) }
+          catch (e) { res._hogiErr = e.message }
+        }
+        try {
+          let at = null
+          if (res._moveIds?.length) { const { data } = await supabase.from('stock_movements').select('processed_at').eq('id', res._moveIds[0]).maybeSingle(); at = data?.processed_at || null }
+          if (at && curProj?.code) await recordAssyBatch(selCustomer, curProj.code, curProj.name, outUnits, me?.name, at)
+        } catch { /* 출고 현황 대수만 못 남긴다 */ }
+      }
       return res
     },
     onSuccess: (res) => {
@@ -417,9 +479,12 @@ export default function Outbound() {
       setLastShort(res?._short?.length ? res._short : null)
       const w = res?.warnings||[]
       setStockWarning(null)
-      if (res?._moveIds?.length) remember(`ASSY 출고 ${res._moveIds.length}품목`, async () => { const x = await undoMoves(res._moveIds); return `출고 ${x.cnt}줄을 되돌렸습니다${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` },
-        { note: '방금 나간 출고 줄을 지웁니다 — 재고가 출고 전으로 돌아갑니다 (로트도 되돌림).\n지운 줄은 복구 기록으로 남습니다.', after: () => { refreshProcurement(qc); qc.invalidateQueries({ queryKey: ['outboundHistory'], exact: false }) } })
-      setResult(`출고 처리 완료 (${res?.processed||0}건)` + (w.length?` · 부족 ${w.length}건 제외`:''))
+      const hb = res?._hogi?.before || []
+      if (res?._moveIds?.length) remember(`ASSY 출고 ${res._moveIds.length}품목`, async () => { const x = await undoMoves(res._moveIds); if (hb.length) await restoreHogis(hb); return `출고 ${x.cnt}줄을 되돌렸습니다${hb.length ? ` · 호기 ${hb.length}대 미불출도` : ''}${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` },
+        { note: '방금 나간 출고 줄을 지웁니다 — 재고가 출고 전으로 돌아갑니다 (로트도 되돌림).' + (hb.length ? '\n생산관리 호기 미불출 · 파트 불출 체크도 출고 전으로 돌립니다.' : '') + '\n지운 줄은 복구 기록으로 남습니다.', after: () => { refreshProcurement(qc); qc.invalidateQueries({ queryKey: ['outboundHistory'], exact: false }); qc.invalidateQueries({ queryKey: ['production'] }) } })
+      if (res?._hogiErr) toastError('출고는 됐지만 생산관리 미불출 저장 실패: ' + res._hogiErr)
+      setResult(`출고 처리 완료 (${res?.processed||0}건)` + (w.length?` · 부족 ${w.length}건 제외`:'') + (res?._hogi ? ` · 생산관리 ${res._hogi.touched}대 불출 체크 · 미불출 ${res._hogi.lines}줄` : ''))
+      if (res?._hogi) { qc.invalidateQueries({ queryKey: ['production'] }); qc.invalidateQueries({ queryKey: ['outHogis'] }) }
       setOutQtys({}); setNote('')
       qc.invalidateQueries(['inventory'])
       qc.invalidateQueries(['outboundHistory'])
@@ -431,6 +496,21 @@ export default function Outbound() {
   function autoFillFromBOM(qty) {
     const perItem = {}
     bomItems.forEach(b=>{ if(b.item_id) perItem[b.item_id] = (perItem[b.item_id]||0) + effQ(b) })
+    if (replay) {
+      // 지난 출고 — 그때 실제로 뺀 수량 그대로 (안 뺀 품목은 0)
+      const qtys = {}
+      Object.keys(perItem).forEach((id) => { if (mtOf(id) === 'normal') qtys[id] = Number(replay.items?.[id]) || 0 })
+      // 대수가 기록에 없으면 뺀 수량 ÷ 대당 으로 가장 많이 나온 값
+      if (!replayUnitsSet) {
+        const cnt = {}
+        Object.entries(perItem).forEach(([id, per]) => { const q = Number(replay.items?.[id]) || 0; if (per > 0 && q > 0) { const u = Math.round(q / per); if (u > 0) cnt[u] = (cnt[u] || 0) + 1 } })
+        const best = Object.entries(cnt).sort((a, b) => b[1] - a[1])[0]
+        setReplayUnitsSet(true)
+        if (best && Number(best[0]) !== Number(qty)) { setOutUnits(Number(best[0])); setOutQtys(qtys); return }
+      }
+      setOutQtys(qtys)
+      return
+    }
     const qtys = {}
     Object.entries(perItem).forEach(([id, per])=>{ if (mtOf(id)==='normal') qtys[id] = per * (qty||1) })
     setOutQtys(qtys)
@@ -440,7 +520,7 @@ export default function Outbound() {
   //   라벨 합산/개별 토글은 캐시(bomForOut)를 고쳐 쓰므로 배열이 새로 만들어진다.
   //   배열 자체를 보면 그때마다 손으로 고친 수량이 지워지므로, 품목·소요량이 바뀔 때만 다시 채운다.
   const bomSig = bomItems.map(b => `${b.item_id}:${effQ(b)}`).join('|')
-  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomSig, outUnits, selCustomer, selProject])
+  useEffect(()=>{ if(bomItems.length) autoFillFromBOM(outUnits) }, [bomSig, outUnits, selCustomer, selProject, replay])   // eslint-disable-line react-hooks/exhaustive-deps
 
   // 프로젝트 검색 필터
   const projFiltered = projects.filter(p=>{
@@ -768,6 +848,37 @@ export default function Outbound() {
             </div>
           </div>
 
+          {replay && (
+            <div data-out-replay className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2 flex-wrap">
+              <span><b>↩ 지난 출고 불러옴</b> — {replay.date} {replay.time || ''} · {curProj?.code || ''} · {outUnits}대{replay.who ? ` · ${replay.who}` : ''} · 출고수량 = 그때 뺀 수량 · 라벨 다시 뽑기 · 미불출 넣기용이라 <b>출고 처리는 막혀 있습니다</b></span>
+              <button data-out-replay-miss onClick={() => replayMissMut.mutate()} disabled={!hogiSel.length || replayMissMut.isPending}
+                title={hogiSel.length ? '덜 뺀 수량을 고른 호기 미불출로 · 파트 불출 체크 (재고는 안 건드림)' : '아래 「생산관리 호기」를 고르세요'}
+                className="ml-auto px-2.5 py-1 rounded-lg bg-white border border-amber-300 font-bold hover:bg-amber-100 disabled:opacity-40">
+                {replayMissMut.isPending ? '저장 중…' : `⚠ 생산관리 미불출로 넣기${hogiSel.length ? ` (${hogiSel.length}대)` : ''}`}</button>
+              <button onClick={() => { setReplay(null); setReplayUnitsSet(false) }} className="px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-slate-600 font-bold hover:bg-slate-50">✕ 닫고 새로 출고</button>
+            </div>
+          )}
+
+          {curProj && hogis.length > 0 && (
+            <div data-out-hogis className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-xs flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-slate-600">🏭 생산관리 호기</span>
+              {hogis.map((h) => {
+                const on = hogiSel.includes(h.id)
+                const issued = h.part_issue === true || /^(true|1|y)$/i.test(String(h.part_issue ?? ''))
+                return (
+                  <button key={h.id} data-out-hogi={h.hogi} onClick={() => { setHogiTouched(true); setHogiSel((v) => on ? v.filter((x) => x !== h.id) : [...v, h.id]) }}
+                    title={`${h.hogi || '-'} · 납기 ${h.req_date || '미정'} · ${h.status || ''}${issued ? ' · 파트 불출 체크됨' : ''}`}
+                    className={`px-2 py-1 rounded-full border font-bold ${on ? 'bg-indigo-600 border-indigo-600 text-white' : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'}`}>
+                    {on ? '✔ ' : ''}{h.hogi || '-'}<span className={`ml-1 font-normal ${on ? 'text-indigo-100' : 'text-slate-400'}`}>{h.req_date ? String(h.req_date).slice(5) : ''}{issued ? ' · 불출됨' : ''}</span></button>
+                )
+              })}
+              <span className={`text-[11px] ${hogiSel.length && hogiSel.length !== Number(outUnits) ? 'text-amber-600 font-bold' : 'text-slate-400'}`}>
+                {hogiSel.length
+                  ? `${replay ? '「미불출로 넣기」' : '출고하면'} 덜 뺀 수량을 고른 ${hogiSel.length}대 미불출로 (납기 빠른 호기부터 채움) · 파트 불출 체크${hogiSel.length !== Number(outUnits) ? ` — ⚠ 출고 대수 ${outUnits}대와 다름` : ''}`
+                  : '고르지 않으면 생산관리는 그대로'}</span>
+            </div>
+          )}
+
           {verObj && (
             <div data-out-oldver className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 flex items-center gap-2 flex-wrap">
               <span>⚠ <b>구버전 REV {verObj.rev}</b> BOM 으로 보는 중 ({verObj.label}) — 불출표 · 라벨 · 출고(재고 차감)가 모두 이 REV 기준입니다. 출고 메모에 「BOM REV {verObj.rev} 구버전」이 남습니다.</span>
@@ -881,9 +992,10 @@ export default function Outbound() {
                     <input value={note} onChange={e=>setNote(e.target.value)} placeholder="출고 비고 (선택)"
                       className="flex-1 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
                     <button onClick={()=>outMut.mutate({mode:'strict'})}
-                      disabled={outMut.isPending||Object.values(outQtys).every(q=>!q||Number(q)<=0)}
+                      disabled={!!replay||outMut.isPending||Object.values(outQtys).every(q=>!q||Number(q)<=0)}
+                      title={replay ? '지난 출고를 불러온 화면 — 출고 처리는 막혀 있습니다' : undefined}
                       className="w-56 py-2 text-xs font-bold rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">
-                      {outMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />처리 중...</span>:'📤 출고 처리'}
+                      {outMut.isPending?<span className="inline-flex items-center gap-1.5"><Spin />처리 중...</span>:replay?'📤 출고 처리 (막힘)':'📤 출고 처리'}
                     </button>
                   </div>
                 )}>
