@@ -600,8 +600,13 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
       <aside className="w-56 min-w-[224px] h-full bg-slate-50 border-r border-slate-200 flex flex-col overflow-y-auto">
         {/* 로고 */}
         <div className="px-4 py-3 border-b border-slate-200 flex items-center justify-between">
-          <div>
+          <div className="flex items-center gap-2 min-w-0">
             <BrandMark />
+            {/* 버전 — 배포 반영 확인을 맨 아래까지 안 내려도 되게 로고 옆에 (v4.240.0) */}
+            <button data-ver-top onClick={() => setShowChangelog(true)} title="업데이트 이력 보기"
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-slate-200 bg-white text-[10.5px] font-semibold text-slate-500 hover:text-indigo-600 hover:border-indigo-200 whitespace-nowrap">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0"></span>{APP_VERSION}
+            </button>
           </div>
           {/* PC 메뉴 접기 — 접으면 위 ☰ 로 다시 연다 (v4.63.0) */}
           {onCollapse && (
