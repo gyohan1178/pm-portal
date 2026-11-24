@@ -156,11 +156,15 @@ export default function OutboundHistory() {
   const oWords = oq.trim().toLowerCase().split(/\s+/).filter(Boolean)
   const hit = (hay) => { const h = hay.toLowerCase(); return oWords.every((w) => h.includes(w)) }
   const rowHay = (r) => [r.items?.std_code, r.items?.name, r.items?.manufacturer, r.items?.manufacturer_code, r.purchase_orders?.po_number].filter(Boolean).join(' ')
+  // 정렬 (v4.241.1) — new 최근 출고순(기본) · old 빠른 출고순. 출고일 → 처리 시각 → 줄 번호
+  const [sortDir, setSortDir] = useRemember('outhist.sort', 'new', (v) => v === 'new' || v === 'old')
   const histRows = useMemo(() => {
     let rows = hKind ? history.filter(r => r._kind === hKind) : history
     if (oWords.length) rows = rows.filter((r) => hit(rowHay(r)))
-    return rows
-  }, [history, hKind, oq])
+    const t = (r) => `${r.movement_date || ''}|${r.processed_at ? new Date(r.processed_at).toISOString() : ''}`
+    const sgn = sortDir === 'old' ? 1 : -1
+    return [...rows].sort((a, b) => sgn * (t(a).localeCompare(t(b)) || (Number(a.id) || 0) - (Number(b.id) || 0)))
+  }, [history, hKind, oq, sortDir])
   const histTotal = histRows.reduce((a,r)=>a+(Number(r.qty)||0),0)
   const custName = (id) => customers.find(c => c.id === id)?.name || ''
   const histGroups = useMemo(() => groupHistory(histRows), [histRows])
@@ -206,9 +210,13 @@ export default function OutboundHistory() {
         replay: { custId: r._custId, projId: r.project_id, at: r.processed_at, date: r.movement_date, time: timeOf(r.processed_at), who: r._who || '', units: rec ? rec.qty : null, items } })
       by.set(k, e)
     }
-    const all = [...by.values()].sort((a, b) => b.qty - a.qty || a.code.localeCompare(b.code))
+    // 정렬 — 최근 출고순: 마지막 출고가 늦은 것부터 · 빠른 출고순: 첫 출고가 이른 것부터 (펼친 날짜도 같은 방향)
+    const bt = (x) => `${x.date || ''}|${x.at ? new Date(x.at).toISOString() : ''}`
+    const sgn = sortDir === 'old' ? 1 : -1
+    for (const e of by.values()) e.batches.sort((a, b) => sgn * bt(a).localeCompare(bt(b)))
+    const all = [...by.values()].sort((a, b) => sgn * bt(a.batches[0]).localeCompare(bt(b.batches[0])) || a.code.localeCompare(b.code))
     return oWords.length ? all.filter((e) => hit(`${e.code} ${e.name || ''}`)) : all
-  }, [history, assyMap, oq])
+  }, [history, assyMap, oq, sortDir])
 
   function exportHistory() {
     if (mode === 'assy') {
@@ -291,6 +299,12 @@ export default function OutboundHistory() {
           {[['line', '출고 줄'], ['assy', '🧩 상위품목 기준']].map(([k, t]) => (
             <button key={k} type="button" onClick={() => setMode(k)} data-mode={k}
               className={`px-2.5 py-1.5 rounded-md ${mode === k ? 'bg-violet-100 text-violet-700' : 'text-slate-500 hover:bg-slate-50'}`}>{t}</button>
+          ))}
+        </div>
+        <div className="flex rounded-lg border border-slate-200 bg-white p-0.5 text-xs font-bold self-center" data-sort-dir>
+          {[['new', '↓ 최근 출고순'], ['old', '↑ 빠른 출고순']].map(([k, t]) => (
+            <button key={k} type="button" onClick={() => setSortDir(k)} data-sort={k}
+              className={`px-2.5 py-1.5 rounded-md ${sortDir === k ? 'bg-indigo-100 text-indigo-700' : 'text-slate-500 hover:bg-slate-50'}`}>{t}</button>
           ))}
         </div>
         <div className="ml-auto text-xs text-slate-400 self-center">{mode === 'assy' ? `상위품목 ${assyRows.length}종` : `총 ${histRows.length}건`}</div>
