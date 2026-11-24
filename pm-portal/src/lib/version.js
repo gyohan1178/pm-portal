@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.241.1'
+export const APP_VERSION = 'v4.242.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,14 @@ export const APP_VERSION = 'v4.241.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.242.0',
+    date: '2026-11-24',
+    changes: [
+      '생산관리 AXCELIS — 「🧵 HARN ASSY」 탭: 하네스 작업 순서표 (HOT → need 지남 → 7일 → 14일, FA(G 오더)는 따로) · 출도일 · 미출도 · 출도 뒤 SRev 바뀜(재출도) · 불출 · 🖨 흑백 순서표 · 📥 지연 예상 엑셀 (보기 전용 — 출도 · 불출은 하네스 출도에서)',
+      '고객사 PO 업로드 — Required Date(Supplier Portal need date)를 같이 저장, 바뀌면 그 줄 이력에 남김 → 순서표 ▲ 당겨짐 · ▼ 늦춰짐 · ▶늦음 (SQL pm_need_date_261124 실행 후 적용 · 그전엔 promise date 로 묶음)',
+    ],
+  },
   {
     version: 'v4.241.1',
     date: '2026-11-24',

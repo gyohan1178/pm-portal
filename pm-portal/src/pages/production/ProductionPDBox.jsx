@@ -2,7 +2,7 @@ import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import PlanBadge from '../../components/PlanBadge'
 import { DocRequestButton } from '../../components/DocRequestModal'
 import { useFillHeight } from '../../hooks/useFillHeight'
-import { useState, useMemo, useRef, useCallback, Fragment } from 'react'
+import { useState, useMemo, useRef, useCallback, Fragment, lazy, Suspense } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, useMainPns, saveMainPn, isOverridden, DEFAULT_MAIN_PNS } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
@@ -33,6 +33,7 @@ import QcCell from '../../components/QcCell'
 import { useMe } from '../../hooks/useProfile'
 import { AUTO_CUST, vmBoxesNeeded, qcIndex, qcKey, stagesOf, applyAutoStatus, fetchProdQc } from '../../lib/prodAuto'
 import { kst } from '../../lib/utils'
+const HarnAssyTab = lazy(() => import('./HarnAssyTab'))   // 생산관리 AXCELIS › 🧵 HARN ASSY (v4.242.0)
 
 // 여러 줄 요약 글자 → 확인 창 목록 줄 (v4.104.0)
 // Edwards 「📦 소요량 매칭」(재고 · 부족) — 생산관리에서는 안 씀 (v4.118.5 · 코드는 남겨 둠, true 로 바꾸면 다시 보임)
@@ -852,6 +853,22 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     return Object.values(g).sort((a, b) => a.wk.localeCompare(b.wk))
   }, [rows, mdMap, mainVer])
 
+  // ⭐ 주요 관리 | Sub Assy | 🧵 HARN ASSY(AXCELIS 만 · v4.242.0 — 하네스 작업 순서표, 보기 전용)
+  const mainTabs = (
+    <div className="flex gap-1 p-0.5 bg-indigo-100/70 rounded-lg" data-main-tabs>
+      <button onClick={() => { setMainTab('main') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='main'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>⭐ 주요 관리</button>
+      <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>{isED ? 'Sub Assy · 협력사' : 'Sub Assy'}</button>
+      {isAx && <button data-tab-harn onClick={() => { setMainTab('harn') }} title="하네스 작업 순서표 — HOT → need date 순 (보기 전용)"
+        className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='harn'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>🧵 HARN ASSY</button>}
+    </div>
+  )
+  if (isAx && mainTab === 'harn') return (
+    <>
+      <div className="flex items-center gap-2 flex-wrap mb-3">{mainTabs}</div>
+      <Suspense fallback={<div className="p-6 text-center text-sm text-slate-400">불러오는 중…</div>}><HarnAssyTab /></Suspense>
+    </>
+  )
+
   return (
     <>
       {woRows && <WorkOrderPrinter rows={woRows} onDone={() => setWoRows(null)} />}
@@ -862,10 +879,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
           <input type="checkbox" checked={showDone} onChange={e => setShowDone(e.target.checked)} /> 완료 포함
         </label>
         <button onClick={() => openEdit(null) || setEdit({ ...EMPTY, ...(isED ? { po_received: false } : {}) })} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700">+ 호기 추가</button>
-        <div className="flex gap-1 p-0.5 bg-indigo-100/70 rounded-lg">
-          <button onClick={() => { setMainTab('main') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='main'?'bg-white text-indigo-700 shadow-sm':'text-indigo-400'}`}>⭐ 주요 관리</button>
-          <button onClick={() => { setMainTab('sub'); setView('list') }} className={`px-2.5 py-1 text-xs font-bold rounded-md ${mainTab==='sub'?'bg-white text-slate-700 shadow-sm':'text-slate-500'}`}>{isED ? 'Sub Assy · 협력사' : 'Sub Assy'}</button>
-        </div>
+        {mainTabs}
         {mainTab === 'main' && (
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
           <button onClick={() => setView('list')} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${view==='list'?'bg-white text-slate-900 shadow-sm':'text-slate-500'}`}>📃 리스트</button>

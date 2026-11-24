@@ -680,7 +680,7 @@ export default function CustomerPO() {
               {(chgModal.changes||[]).slice().reverse().map((c,i)=>(
                 <div key={i} className="rounded-lg border border-slate-200 p-3 text-xs">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="font-bold text-slate-700">{c.field==='promise_date'?'납기 변경':c.field==='item_rev'?'REV 변경':c.field==='qty_ordered'?'수량 변경':c.field==='division'?'구분 변경':c.field==='plan_exc'?'Plan Exc (HOT 등) 변경':c.field}</span>
+                    <span className="font-bold text-slate-700">{c.field==='promise_date'?'납기 변경':c.field==='item_rev'?'REV 변경':c.field==='qty_ordered'?'수량 변경':c.field==='division'?'구분 변경':c.field==='plan_exc'?'Plan Exc (HOT 등) 변경':c.field==='need_date'?'need date 변경':c.field}</span>
                     <span className="text-slate-400">{kstYmd(c.at)}</span>
                   </div>
                   <div className="flex items-center gap-2">

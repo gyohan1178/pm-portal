@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
 import { downloadCsvTemplate, TEMPLATES } from '../../lib/csvTemplate'
 import { planExcReady, planExcOf } from '../../lib/planExc'
+import { needDateReady } from '../../lib/needDate'
 import { todayISO } from '../../lib/utils'
 import { parseThirdPartySheet, tpKey, thirdPartyReady, syncThirdPartyProduction } from '../../lib/thirdParty'
 import { parseAxPoWorkbook } from '../../lib/axPoFile'
@@ -103,6 +104,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
           qty: parseFloat(s(pick(r, ['quantity', '수량', 'qty', '발주량'])).replace(/,/g, '')) || 0,
           unit_price: parseFloat(s(pick(r, ['unit price', 'unitprice', '단가'])).replace(/[^0-9.]/g, '')) || 0,
           promise_date: dnorm(pick(r, ['promisedate', 'promise date', '약속일', '납기'])),
+          need_date: dnorm(pick(r, ['requireddate', 'required date'])),   // Supplier Portal need date (v4.242.0)
           division: pn.startsWith('16') ? '하네스' : pn.startsWith('11') ? '전장' : '구매품',   // 16*=하네스, 11*=전장, 그외=구매품
         }
       }).filter(r => r.pn && r.po_number)
@@ -163,6 +165,9 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
       const tpReady = await thirdPartyReady(supabase)
       // Plan Exc Type 칸(purchase_orders.plan_exc)이 있어야 HOT 등을 저장한다
       const planReady = await planExcReady(supabase)
+      // need date 칸(purchase_orders.need_date)이 있어야 Required Date 를 저장한다 (v4.242.0 · SQL pm_need_date_261124)
+      const needReady = await needDateReady(supabase)
+      const needUpd = []   // need date 맞추기 — 처음 채울 땐 값만, 바뀌면 그 줄 이력에도 (▲ 당겨짐 · ▼ 늦춰짐)
       const planUpd = []   // Plan Exc(HOT 등) 맞추기 — v4.56.0 부터 그 줄 변경 이력에도 남긴다 (언제 HOT 이 붙었는지 보려고)
       const tpOpen = tpReady ? tp.rows.filter(r => r.state === 'open') : []
       const fileRows = [...rows, ...tpOpen]
@@ -175,7 +180,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
       const all = []
       for (let from = 0; ; from += 1000) {
         const { data, error } = await supabase.from('purchase_orders')
-          .select(`id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,unit_price,promise_date,division,status,changes${tpReady ? ',third_party' : ''}${planReady ? ',plan_exc' : ''}, items!purchase_orders_item_id_fkey(std_code)`)
+          .select(`id,po_number,order_line,del_line,item_rev,item_brev,qty_ordered,unit_price,promise_date,division,status,changes${tpReady ? ',third_party' : ''}${planReady ? ',plan_exc' : ''}${needReady ? ',need_date' : ''}, items!purchase_orders_item_id_fkey(std_code)`)
           .eq('customer_id', csId).eq('order_type', 'customer_po').order('id')
           .range(from, from + 999)
         if (error) throw error
@@ -199,6 +204,10 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
         if (!ex) { news.push({ ...r, code }); continue }
         const planHist = (planReady && !r.third_party && (r.plan_exc || '') !== (ex.plan_exc || ''))
           ? { field: 'plan_exc', from: ex.plan_exc || '-', to: r.plan_exc || '-' } : null
+        // need date — 파일이 비었으면 그대로 둔다 · 처음 채우는 줄은 이력 없이 값만
+        const exNeed = ex.need_date ? String(ex.need_date).slice(0, 10) : ''
+        const needSet = !!(needReady && !r.third_party && r.need_date && r.need_date !== exNeed)
+        const needHist = needSet && exNeed ? { field: 'need_date', from: exNeed, to: r.need_date } : null
         const chg = []
         if (code !== (ex.items?.std_code || '')) chg.push({ field: 'item', from: ex.items?.std_code || '-', to: code, _newCode: code })
         if (r.item_rev && r.item_rev !== (ex.item_rev || '')) chg.push({ field: 'item_rev', from: ex.item_rev || '-', to: r.item_rev })
@@ -207,10 +216,11 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
         if (r.qty && r.qty !== ex.qty_ordered) chg.push({ field: 'qty_ordered', from: ex.qty_ordered, to: r.qty })
         if (r.unit_price && r.unit_price !== (Number(ex.unit_price) || 0)) chg.push({ field: 'unit_price', from: ex.unit_price || 0, to: r.unit_price })
         if (r.division && r.division !== (ex.division || '')) chg.push({ field: 'division', from: ex.division || '-', to: r.division })
-        if (chg.length) changes.push({ ...r, code, id: ex.id, prevChanges: ex.changes || [], chg, planHist })
+        if (chg.length) changes.push({ ...r, code, id: ex.id, prevChanges: ex.changes || [], chg, planHist, needSet, needHist })
         else sames.push({ ...r, id: ex.id, hadChanges: (ex.changes || []).length > 0 })
         // 이력: 다른 변경과 같이 바뀌면 그 줄 이력에 함께 넣고(inChg), Plan Exc 만 바뀐 줄은 아래 적용 때 따로 넣는다
         if (planHist) planUpd.push({ id: ex.id, v: r.plan_exc || null, hist: planHist, prev: ex.changes || [], inChg: chg.length > 0 })
+        if (needSet) needUpd.push({ id: ex.id, v: r.need_date, hist: needHist, prev: ex.changes || [], inChg: chg.length > 0 })
       }
 
       // 사라진 PO: 기존 진행중인데 이번 Current Data에 없는 것
@@ -297,6 +307,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
       return { news, changes, sames, unregistered, noBomAsm, disappeared, disappearWarn, priceBackfill, existCount: liveCount, ordPv, ordErr,
                tpReady, tpOpen: tpOpen.length, tpTotal: tp.rows.length,
                planReady, planUpd, planInFile: rows.filter(r => r.plan_exc).length,
+               needReady, needUpd, needInFile: rows.filter(r => r.need_date).length,
                // 약속일이 이미 지난 줄 — 엑셀에서 새 날짜로 고쳐 다시 올려야 한다
                overdue: rows.filter(r => r.promise_date && r.promise_date < todayISO()) }
     },
@@ -361,13 +372,15 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
             patch[x.field] = x.to
           }
         }
+        if (c.needSet) patch.need_date = c.need_date
         // 이력은 누적해 남긴다. 한 건이 몇 번이나 밀렸는지가
         // 제조 일정 판단에 중요하기 때문이다.
         // 화면에서는 기본적으로 최근 변경만 보여주고,
         // 반복 변경은 별도 배지로 표시한다.
         patch.changes = [...(c.prevChanges || []),
                          ...c.chg.map(x => ({ field: x.field, from: x.from, to: x.to, at: now })),
-                         ...(c.planHist ? [{ ...c.planHist, at: now }] : [])]
+                         ...(c.planHist ? [{ ...c.planHist, at: now }] : []),
+                         ...(c.needHist ? [{ ...c.needHist, at: now }] : [])]
         return supabase.from('purchase_orders').update(patch).eq('id', c.id)
       })
 
@@ -388,6 +401,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
           status: '진행중', changes: [],
           ...(n.third_party ? { third_party: n.third_party } : {}),
           ...(diff.planReady && n.plan_exc ? { plan_exc: n.plan_exc } : {}),
+          ...(diff.needReady && n.need_date && !n.third_party ? { need_date: n.need_date } : {}),
         }
       })
       for (let i = 0; i < newRows.length; i += 200) {
@@ -407,8 +421,24 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
           if (error) throw error
         }
       }
-      await pool((diff.planUpd || []).filter(u => !u.inChg), u =>
-        supabase.from('purchase_orders').update({ plan_exc: u.v || null, changes: [...(u.prev || []), { ...u.hist, at: now }] }).eq('id', u.id))
+      // need date 만 바뀐 줄 — Plan Exc 도 같이 바뀐 줄은 한 번에 (이력이 서로 덮이지 않게)
+      const needOnly = new Map((diff.needUpd || []).filter(u => !u.inChg).map(u => [u.id, u]))
+      await pool((diff.planUpd || []).filter(u => !u.inChg), u => {
+        const nd = needOnly.get(u.id); needOnly.delete(u.id)
+        return supabase.from('purchase_orders').update({ plan_exc: u.v || null, ...(nd ? { need_date: nd.v } : {}),
+          changes: [...(u.prev || []), { ...u.hist, at: now }, ...(nd?.hist ? [{ ...nd.hist, at: now }] : [])] }).eq('id', u.id)
+      })
+      //   처음 채우는 줄(이력 없음)은 같은 날짜끼리 묶어서 · 바뀐 줄은 값 + 이력 한 줄씩
+      const needFirst = {}
+      ;[...needOnly.values()].filter(u => !u.hist).forEach(u => { (needFirst[u.v] ||= []).push(u.id) })
+      for (const [v, ids] of Object.entries(needFirst)) {
+        for (let i = 0; i < ids.length; i += 150) {
+          const { error } = await supabase.from('purchase_orders').update({ need_date: v }).in('id', ids.slice(i, i + 150))
+          if (error) throw error
+        }
+      }
+      await pool([...needOnly.values()].filter(u => u.hist), u =>
+        supabase.from('purchase_orders').update({ need_date: u.v, changes: [...(u.prev || []), { ...u.hist, at: now }] }).eq('id', u.id))
       // 사라진 PO 처리 (체크된 것만): 납품→완료, 취소→취소
       let done = 0, canceled = 0
       //   「확인 필요」 줄은 사람이 납품 / 취소를 고른 것만 처리한다 (안 고르면 그대로 둔다)
@@ -620,6 +650,16 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
                   ⚠ Plan Exc Type(HOT 등) {diff.planInFile}줄은 이번에 저장하지 않습니다 — SQL pm_plan_exc_261002 를 먼저 실행하세요.
                 </p>
               )}
+              {diff.needInFile > 0 && !diff.needReady && (
+                <p data-need-note className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  ⚠ need date(Required Date) {diff.needInFile}줄은 이번에 저장하지 않습니다 — SQL pm_need_date_261124 를 먼저 실행하세요. (하네스 작업 순서는 그전까지 promise date 로 묶습니다)
+                </p>
+              )}
+              {diff.needReady && diff.needUpd?.length > 0 && (
+                <p data-need-note className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                  need date(Required Date) {diff.needUpd.length}줄을 파일 값으로 맞춥니다 — 처음 채우는 {diff.needUpd.filter(u => !u.hist).length}줄은 값만, 바뀐 {diff.needUpd.filter(u => u.hist).length}줄은 이력에도 남깁니다
+                </p>
+              )}
               {diff.planReady && diff.planUpd?.length > 0 && (
                 <p data-plan-note className="text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
                   Plan Exc Type(HOT · RSIN · RSOU …) {diff.planUpd.length}줄을 파일 값으로 맞추고 그 줄 변경 이력에 남깁니다
@@ -736,7 +776,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
                         <div className="font-mono text-slate-500 mb-1">{c.third_party && <span className="mr-1 px-1.5 py-0.5 rounded bg-fuchsia-100 text-fuchsia-700 text-[10px] font-bold font-sans">{c.third_party}</span>}{c.po_number} · {c.code} {c.order_line && `· L${c.order_line}`}</div>
                         {c.chg.map((x, j) => (
                           <div key={j} className="flex items-center gap-2 ml-2">
-                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'SREV' : x.field === 'item_brev' ? 'BREV' : x.field === 'division' ? '구분' : x.field === 'plan_exc' ? 'Plan Exc' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
+                            <span className="text-slate-400 w-16">{x.field === 'promise_date' ? '납기' : x.field === 'item_rev' ? 'SREV' : x.field === 'item_brev' ? 'BREV' : x.field === 'division' ? '구분' : x.field === 'plan_exc' ? 'Plan Exc' : x.field === 'need_date' ? 'need' : x.field === 'unit_price' ? '단가' : x.field === 'item' ? '품번' : x.field === 'qty_ordered' ? '수량' : x.field}</span>
                             <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-500 line-through">{x.from}</span>
                             <span className="text-slate-300">→</span>
                             <span className="px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-600 font-semibold">{x.to}</span>
