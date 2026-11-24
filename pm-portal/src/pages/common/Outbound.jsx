@@ -290,25 +290,22 @@ export default function Outbound() {
     return { labels: out, capped }
   }
 
-  // ── 부족 라벨 (v4.239.0) — 출고수량보다 재고가 모자란 전장 품목만, 수량 = 부족분 ──
-  //   일부 부족(10개 중 4개만 있음)도 잡는다 → 6 EA · NEED 10 / OUT 4
-  //   v4.240.1 — 필요 = BOM/대 × 출고 대수. 출고수량을 필요보다 적게 적으면(재고가 있어도) 그 차이도 부족분
-  //     예) 필요 6 · 출고수량 2 → 부족 4 / 필요 12 · 재고 8 → 부족 4
+  // ── 부족 라벨 (v4.239.0) — 불출 못 한 전장 품목만, 수량 = 못 뺀 수 ──
+  //   v4.240.2 — 재고는 안 본다. 필요(BOM/대 × 출고 대수) − 내가 적은 출고수량 = 부족
+  //     예) 필요 6 · 출고수량 2 → 4 EA · NEED 6 / OUT 2. 출고수량을 0 으로 지우면 전량 부족
+  //     (재고로 계산하면 전산 재고가 틀린 품목까지 부족으로 잡혀 110211211 에서 40장이 나왔다)
   const r4 = (v) => Math.round(v * 10000) / 10000
   const labelTarget = (r) => mtOf(r.item_id) === 'normal' && String(r.location || '').trim() !== '라벨' && Number(r.bom_qty) > 0
-  //   mode 'skip' (부족 제외 출고) — 출고수량보다 재고가 적은 품목은 통째로 안 나간다 → 나간 수 0
-  function shortOf(r, stock, mode) {
+  function shortOf(r) {
     const need = r4((Number(r.bom_qty) || 0) * (Number(outUnits) || 1))
-    const want = Number(outQtys[r.item_id] || 0)
-    const have = Math.max(0, Number(stock?.[r.item_id]) || 0)
-    const out = mode === 'skip' && want > have ? 0 : r4(Math.max(0, Math.min(want, have)))
+    const out = r4(Math.max(0, Number(outQtys[r.item_id] || 0)))
     return { need, out, short: r4(Math.max(0, need - out)) }
   }
-  function shortRows(stock, mode) {
+  function shortRows() {
     const noMap = sheetNo
     // 보기 · 검색 조건과 상관없이 BOM 전체에서 (출고는 전체가 나간다)
     return outOrder.filter(labelTarget).map((r) => {
-      const { need, out, short } = shortOf(r, stock, mode)
+      const { need, out, short } = shortOf(r)
       return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out } } : null
     }).filter(Boolean)
   }
@@ -323,18 +320,14 @@ export default function Outbound() {
       items, range: count ? `LABELS 2-${count + 1}` : ' ',
     }
   }
-  // 출고 처리 뒤 — 출고 직전 재고로 계산한 부족 목록 (재고가 줄어서 다시 계산하면 틀어진다)
+  // 출고 처리 뒤 — 출고 직전 출고수량으로 계산해 둔 부족 목록 (출고하면 출고수량 칸이 비워진다)
   const [lastShort, setLastShort] = useState(null)
-  async function printShortLabels(saved) {
-    let rows = saved
-    if (!rows) {
-      try { rows = shortRows(await readStock(outItemIds)) }   // 누를 때 재고를 다시 읽는다
-      catch (e) { toastError('재고 읽기 실패: ' + e.message); return }
-    }
-    if (!rows.length) { toastError('부족한 품목이 없습니다 (전장 · 출고수량 입력 품목 기준)'); return }
+  function printShortLabels(saved) {
+    const rows = saved || shortRows()
+    if (!rows.length) { toastError('부족한 품목이 없습니다 — 출고수량이 BOM/대 × 대수보다 적은 전장 품목이 없음'); return }
     const labels = [headLabel('SHORT LIST', `SHORT ${rows.length}`, rows.length), ...rows]
     setLabelConfirm({ title: '🏷 부족 라벨', labels, itemCount: rows.length, labelCount: labels.length, eachCount: 0, eachItems: [], skipped: 0,
-      note: '맨 앞 1장은 상위품번 라벨 · 수량 = 부족분 (출고수량 − 재고)' })
+      note: '맨 앞 1장은 상위품번 라벨 · 수량 = BOM/대 × 대수 − 출고수량 (재고는 안 봄)' })
   }
 
   function printOutLabels() {
@@ -404,10 +397,8 @@ export default function Outbound() {
         if (qty > 0 && mtOf(b.item_id) === 'normal')   // 정상만 재고 차감 (하네스·제외 제외)
           lines.push({ item_id: b.item_id, name: b.items?.name || '', qty })
       }
-      // 부족 라벨용 — 출고 직전 재고로 부족 품목을 떠 둔다 (v4.239.0) · 실패해도 출고는 진행
-      let shortSnap = null
-      // 「부족 제외 출고」는 모자란 품목을 통째로 안 뺀다 → 그 품목은 전량이 부족분 (OUT 0)
-      try { shortSnap = shortRows(await readStock(outItemIds), mode) } catch { shortSnap = null }
+      // 부족 라벨용 — 출고 직전 출고수량으로 부족 품목을 떠 둔다 (출고 뒤 출고수량 칸이 비워진다)
+      const shortSnap = shortRows()
       // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
       const itemIds = lines.map(l => l.item_id)
       const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(swallow('출고 · 되돌리기용 이전 기록 떠 두기')) : null
@@ -594,8 +585,8 @@ export default function Outbound() {
     return rows
   }, [outOrder, makerFilter, view, dBomQ, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
   // 부족 품목 수 (v4.239.0) — 버튼 표시용 · 지금 읽어 둔 재고 기준
-  const shortCount = useMemo(() => (stockReady ? shortRows(stockMeta).length : 0),
-    [outOrder, outQtys, stockMeta, stockReady, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
+  const shortCount = useMemo(() => shortRows().length,
+    [outOrder, outQtys, outUnits, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
   const noMakerCount = useMemo(() => outOrder.filter(o=>!o.maker).length, [outOrder])
 
   const round2 = (v) => { const n = Number(v); return isNaN(n) ? "" : Math.round(n * 100) / 100 }
@@ -972,12 +963,12 @@ export default function Outbound() {
                               value={mt==='normal' ? (outQtys[item.item_id]??'') : ''}
                               onChange={e=>setOutQtys(prev=>({...prev,[item.item_id]:e.target.value}))}
                               className="w-16 px-1.5 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100"/>
-                            {mt==='normal' && stockReady && (() => {
-                              const st = Number(stockMeta[item.item_id]) || 0
-                              const { out, short: sh } = labelTarget(item) ? shortOf(item, stockMeta) : { out: 0, short: 0 }
-                              return <div data-out-stock title={sh > 0 ? '부족 = BOM/대 × 출고 대수 − 실제 나가는 수(출고수량 · 재고 중 작은 값)' : undefined}
+                            {mt==='normal' && (() => {
+                              const { out, short: sh } = labelTarget(item) ? shortOf(item) : { out: 0, short: 0 }
+                              if (!stockReady && !(sh > 0)) return null
+                              return <div data-out-stock title={sh > 0 ? '부족 = BOM/대 × 출고 대수 − 출고수량 (재고는 안 봄)' : '전산 재고 (참고)'}
                                 className={`text-[10.5px] mt-0.5 whitespace-nowrap ${sh > 0 ? (out > 0 ? 'text-amber-600 font-bold' : 'text-rose-600 font-bold') : 'text-slate-400'}`}>
-                                재고 {st.toLocaleString('ko-KR')}{sh > 0 ? `·부족 ${Math.round(sh * 100) / 100}` : ''}</div>
+                                {stockReady ? `재고 ${(Number(stockMeta[item.item_id]) || 0).toLocaleString('ko-KR')}` : ''}{sh > 0 ? `${stockReady ? '·' : ''}부족 ${Math.round(sh * 100) / 100}` : ''}</div>
                             })()}
                           </td>
                           <td className="px-2 py-2">
