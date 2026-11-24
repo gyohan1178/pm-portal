@@ -18,6 +18,8 @@ import { useRemember } from '../../hooks/useRemember'
 //   순서: HOT → need date 지남 → 7일 이내 → 14일 이내 (묶음 안은 need date 순) · FA(G 오더)는 따로
 //   need date = Supplier Portal Required Date. 칸이 없으면(SQL 전) promise date 로 대신 묶는다
 //   REV: 출도할 때 찍은 REV 와 지금 PO SRev 가 다르면 「재출도」
+//   공정(v4.243.0): 하네스 공정관리 QR 스캔 기록(harness_logs)을 PO · 라인으로 맞춰 줄마다 거친 공정 · 지금 공정 · 마지막 스캔을 보여 준다
+//     현장은 하던 대로 QR 만 찍는다 — 포털은 읽기만. 「출도」 스캔도 출도 기록으로 센다
 
 const DAY = 86400000
 const P = (s) => String(s ?? '').trim().toUpperCase()
@@ -65,6 +67,42 @@ function matchIssued(lines, horders, hist) {
   return out
 }
 
+// 공정 스캔 기록 → 줄별 { steps:[{p, at, done}], last:{p, at, who, open}, out } (출도 스캔은 out 으로)
+const DONE_STEP = /출하|납품|포장/
+function matchLogs(lines, logs) {
+  const byLine = new Map(), byDwg = new Map()
+  for (const l of logs || []) {
+    const po = P(l.po); if (!po) continue
+    const k = N(l.ord_ln) ? `${po}|${N(l.ord_ln)}|${N(l.del_ln) || '1'}` : `${po}|${P(l.dwg_no)}`
+    const m = N(l.ord_ln) ? byLine : byDwg
+    if (!m.has(k)) m.set(k, []); m.get(k).push(l)
+  }
+  const out = {}
+  for (const p of lines) {
+    const po = P(p.po_number)
+    const list = byLine.get(`${po}|${N(p.order_line)}|${N(p.del_line) || '1'}`) || byDwg.get(`${po}|${P(pnOf(p.items?.std_code))}`)
+    if (!list?.length) continue
+    const sorted = [...list].sort((a, b) => String(a.started_at || '').localeCompare(String(b.started_at || '')))
+    const issue = sorted.filter(l => String(l.process || '').trim() === '출도')
+    const work = sorted.filter(l => String(l.process || '').trim() && String(l.process).trim() !== '출도')
+    const steps = []
+    for (const l of work) {
+      const name = String(l.process).trim()
+      const at = l.ended_at || l.started_at
+      const e = steps.find(x => x.p === name)
+      if (e) { e.done = e.done || !!l.ended_at; if (String(at) > String(e.at)) e.at = at } else steps.push({ p: name, at, done: !!l.ended_at })
+    }
+    const lastLog = work[work.length - 1]
+    out[p.id] = {
+      steps,
+      last: lastLog ? { p: String(lastLog.process).trim(), at: lastLog.ended_at || lastLog.started_at, who: lastLog.worker || '', open: !lastLog.ended_at } : null,
+      out: issue.length ? { t: issue[issue.length - 1].started_at || '', rev: '' } : null,
+    }
+  }
+  return out
+}
+const hm = (t) => { if (!t) return ''; const d = new Date(Date.parse(t) + 9 * 3600000).toISOString(); return `${d.slice(5, 7)}/${d.slice(8, 10)} ${d.slice(11, 16)}` }
+
 async function loadHarn() {
   const base = await fetchAxLinesSafe()
   const lines = base.filter(p => !p.in_prod && pnOf(p.items?.std_code).startsWith('16') && p.status !== '완료' && p.status !== '취소')
@@ -74,15 +112,19 @@ async function loadHarn() {
   let need = {}
   if (ready && cpo.length) { try { need = await fetchNeedByPo(supabase, cpo) } catch (e) { console.warn('need date 조회 실패', e) } }
   const poNos = [...new Set(lines.map(p => String(p.po_number || '').trim()).filter(Boolean))]
-  const ho = [], hh = []
+  const ho = [], hh = [], hl = []
   for (let i = 0; i < poNos.length; i += 150) {
     const part = poNos.slice(i, i + 150)
     ho.push(...await fetchAll(() => supabase.from('harness_orders').select('*').in('po', part).order('id')))
     hh.push(...await fetchAll(() => supabase.from('harness_qr_history').select('*').in('po', part).order('id')))
+    try {   // 공정 스캔 기록 — 못 읽어도 순서표는 보여 준다
+      hl.push(...await fetchAll(() => supabase.from('harness_logs').select('id,dwg_no,po,ord_ln,del_ln,process,started_at,ended_at,worker').in('po', part).order('id')))
+    } catch (e) { console.warn('공정 기록 읽기 실패', e) }
   }
   const iss = matchIssued(lines, ho, hh)
+  const logs = matchLogs(lines, hl)
   return { ready, rows: lines.map(p => ({ ...p, plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null,
-    need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] })) }
+    need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] || logs[p.id]?.out || null, proc: logs[p.id] || null })) }
 }
 
 export default function HarnAssyTab() {
@@ -104,7 +146,11 @@ export default function HarnAssyTab() {
       const sRev = P(p.item_rev), iRev = p.iss?.rev || ''
       const revChg = !!(p.iss && iRev && sRev && iRev !== sRev)
       const grp = isFA(p) ? 'fa' : isHot(p) ? 'hot' : d == null ? 'rest' : d < 0 ? 'late' : d <= 7 ? 'w1' : d <= 14 ? 'w2' : 'rest'
-      return { ...p, base, d, prom, late, revChg, iRev, sRev, grp, trend: ready ? needTrend(p.needPrev, p.need) : '' }
+      const lastAt = p.proc?.last?.at
+      const idle = lastAt ? Math.floor((Date.now() - Date.parse(lastAt)) / DAY) : null
+      const fin = !!(p.proc?.last && DONE_STEP.test(p.proc.last.p) && !p.proc.last.open)
+      const stale = !!(p.proc?.last && !fin && idle != null && idle >= 3)
+      return { ...p, base, d, prom, late, revChg, iRev, sRev, grp, idle, fin, stale, trend: ready ? needTrend(p.needPrev, p.need) : '' }
     }).sort((a, b) => String(a.base || '9999').localeCompare(String(b.base || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
   }, [data, ready])
 
@@ -115,6 +161,8 @@ export default function HarnAssyTab() {
     slip: rows.filter(r => r.late).length,
     miss: rows.filter(r => !r.iss && r.grp !== 'rest' && r.grp !== 'fa').length,
     rev: rows.filter(r => r.revChg).length,
+    work: rows.filter(r => r.proc?.last && !r.fin).length,
+    stale: rows.filter(r => r.stale).length,
     fa: rows.filter(r => r.grp === 'fa').length,
   }), [rows])
 
@@ -125,6 +173,8 @@ export default function HarnAssyTab() {
       if (kind === 'hot' && r.grp !== 'hot') return false
       if (kind === 'miss' && r.iss) return false
       if (kind === 'rev' && !r.revChg) return false
+      if (kind === 'work' && !(r.proc?.last && !r.fin)) return false
+      if (kind === 'stale' && !r.stale) return false
       if (kind === 'late' && !r.late) return false
       if (!s) return true
       return [pnOf(r.items?.std_code), r.items?.name, r.po_number].some(v => String(v || '').toLowerCase().includes(s))
@@ -144,8 +194,8 @@ export default function HarnAssyTab() {
 <td class="mono b">${esc(pnOf(r.items?.std_code))}</td><td class="nm">${esc(r.items?.name || '')}</td><td class="c b">${esc(r.sRev)}${r.revChg ? ` <b class="k">재출도 ${esc(r.iRev)}→${esc(r.sRev)}</b>` : ''}</td><td class="r">${leftOf(r)}</td>
 <td class="mono">${esc(r.po_number)} L${esc(N(r.order_line))}-${esc(N(r.del_line) || 1)}</td>
 <td class="b">${md(r.base)}${r.d < 0 ? ` (${-r.d}일 지남)` : ''}${r.trend === 'up' ? ' ▲' : r.trend === 'down' ? ' ▼' : ''}</td>
-<td>${ready ? md(r.prom) + (r.late ? ' <b>▶늦음</b>' : '') : ''}</td><td>${isHot(r) ? '<span class="hot">HOT</span>' : esc(r.plan_exc || '')}${r.material_issued ? ' 불출' : ''}</td></tr>`
-    const body = groups.map(g => `<tr class="gh"><td colspan="11">${g.label} <span>${g.list.length}건</span></td></tr>${g.list.map(tr).join('')}`).join('')
+<td>${ready ? md(r.prom) + (r.late ? ' <b>▶늦음</b>' : '') : ''}</td><td>${isHot(r) ? '<span class="hot">HOT</span>' : esc(r.plan_exc || '')}${r.material_issued ? ' 불출' : ''}</td><td>${r.proc?.last ? esc(r.proc.last.p) + (r.proc.last.open ? ' 중' : ' 끝') + (r.stale ? ` <b>멈춤${r.idle}일</b>` : '') : ''}</td></tr>`
+    const body = groups.map(g => `<tr class="gh"><td colspan="12">${g.label} <span>${g.list.length}건</span></td></tr>${g.list.map(tr).join('')}`).join('')
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>하네스 작업 순서표 ${t}</title><style>
 @page{size:A4 landscape;margin:10mm}body{font-family:'Malgun Gothic',Arial,sans-serif;color:#000;margin:0}
 .top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #000;padding-bottom:4px}h1{margin:0;font-size:20px}
@@ -159,7 +209,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
 <div class="top"><div><div style="font-size:10px">JINSUNTECH · AXCELIS 하네스</div><h1>작업 순서표</h1></div>
 <div class="meta">기준 : ${t} · ${ready ? 'need date' : 'promise date (need date 저장 전)'} 기준<br>정렬 : HOT → 지남 → 7일 → 14일 (각 날짜 순)${range === 'all' ? ' → 그 뒤' : ''}</div></div>
 <div class="sum"><div class="inv">HOT<b>${kpi.hot}</b></div><div>지남<b>${kpi.late}</b></div><div>7일 이내<b>${kpi.w1}</b></div>${ready ? `<div>promise가 need보다 늦음<b>${kpi.slip}</b></div>` : ''}<div>미출도<b>${kpi.miss}</b></div><div>REV 바뀜<b>${kpi.rev}</b></div></div>
-<table><thead><tr><th>✔</th><th>순</th><th>출도</th><th>품번</th><th>품명</th><th>SRev</th><th class="r">수량</th><th>PO</th><th>${ready ? 'need date' : 'promise'}</th><th>${ready ? 'promise' : ''}</th><th>구분</th></tr></thead>
+<table><thead><tr><th>✔</th><th>순</th><th>출도</th><th>품번</th><th>품명</th><th>SRev</th><th class="r">수량</th><th>PO</th><th>${ready ? 'need date' : 'promise'}</th><th>${ready ? 'promise' : ''}</th><th>구분</th><th>공정</th></tr></thead>
 <tbody>${body}</tbody></table>
 <div class="legend">▲ 지난번보다 need 당겨짐 · ▼ 늦춰짐 · <b>▶늦음</b> promise가 need보다 늦음(Axcelis 사전 공유) · <span class="miss">미출도</span> 아직 도면 안 나감 · <b class="k">재출도</b> 출도 뒤 SRev 바뀜 → 작업 중지, 구매자재 연락<br>FA(G 오더) ${kpi.fa}건은 따로 관리 · 못 하는 건 옆에 사유(자재·인력·REV·도면)</div>
 </body></html>`
@@ -190,7 +240,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
           className="w-full sm:w-56 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">{chip(range, '14', setRange, '14일 이내')}{chip(range, 'all', setRange, '전체 진행 중')}</div>
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
-          {chip(kind, 'all', setKind, '전체')}{chip(kind, 'hot', setKind, 'HOT만')}{chip(kind, 'miss', setKind, '미출도만')}{chip(kind, 'rev', setKind, 'REV 바뀜')}
+          {chip(kind, 'all', setKind, '전체')}{chip(kind, 'hot', setKind, 'HOT만')}{chip(kind, 'miss', setKind, '미출도만')}{chip(kind, 'rev', setKind, 'REV 바뀜')}{chip(kind, 'work', setKind, '작업 중')}{chip(kind, 'stale', setKind, '멈춤 3일+')}
           {ready && chip(kind, 'late', setKind, '▶늦음')}
         </div>
         <div className="flex-1" />
@@ -209,11 +259,11 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
 
       <KpiRow cols={6}>
         <KpiCard tone="red" label="HOT" value={kpi.hot} note="최우선 · 오늘 먼저" loading={isLoading} onClick={() => setKind(kind === 'hot' ? 'all' : 'hot')} on={kind === 'hot'} />
-        <KpiCard tone="red" label={ready ? 'need 지남' : '납기 지남'} value={kpi.late} note={`FA(G 오더) ${kpi.fa}건 따로`} loading={isLoading} />
-        <KpiCard tone="amber" label="7일 이내" value={kpi.w1} note="이번 주 끝내야 할 것" loading={isLoading} />
+        <KpiCard tone="red" label={ready ? 'need 지남' : '납기 지남'} value={kpi.late} note={`7일 이내 ${kpi.w1}건 · FA ${kpi.fa}건 따로`} loading={isLoading} />
         <KpiCard tone="amber" label="▶늦음" value={ready ? kpi.slip : '—'} note={ready ? 'promise가 need보다 늦음 · Axcelis 공유' : 'need date 저장 후'} loading={isLoading}
           onClick={ready ? () => setKind(kind === 'late' ? 'all' : 'late') : undefined} on={kind === 'late'} />
         <KpiCard label="미출도" value={kpi.miss} note="14일 안쪽 중 도면 안 나감" loading={isLoading} onClick={() => setKind(kind === 'miss' ? 'all' : 'miss')} on={kind === 'miss'} />
+        <KpiCard tone="blue" label="작업 중" value={kpi.work} note={kpi.stale ? `멈춤 3일+ ${kpi.stale}건` : '공정 QR 찍힌 줄'} loading={isLoading} onClick={() => setKind(kind === 'work' ? 'all' : 'work')} on={kind === 'work'} />
         <KpiCard tone="red" label="REV 바뀜" value={kpi.rev} note="출도 뒤 SRev 변경 · 재출도" loading={isLoading} onClick={() => setKind(kind === 'rev' ? 'all' : 'rev')} on={kind === 'rev'} />
       </KpiRow>
 
@@ -228,7 +278,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
               <th className="px-2 py-2 text-center">순</th><th className="px-2 py-2 text-left">출도</th><th className="px-2 py-2 text-left">품번 · 품명</th>
               <th className="px-2 py-2 text-center">SRev</th><th className="px-2 py-2 text-right">수량</th><th className="px-2 py-2 text-left">PO</th>
               <th className="px-2 py-2 text-left">{ready ? 'need date' : 'promise (need 저장 전)'}</th>{ready && <th className="px-2 py-2 text-left">promise</th>}
-              <th className="px-2 py-2 text-left">구분</th><th className="px-2 py-2 text-center">불출</th>
+              <th className="px-2 py-2 text-left">구분</th><th className="px-2 py-2 text-center">불출</th><th className="px-2 py-2 text-left">공정 (QR)</th>
             </tr>
           </thead>
           <tbody>
@@ -236,7 +286,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
               const fold = g.key === 'fa' && !faOpen
               return [
                 <tr key={g.key} data-harn-group={g.key}>
-                  <td colSpan={ready ? 10 : 9} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
+                  <td colSpan={ready ? 11 : 10} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
                     {g.label} <span className="font-normal text-slate-400 ml-1">{g.list.length}건{g.key === 'fa' ? (faOpen ? ' ▾ 접기' : ' ▸ 펼치기') : ''}</span>
                   </td>
                 </tr>,
@@ -259,6 +309,15 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                     {ready && <td className={`px-2 py-1.5 whitespace-nowrap ${r.late ? 'text-amber-600 font-bold' : 'text-slate-600'}`}>{md(r.prom) || '—'}{r.late ? ' ▶늦음' : ''}</td>}
                     <td className="px-2 py-1.5">{r.plan_exc ? <PlanBadge plan={r.plan_exc} since={false} /> : ''}</td>
                     <td className="px-2 py-1.5 text-center">{r.material_issued ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold">불출</span> : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1.5" data-harn-proc>{r.proc?.steps?.length ? (
+                      <div>
+                        <div className="flex flex-wrap gap-1">{r.proc.steps.map(st => {
+                          const cur = r.proc.last?.open && r.proc.last.p === st.p
+                          return <span key={st.p} className={`px-1.5 py-0.5 rounded border text-[10.5px] font-bold ${cur ? 'bg-indigo-600 border-indigo-600 text-white' : st.done ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-400'}`}>{st.done && !cur ? '✓' : ''}{st.p}</span>
+                        })}</div>
+                        <div className="text-[10.5px] text-slate-400 mt-0.5 whitespace-nowrap">{r.proc.last.p} {r.proc.last.open ? '진행 중' : '끝'} · {hm(r.proc.last.at)}{r.proc.last.who ? ` · ${r.proc.last.who}` : ''}
+                          {r.stale && <b data-harn-stale className="text-amber-600"> · 멈춤 {r.idle}일</b>}{r.fin && <b className="text-emerald-600"> → 납품 대기</b>}</div>
+                      </div>) : <span className="text-slate-300">—</span>}</td>
                   </tr>
                 ))),
               ]
@@ -267,7 +326,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         </table>
         )}
       </div>
-      <p className="mt-2 text-[11px] text-slate-400">보기 전용 — 출도 · 불출은 「하네스 출도」에서 합니다. 출도일 · REV 는 하네스 공정관리 출도 기록을 읽습니다.</p>
+      <p className="mt-2 text-[11px] text-slate-400">보기 전용 — 출도 · 불출은 「하네스 출도」에서 합니다. 출도일 · REV · 공정은 하네스 공정관리 기록(출도 · QR 스캔)을 PO · 라인으로 맞춰 읽습니다 — PO 없이 찍힌 스캔은 안 붙습니다.</p>
     </div>
   )
 }
