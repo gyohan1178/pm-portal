@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.238.0'
+export const APP_VERSION = 'v4.239.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,16 @@ export const APP_VERSION = 'v4.238.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.239.0',
+    date: '2026-11-24',
+    changes: [
+      'ASSY 출고 「🏷 부족 라벨」 — 출고수량보다 재고가 모자란 전장 품목만, 수량 = 부족분으로 라벨 출력 (일부 부족도 · NEED 필요 / OUT 나간 수 · SHORT 표시)',
+      'ASSY 출고 — 출고 처리 뒤 결과 줄에서 출고 직전 재고 기준 부족 라벨을 다시 뽑을 수 있음 (부족 제외 출고면 전량을 부족분으로)',
+      '라벨 맨 앞 1장 상위품번 라벨 — 상위품번 · REV · 품명 · 대수 · PO · 날짜 · 품목 수 (ASSY ISSUE / SHORT LIST)',
+      'ASSY 출고 — 출고수량 밑에 재고 · 부족 표시',
+    ],
+  },
   {
     version: 'v4.238.0',
     date: '2026-11-23',

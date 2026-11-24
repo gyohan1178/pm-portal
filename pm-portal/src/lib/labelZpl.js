@@ -42,6 +42,10 @@ const LOC_X = X1 - LOC_W
 // 수량은 '10 EA' 정도로 짧다. 제조사 줄 옆 좁은 자리로 옮긴다.
 const QTY_W = mm(17)
 const QTY_X = X1 - QTY_W
+// 부족 표시 — NO 박스 오른쪽 (LOC 박스와 사이 빈 자리)
+const SHORT_X = X0 + NO_W + mm(1.5)
+const SHORT_W = mm(14)
+const fmtN = (v) => { const n = Number(v) || 0; return Number.isInteger(n) ? String(n) : String(Math.round(n * 100) / 100) }
 const MK_W = UW - QTY_W - mm(3)   // 제조사 영역 — 수량과 안 겹치게 (여유 3mm)
 
 // ── 세로 ──
@@ -68,6 +72,7 @@ export function labelZpl(row) {
   // ^A0N 글꼴은 폭이 높이의 약 0.55배다. 가운데 정렬에 쓴다.
   const locW = Math.round(loc.length * mm(4.0) * 0.55)
   const isAlt = !!row.isAlt          // 비고로 지정한 대체품
+  const short = row.short || null    // 부족 라벨 (v4.239.0) — { need, out }
 
   // 글자가 길면 폰트를 줄여 잘리지 않게 한다 (15자까지는 그대로, 최소 55%)
   // 글자가 길면 크기를 줄여 넣는다.
@@ -89,6 +94,12 @@ export function labelZpl(row) {
     // LOC 박스 (검정) — 첫 줄 우측. 창고에서 가장 먼저 보는 값이다.
     `^FO${LOC_X},${ROW1_Y}^GB${LOC_W},${LOC_H},${LOC_H}^FS`,
     `^FO${LOC_X + Math.max(0, Math.round((LOC_W - locW) / 2))},${ROW1_Y + mm(1.1)}^FR^A0N,${mm(4.0)},${mm(4.0)}^FD${loc}^FS`,
+
+    // 부족 라벨 — NO 와 LOC 사이 검정 「SHORT」 (v4.239.0)
+    ...(short ? [
+      `^FO${SHORT_X},${ROW1_Y}^GB${SHORT_W},${NO_H},${NO_H}^FS`,
+      `^FO${SHORT_X},${ROW1_Y + mm(1.5)}^FR^A0N,${mm(3.2)},${mm(3.2)}^FB${SHORT_W},1,0,C^FDSHORT^FS`,
+    ] : []),
 
     // 2줄 — 품번. 한 줄 전체를 써서 길어도 겹치지 않는다
     `^FO${X0},${PN_Y}^A0N,${mm(5.0)},${mm(5.0)}^FB${UW},1,0,L^FD${pn}^FS`,
@@ -128,6 +139,13 @@ export function labelZpl(row) {
     out.push(`^FO${X0},${ALT_Y - mm(0.8)}^GB${UW},1,1^FS`, `^FO${X0},${ALT_Y}^A0N,${fs},${fs}^FB${UW},1,0,L^FD${t}^FS`)
   }
 
+  // 부족 라벨 — 수량 아래 「NEED 10 / OUT 4」 (필요 · 출고 직전 재고로 나간 수)
+  if (short) {
+    const t = `NEED ${fmtN(short.need)} / OUT ${fmtN(short.out)}`
+    const fs = mm(Math.min(2.4, 17 / (t.length * 0.55)))
+    out.push(`^FO${QTY_X - mm(6)},${DIV_Y + mm(7.4)}^A0N,${fs},${fs}^FB${QTY_W + mm(6)},1,0,R^FD${t}^FS`)
+  }
+
   // 수량 — 제조사 줄 오른쪽. 짧아서 좁은 자리로 충분하다.
   out.push(
     `^FO${QTY_X},${QTY_Y}^A0N,${mm(4.4)},${mm(4.4)}^FB${QTY_W},1,0,R^FD${qty} EA${part ? ` (${part})` : ''}^FS`,
@@ -136,6 +154,38 @@ export function labelZpl(row) {
   return out.join('')
 }
 
+/**
+ * 상위품번 라벨 (v4.239.0) — 라벨 묶음 맨 앞 1장. 어느 ASSY 묶음인지 구분용
+ * h = { head: true, title, code, rev, name, units, po, date, items, range }
+ *   title: 'ASSY ISSUE' | 'SHORT LIST' · 라벨 글꼴에 한글이 없을 수 있어 영문만 찍는다
+ */
+export function headerLabelZpl(h) {
+  const bar = mm(7)
+  const code = raw([h.code, h.rev].filter(Boolean).join(' '))
+  // 글자가 한 줄 폭을 넘지 않게 — ^A0 글꼴 폭 ≈ 높이 × 0.55 (여유 0.6)
+  const fitW = (n, base, min) => mm(Math.max(min, Math.min(base, (LABEL_W - M_LEFT - M_RIGHT) / (Math.max(1, n) * 0.6))))
+  const cs = fitW(code.length, 5.4, 3.2)
+  const name = raw(h.name).replace(/[^\x20-\x7E]/g, '').trim()
+  const ns = fitW(name.length, 2.8, 1.6)
+  const LY = Y0 + mm(19.6)
+  const half = Math.round(UW / 2)
+  const cell = (x, y, t) => `^FO${x},${y}^A0N,${mm(2.8)},${mm(2.8)}^FB${half},1,0,L^FD${esc(t)}^FS`
+  return [
+    '^XA', '^CI28', `^PW${W}`, `^LL${H}`, '^LH0,0',
+    `^FO${X0},${Y0}^GB${UW},${bar},${bar}^FS`,
+    `^FO${X0 + mm(1.5)},${Y0 + mm(1.5)}^FR^A0N,${mm(4.2)},${mm(4.2)}^FD${esc(h.title)}^FS`,
+    `^FO${X0},${Y0 + mm(1.5)}^FR^A0N,${mm(4.2)},${mm(4.2)}^FB${UW - mm(1.5)},1,0,R^FD${esc(h.date)}^FS`,
+    `^FO${X0},${Y0 + mm(8.4)}^A0N,${cs},${cs}^FB${UW},1,0,L^FD${esc(code)}^FS`,
+    `^FO${X0},${Y0 + mm(15.2)}^A0N,${ns},${ns}^FB${UW},1,0,L^FD${esc(name)}^FS`,
+    `^FO${X0},${LY}^GB${UW},2,3^FS`,
+    cell(X0, LY + mm(1.4), `QTY ${fmtN(h.units)} SET`),
+    cell(X0 + half, LY + mm(1.4), h.po ? `PO ${h.po}` : ' '),
+    cell(X0, LY + mm(5.0), h.items),
+    cell(X0 + half, LY + mm(5.0), h.range),
+    '^XZ',
+  ].join('')
+}
+
 export function buildLabelZpl(rows) {
-  return rows.map((r, i) => labelZpl({ ...r, no: r.no ?? (i + 1) })).join('')
+  return rows.map((r, i) => (r.head ? headerLabelZpl(r) : labelZpl({ ...r, no: r.no ?? (i + 1) }))).join('')
 }

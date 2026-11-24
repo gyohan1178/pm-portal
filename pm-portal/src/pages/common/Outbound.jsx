@@ -76,6 +76,16 @@ export async function callOutboundRpc(base, extra) {
   return data
 }
 
+// 재고 수량 맵 { item_id: qty } — 오류를 삼키지 않는다
+async function readStock(ids) {
+  if (!ids.length) return {}
+  const { data, error } = await invIn('item_id,qty', ids)
+  if (error) throw error
+  const m = {}
+  ;(data || []).forEach(r => { m[r.item_id] = Number(r.qty) || 0 })
+  return m
+}
+
 export default function Outbound() {
   const qc = useQueryClient()
   const compact = useCompact()
@@ -280,6 +290,45 @@ export default function Outbound() {
     return { labels: out, capped }
   }
 
+  // ── 부족 라벨 (v4.239.0) — 출고수량보다 재고가 모자란 전장 품목만, 수량 = 부족분 ──
+  //   일부 부족(10개 중 4개만 있음)도 잡는다 → 6 EA · NEED 10 / OUT 4
+  const labelTarget = (r) => mtOf(r.item_id) === 'normal' && String(r.location || '').trim() !== '라벨' && Number(outQtys[r.item_id] || 0) > 0
+  function shortRows(stock) {
+    const noMap = sheetNo
+    // 보기 · 검색 조건과 상관없이 BOM 전체에서 (출고는 전체가 나간다)
+    return outOrder.filter(labelTarget).map((r) => {
+      const need = Number(outQtys[r.item_id] || 0)
+      const have = Math.max(0, Number(stock?.[r.item_id]) || 0)
+      const out = Math.min(need, have)
+      const short = Math.round((need - out) * 10000) / 10000
+      return short > 0 ? { ...r, qty: short, labelQty: short, part: '', no: noMap.get(r.item_id), alts: altFor(r)?.text || '', short: { need, out } } : null
+    }).filter(Boolean)
+  }
+  // 상위품번 라벨 — 맨 앞 1장
+  function headLabel(title, items, count) {
+    const d = new Date()
+    return {
+      head: true, title, std_code: `상위 ${curProj?.code || ''}`, location: '',
+      code: curProj?.code || '', rev: verObj ? `REV ${verObj.rev}` : (curProj?.rev ? String(curProj.rev).trim().toUpperCase() : ''),
+      name: curProj?.name || '', units: outUnits, po: selCPO?.po_number || '',
+      date: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`,
+      items, range: count ? `LABELS 2-${count + 1}` : ' ',
+    }
+  }
+  // 출고 처리 뒤 — 출고 직전 재고로 계산한 부족 목록 (재고가 줄어서 다시 계산하면 틀어진다)
+  const [lastShort, setLastShort] = useState(null)
+  async function printShortLabels(saved) {
+    let rows = saved
+    if (!rows) {
+      try { rows = shortRows(await readStock(outItemIds)) }   // 누를 때 재고를 다시 읽는다
+      catch (e) { toastError('재고 읽기 실패: ' + e.message); return }
+    }
+    if (!rows.length) { toastError('부족한 품목이 없습니다 (전장 · 출고수량 입력 품목 기준)'); return }
+    const labels = [headLabel('SHORT LIST', `SHORT ${rows.length}`, rows.length), ...rows]
+    setLabelConfirm({ title: '🏷 부족 라벨', labels, itemCount: rows.length, labelCount: labels.length, eachCount: 0, eachItems: [], skipped: 0,
+      note: '맨 앞 1장은 상위품번 라벨 · 수량 = 부족분 (출고수량 − 재고)' })
+  }
+
   function printOutLabels() {
     // 전장(normal)만 + 위치'라벨' 제외 + 미출력(none) 제외 + 수량 입력된 것만
     // ★ 라벨 NO 는 화면 목록(outItems)의 순번과 일치해야 현장에서 불출표와 대조된다.
@@ -306,10 +355,12 @@ export default function Outbound() {
       const pack = Number(packQtyOf(r)) || 0
       return labelModeOf(r) === 'each' && pack > 0 && Number(r.qty) > pack
     })
+    const all = [headLabel('ASSY ISSUE', `ITEMS ${rows.length}`, labels.length), ...labels]
     setLabelConfirm({
-      labels,
+      labels: all,
+      note: '맨 앞 1장은 상위품번 라벨',
       itemCount: rows.length,
-      labelCount: labels.length,
+      labelCount: all.length,
       eachCount: labels.filter(l => l.part).length,
       eachItems: eachRows.map(r => {
         const pack = Number(packQtyOf(r))
@@ -326,7 +377,7 @@ export default function Outbound() {
     if (!BP) { toastError('Zebra Browser Print가 설치/실행되어 있지 않습니다.'); return }
     BP.getDefaultDevice('printer', (device) => {
       if (!device) { toastError('기본 프린터를 찾을 수 없습니다. Browser Print에서 ZM400을 등록하세요.'); return }
-      device.send(zpl, () => toastSuccess(`전장 라벨 ${labels.length}장 전송`), (err) => toastError('라벨 전송 실패: ' + err))
+      device.send(zpl, () => toastSuccess(`라벨 ${labels.length}장 전송`), (err) => toastError('라벨 전송 실패: ' + err))
     }, (err) => toastError('프린터 연결 실패: ' + err))
   }
 
@@ -345,6 +396,11 @@ export default function Outbound() {
         if (qty > 0 && mtOf(b.item_id) === 'normal')   // 정상만 재고 차감 (하네스·제외 제외)
           lines.push({ item_id: b.item_id, name: b.items?.name || '', qty })
       }
+      // 부족 라벨용 — 출고 직전 재고로 부족 품목을 떠 둔다 (v4.239.0) · 실패해도 출고는 진행
+      let shortSnap = null
+      try { shortSnap = shortRows(await readStock(outItemIds)) } catch { shortSnap = null }
+      // 「부족 제외 출고」는 모자란 품목을 통째로 안 뺀다 → 전량이 부족분 (OUT 0)
+      if (shortSnap && mode === 'skip') shortSnap = shortSnap.map(r => ({ ...r, qty: r.short.need, labelQty: r.short.need, short: { need: r.short.need, out: 0 } }))
       // 되돌리기용 — 출고 전 이 품목들의 최근 출고 줄 (v4.58.0)
       const itemIds = lines.map(l => l.item_id)
       const before = lines.length ? await moveRows({ type: '출고', itemIds, since: sinceYesterday() }).catch(swallow('출고 · 되돌리기용 이전 기록 떠 두기')) : null
@@ -354,10 +410,12 @@ export default function Outbound() {
       if (!res?.aborted && before) {
         try { res._moveIds = pickNew(before, await moveRows({ type: '출고', itemIds, since: sinceYesterday() }), lines.map(l => ({ item_id: l.item_id, qty: l.qty }))) } catch { /* 되돌리기만 못 한다 */ }
       }
+      if (res && typeof res === 'object') res._short = shortSnap
       return res
     },
     onSuccess: (res) => {
       if (res?.aborted) { setStockWarning({ errors: res.warnings||[] }); return }
+      setLastShort(res?._short?.length ? res._short : null)
       const w = res?.warnings||[]
       setStockWarning(null)
       if (res?._moveIds?.length) remember(`ASSY 출고 ${res._moveIds.length}품목`, async () => { const x = await undoMoves(res._moveIds); return `출고 ${x.cnt}줄을 되돌렸습니다${x.snap_id ? ` (복구 기록 #${x.snap_id})` : ''}` },
@@ -366,6 +424,7 @@ export default function Outbound() {
       setOutQtys({}); setNote('')
       qc.invalidateQueries(['inventory'])
       qc.invalidateQueries(['outboundHistory'])
+      qc.invalidateQueries({ queryKey: ['outStockMeta'], exact: false })
     },
     onError: (e) => { if (e.message !== '__READONLY__') toastError('오류: ' + e.message) },
   })
@@ -404,6 +463,13 @@ export default function Outbound() {
       ;(inv||[]).forEach(r => { if (r.location) m[r.item_id] = r.location })
       return m
     },
+  })
+  // 재고 수량 (v4.239.0) — 부족 표시 · 부족 라벨용. 묶음 품번은 대표 품번 재고
+  const { data: stockMeta = {}, isSuccess: stockReady } = useQuery({
+    queryKey: ['outStockMeta', outItemIds.join(',')],
+    enabled: outItemIds.length > 0,
+    staleTime: 30 * 1000,
+    queryFn: () => readStock(outItemIds),
   })
   // 실사 때 센 칸 (v4.154.0) — 품목 위치가 비어 있으면 가장 최근 실사 칸을 보여 준다 (누르면 품목 위치로 저장)
   //   실사(칸 순환 실사 · 예전 실사)는 실사 기록(pm_stock_audit)에만 칸이 남고 품목 위치(inventory.location)는 안 바뀐다
@@ -520,6 +586,9 @@ export default function Outbound() {
     if (m) rows = rows.filter(o => m([o.std_code, o.name, o.maker, o.makerPn, o.location, o.cat, noteOf(o.item_id)]))
     return rows
   }, [outOrder, makerFilter, view, dBomQ, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
+  // 부족 품목 수 (v4.239.0) — 버튼 표시용 · 지금 읽어 둔 재고 기준
+  const shortCount = useMemo(() => (stockReady ? shortRows(stockMeta).length : 0),
+    [outOrder, outQtys, stockMeta, stockReady, makeTypes])   // eslint-disable-line react-hooks/exhaustive-deps
   const noMakerCount = useMemo(() => outOrder.filter(o=>!o.maker).length, [outOrder])
 
   const round2 = (v) => { const n = Number(v); return isNaN(n) ? "" : Math.round(n * 100) / 100 }
@@ -721,7 +790,11 @@ export default function Outbound() {
           {result && (
             <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs text-emerald-700 font-semibold flex items-center">
               ✅ {result}
-              <button onClick={()=>setResult(null)} className="ml-auto text-emerald-400">✕</button>
+              {lastShort && (
+                <button data-out-shortlast onClick={()=>printShortLabels(lastShort)} title="출고 직전 재고 기준 부족 품목 — 나중에 입고되면 챙길 라벨"
+                  className="ml-3 px-2.5 py-1 rounded bg-rose-50 border border-rose-200 text-rose-600 font-bold hover:bg-rose-100">🏷 부족 라벨 출력 ({lastShort.length})</button>
+              )}
+              <button onClick={()=>{ setResult(null); setLastShort(null) }} className="ml-auto text-emerald-400">✕</button>
             </div>
           )}
 
@@ -751,6 +824,10 @@ export default function Outbound() {
                     <button onClick={printIssueSheet} title="박스 불출표 (정상+하네스표시, 제외 뺌)" className="text-xs font-bold text-white bg-indigo-600 px-2.5 py-1 rounded hover:bg-indigo-700">🖨 박스 불출표</button>
                     <button onClick={exportBoxSheet} data-out-excel title="지금 화면에 보이는 줄 그대로 (보기 · 제조사 · 검색 조건 반영) — No · 불출수량은 박스 불출표와 같은 값" className="text-xs font-bold text-slate-600 bg-white border border-slate-200 px-2.5 py-1 rounded hover:bg-slate-50">📥 엑셀</button>
                     <button onClick={printOutLabels} title="전장 자재를 ZM400 라벨로 출력 (수량 입력된 것만, 라벨류·현장재고·하네스 제외)" className="text-xs font-bold text-white bg-teal-600 px-2.5 py-1 rounded hover:bg-teal-700">🏷 라벨 출력</button>
+                    <button data-out-short onClick={()=>printShortLabels()} disabled={!shortCount}
+                      title="출고수량보다 재고가 모자란 전장 품목만 — 수량 = 부족분 · 맨 앞에 상위품번 라벨 1장"
+                      className={`text-xs font-bold px-2.5 py-1 rounded border ${shortCount ? 'bg-rose-50 border-rose-200 text-rose-600 hover:bg-rose-100' : 'bg-slate-50 border-slate-200 text-slate-400'}`}>
+                      {shortCount ? `🏷 부족 라벨 ${shortCount}` : '부족 없음'}</button>
                     <span className="inline-flex items-center gap-1 text-xs">
                       <input type="number" min={1} value={harnessUnits} onChange={e=>setHarnessUnits(Number(e.target.value)||1)}
                         className="w-12 px-1 py-1 border border-slate-200 rounded text-right" title="하네스 불출 대수" />대
@@ -888,6 +965,13 @@ export default function Outbound() {
                               value={mt==='normal' ? (outQtys[item.item_id]??'') : ''}
                               onChange={e=>setOutQtys(prev=>({...prev,[item.item_id]:e.target.value}))}
                               className="w-16 px-1.5 py-1 text-xs border border-slate-200 rounded text-right focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:bg-slate-100"/>
+                            {mt==='normal' && stockReady && (() => {
+                              const st = Number(stockMeta[item.item_id]) || 0
+                              const need = Number(outQtys[item.item_id] || 0)
+                              const sh = need - Math.max(0, st)
+                              return <div data-out-stock className={`text-[10.5px] mt-0.5 whitespace-nowrap ${sh > 0 ? (st > 0 ? 'text-amber-600 font-bold' : 'text-rose-600 font-bold') : 'text-slate-400'}`}>
+                                재고 {st.toLocaleString('ko-KR')}{sh > 0 ? `·부족 ${Math.round(sh * 100) / 100}` : ''}</div>
+                            })()}
                           </td>
                           <td className="px-2 py-2">
                             <select value={mt} onChange={e=>saveMakeType([item.item_id], e.target.value)}
@@ -964,7 +1048,8 @@ function LabelConfirmModal({ data, onCancel, onPrint }) {
   return (
     <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md p-5 max-h-[88vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-        <h3 className="text-base font-bold text-slate-800 mb-3">🏷 라벨 출력</h3>
+        <h3 className="text-base font-bold text-slate-800 mb-3">{data.title || '🏷 라벨 출력'}</h3>
+        {data.note && <p className="text-[11px] text-slate-400 -mt-2 mb-3">{data.note}</p>}
         <div className="space-y-2 text-sm">
           <div className="flex justify-between"><span className="text-slate-500">품목</span><span className="font-bold">{data.itemCount}건</span></div>
           <div className="flex justify-between items-center">
@@ -1019,8 +1104,9 @@ function LabelConfirmModal({ data, onCancel, onPrint }) {
                     className={`px-2.5 py-1.5 flex items-center gap-2 text-[11px] ${
                       on ? '' : 'opacity-35'}`}>
                     <span className="w-6 text-right font-bold text-slate-400">{n}</span>
-                    <span className="font-mono text-slate-700 flex-1 truncate">{l.std_code}</span>
+                    <span className={`font-mono flex-1 truncate ${l.head ? 'font-bold text-indigo-600' : 'text-slate-700'}`}>{l.std_code}</span>
                     {l.part && <span className="text-amber-600">{l.part}</span>}
+                    {l.short && <span className="text-rose-600 font-bold">{l.labelQty}</span>}
                     <span className="text-slate-400">{l.location || '-'}</span>
                   </div>
                 )
