@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.248.0'
+export const APP_VERSION = 'v4.248.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.248.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.248.1',
+    date: '2026-11-25',
+    changes: ['결품 현황 — 입고예정이 이미 지났는데 입고 처리 안 된 발주를 「일정 OK」로 보이던 것 → 「입고 지연 n일 지남」 판정 · 지표 칸 · 재고가 마이너스면 ⚠ 표시(입고 처리 누락 확인)'],
+  },
   {
     version: 'v4.248.0',
     date: '2026-11-25',

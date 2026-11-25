@@ -34,11 +34,12 @@ const MP_COLS = [
 ]
 // 판정 (v4.247.0) — 급한 순서
 const VERDICT = {
-  late:  { order: 0, label: '⚠ 생산 늦음', cls: 'bg-rose-50 text-rose-600' },
-  nopo:  { order: 1, label: '발주 없음', cls: 'bg-rose-50 text-rose-600' },
-  tbd:   { order: 2, label: '입고일 미정', cls: 'bg-amber-50 text-amber-700' },
-  ok:    { order: 3, label: '일정 OK', cls: 'bg-emerald-50 text-emerald-700' },
-  ready: { order: 4, label: '재불출 가능', cls: 'bg-green-100 text-green-700 border border-green-300' },
+  late:    { order: 0, label: '⚠ 생산 늦음', cls: 'bg-rose-50 text-rose-600' },
+  overdue: { order: 1, label: '입고 지연', cls: 'bg-orange-50 text-orange-700' },   // 입고예정이 지났는데 아직 입고 처리 안 됨 (v4.248.1)
+  nopo:    { order: 2, label: '발주 없음', cls: 'bg-rose-50 text-rose-600' },
+  tbd:     { order: 3, label: '입고일 미정', cls: 'bg-amber-50 text-amber-700' },
+  ok:      { order: 4, label: '일정 OK', cls: 'bg-emerald-50 text-emerald-700' },
+  ready:   { order: 5, label: '재불출 가능', cls: 'bg-green-100 text-green-700 border border-green-300' },
 }
 const CS_LABEL = { AX: 'AXCELIS', ED: 'Edwards', VM: 'VM', CSK: 'CSK' }
 const DAY = 86400000
@@ -150,7 +151,8 @@ export function allocate(rows, pos) {
       } else {
         r.eta = poUsed.map((u) => ymd(u.po.promise_date)).sort().at(-1)
         r.gap = due ? days(due, r.eta) : null
-        r.verdict = r.gap != null && r.gap < 0 ? 'late' : 'ok'
+        r.verdict = r.gap != null && r.gap < 0 ? 'late' : r.eta < t ? 'overdue' : 'ok'
+        if (r.verdict === 'overdue') r.overDays = days(t, r.eta)
       }
       r.ready = r.verdict === 'ready'
     }
@@ -375,6 +377,7 @@ export default function MissingParts() {
           <div className="text-[11px] text-slate-400">호기 {hogiCnt}대</div>
         </div>
         {kpi('late', '⚠ 생산 늦음', '입고예정이 납품요청일보다 늦음', 'bg-rose-50 border-rose-200 text-rose-600')}
+        {kpi('overdue', '입고 지연', '입고예정이 지났는데 입고 처리 안 됨', 'bg-orange-50 border-orange-200 text-orange-600')}
         {kpi('nopo', '발주 없음', '재고도 발주도 모자람 → 발주 필요', 'bg-rose-50 border-rose-200 text-rose-600')}
         {kpi('tbd', '입고일 미정', '발주는 나갔는데 입고예정일 없음', 'bg-amber-50 border-amber-200 text-amber-600')}
         {kpi('ok', '일정 OK', '납품요청일 전에 들어옴', 'bg-white border-slate-200 text-emerald-600')}
@@ -431,7 +434,7 @@ export default function MissingParts() {
                     <td className="px-3 py-2 text-[11px] font-bold text-slate-500">{CS_LABEL[g.cs] || g.cs}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{g.hogiN}대</td>
                     <td className="px-3 py-2 text-right tabular-nums font-bold">{g.need}</td>
-                    <td className={`px-3 py-2 text-right tabular-nums ${g.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`}>{g.stock}</td>
+                    <td className={`px-3 py-2 text-right tabular-nums ${g.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`} title={g.stock < 0 ? '재고가 마이너스 — 입고 처리 누락 확인' : undefined}>{g.stock}{g.stock < 0 && <span className="ml-0.5 text-[10px] font-bold">⚠ 입고 누락?</span>}</td>
                     <td className="px-3 py-2 whitespace-nowrap">{p0 ? <><span className="font-mono text-slate-700">{p0.po_number}</span>{g.pos.length > 1 && <span className="text-slate-400"> 외 {g.pos.length - 1}</span>} <span className="text-[11px] text-slate-400">{md(p0.order_date) || '—'} · {p0.vendors?.name || '—'} · 잔량 {p0.left}</span></> : <span className="text-slate-300">—</span>}</td>
                     <td className="px-3 py-2 tabular-nums">{g.eta ? md(g.eta) : g.vc.tbd ? <span className="text-amber-600">미정</span> : <span className="text-slate-300">—</span>}</td>
                     <td className="px-3 py-2 tabular-nums">{g.due ? md(g.due) : '—'}</td>
@@ -455,7 +458,7 @@ export default function MissingParts() {
                         <td className="px-3 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">{p ? `${p.po_number} 몫 ${p.q}` : r.verdict === 'nopo' ? `부족 ${r.short}` : '—'}</td>
                         <td className={`px-3 py-1.5 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? '미정' : '—'}</td>
                         <td className="px-3 py-1.5 tabular-nums text-slate-600">{ymd(r.reqDate) ? md(r.reqDate) : '—'}</td>
-                        <td className="px-3 py-1.5 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${rv.cls || ''}`}>{rv.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : ''}</span></td>
+                        <td className="px-3 py-1.5 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${rv.cls || ''}`}>{rv.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : r.verdict === 'overdue' ? ` · ${r.overDays}일 지남` : ''}</span></td>
                         <td></td>
                       </tr>)
                   }) : []),
@@ -479,7 +482,7 @@ export default function MissingParts() {
                   <td className="px-3 py-2 tabular-nums text-slate-600">{ymd(r.reqDate) ? md(r.reqDate) : <span className="text-slate-300">—</span>}</td>
                   <td className="px-3 py-2 overflow-hidden truncate" title={r.name}><ItemLink code={r.std_code} className="font-mono font-semibold text-slate-700" /> <span className="text-slate-500">{r.name}</span></td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold">{r.need}</td>
-                  <td className={`px-3 py-2 text-right tabular-nums ${r.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`}>{r.stock}</td>
+                  <td className={`px-3 py-2 text-right tabular-nums ${r.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`} title={r.stock < 0 ? '재고가 마이너스 — 출고가 입고보다 많습니다. 들어온 자재의 입고 처리가 빠졌는지 확인하세요' : undefined}>{r.stock}{r.stock < 0 && <span className="ml-0.5 text-[10px] font-bold" data-mp-neg>⚠</span>}</td>
                   <td className="px-3 py-2 overflow-hidden" data-mp-po>{p ? (
                     <div className="truncate" title={(r.poUsed || []).map((x) => `${x.po_number} · 발주 ${ymd(x.order_date) || '-'} · ${x.vendors?.name || ''} · 이 호기 몫 ${x.q} / 잔량 ${x.left}`).join('\n')}>
                       <span className="font-mono text-slate-700">{p.po_number}</span>{r.poUsed.length > 1 && <span className="text-slate-400"> 외 {r.poUsed.length - 1}</span>}
@@ -487,7 +490,7 @@ export default function MissingParts() {
                     </div>) : <span className="text-slate-300">{r.verdict === 'nopo' ? `— 부족 ${r.short}` : '—'}</span>}</td>
                   <td className={`px-3 py-2 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? <span className="text-amber-600">미정</span> : <span className="text-slate-300">—</span>}</td>
                   <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${v.cls || ''}`}>
-                    {v.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : ''}</span></td>
+                    {v.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : r.verdict === 'overdue' ? ` · ${r.overDays}일 지남` : ''}</span></td>
                 </tr>
               )})}
             </tbody>
