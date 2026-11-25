@@ -8,6 +8,7 @@ import { missKey, clearMissing } from '../../lib/missingBulk'
 import { moveRows, pickNew, undoMoves, sinceYesterday } from '../../lib/undoMove'
 import { useUndo } from '../../components/UndoBar'
 import { useCanEdit, useMe } from '../../hooks/useProfile'
+import { useRemember } from '../../hooks/useRemember'
 import { toastError, toastSuccess } from '../../lib/toast'
 import { refreshProcurement } from '../../lib/refresh'
 import { supabase } from '../../lib/supabase'
@@ -18,14 +19,30 @@ import { SkeletonRows } from '../../components/ux/Skeleton'
 
 const MP_COLS = [
   { key:'sel',    label:'',          defaultWidth:34, style:{textAlign:'center'} },
-  { key:'cs',     label:'고객사',    defaultWidth:70  },
-  { key:'pn',     label:'품번',      defaultWidth:120 },
-  { key:'hogi',   label:'호기',      defaultWidth:70  },
-  { key:'part',   label:'결품 품목', defaultWidth:220 },
-  { key:'need',   label:'필요',      defaultWidth:70, style:{textAlign:'right'} },
-  { key:'stock',  label:'재고',      defaultWidth:70, style:{textAlign:'right'} },
-  { key:'status', label:'상태',      defaultWidth:100 },
+  { key:'cs',     label:'고객사',    defaultWidth:62  },
+  { key:'pn',     label:'상위품번 · 호기', defaultWidth:150 },
+  { key:'due',    label:'납품요청일', defaultWidth:84 },
+  { key:'part',   label:'결품 부품', defaultWidth:240 },
+  { key:'need',   label:'필요',      defaultWidth:56, style:{textAlign:'right'} },
+  { key:'stock',  label:'재고',      defaultWidth:56, style:{textAlign:'right'} },
+  { key:'po',     label:'발주 (PO · 발주일 · 업체)', defaultWidth:230 },
+  { key:'eta',    label:'입고예정',  defaultWidth:78 },
+  { key:'verdict',label:'판정',      defaultWidth:150 },
 ]
+// 판정 (v4.247.0) — 급한 순서
+const VERDICT = {
+  late:  { order: 0, label: '⚠ 생산 늦음', cls: 'bg-rose-50 text-rose-600' },
+  nopo:  { order: 1, label: '발주 없음', cls: 'bg-rose-50 text-rose-600' },
+  tbd:   { order: 2, label: '입고일 미정', cls: 'bg-amber-50 text-amber-700' },
+  ok:    { order: 3, label: '일정 OK', cls: 'bg-emerald-50 text-emerald-700' },
+  ready: { order: 4, label: '재불출 가능', cls: 'bg-green-100 text-green-700 border border-green-300' },
+}
+const CS_LABEL = { AX: 'AXCELIS', ED: 'Edwards', VM: 'VM', CSK: 'CSK' }
+const DAY = 86400000
+const today = () => new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10)
+const ymd = (d) => (d ? String(d).slice(0, 10) : null)
+const md = (d) => (d ? `${String(d).slice(5, 7)}/${String(d).slice(8, 10)}` : '')
+const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / DAY)
 
 // 미불출 모아보기 (2026-10-08)
 //   · 전 고객사 (예전엔 AXCELIS 만) · 완료된 호기는 뺀다 · 1,000줄에서 잘리지 않게 끝까지 읽는다
@@ -71,10 +88,59 @@ async function fetchMissing() {
     if (error) throw error
     ;(inv || []).forEach(x => { invMap[x.item_id] = (invMap[x.item_id] || 0) + (Number(x.qty) || 0) })
   }
-  return rows.map(r => {
-    const stock = invMap[r.item_id] ?? 0
-    return { ...r, stock, ready: stock >= r.need && r.need > 0 }
-  })
+  // 진행 중 구매 발주 (v4.247.0) — 발주일 · 입고예정 · 업체 · 잔량
+  const pos = {}
+  for (let i = 0; i < ids.length; i += 200) {
+    const part = await fetchAll(() => supabase.from('purchase_orders')
+      .select('id,po_number,item_id,order_date,promise_date,qty_ordered,qty_received,status,vendors(name)')
+      .eq('order_type', 'purchase').not('status', 'in', '(완료,취소)').in('item_id', ids.slice(i, i + 200)).order('id'))
+    for (const po of part) {
+      const left = (Number(po.qty_ordered) || 0) - (Number(po.qty_received) || 0)
+      if (left > 0) (pos[po.item_id] ||= []).push({ ...po, left })
+    }
+  }
+  return allocate(rows.map(r => ({ ...r, stock: invMap[r.item_id] ?? 0 })), pos)
+}
+
+// 같은 부품을 여러 호기가 기다리면 재고 → 발주(입고예정 빠른 순) 를 납품요청일 빠른 호기부터 채운다
+//   재고로 다 채우면 재불출 가능 · 발주로 채우면 그 발주의 입고예정과 납품요청일을 견줘 늦음/OK · 입고예정이 비면 미정 · 모자라면 발주 없음
+export function allocate(rows, pos) {
+  const t = today()
+  const byItem = new Map()
+  rows.forEach((r) => { const k = r.item_id || `?${r.std_code}`; if (!byItem.has(k)) byItem.set(k, []); byItem.get(k).push(r) })
+  for (const [k, list] of byItem) {
+    list.sort((a, b) => String(ymd(a.reqDate) || '9999').localeCompare(String(ymd(b.reqDate) || '9999')) || String(a.pn).localeCompare(String(b.pn)) || String(a.hogi).localeCompare(String(b.hogi), undefined, { numeric: true }))
+    const supply = [{ kind: 'stock', left: Number(list[0].stock) || 0 }]
+    ;(pos[k] || []).slice().sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.order_date || '').localeCompare(String(b.order_date || '')))
+      .forEach((po) => supply.push({ kind: 'po', po, left: po.left }))
+    for (const r of list) {
+      let need = Number(r.need) || 0
+      const used = []
+      for (const s of supply) {
+        if (need <= 0) break
+        if (s.left <= 0) continue
+        const q = Math.min(s.left, need); s.left -= q; need -= q
+        used.push({ ...s, q })
+      }
+      const poUsed = used.filter((u) => u.kind === 'po')
+      r.poUsed = poUsed.map((u) => ({ ...u.po, q: u.q }))
+      r.short = need
+      const due = ymd(r.reqDate)
+      if (need > 0) { r.verdict = 'nopo' }
+      else if (!poUsed.length) { r.verdict = 'ready' }
+      else if (poUsed.some((u) => !u.po.promise_date)) {
+        r.verdict = 'tbd'
+        const od = poUsed.map((u) => ymd(u.po.order_date)).filter(Boolean).sort()[0]
+        r.waitDays = od ? days(t, od) : null
+      } else {
+        r.eta = poUsed.map((u) => ymd(u.po.promise_date)).sort().at(-1)
+        r.gap = due ? days(due, r.eta) : null
+        r.verdict = r.gap != null && r.gap < 0 ? 'late' : 'ok'
+      }
+      r.ready = r.verdict === 'ready'
+    }
+  }
+  return rows
 }
 
 // 재불출 (v4.241.0) — 입고돼 재고가 있는 결품을 체크해 바로 출고(재고 차감) + 그 호기 미불출에서 지운다
@@ -124,6 +190,9 @@ export default function MissingParts() {
   const me = useMe()
   const { remember, bar: undoBar } = useUndo()
   const [sel, setSel] = useState(new Set())
+  const [cs, setCs] = useRemember('missing.cs', 'all')
+  const [vf, setVf] = useState('all')
+  const [q, setQ] = useState('')
   const rid = (r) => `${r.prodId}|${r.mKey}`
   const pickable = (r) => r.ready && r.item_id
   const reMut = useMutation({
@@ -144,58 +213,115 @@ export default function MissingParts() {
   })
   const selCnt = rows.filter((r) => sel.has(rid(r)) && pickable(r)).length
 
-  const sorted = useMemo(() =>
-    [...rows].sort((a, b) => (b.ready - a.ready) || String(a.pn).localeCompare(String(b.pn))), [rows])
-  const readyCnt = rows.filter(r => r.ready).length
-  const hogiCnt = new Set(rows.map(r => r.prodId)).size
+  const csList = useMemo(() => {
+    const c = {}; rows.forEach((r) => { c[r.cs] = (c[r.cs] || 0) + 1 })
+    return Object.entries(c).sort((a, b) => b[1] - a[1])
+  }, [rows])
+  const inCs = useMemo(() => rows.filter((r) => cs === 'all' || r.cs === cs), [rows, cs])
+  const cnt = useMemo(() => { const c = {}; inCs.forEach((r) => { c[r.verdict] = (c[r.verdict] || 0) + 1 }); return c }, [inCs])
+  const sorted = useMemo(() => {
+    const s = q.trim().toLowerCase()
+    return inCs.filter((r) => (vf === 'all' || r.verdict === vf) && (!s || [r.pn, r.hogi, r.std_code, r.name, ...(r.poUsed || []).flatMap((p) => [p.po_number, p.vendors?.name])].some((v) => String(v || '').toLowerCase().includes(s))))
+      .sort((a, b) => (VERDICT[a.verdict]?.order ?? 9) - (VERDICT[b.verdict]?.order ?? 9) || String(ymd(a.reqDate) || '9999').localeCompare(String(ymd(b.reqDate) || '9999')) || String(a.pn).localeCompare(String(b.pn)))
+  }, [inCs, vf, q])
+  const readyCnt = inCs.filter(r => r.ready).length
+  const hogiCnt = new Set(inCs.map(r => r.prodId)).size
+
+  async function exportXlsx() {
+    const XLSX = await import('xlsx')
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['판정', '고객사', '상위품번', '호기', '납품요청일', '결품 부품', '품명', '필요', '재고', '발주번호', '발주일', '업체', '입고예정', '늦음/여유(일)'],
+      ...sorted.map((r) => { const p = r.poUsed?.[0]; return [VERDICT[r.verdict]?.label.replace('⚠ ', '') || '', CS_LABEL[r.cs] || r.cs, r.pn, r.hogi, ymd(r.reqDate) || '', r.std_code, r.name, r.need, r.stock,
+        (r.poUsed || []).map((x) => x.po_number).join(', '), p ? ymd(p.order_date) || '' : '', p?.vendors?.name || '', r.eta || (r.verdict === 'tbd' ? '미정' : ''), r.gap ?? ''] }),
+    ])
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '결품 현황')
+    XLSX.writeFile(wb, `결품현황_${cs === 'all' ? '전체' : (CS_LABEL[cs] || cs)}_${today()}.xlsx`)
+  }
+
+  const kpi = (key, label, note, tone) => (
+    <button key={key} data-mp-kpi={key} onClick={() => setVf(vf === key ? 'all' : key)}
+      className={`flex-1 min-w-[140px] text-left rounded-xl border px-3.5 py-2.5 ${tone} ${vf === key ? 'ring-2 ring-indigo-400' : ''}`}>
+      <div className="text-xs font-semibold text-slate-500">{label}</div>
+      <div className="text-2xl font-extrabold">{(cnt[key] || 0).toLocaleString('ko-KR')}</div>
+      <div className="text-[11px] text-slate-400">{note}</div>
+    </button>
+  )
 
   return (
-    <div className="p-4 max-w-5xl mx-auto space-y-4">
+    <div className="p-4 w-full space-y-3">
       <PageHead crumb="구매" title="결품 현황"
-        desc="불출 못 한 부품 모아보기 (전 고객사 · 완료 호기 제외) · 입고돼 「재불출 가능」인 줄을 체크해 「📤 재불출」하면 재고에서 빼고 그 호기 미불출을 지웁니다" />
+        desc="불출 못 한 부품 — 발주가 언제 나갔고 언제 들어오는지, 호기 납품요청일에 늦는 건 무엇인지 봅니다. 같은 부품을 여러 호기가 기다리면 재고 · 발주를 납품요청일 빠른 호기부터 채워 판정합니다. 「재불출 가능」 줄을 체크해 「📤 재불출」하면 재고에서 빼고 그 호기 미불출을 지웁니다" />
+
+      <div className="flex gap-1 flex-wrap" data-mp-cs>
+        {[['all', rows.length], ...csList].map(([c, n]) => (
+          <button key={c} onClick={() => { setCs(c); setSel(new Set()) }}
+            className={`px-3 py-1.5 text-xs font-bold rounded-full border ${cs === c ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>
+            {c === 'all' ? '전체' : (CS_LABEL[c] || c)} <span className="opacity-60 font-semibold">{n}</span></button>
+        ))}
+      </div>
 
       <div className="flex gap-2 flex-wrap">
-        <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-50 text-red-600">결품 {rows.length}건</span>
-        <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-slate-100 text-slate-500">호기 {hogiCnt}대</span>
-        <span className="text-xs font-semibold px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-700">입고됨 · 재불출 가능 {readyCnt}건</span>
-        {canEdit && readyCnt > 0 && (
-          <span className="ml-auto flex items-center gap-2">
-            <button data-mp-allready onClick={() => setSel(new Set(rows.filter(pickable).map(rid)))} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">재불출 가능 전체 체크</button>
+        <div className="flex-1 min-w-[140px] rounded-xl border border-slate-200 bg-white px-3.5 py-2.5">
+          <div className="text-xs font-semibold text-slate-500">결품</div>
+          <div className="text-2xl font-extrabold">{inCs.length.toLocaleString('ko-KR')}</div>
+          <div className="text-[11px] text-slate-400">호기 {hogiCnt}대</div>
+        </div>
+        {kpi('late', '⚠ 생산 늦음', '입고예정이 납품요청일보다 늦음', 'bg-rose-50 border-rose-200 text-rose-600')}
+        {kpi('nopo', '발주 없음', '재고도 발주도 모자람 → 발주 필요', 'bg-rose-50 border-rose-200 text-rose-600')}
+        {kpi('tbd', '입고일 미정', '발주는 나갔는데 입고예정일 없음', 'bg-amber-50 border-amber-200 text-amber-600')}
+        {kpi('ok', '일정 OK', '납품요청일 전에 들어옴', 'bg-white border-slate-200 text-emerald-600')}
+        {kpi('ready', '재불출 가능', '재고 있음 · 바로 불출', 'bg-emerald-50 border-emerald-200 text-emerald-600')}
+      </div>
+
+      <div className="flex gap-2 flex-wrap items-center">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="상위품번 · 호기 · 부품 · PO · 업체 검색"
+          className="w-full sm:w-72 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        {vf !== 'all' && <button onClick={() => setVf('all')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700">{VERDICT[vf]?.label} 만 보는 중 ✕</button>}
+        <span className="ml-auto flex items-center gap-2">
+          <button data-mp-xlsx onClick={exportXlsx} disabled={!sorted.length} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40">📥 엑셀</button>
+          {canEdit && readyCnt > 0 && <>
+            <button data-mp-allready onClick={() => setSel(new Set(inCs.filter(pickable).map(rid)))} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">재불출 가능 전체 체크</button>
             <button data-mp-reissue onClick={() => reMut.mutate()} disabled={!selCnt || reMut.isPending}
               title="체크한 줄을 재고에서 출고하고 그 호기 미불출에서 지웁니다 (호기마다 한 번씩 · 출고 현황에 「결품 재불출」로 남음)"
               className="text-xs font-bold px-3 py-1.5 rounded-lg bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-40">{reMut.isPending ? '처리 중…' : `📤 재불출${selCnt ? ` ${selCnt}줄` : ''}`}</button>
-          </span>
-        )}
+          </>}
+        </span>
       </div>
       {undoBar}
 
       {error && <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">불러오지 못했습니다 — {error.message}</p>}
       {isLoading ? (
-        <ResizableTable cols={MP_COLS} storageKey="missing_cols2" fill fillMin={360}>
-          {() => <tbody data-mp-loading><SkeletonRows cols={MP_COLS.length} rows={8} two={[3]} /></tbody>}
+        <ResizableTable cols={MP_COLS} storageKey="missing_cols3" fill fillMin={360}>
+          {() => <tbody data-mp-loading><SkeletonRows cols={MP_COLS.length} rows={8} two={[4, 7]} /></tbody>}
         </ResizableTable>
-      ) : rows.length === 0 ? (
-        <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">결품이 없습니다 👍</p></div>
+      ) : sorted.length === 0 ? (
+        <div className="border border-slate-200 rounded-xl"><p className="px-3 py-8 text-center text-sm text-slate-400">{rows.length ? '조건에 맞는 결품이 없습니다' : '결품이 없습니다 👍'}</p></div>
       ) : (
-        <ResizableTable cols={MP_COLS} storageKey="missing_cols2" fill fillMin={360}>
+        <ResizableTable cols={MP_COLS} storageKey="missing_cols3" fill fillMin={360}>
           {() => (
             <tbody>
-              {sorted.map((r, i) => (
-                <tr key={i} className={`border-t border-slate-100 ${r.ready ? 'bg-emerald-50/40' : ''}`}>
+              {sorted.map((r) => {
+                const v = VERDICT[r.verdict] || {}
+                const p = r.poUsed?.[0]
+                return (
+                <tr key={rid(r)} data-mp-row={r.verdict} className={`border-t border-slate-100 ${r.verdict === 'late' || r.verdict === 'nopo' ? 'bg-rose-50/30' : r.ready ? 'bg-emerald-50/40' : ''}`}>
                   <td className="px-2 py-2 text-center">{canEdit && pickable(r) && <input type="checkbox" data-mp-sel checked={sel.has(rid(r))} onChange={() => setSel((v) => { const n = new Set(v); n.has(rid(r)) ? n.delete(rid(r)) : n.add(rid(r)); return n })} />}</td>
-                  <td className="px-3 py-2 text-[11px] font-bold text-slate-500 overflow-hidden truncate">{r.cs}</td>
-                  <td className="px-3 py-2 font-mono text-slate-500 overflow-hidden truncate">{r.pn}</td>
-                  <td className="px-3 py-2 font-mono font-bold text-indigo-600 overflow-hidden truncate">{r.hogi}</td>
-                  <td className="px-3 py-2 overflow-hidden truncate"><ItemLink code={r.std_code} className="font-mono font-semibold text-slate-700" /> <span className="text-slate-500">{r.name}</span></td>
+                  <td className="px-3 py-2 text-[11px] font-bold text-slate-500 overflow-hidden truncate">{CS_LABEL[r.cs] || r.cs}</td>
+                  <td className="px-3 py-2 overflow-hidden truncate"><span className="font-mono text-slate-500">{r.pn}</span> <b className="font-mono text-indigo-600">{r.hogi}</b></td>
+                  <td className="px-3 py-2 tabular-nums text-slate-600">{ymd(r.reqDate) ? md(r.reqDate) : <span className="text-slate-300">—</span>}</td>
+                  <td className="px-3 py-2 overflow-hidden truncate" title={r.name}><ItemLink code={r.std_code} className="font-mono font-semibold text-slate-700" /> <span className="text-slate-500">{r.name}</span></td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold">{r.need}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${r.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`}>{r.stock}</td>
-                  <td className="px-3 py-2">
-                    {r.ready
-                      ? <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700">재불출 가능</span>
-                      : <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700">입고 대기</span>}
-                  </td>
+                  <td className="px-3 py-2 overflow-hidden" data-mp-po>{p ? (
+                    <div className="truncate" title={(r.poUsed || []).map((x) => `${x.po_number} · 발주 ${ymd(x.order_date) || '-'} · ${x.vendors?.name || ''} · 이 호기 몫 ${x.q} / 잔량 ${x.left}`).join('\n')}>
+                      <span className="font-mono text-slate-700">{p.po_number}</span>{r.poUsed.length > 1 && <span className="text-slate-400"> 외 {r.poUsed.length - 1}</span>}
+                      <div className="text-[11px] text-slate-400 truncate">{md(p.order_date) || '발주일 —'} · {p.vendors?.name || '업체 —'} · 잔량 {p.left}</div>
+                    </div>) : <span className="text-slate-300">{r.verdict === 'nopo' ? `— 부족 ${r.short}` : '—'}</span>}</td>
+                  <td className={`px-3 py-2 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? <span className="text-amber-600">미정</span> : <span className="text-slate-300">—</span>}</td>
+                  <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${v.cls || ''}`}>
+                    {v.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : ''}</span></td>
                 </tr>
-              ))}
+              )})}
             </tbody>
           )}
         </ResizableTable>
