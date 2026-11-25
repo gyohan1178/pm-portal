@@ -112,7 +112,7 @@ async function loadHarn() {
   //   전에는 하나씩 차례로 + 150개씩 차례로 읽어 수십 번 왕복 → 10초 넘게 걸렸다
   const byPo = (table, cols) => chunkAll(poNos, 150, (part) => fetchAll(() => supabase.from(table).select(cols).in('po', part).order('id')))
     .then(parts => parts.flat())
-  const [plan, needRes, ho, hh, hl] = await Promise.all([
+  const [plan, needRes, ho, hh, hl, heads] = await Promise.all([
     cpo.length ? fetchPlanByPo(supabase, cpo) : {},
     // need date 칸이 없으면(SQL 전) 여기서 오류 → promise date 로
     cpo.length ? fetchNeedByPo(supabase, cpo).then(v => ({ ready: true, v })).catch(() => ({ ready: false, v: {} })) : needDateReady(supabase).then(r => ({ ready: r, v: {} })),
@@ -120,11 +120,16 @@ async function loadHarn() {
     byPo('harness_qr_history', 'id,po,ord_ln,del_ln,dwg_no,rev,ts,deleted'),
     // 공정 스캔 기록 — 못 읽어도 순서표는 보여 준다
     byPo('harness_logs', 'id,dwg_no,po,ord_ln,del_ln,process,started_at,ended_at,worker').catch(e => { console.warn('공정 기록 읽기 실패', e); return [] }),
+    // PO 접수일 — 수주대장 머리(pm_order.order_date · AXCELIS 엑셀 「Date Placed」) (v4.245.0)
+    chunkAll(poNos, 150, (part) => fetchAll(() => supabase.from('pm_order').select('id,po_no,order_date').eq('customer_code', 'AX').in('po_no', part).order('id')))
+      .then(parts => parts.flat()).catch(e => { console.warn('PO 접수일 읽기 실패', e); return [] }),
   ])
+  const placed = new Map()
+  for (const h of heads) if (h.order_date) { const k = P(h.po_no); if (!placed.has(k) || String(h.order_date) < placed.get(k)) placed.set(k, String(h.order_date).slice(0, 10)) }
   const ready = needRes.ready, need = needRes.v
   const iss = matchIssued(lines, ho, hh)
   const logs = matchLogs(lines, hl)
-  return { ready, rows: lines.map(p => ({ ...p, plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null,
+  return { ready, rows: lines.map(p => ({ ...p, plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null, placed: placed.get(P(p.po_number)) || null,
     need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] || logs[p.id]?.out || (p.material_issued ? { t: '', rev: '', byIssue: true } : null),
     proc: logs[p.id] || null })) }   // 불출했으면 출도는 이미 된 것 (출도 기록이 없어도)
 }
@@ -194,10 +199,10 @@ export default function HarnAssyTab() {
     const t = today()
     const tr = (r) => `<tr><td class="c"><i class="ck"></i></td><td class="c">${r.no}</td><td>${r.iss ? md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도') : '<b class="miss">미출도</b>'}</td>
 <td class="mono b">${esc(pnOf(r.items?.std_code))}</td><td class="nm">${esc(r.items?.name || '')}</td><td class="c b">${esc(r.sRev)}${r.revChg ? ` <b class="k">재출도 ${esc(r.iRev)}→${esc(r.sRev)}</b>` : ''}</td><td class="r">${leftOf(r)}</td>
-<td class="mono">${esc(r.po_number)} L${esc(N(r.order_line))}-${esc(N(r.del_line) || 1)}</td>
+<td class="mono">${esc(r.po_number)} L${esc(N(r.order_line))}-${esc(N(r.del_line) || 1)}</td><td>${r.placed ? md(r.placed) : ''}</td>
 <td class="b">${md(r.base)}${r.d < 0 ? ` (${-r.d}일 지남)` : ''}${r.trend === 'up' ? ' ▲' : r.trend === 'down' ? ' ▼' : ''}</td>
 <td>${ready ? md(r.prom) + (r.late ? ' <b>▶늦음</b>' : '') : ''}</td><td>${isHot(r) ? '<span class="hot">HOT</span>' : esc(r.plan_exc || '')}${r.material_issued ? ' 불출' : ''}</td><td>${r.proc?.last ? esc(r.proc.last.p) + (r.proc.last.open ? ' 중' : ' 끝') + (r.stale ? ` <b>멈춤${r.idle}일</b>` : '') : ''}</td></tr>`
-    const body = groups.map(g => `<tr class="gh"><td colspan="12">${g.label} <span>${g.list.length}건</span></td></tr>${g.list.map(tr).join('')}`).join('')
+    const body = groups.map(g => `<tr class="gh"><td colspan="13">${g.label} <span>${g.list.length}건</span></td></tr>${g.list.map(tr).join('')}`).join('')
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>하네스 작업 순서표 ${t}</title><style>
 @page{size:A4 landscape;margin:10mm}body{font-family:'Malgun Gothic',Arial,sans-serif;color:#000;margin:0}
 .top{display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #000;padding-bottom:4px}h1{margin:0;font-size:20px}
@@ -211,7 +216,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
 <div class="top"><div><div style="font-size:10px">JINSUNTECH · AXCELIS 하네스</div><h1>작업 순서표</h1></div>
 <div class="meta">기준 : ${t} · ${ready ? 'need date' : 'promise date (need date 저장 전)'} 기준<br>정렬 : HOT → 지남 → 7일 → 14일 (각 날짜 순)${range === 'all' ? ' → 그 뒤' : ''}</div></div>
 <div class="sum"><div class="inv">HOT<b>${kpi.hot}</b></div><div>지남<b>${kpi.late}</b></div><div>7일 이내<b>${kpi.w1}</b></div>${ready ? `<div>promise가 need보다 늦음<b>${kpi.slip}</b></div>` : ''}<div>미출도<b>${kpi.miss}</b></div><div>REV 바뀜<b>${kpi.rev}</b></div></div>
-<table><thead><tr><th>✔</th><th>순</th><th>출도</th><th>품번</th><th>품명</th><th>SRev</th><th class="r">수량</th><th>PO</th><th>${ready ? 'need date' : 'promise'}</th><th>${ready ? 'promise' : ''}</th><th>구분</th><th>공정</th></tr></thead>
+<table><thead><tr><th>✔</th><th>순</th><th>출도</th><th>품번</th><th>품명</th><th>SRev</th><th class="r">수량</th><th>PO</th><th>접수</th><th>${ready ? 'need date' : 'promise'}</th><th>${ready ? 'promise' : ''}</th><th>구분</th><th>공정</th></tr></thead>
 <tbody>${body}</tbody></table>
 <div class="legend">▲ 지난번보다 need 당겨짐 · ▼ 늦춰짐 · <b>▶늦음</b> promise가 need보다 늦음(Axcelis 사전 공유) · <span class="miss">미출도</span> 아직 도면 안 나감 · <b class="k">재출도</b> 출도 뒤 SRev 바뀜 → 작업 중지, 구매자재 연락<br>FA(G 오더) ${kpi.fa}건은 따로 관리 · 못 하는 건 옆에 사유(자재·인력·REV·도면)</div>
 </body></html>`
@@ -223,8 +228,8 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
     if (!list.length) { toastError('promise 가 need 보다 늦은 줄이 없습니다'); return }
     const XLSX = await import('xlsx')
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Order Number', 'Order Line', 'Del Line', 'Item', 'Item Desc', 'SRev', 'Qty', 'Need Date', 'Promise Date', 'Days Late', 'Plan Exc', 'Drawing Issued', 'Reason'],
-      ...list.map(r => [r.po_number, N(r.order_line), N(r.del_line), pnOf(r.items?.std_code), r.items?.name || '', r.sRev, leftOf(r), r.need, r.prom,
+      ['Order Number', 'Date Placed', 'Order Line', 'Del Line', 'Item', 'Item Desc', 'SRev', 'Qty', 'Need Date', 'Promise Date', 'Days Late', 'Plan Exc', 'Drawing Issued', 'Reason'],
+      ...list.map(r => [r.po_number, r.placed || '', N(r.order_line), N(r.del_line), pnOf(r.items?.std_code), r.items?.name || '', r.sRev, leftOf(r), r.need, r.prom,
         dd(r.prom, r.need), r.plan_exc || '', r.iss ? 'Y' : 'N', '']),
     ])
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'Delay Forecast')
@@ -278,7 +283,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
           <thead className="bg-slate-50 text-slate-600 sticky top-0">
             <tr>
               <th className="px-2 py-2 text-center">순</th><th className="px-2 py-2 text-left">출도</th><th className="px-2 py-2 text-left">품번 · 품명</th>
-              <th className="px-2 py-2 text-center">SRev</th><th className="px-2 py-2 text-right">수량</th><th className="px-2 py-2 text-left">PO</th>
+              <th className="px-2 py-2 text-center">SRev</th><th className="px-2 py-2 text-right">수량</th><th className="px-2 py-2 text-left">PO</th><th className="px-2 py-2 text-left" title="PO 접수일 — AXCELIS 엑셀 「Date Placed」">접수</th>
               <th className="px-2 py-2 text-left">{ready ? 'need date' : 'promise (need 저장 전)'}</th>{ready && <th className="px-2 py-2 text-left">promise</th>}
               <th className="px-2 py-2 text-left">구분</th><th className="px-2 py-2 text-center">불출</th><th className="px-2 py-2 text-left">공정 (QR)</th>
             </tr>
@@ -288,7 +293,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
               const fold = g.key === 'fa' && !faOpen
               return [
                 <tr key={g.key} data-harn-group={g.key}>
-                  <td colSpan={ready ? 11 : 10} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
+                  <td colSpan={ready ? 12 : 11} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
                     {g.label} <span className="font-normal text-slate-400 ml-1">{g.list.length}건{g.key === 'fa' ? (faOpen ? ' ▾ 접기' : ' ▸ 펼치기') : ''}</span>
                   </td>
                 </tr>,
@@ -303,6 +308,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                       : (r.sRev || '—')}</td>
                     <td className="px-2 py-1.5 text-right font-mono">{leftOf(r).toLocaleString('ko-KR')}</td>
                     <td className="px-2 py-1.5 font-mono whitespace-nowrap">{r.po_number} <span className="text-slate-400">L{N(r.order_line)}-{N(r.del_line) || 1}</span></td>
+                    <td className="px-2 py-1.5 whitespace-nowrap text-slate-500" data-harn-placed>{r.placed ? `${md(r.placed)}${String(r.placed).slice(0, 4) !== today().slice(0, 4) ? ` '${String(r.placed).slice(2, 4)}` : ''}` : '—'}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">
                       <span className={r.d != null && r.d < 0 ? 'text-rose-600 font-bold' : 'text-slate-700'}>{md(r.base) || '—'}{r.d != null && r.d < 0 ? ` · ${-r.d}일 지남` : ''}</span>
                       {r.trend === 'up' && <span className="ml-1 text-rose-600 font-extrabold" title={`지난번 ${md(r.needPrev)} → 당겨짐`}>▲</span>}

@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.244.0'
+export const APP_VERSION = 'v4.245.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,13 @@ export const APP_VERSION = 'v4.244.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.245.0',
+    date: '2026-11-25',
+    changes: [
+      '생산관리 AXCELIS › 🧵 HARN ASSY — 「접수」 칸: PO 접수일(수주대장 발주일 · AXCELIS 엑셀 「Date Placed」), 올해가 아니면 연도도 표시 · 흑백 순서표 · 지연 예상 엑셀에도',
+    ],
+  },
   {
     version: 'v4.244.0',
     date: '2026-11-25',
