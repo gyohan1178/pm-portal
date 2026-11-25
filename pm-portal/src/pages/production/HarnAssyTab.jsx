@@ -12,6 +12,7 @@ import { useMe, useCanEdit } from '../../hooks/useProfile'
 import { fetchNotes, fetchPoChanges, ackState, cellTag, changeText, atText, addNote, setPromise } from '../../lib/poNotes'
 import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import PlanBadge from '../../components/PlanBadge'
+import TopScroll from '../../components/ui/TopScroll'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useRemember } from '../../hooks/useRemember'
 
@@ -348,12 +349,13 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         <KpiCard tone="red" label="REV 바뀜" value={kpi.rev} note="출도 뒤 SRev 변경 · 재출도" loading={isLoading} onClick={() => setKind(kind === 'rev' ? 'all' : 'rev')} on={kind === 'rev'} />
       </KpiRow>
 
-      <div className="mt-3 bg-white border border-slate-200 rounded-xl overflow-auto">
+      {/* 가로 스크롤 막대는 화면 맨 아래에 붙음 (v4.250.1) */}
+      <TopScroll className="mt-3 bg-white border border-slate-200 rounded-xl" data-harn-table>
         {error ? <p className="p-4 text-sm text-rose-600">불러오기 실패: {error.message}</p>
         : isLoading ? <table className="w-full"><tbody><SkeletonRows cols={9} rows={8} two={[2]} /></tbody></table>
         : !grouped.length ? <p className="p-6 text-center text-sm text-slate-400">조건에 맞는 하네스 줄이 없습니다</p>
         : (
-        <table className="w-full text-xs">
+        <table className="w-max min-w-full text-xs">
           <thead className="bg-slate-50 text-slate-600 sticky top-0">
             <tr>
               <th className="px-2 py-2 text-center">순</th><Th k="out">출도</Th><Th k="pn">품번 · 품명</Th><Th k="ccn" title="CCN — K · HUB · B (B = 미국 · 달러)">CCN</Th>
@@ -377,7 +379,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                     <td className="px-2 py-1.5 text-center text-slate-500">{r.no}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{r.iss ? <span className="text-slate-600" title="하네스 공정관리 출도 기록">{md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도')}</span>
                       : <span className="px-1.5 py-0.5 rounded border border-dashed border-slate-400 text-slate-500 font-bold text-[10px]">미출도</span>}</td>
-                    <td className="px-2 py-1.5"><div className="font-mono font-bold text-indigo-600">{pnOf(r.items?.std_code)}</div><div className="text-[11px] text-slate-400 truncate max-w-[280px]">{r.items?.name}</div></td>
+                    <td className="px-2 py-1.5"><div className="font-mono font-bold text-indigo-600">{pnOf(r.items?.std_code)}</div><div className="text-[11px] text-slate-400 truncate max-w-[210px]">{r.items?.name}</div></td>
                     <td className="px-2 py-1.5 font-mono font-bold text-slate-600 whitespace-nowrap" data-harn-ccn title={r.ccn === 'B' ? 'CCN B — 미국 · 달러' : ''}>{r.ccn || '—'}</td>
                     <td className="px-2 py-1.5 text-center font-mono font-bold">{r.revChg
                       ? <span data-harn-rev className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 text-[11px]" title={`출도 때 REV ${r.iRev} → 지금 PO SRev ${r.sRev} · 작업 중지하고 재출도`}>⚠ {r.iRev}→{r.sRev} 재출도</span>
@@ -428,7 +430,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
           </tbody>
         </table>
         )}
-      </div>
+      </TopScroll>
       {data && !data.notesReady && (
         <p data-harn-nonotes className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           영업 · 제조 확인과 코멘트를 저장할 표가 아직 없습니다 — SQL <b>pm_po_notes_261125</b> 를 실행하면 켜집니다. (변경 음영 · promise 바꾸기는 지금도 됩니다)

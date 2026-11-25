@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.250.0'
+export const APP_VERSION = 'v4.250.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.250.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.250.1',
+    date: '2026-11-25',
+    changes: ['넓은 표 가로 스크롤 막대 — 표 끝까지 내리지 않아도 화면 맨 아래에 붙어 보임 (HARN ASSY · 견적요청)', 'HARN ASSY — 칸이 내용만큼만 넓어지게(빈 여백 줄임) · 품명 폭 줄임'],
+  },
   {
     version: 'v4.250.0',
     date: '2026-11-25',
