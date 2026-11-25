@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.249.1'
+export const APP_VERSION = 'v4.250.0'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.249.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.250.0',
+    date: '2026-11-25',
+    changes: ['HARN ASSY — CCN 칸 · 머리글 정렬 · 「n일 지남 · ▶늦음」 글자 뺌', 'HARN ASSY — 변경(신규 HOT · need · promise · 수량 · 새 PO 줄) 칸 노란 음영 → 영업 · 제조 둘 다 확인하면 꺼짐 · 확인 기록 남음 · 「미확인」 필터 (SQL pm_po_notes_261125)', 'HARN ASSY — 💬 이력 · 코멘트 창(PO 업로드 · 포털 수정 · 확인 · 제조/구매자재/영업 코멘트 시간순) · promise ✏ 사유 필수 · 「📥 엑셀」'],
+  },
   {
     version: 'v4.249.1',
     date: '2026-11-25',

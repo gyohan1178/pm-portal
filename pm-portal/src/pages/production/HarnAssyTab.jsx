@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
@@ -7,7 +7,9 @@ import { fetchAxLinesSafe, chunkAll } from '../../lib/axLines'
 import { fetchPlanByPo, isHot } from '../../lib/planExc'
 import { needDateReady, fetchNeedByPo, needTrend } from '../../lib/needDate'
 import { openPrint } from '../../lib/issueSheet'
-import { toastError } from '../../lib/toast'
+import { toastError, toastSuccess } from '../../lib/toast'
+import { useMe, useCanEdit } from '../../hooks/useProfile'
+import { fetchNotes, fetchPoChanges, ackState, cellTag, changeText, atText, addNote, setPromise } from '../../lib/poNotes'
 import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import PlanBadge from '../../components/PlanBadge'
 import { SkeletonRows } from '../../components/ux/Skeleton'
@@ -40,6 +42,15 @@ const GROUPS = [
   { key: 'rest', label: '그 뒤', cls: 'bg-slate-50 text-slate-500' },
   { key: 'fa', label: 'FA (G 오더) — 따로 관리', cls: 'bg-slate-100 text-slate-600' },
 ]
+
+// 머리글 정렬 값 (v4.250.0)
+const SORT_VAL = {
+  out: (r) => (r.iss ? String(r.iss.t || '0') : ''), pn: (r) => pnOf(r.items?.std_code), ccn: (r) => String(r.ccn || ''), rev: (r) => r.sRev || '',
+  qty: (r) => leftOf(r), po: (r) => `${r.po_number}|${String(N(r.order_line)).padStart(4, '0')}|${String(N(r.del_line) || 1).padStart(3, '0')}`,
+  placed: (r) => r.placed || '9999', need: (r) => r.base || '9999', prom: (r) => r.prom || '9999', plan: (r) => String(r.plan_exc || 'ZZZ'),
+  issue: (r) => (r.material_issued ? 0 : 1), proc: (r) => r.proc?.last?.at || '', ack: (r) => (r.ack.open ? 0 : 1), cmt: (r) => -r.ack.comments.length,
+}
+const SORT_LABEL = { out: '출도', pn: '품번', ccn: 'CCN', rev: 'SRev', qty: '수량', po: 'PO', placed: '접수', need: 'need date', prom: 'promise', plan: '구분', issue: '불출', proc: '공정', ack: '확인', cmt: '코멘트' }
 
 // 출도 기록 — 줄(PO · 라인 · 분할)로, 없으면 PO · 도번으로 (하네스 출도 화면과 같은 규칙)
 function matchIssued(lines, horders, hist) {
@@ -112,7 +123,7 @@ async function loadHarn() {
   //   전에는 하나씩 차례로 + 150개씩 차례로 읽어 수십 번 왕복 → 10초 넘게 걸렸다
   const byPo = (table, cols) => chunkAll(poNos, 150, (part) => fetchAll(() => supabase.from(table).select(cols).in('po', part).order('id')))
     .then(parts => parts.flat())
-  const [plan, needRes, ho, hh, hl, heads] = await Promise.all([
+  const [plan, needRes, ho, hh, hl, heads, chgs, notes] = await Promise.all([
     cpo.length ? fetchPlanByPo(supabase, cpo) : {},
     // need date 칸이 없으면(SQL 전) 여기서 오류 → promise date 로
     cpo.length ? fetchNeedByPo(supabase, cpo).then(v => ({ ready: true, v })).catch(() => ({ ready: false, v: {} })) : needDateReady(supabase).then(r => ({ ready: r, v: {} })),
@@ -123,13 +134,16 @@ async function loadHarn() {
     // PO 접수일 — 수주대장 머리(pm_order.order_date · AXCELIS 엑셀 「Date Placed」) (v4.245.0)
     chunkAll(poNos, 150, (part) => fetchAll(() => supabase.from('pm_order').select('id,po_no,order_date').eq('customer_code', 'AX').in('po_no', part).order('id')))
       .then(parts => parts.flat()).catch(e => { console.warn('PO 접수일 읽기 실패', e); return [] }),
+    // PO 변경 이력 · 영업/제조 확인 · 코멘트 (v4.250.0)
+    cpo.length ? fetchPoChanges(supabase, cpo).catch(e => { console.warn('PO 변경 이력 읽기 실패', e); return {} }) : {},
+    cpo.length ? fetchNotes(supabase, cpo) : { ready: true, byPo: {} },
   ])
   const placed = new Map()
   for (const h of heads) if (h.order_date) { const k = P(h.po_no); if (!placed.has(k) || String(h.order_date) < placed.get(k)) placed.set(k, String(h.order_date).slice(0, 10)) }
   const ready = needRes.ready, need = needRes.v
   const iss = matchIssued(lines, ho, hh)
   const logs = matchLogs(lines, hl)
-  return { ready, rows: lines.map(p => ({ ...p, plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null, placed: placed.get(P(p.po_number)) || null,
+  return { ready, notesReady: notes.ready, rows: lines.map(p => ({ ...p, chg: (p.cpo_id && chgs[p.cpo_id]) || null, ccn: p.ccn || (p.cpo_id && chgs[p.cpo_id]?.ccn) || null, notes: (p.cpo_id && notes.byPo[String(p.cpo_id)]) || [], plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null, placed: placed.get(P(p.po_number)) || null,
     need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] || logs[p.id]?.out || (p.material_issued ? { t: '', rev: '', byIssue: true } : null),
     proc: logs[p.id] || null })) }   // 불출했으면 출도는 이미 된 것 (출도 기록이 없어도)
 }
@@ -140,6 +154,12 @@ export default function HarnAssyTab() {
   const [kind, setKind] = useRemember('harnassy.kind', 'all')     // all | hot | miss | rev | late
   const [q, setQ] = useState('')
   const [faOpen, setFaOpen] = useState(false)
+  const [sort, setSort] = useRemember('harnassy.sort', null)   // { k, dir } · null = 순서표 기본(HOT → 지남 → 7일 …)
+  const [hist, setHist] = useState(null)       // 이력 · 코멘트 창 (줄)
+  const [promEdit, setPromEdit] = useState(null) // promise 바꾸기 창 (줄)
+  const qc = useQueryClient()
+  const me = useMe()
+  const canEdit = useCanEdit()
   const { data, isLoading, error } = useQuery({ queryKey: ['harnAssy'], queryFn: loadHarn, staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false, placeholderData: (prev) => prev })
   const ready = !!data?.ready
 
@@ -157,7 +177,7 @@ export default function HarnAssyTab() {
       const idle = lastAt ? Math.floor((Date.now() - Date.parse(lastAt)) / DAY) : null
       const fin = !!(p.proc?.last && DONE_STEP.test(p.proc.last.p) && !p.proc.last.open)
       const stale = !!(p.proc?.last && !fin && idle != null && idle >= 3)
-      return { ...p, base, d, prom, late, revChg, iRev, sRev, grp, idle, fin, stale, trend: ready ? needTrend(p.needPrev, p.need) : '' }
+      return { ...p, base, d, prom, late, revChg, iRev, sRev, grp, idle, fin, stale, trend: ready ? needTrend(p.needPrev, p.need) : '', ack: ackState(p.chg, p.notes) }
     }).sort((a, b) => String(a.base || '9999').localeCompare(String(b.base || '9999')) || String(a.po_number).localeCompare(String(b.po_number)))
   }, [data, ready])
 
@@ -171,6 +191,7 @@ export default function HarnAssyTab() {
     work: rows.filter(r => r.proc?.last && !r.fin).length,
     stale: rows.filter(r => r.stale).length,
     fa: rows.filter(r => r.grp === 'fa').length,
+    unack: rows.filter(r => r.ack.open).length,
   }), [rows])
 
   const shown = useMemo(() => {
@@ -183,15 +204,25 @@ export default function HarnAssyTab() {
       if (kind === 'work' && !(r.proc?.last && !r.fin)) return false
       if (kind === 'stale' && !r.stale) return false
       if (kind === 'late' && !r.late) return false
+      if (kind === 'unack' && !r.ack.open) return false
       if (!s) return true
-      return [pnOf(r.items?.std_code), r.items?.name, r.po_number].some(v => String(v || '').toLowerCase().includes(s))
+      return [pnOf(r.items?.std_code), r.items?.name, r.po_number, r.ccn].some(v => String(v || '').toLowerCase().includes(s))
     })
   }, [rows, range, kind, q])
 
   const grouped = useMemo(() => {
     let no = 0
+    // 머리글 정렬 (v4.250.0) — 정렬하면 묶음 없이 한 목록 · FA 는 그대로 따로
+    if (sort?.k) {
+      const val = SORT_VAL[sort.k] || (() => '')
+      const cmp = (a, b) => { const x = val(a), y = val(b); const c = typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y)); return sort.dir === 'desc' ? -c : c }
+      const main = shown.filter(r => r.grp !== 'fa').sort(cmp).map(r => ({ ...r, no: ++no }))
+      const fa = shown.filter(r => r.grp === 'fa').sort(cmp).map(r => ({ ...r, no: '' }))
+      return [{ key: 'sorted', label: `정렬: ${SORT_LABEL[sort.k]} ${sort.dir === 'desc' ? '▼' : '▲'}`, cls: 'bg-indigo-50 text-indigo-700', list: main },
+        { ...GROUPS.find(g => g.key === 'fa'), list: fa }].filter(g => g.list.length)
+    }
     return GROUPS.map(g => ({ ...g, label: ready ? g.label : g.label.replace(/^need (date )?/, ''), list: shown.filter(r => r.grp === g.key).map(r => ({ ...r, no: g.key === 'fa' ? '' : ++no })) })).filter(g => g.list.length)
-  }, [shown, ready])
+  }, [shown, ready, sort])
 
   function printSheet() {
     const groups = grouped.filter(g => g.key !== 'fa')
@@ -200,7 +231,7 @@ export default function HarnAssyTab() {
     const tr = (r) => `<tr><td class="c"><i class="ck"></i></td><td class="c">${r.no}</td><td>${r.iss ? md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도') : '<b class="miss">미출도</b>'}</td>
 <td class="mono b">${esc(pnOf(r.items?.std_code))}</td><td class="nm">${esc(r.items?.name || '')}</td><td class="c b">${esc(r.sRev)}${r.revChg ? ` <b class="k">재출도 ${esc(r.iRev)}→${esc(r.sRev)}</b>` : ''}</td><td class="r">${leftOf(r)}</td>
 <td class="mono">${esc(r.po_number)} L${esc(N(r.order_line))}-${esc(N(r.del_line) || 1)}</td><td>${r.placed ? md(r.placed) : ''}</td>
-<td class="b">${md(r.base)}${r.d < 0 ? ` (${-r.d}일 지남)` : ''}${r.trend === 'up' ? ' ▲' : r.trend === 'down' ? ' ▼' : ''}</td>
+<td class="b">${md(r.base)}${r.trend === 'up' ? ' ▲' : r.trend === 'down' ? ' ▼' : ''}</td>
 <td>${ready ? md(r.prom) + (r.late ? ' <b>▶늦음</b>' : '') : ''}</td><td>${isHot(r) ? '<span class="hot">HOT</span>' : esc(r.plan_exc || '')}${r.material_issued ? ' 불출' : ''}</td><td>${r.proc?.last ? esc(r.proc.last.p) + (r.proc.last.open ? ' 중' : ' 끝') + (r.stale ? ` <b>멈춤${r.idle}일</b>` : '') : ''}</td></tr>`
     const body = groups.map(g => `<tr class="gh"><td colspan="13">${g.label} <span>${g.list.length}건</span></td></tr>${g.list.map(tr).join('')}`).join('')
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>하네스 작업 순서표 ${t}</title><style>
@@ -236,6 +267,47 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
     XLSX.writeFile(wb, `Harness_delay_forecast_${today()}.xlsx`)
   }
 
+  // ── v4.250.0 정렬 · 변경 음영 · 확인 · 코멘트 · 엑셀 ──
+  const Th = ({ k, cls = '', title, children }) => (
+    <th title={title} onClick={() => setSort(sort?.k === k ? (sort.dir === 'asc' ? { k, dir: 'desc' } : null) : { k, dir: 'asc' })}
+      className={`px-2 py-2 text-left cursor-pointer select-none whitespace-nowrap hover:text-indigo-600 ${cls}`} data-harn-th={k}>
+      {children}<span className={`ml-0.5 text-[10px] ${sort?.k === k ? 'text-indigo-600' : 'text-slate-300'}`}>{sort?.k === k ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}</span>
+    </th>
+  )
+  // 영업 · 제조 둘 다 확인 전인 변경 칸 → 노란 음영
+  const hl = (r, f) => (r.ack.cells[f] ? 'bg-amber-100/70 ring-2 ring-inset ring-amber-300' : '')
+  const Tag = ({ r, f }) => (r.ack.cells[f] ? <span className="block text-[10px] font-bold text-amber-700 whitespace-nowrap" data-harn-chg={f}>{cellTag(r.ack.cells[f])}</span> : null)
+  const refresh = () => qc.invalidateQueries({ queryKey: ['harnAssy'] })
+  async function doAck(r, dept) {
+    try {
+      await addNote(supabase, { poId: r.cpo_id, kind: 'ack', dept, me })
+      toastSuccess(`${dept} 확인 — ${pnOf(r.items?.std_code)} ${r.po_number}`)
+      refresh()
+    } catch (e) { toastError(e.message) }
+  }
+  async function exportAll() {
+    const list = grouped.flatMap(g => g.list)
+    if (!list.length) { toastError('내려받을 줄이 없습니다'); return }
+    const XLSX = await import('xlsx')
+    const histTxt = (r) => [...r.ack.events.map(c => ({ at: c.at, t: changeText(c) + (c.reason ? ` (사유: ${c.reason})` : c.field === 'promise_date' && c.src !== 'portal' ? ' (PO 업로드)' : '') + (c.by ? ` · ${c.by}` : '') })),
+      ...r.notes.map(n => ({ at: n.created_at, t: n.kind === 'ack' ? `${n.dept} 확인 · ${n.by_name || ''}` : `[${n.dept || '-'}] ${n.by_name || ''}: ${n.body || ''}` }))]
+      .sort((a, b) => String(a.at).localeCompare(String(b.at))).map(x => `${atText(x.at)} ${x.t}`).join('\n')
+    const ws = XLSX.utils.aoa_to_sheet([
+      ['순', '묶음', '출도', '품번', '품명', 'CCN', 'SRev', '수량', 'PO', 'Line', 'Del', '접수', 'need date', 'promise', 'Plan Exc', '불출', '공정(마지막)', '영업 확인', '제조 확인', '미확인 변경', '최근 코멘트', '이력 · 코멘트'],
+      ...grouped.flatMap(g => g.list.map(r => {
+        const lastC = r.ack.comments[r.ack.comments.length - 1]
+        return [r.no, g.label, r.iss ? (String(r.iss.t).slice(0, 10) || (r.iss.byIssue ? '불출' : '출도')) : '미출도', pnOf(r.items?.std_code), r.items?.name || '', r.ccn || '', r.sRev, leftOf(r),
+          r.po_number, N(r.order_line), N(r.del_line) || 1, r.placed || '', (ready && r.need) || '', r.prom || '', r.plan_exc || '', r.material_issued ? 'Y' : '',
+          r.proc?.last ? `${r.proc.last.p} ${r.proc.last.open ? '진행 중' : '끝'} ${atText(r.proc.last.at)}` : '',
+          r.ack.ackS ? atText(r.ack.ackS) : '', r.ack.ackM ? atText(r.ack.ackM) : '',
+          Object.values(r.ack.cells).map(cellTag).join(' / '), lastC ? `[${lastC.dept || '-'}] ${lastC.by_name || ''}: ${lastC.body || ''}` : '', histTxt(r)]
+      })),
+    ])
+    ws['!cols'] = [4, 14, 10, 12, 30, 6, 5, 6, 10, 5, 4, 10, 10, 10, 8, 5, 22, 12, 12, 26, 30, 60].map(w => ({ wch: w }))
+    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'HARN ASSY')
+    XLSX.writeFile(wb, `HARN_ASSY_${today()}.xlsx`)
+  }
+
   const chip = (cur, v, set, label) => (
     <button key={v} onClick={() => set(v)} className={`px-2.5 py-1 text-xs font-semibold rounded-md ${cur === v ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500'}`}>{label}</button>
   )
@@ -248,9 +320,11 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">{chip(range, '14', setRange, '14일 이내')}{chip(range, 'all', setRange, '전체 진행 중')}</div>
         <div className="flex gap-1 p-0.5 bg-slate-100 rounded-lg">
           {chip(kind, 'all', setKind, '전체')}{chip(kind, 'hot', setKind, 'HOT만')}{chip(kind, 'miss', setKind, '미출도만')}{chip(kind, 'rev', setKind, 'REV 바뀜')}{chip(kind, 'work', setKind, '작업 중')}{chip(kind, 'stale', setKind, '멈춤 3일+')}
-          {ready && chip(kind, 'late', setKind, '▶늦음')}
+          {ready && chip(kind, 'late', setKind, '▶늦음')}{chip(kind, 'unack', setKind, `미확인 ${kpi.unack || ''}`)}
         </div>
+        {sort?.k && <button onClick={() => setSort(null)} data-harn-sort-reset className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700">순서표 기본</button>}
         <div className="flex-1" />
+        <button onClick={exportAll} data-harn-xlsx className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50" title="지금 보이는 줄 전부 — 확인 · 코멘트 · 변경 이력 포함">📥 엑셀</button>
         <button onClick={() => nav('/production/harness-release')} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">🧵 하네스 출도로</button>
         <button onClick={exportLate} disabled={!ready} data-harn-late
           title={ready ? 'promise 가 need 보다 늦은 줄 — Axcelis 사전 공유용 엑셀 (사유 칸은 비워 둠)' : 'need date 를 저장한 뒤(SQL 실행 후 PO 파일 업로드) 쓸 수 있습니다'}
@@ -282,10 +356,11 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         <table className="w-full text-xs">
           <thead className="bg-slate-50 text-slate-600 sticky top-0">
             <tr>
-              <th className="px-2 py-2 text-center">순</th><th className="px-2 py-2 text-left">출도</th><th className="px-2 py-2 text-left">품번 · 품명</th>
-              <th className="px-2 py-2 text-center">SRev</th><th className="px-2 py-2 text-right">수량</th><th className="px-2 py-2 text-left">PO</th><th className="px-2 py-2 text-left" title="PO 접수일 — AXCELIS 엑셀 「Date Placed」">접수</th>
-              <th className="px-2 py-2 text-left">{ready ? 'need date' : 'promise (need 저장 전)'}</th>{ready && <th className="px-2 py-2 text-left">promise</th>}
-              <th className="px-2 py-2 text-left">구분</th><th className="px-2 py-2 text-center">불출</th><th className="px-2 py-2 text-left">공정 (QR)</th>
+              <th className="px-2 py-2 text-center">순</th><Th k="out">출도</Th><Th k="pn">품번 · 품명</Th><Th k="ccn" title="CCN — K · HUB · B (B = 미국 · 달러)">CCN</Th>
+              <Th k="rev" cls="text-center">SRev</Th><Th k="qty" cls="text-right">수량</Th><Th k="po">PO</Th><Th k="placed" title="PO 접수일 — AXCELIS 엑셀 「Date Placed」">접수</Th>
+              <Th k="need">{ready ? 'need date' : 'promise (need 저장 전)'}</Th>{ready && <Th k="prom">promise</Th>}
+              <Th k="plan">구분</Th><Th k="issue" cls="text-center">불출</Th><Th k="proc">공정 (QR)</Th>
+              <Th k="ack" title="변경(신규 HOT · need · promise · 수량 · 새 줄)을 영업 · 제조가 둘 다 확인하면 노란 음영이 꺼집니다">확인</Th><Th k="cmt" cls="text-center" title="이력 · 코멘트">💬</Th>
             </tr>
           </thead>
           <tbody>
@@ -293,7 +368,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
               const fold = g.key === 'fa' && !faOpen
               return [
                 <tr key={g.key} data-harn-group={g.key}>
-                  <td colSpan={ready ? 12 : 11} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
+                  <td colSpan={ready ? 15 : 14} className={`px-3 py-1.5 font-bold ${g.cls} ${g.key === 'fa' ? 'cursor-pointer' : ''}`} onClick={g.key === 'fa' ? () => setFaOpen(!faOpen) : undefined}>
                     {g.label} <span className="font-normal text-slate-400 ml-1">{g.list.length}건{g.key === 'fa' ? (faOpen ? ' ▾ 접기' : ' ▸ 펼치기') : ''}</span>
                   </td>
                 </tr>,
@@ -303,19 +378,25 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                     <td className="px-2 py-1.5 whitespace-nowrap">{r.iss ? <span className="text-slate-600" title="하네스 공정관리 출도 기록">{md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도')}</span>
                       : <span className="px-1.5 py-0.5 rounded border border-dashed border-slate-400 text-slate-500 font-bold text-[10px]">미출도</span>}</td>
                     <td className="px-2 py-1.5"><div className="font-mono font-bold text-indigo-600">{pnOf(r.items?.std_code)}</div><div className="text-[11px] text-slate-400 truncate max-w-[280px]">{r.items?.name}</div></td>
+                    <td className="px-2 py-1.5 font-mono font-bold text-slate-600 whitespace-nowrap" data-harn-ccn title={r.ccn === 'B' ? 'CCN B — 미국 · 달러' : ''}>{r.ccn || '—'}</td>
                     <td className="px-2 py-1.5 text-center font-mono font-bold">{r.revChg
                       ? <span data-harn-rev className="px-1.5 py-0.5 rounded bg-rose-50 text-rose-600 text-[11px]" title={`출도 때 REV ${r.iRev} → 지금 PO SRev ${r.sRev} · 작업 중지하고 재출도`}>⚠ {r.iRev}→{r.sRev} 재출도</span>
                       : (r.sRev || '—')}</td>
-                    <td className="px-2 py-1.5 text-right font-mono">{leftOf(r).toLocaleString('ko-KR')}</td>
-                    <td className="px-2 py-1.5 font-mono whitespace-nowrap">{r.po_number} <span className="text-slate-400">L{N(r.order_line)}-{N(r.del_line) || 1}</span></td>
+                    <td className={`px-2 py-1.5 text-right font-mono ${hl(r, 'qty_ordered')}`}>{leftOf(r).toLocaleString('ko-KR')}<Tag r={r} f="qty_ordered" /></td>
+                    <td className={`px-2 py-1.5 font-mono whitespace-nowrap ${hl(r, 'new')}`}>{r.po_number} <span className="text-slate-400">L{N(r.order_line)}-{N(r.del_line) || 1}</span><Tag r={r} f="new" /></td>
                     <td className="px-2 py-1.5 whitespace-nowrap text-slate-500" data-harn-placed>{r.placed ? `${md(r.placed)}${String(r.placed).slice(0, 4) !== today().slice(0, 4) ? ` '${String(r.placed).slice(2, 4)}` : ''}` : '—'}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">
-                      <span className={r.d != null && r.d < 0 ? 'text-rose-600 font-bold' : 'text-slate-700'}>{md(r.base) || '—'}{r.d != null && r.d < 0 ? ` · ${-r.d}일 지남` : ''}</span>
+                    <td className={`px-2 py-1.5 whitespace-nowrap ${hl(r, ready ? 'need_date' : 'promise_date')}`}>
+                      <span className={r.d != null && r.d < 0 ? 'text-rose-600 font-bold' : 'text-slate-700'}>{md(r.base) || '—'}</span>
                       {r.trend === 'up' && <span className="ml-1 text-rose-600 font-extrabold" title={`지난번 ${md(r.needPrev)} → 당겨짐`}>▲</span>}
                       {r.trend === 'down' && <span className="ml-1 text-sky-600 font-extrabold" title={`지난번 ${md(r.needPrev)} → 늦춰짐`}>▼</span>}
+                      <Tag r={r} f={ready ? 'need_date' : 'promise_date'} />
                     </td>
-                    {ready && <td className={`px-2 py-1.5 whitespace-nowrap ${r.late ? 'text-amber-600 font-bold' : 'text-slate-600'}`}>{md(r.prom) || '—'}{r.late ? ' ▶늦음' : ''}</td>}
-                    <td className="px-2 py-1.5">{r.plan_exc ? <PlanBadge plan={r.plan_exc} since={false} /> : ''}</td>
+                    {ready && <td className={`px-2 py-1.5 whitespace-nowrap ${hl(r, 'promise_date')}`} data-harn-prom>
+                      <span className={r.late ? 'text-amber-600 font-bold' : 'text-slate-600'} title={r.late ? 'promise 가 need date 보다 늦음' : ''}>{md(r.prom) || '—'}</span>
+                      {canEdit && r.cpo_id && <button onClick={() => setPromEdit(r)} data-harn-prom-edit className="ml-1 text-slate-400 hover:text-indigo-600" title="promise date 바꾸기 (사유 필수)">✏</button>}
+                      <Tag r={r} f="promise_date" />
+                    </td>}
+                    <td className={`px-2 py-1.5 ${hl(r, 'plan_exc')}`}>{r.plan_exc ? <PlanBadge plan={r.plan_exc} since={false} /> : ''}<Tag r={r} f="plan_exc" /></td>
                     <td className="px-2 py-1.5 text-center">{r.material_issued ? <span className="px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[11px] font-bold">불출</span> : <span className="text-slate-300">—</span>}</td>
                     <td className="px-2 py-1.5" data-harn-proc>{r.proc?.steps?.length ? (
                       <div>
@@ -326,6 +407,20 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                         <div className="text-[10.5px] text-slate-400 mt-0.5 whitespace-nowrap">{r.proc.last.p} {r.proc.last.open ? '진행 중' : '끝'} · {hm(r.proc.last.at)}{r.proc.last.who ? ` · ${r.proc.last.who}` : ''}
                           {r.stale && <b data-harn-stale className="text-amber-600"> · 멈춤 {r.idle}일</b>}{r.fin && <b className="text-emerald-600"> → 납품 대기</b>}</div>
                       </div>) : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap" data-harn-ack>
+                      <span className="inline-flex gap-1">
+                        {['영업', '제조'].map(dp => {
+                          const ok = dp === '영업' ? r.ack.sOk : r.ack.mOk
+                          return <button key={dp} disabled={!canEdit || !r.cpo_id || !data?.notesReady} onClick={() => doAck(r, dp)}
+                            title={ok ? `${dp} 확인함 · ${atText(dp === '영업' ? r.ack.ackS : r.ack.ackM)}` : `${dp} 확인 — 누르면 이력에 남습니다`}
+                            className={`px-1.5 py-0.5 rounded border text-[10.5px] font-bold ${ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : r.ack.open ? 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50' : 'bg-white border-slate-200 text-slate-400'} disabled:opacity-50`}>
+                            {dp}{ok ? ' ✓' : ' 확인'}</button>
+                        })}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5 text-center">
+                      <button onClick={() => setHist(r)} data-harn-hist className="text-[11px] font-bold text-indigo-600 hover:underline" title="이력 · 코멘트">{r.ack.comments.length || '+'}</button>
+                    </td>
                   </tr>
                 ))),
               ]
@@ -334,7 +429,108 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         </table>
         )}
       </div>
+      {data && !data.notesReady && (
+        <p data-harn-nonotes className="mt-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          영업 · 제조 확인과 코멘트를 저장할 표가 아직 없습니다 — SQL <b>pm_po_notes_261125</b> 를 실행하면 켜집니다. (변경 음영 · promise 바꾸기는 지금도 됩니다)
+        </p>
+      )}
+      {hist && <HistDialog r={rows.find(x => x.id === hist.id) || hist} me={me} canEdit={canEdit} notesReady={!!data?.notesReady} onAck={doAck} onClose={() => setHist(null)} onSaved={refresh} />}
+      {promEdit && <PromiseDialog r={promEdit} me={me} onClose={() => setPromEdit(null)} onSaved={refresh} />}
       <p className="mt-2 text-[11px] text-slate-400">보기 전용 — 출도 · 불출은 「하네스 출도」에서 합니다. 출도일 · REV · 공정은 하네스 공정관리 기록(출도 · QR 스캔)을 PO · 라인으로 맞춰 읽습니다 — PO 없이 찍힌 스캔은 안 붙습니다.</p>
+    </div>
+  )
+}
+
+// 이력 · 코멘트 창 (v4.250.0) — PO 변경(업로드 · 포털)과 확인 · 코멘트를 시간순으로. 지우지 않는다
+const DEPT_CLS = { 영업: 'bg-blue-50 text-blue-600', 제조: 'bg-amber-50 text-amber-700', 구매자재: 'bg-violet-50 text-violet-700' }
+function HistDialog({ r, me, canEdit, notesReady, onAck, onClose, onSaved }) {
+  const [body, setBody] = useState('')
+  const [busy, setBusy] = useState(false)
+  const myDept = ['영업', '제조', '구매자재'].includes(me?.dept) ? me.dept : (me?.dept || '')
+  const all = (r.chg?.changes || []).filter(c => c && c.at)
+  const items = [
+    ...all.map(c => ({ at: String(c.at), k: 'chg', c })),
+    ...(r.chg?.created ? [{ at: String(r.chg.created), k: 'new' }] : []),
+    ...(r.notes || []).map(n => ({ at: String(n.created_at), k: n.kind, n })),
+  ].sort((a, b) => b.at.localeCompare(a.at))
+  async function save() {
+    if (!body.trim()) return
+    setBusy(true)
+    try { await addNote(supabase, { poId: r.cpo_id, kind: 'comment', dept: myDept, body: body.trim(), me }); setBody(''); toastSuccess('코멘트 저장'); onSaved?.() }
+    catch (e) { toastError(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4" data-harn-hist-dialog>
+      <div className="bg-white rounded-2xl w-full max-w-[640px] max-h-[90vh] flex flex-col p-5" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <h3 className="text-base font-extrabold text-slate-800">{pnOf(r.items?.std_code)} · {r.po_number} L{N(r.order_line)}-{N(r.del_line) || 1} — 이력 · 코멘트</h3>
+            <p className="text-xs text-slate-400 mt-0.5">PO 업로드 · 포털 수정 · 영업/제조 확인 · 코멘트가 시간순으로 쌓입니다 (지워지지 않음)</p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+        </div>
+        <ul className="mt-3 overflow-y-auto flex-1 border-l-2 border-slate-100 ml-1 space-y-2 text-xs" data-harn-timeline>
+          {!items.length && <li className="pl-3 text-slate-400">기록이 없습니다</li>}
+          {items.map((x, i) => (
+            <li key={i} className="pl-3 relative">
+              <span className="absolute -left-[5px] top-1.5 w-2 h-2 rounded-full bg-violet-300" />
+              <span className="text-slate-400 mr-1.5">{atText(x.at)}</span>
+              {x.k === 'chg' && <>{x.c.src === 'portal' ? '✏' : '📥 PO 업로드 —'} <b className={x.c.field === 'plan_exc' && String(x.c.to).toUpperCase() === 'HOT' ? 'text-rose-600' : 'text-slate-700'}>{changeText(x.c)}</b>
+                {x.c.by && <span className="text-slate-500"> · {x.c.by}</span>}{x.c.reason && <span className="text-slate-600"> · 사유: {x.c.reason}</span>}</>}
+              {x.k === 'new' && <>📥 PO 줄 등록 (promise {r.prom ? r.prom.slice(5).replace('-', '/') : '—'})</>}
+              {x.k === 'ack' && <><span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold mr-1 ${DEPT_CLS[x.n.dept] || 'bg-slate-100 text-slate-600'}`}>{x.n.dept}</span><b>{x.n.by_name}</b> ✓ 확인</>}
+              {x.k === 'comment' && <><span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold mr-1 ${DEPT_CLS[x.n.dept] || 'bg-slate-100 text-slate-600'}`}>{x.n.dept || '—'}</span><b>{x.n.by_name}</b> 💬 <span className="text-slate-700 whitespace-pre-wrap">{x.n.body}</span></>}
+            </li>
+          ))}
+        </ul>
+        {notesReady ? (
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <div className="text-xs font-bold text-slate-600">코멘트 남기기 <span className="font-normal text-slate-400">— 부서 {myDept || '(프로필 부서 없음)'} · {me?.name || ''}</span></div>
+            <textarea value={body} onChange={e => setBody(e.target.value)} rows={2} placeholder="예) 자재 11/26 입고 예정" disabled={!canEdit}
+              className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            <div className="mt-2 flex gap-2 justify-end">
+              {['영업', '제조'].map(dp => <button key={dp} disabled={!canEdit} onClick={() => onAck(r, dp)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">{dp} 확인</button>)}
+              <button disabled={!canEdit || busy || !body.trim()} onClick={save} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">코멘트 저장</button>
+            </div>
+          </div>
+        ) : <p className="mt-3 text-[11px] text-amber-700">확인 · 코멘트는 SQL pm_po_notes_261125 실행 후 쓸 수 있습니다</p>}
+      </div>
+    </div>
+  )
+}
+
+// promise date 바꾸기 (v4.250.0) — 사유 없으면 저장 안 됨 · 이력에 누가 · 언제 · 전→후 · 사유
+function PromiseDialog({ r, me, onClose, onSaved }) {
+  const [to, setTo] = useState(r.prom || '')
+  const [reason, setReason] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function save() {
+    setBusy(true)
+    try { await setPromise(supabase, { poId: r.cpo_id, to, reason, me }); toastSuccess(`promise ${r.prom || '-'} → ${to}`); onSaved?.(); onClose() }
+    catch (e) { toastError(e.message) } finally { setBusy(false) }
+  }
+  return (
+    <div className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center p-4" data-harn-prom-dialog>
+      <div className="bg-white rounded-2xl w-full max-w-[440px] p-5 space-y-3" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start gap-2">
+          <div className="flex-1">
+            <h3 className="text-base font-extrabold text-slate-800">promise date 바꾸기</h3>
+            <p className="text-xs text-slate-400 mt-0.5">{pnOf(r.items?.std_code)} · {r.po_number} L{N(r.order_line)}-{N(r.del_line) || 1} · 지금 <b className="text-slate-600">{r.prom || '—'}</b></p>
+          </div>
+          <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600 text-lg leading-none">✕</button>
+        </div>
+        <label className="block text-xs font-bold text-slate-600">새 promise date
+          <input type="date" value={to} onChange={e => setTo(e.target.value)} className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </label>
+        <label className="block text-xs font-bold text-slate-600">사유 <span className="text-rose-500">*</span>
+          <textarea value={reason} onChange={e => setReason(e.target.value)} rows={2} placeholder="예) 하네스 검사 지연 · 고객사 합의 (필수)" className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </label>
+        <p className="text-[11px] text-slate-400">사유 없이는 저장되지 않습니다 · 이력에 남고, 노란 음영이 켜져 영업 · 제조 확인을 다시 받습니다. PO 파일 업로드로 바뀐 promise 는 이력에 「PO 업로드」로 남습니다.</p>
+        <div className="flex gap-2 justify-end">
+          <button type="button" onClick={onClose} className="px-3 py-2 text-xs font-bold rounded-lg bg-slate-100 text-slate-600">취소</button>
+          <button type="button" disabled={busy || !to || !reason.trim()} onClick={save} data-harn-prom-save className="px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">사유 입력 후 적용</button>
+        </div>
+      </div>
     </div>
   )
 }
