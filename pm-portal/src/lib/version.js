@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.250.4'
+export const APP_VERSION = 'v4.250.5'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.250.4'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.250.5',
+    date: '2026-11-25',
+    changes: ['HARN ASSY — promise ✏ 뺌 (promise 는 수주등록 PO 파일로 관리) · 「↻ 새로고침」 · PO 파일을 올리면 순서표가 바로 다시 읽힘'],
+  },
   {
     version: 'v4.250.4',
     date: '2026-11-25',

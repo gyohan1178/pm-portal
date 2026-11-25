@@ -540,6 +540,7 @@ export default function CustomerPOUpload({ csId, csCode, onClose, initialFile, o
       qc.invalidateQueries({ queryKey: ['production'], exact: false })
       qc.invalidateQueries({ queryKey: ['todoList'] })
       qc.invalidateQueries({ queryKey: ['orderIntake'], exact: false })
+      qc.invalidateQueries({ queryKey: ['harnAssy'] })   // HARN ASSY 순서표 — 업로드 결과 바로 반영 (v4.250.5)
       qc.invalidateQueries({ queryKey: ['orderMoney'], exact: false })   // 수주대장 예상 매출 합계 (v4.103.0)
       onApplied?.(r)
     },

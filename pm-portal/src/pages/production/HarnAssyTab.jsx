@@ -387,6 +387,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
         </div>
         {sort?.k && <button onClick={() => setSort(null)} data-harn-sort-reset className="px-2.5 py-1 text-xs font-semibold rounded-lg border border-indigo-200 bg-indigo-50 text-indigo-700">순서표 기본</button>}
         <div className="flex-1" />
+        <button onClick={refresh} data-harn-refresh className="px-2.5 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50" title="PO 업로드 · QR 스캔 · 확인 · 코멘트를 지금 다시 읽기 (그냥 두면 5분마다)">↻ 새로고침</button>
         <button onClick={exportAll} data-harn-xlsx className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50" title="지금 보이는 줄 전부 — 확인 · 코멘트 · 변경 이력 포함">📥 엑셀</button>
         <button onClick={() => nav('/production/harness-release')} className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">🧵 하네스 출도로</button>
         <button onClick={exportLate} disabled={!ready} data-harn-late
@@ -457,7 +458,6 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                     </td>
                     {ready && <td className={`px-2 py-1.5 whitespace-nowrap ${hl(r, 'promise_date')}`} data-harn-prom>
                       <span className={r.late ? 'text-amber-600 font-bold' : 'text-slate-600'} title={r.late ? 'promise 가 need date 보다 늦음' : ''}>{md(r.prom) || '—'}</span>
-                      {canEdit && r.cpo_id && <button onClick={() => setPromEdit(r)} data-harn-prom-edit className="ml-1 text-slate-400 hover:text-indigo-600" title="promise date 바꾸기 (사유 필수)">✏</button>}
                       <Tag r={r} f="promise_date" />
                     </td>}
                     <td className={`px-2 py-1.5 ${hl(r, 'plan_exc')}`}>{r.plan_exc ? <PlanBadge plan={r.plan_exc} since={false} /> : ''}<Tag r={r} f="plan_exc" /></td>
