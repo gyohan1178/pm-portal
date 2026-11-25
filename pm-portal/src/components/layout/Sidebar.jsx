@@ -505,7 +505,8 @@ export default function Sidebar({ onNavigate, profile, collapsed, onCollapse }) 
           <MenuItem to="/inbound" icon="📥" onNavigate={onNavigate}>입고</MenuItem>
           {/* v4.187.0 메뉴 묶음 — 단가 등록 + 변동 이력 · 부족자재 + 결품 현황 (화면 위 탭으로 오감) · 결제 계획은 안 써서 메뉴에서 뺌 (주소 /payment-plan 은 그대로) */}
           <MenuItem to="/quote"   icon="💲" onNavigate={onNavigate} also={['/master/price']}>단가 등록 · 이력</MenuItem>
-          <MenuItem to={`/customer/${pcs}/short`} icon="🚨" onNavigate={onNavigate} also={['/missing']}>부족자재 · 결품</MenuItem>
+          {/* v4.249.1 결품 현황(호기별 미불출)을 먼저 연다 — 부족자재는 화면 위 탭으로 */}
+          <MenuItem to="/missing" icon="🚨" onNavigate={onNavigate} also={[/^\/customer\/[^/]+\/short(\/|$)/]}>부족자재 · 결품</MenuItem>
         </CollapseSection>
         )}
     </>),

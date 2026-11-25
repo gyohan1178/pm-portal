@@ -15,8 +15,8 @@ export const MENU_GROUPS = [
     { to: '/master/price', label: '📈 단가 변동 이력' },
   ] },
   { id: 'short', tabs: [
-    { to: (cs) => `/customer/${cs}/short`, match: /^\/customer\/([^/]+)\/short(\/|$)/, label: '🚨 부족자재 (발주 필요)' },
     { to: '/missing', label: '🧩 결품 현황 (호기별 미불출)' },
+    { to: (cs) => `/customer/${cs}/short`, match: /^\/customer\/([^/]+)\/short(\/|$)/, label: '🚨 부족자재 (발주 필요)' },
   ] },
 ]
 const hit = (t, path) => (t.match ? t.match.test(path) : path === t.to || path.startsWith(t.to + '/'))

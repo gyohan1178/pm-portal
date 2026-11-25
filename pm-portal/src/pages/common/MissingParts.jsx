@@ -28,7 +28,7 @@ const MP_COLS = [
   { key:'part',   label:'결품 부품', defaultWidth:240 },
   { key:'need',   label:'필요',      defaultWidth:56, style:{textAlign:'right'} },
   { key:'stock',  label:'재고',      defaultWidth:56, style:{textAlign:'right'} },
-  { key:'po',     label:'발주 (PO · 발주일 · 업체)', defaultWidth:230 },
+  { key:'po',     label:'발주 (업체 · 입고예정 · 잔량)', defaultWidth:230 },
   { key:'eta',    label:'입고예정',  defaultWidth:78 },
   { key:'verdict',label:'판정',      defaultWidth:150 },
 ]
@@ -129,6 +129,8 @@ export function allocate(rows, pos) {
     const supply = [{ kind: 'stock', left: Number(list[0].stock) || 0 }]
     ;(pos[k] || []).slice().sort((a, b) => String(a.promise_date || '9999').localeCompare(String(b.promise_date || '9999')) || String(a.order_date || '').localeCompare(String(b.order_date || '')))
       .forEach((po) => supply.push({ kind: 'po', po, left: po.left }))
+    // 이 부품의 진행 중 발주 전부 (v4.249.1) — 재고로 채워져 배정이 없어도 발주 칸에 보여준다
+    const openPos = supply.filter((s) => s.kind === 'po').map((s) => s.po)
     for (const r of list) {
       let need = Number(r.need) || 0
       const used = []
@@ -140,6 +142,7 @@ export function allocate(rows, pos) {
       }
       const poUsed = used.filter((u) => u.kind === 'po')
       r.poUsed = poUsed.map((u) => ({ ...u.po, q: u.q }))
+      r.openPos = openPos
       r.short = need
       const due = ymd(r.reqDate)
       if (need > 0) { r.verdict = 'nopo' }
@@ -247,6 +250,23 @@ async function applyConsolidate(g, plan, by) {
   return before
 }
 
+// 발주 칸 (v4.249.1) — 발주번호 대신 업체 · 입고예정 · 잔량 · 배정된 발주가 없으면 진행 중 발주를 회색으로
+function PoCell({ used, open, short }) {
+  const list = used?.length ? used : (open || [])
+  if (!list.length) return <span className="text-slate-300">{short ? `— 부족 ${short}` : '—'}</span>
+  const ref = !used?.length
+  const p = list[0]
+  const tip = list.map((x) => `${x.po_number || '발주번호 없음'} · 발주 ${ymd(x.order_date) || '-'} · ${x.vendors?.name || ''} · 입고예정 ${ymd(x.promise_date) || '미정'} · 잔량 ${x.left}${x.q != null ? ` · 이 호기 몫 ${x.q}` : ''}`).join('\n')
+  return (
+    <div className={`truncate ${ref ? 'text-slate-400' : 'text-slate-700'}`} title={(ref ? '배정 안 됨 (재고로 채워졌거나 앞 호기가 다 씀) — 진행 중 발주\n' : '') + tip}>
+      <span className="font-semibold">{p.vendors?.name || '업체 —'}</span>
+      <span className="text-[11px]"> · {p.promise_date ? `입고 ${md(p.promise_date)}` : '입고일 미정'} · 잔량 {p.left}{p.q != null ? ` (몫 ${p.q})` : ''}</span>
+      {list.length > 1 && <span className="text-[11px] text-slate-400"> 외 {list.length - 1}</span>}
+      {ref && short > 0 && <span className="text-[11px] text-rose-500"> · 부족 {short}</span>}
+    </div>
+  )
+}
+
 export default function MissingParts() {
   const { data: rows = [], isLoading, error } = useQuery({ queryKey: ['missingParts'], queryFn: fetchMissing })
   const qc = useQueryClient()
@@ -290,7 +310,7 @@ export default function MissingParts() {
   const cnt = useMemo(() => { const c = {}; inCs.forEach((r) => { c[r.verdict] = (c[r.verdict] || 0) + 1 }); return c }, [inCs])
   const sorted = useMemo(() => {
     const s = q.trim().toLowerCase()
-    return inCs.filter((r) => (vf === 'all' || r.verdict === vf) && (!s || [r.pn, r.hogi, r.std_code, r.name, ...(r.poUsed || []).flatMap((p) => [p.po_number, p.vendors?.name])].some((v) => String(v || '').toLowerCase().includes(s))))
+    return inCs.filter((r) => (vf === 'all' || r.verdict === vf) && (!s || [r.pn, r.hogi, r.std_code, r.name, ...[...(r.poUsed || []), ...(r.openPos || [])].flatMap((p) => [p.po_number, p.vendors?.name])].some((v) => String(v || '').toLowerCase().includes(s))))
       .sort(cmpBy(sortBy))
   }, [inCs, vf, q, sortBy])
   // 품목별 — 고객사 · 부품 한 묶음
@@ -308,7 +328,7 @@ export default function MissingParts() {
       const pns = {}; g.rows.forEach((r) => { pns[r.pn] = (pns[r.pn] || 0) + 1 })
       return { ...g, need: g.rows.reduce((a, r) => a + (Number(r.need) || 0), 0), pos: [...pos.values()], vc, worst,
         due: g.rows.map((r) => ymd(r.reqDate)).filter(Boolean).sort()[0] || null, eta: g.rows.map((r) => r.eta).filter(Boolean).sort().at(-1) || null,
-        hogiN: new Set(g.rows.map((r) => r.prodId)).size, multi: Object.entries(pns).filter(([, n]) => n > 1).map(([pn]) => pn) }
+        hogiN: new Set(g.rows.map((r) => r.prodId)).size, openPos: g.rows[0]?.openPos || [], multi: Object.entries(pns).filter(([, n]) => n > 1).map(([pn]) => pn) }
     })
     const ord = (g) => VERDICT[g.worst]?.order ?? 9
     return list.sort(sortBy === 'part' ? (a, b) => String(a.std_code).localeCompare(String(b.std_code))
@@ -379,8 +399,8 @@ export default function MissingParts() {
     const XLSX = await import('xlsx')
     const ws = XLSX.utils.aoa_to_sheet([
       ['판정', '고객사', '상위품번', '호기', '납품요청일', '결품 부품', '품명', '필요', '재고', '발주번호', '발주일', '업체', '입고예정', '늦음/여유(일)'],
-      ...sorted.map((r) => { const p = r.poUsed?.[0]; return [VERDICT[r.verdict]?.label.replace('⚠ ', '') || '', CS_LABEL[r.cs] || r.cs, r.pn, r.hogi, ymd(r.reqDate) || '', r.std_code, r.name, r.need, r.stock,
-        (r.poUsed || []).map((x) => x.po_number).join(', '), p ? ymd(p.order_date) || '' : '', p?.vendors?.name || '', r.eta || (r.verdict === 'tbd' ? '미정' : ''), r.gap ?? ''] }),
+      ...sorted.map((r) => { const p = r.poUsed?.[0] || r.openPos?.[0]; return [VERDICT[r.verdict]?.label.replace('⚠ ', '') || '', CS_LABEL[r.cs] || r.cs, r.pn, r.hogi, ymd(r.reqDate) || '', r.std_code, r.name, r.need, r.stock,
+        (r.poUsed || []).map((x) => x.po_number).join(', '), p ? ymd(p.order_date) || '' : '', p?.vendors?.name || '', r.eta || (r.verdict === 'tbd' ? '미정' : ymd(p?.promise_date) || ''), r.gap ?? ''] }),
     ])
     const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, '결품 현황')
     XLSX.writeFile(wb, `결품현황_${cs === 'all' ? '전체' : (CS_LABEL[cs] || cs)}_${today()}.xlsx`)
@@ -462,13 +482,12 @@ export default function MissingParts() {
           <table className="w-full text-xs">
             <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left">
               <th className="px-3 py-2">결품 부품</th><th className="px-3 py-2">고객사</th><th className="px-3 py-2 text-right">호기</th><th className="px-3 py-2 text-right">모자람</th><th className="px-3 py-2 text-right">재고</th>
-              <th className="px-3 py-2">발주 (PO · 발주일 · 업체 · 잔량)</th><th className="px-3 py-2">입고예정</th><th className="px-3 py-2">빠른 납품요청일</th><th className="px-3 py-2">판정</th><th className="px-3 py-2"></th>
+              <th className="px-3 py-2">발주 (업체 · 입고예정 · 잔량)</th><th className="px-3 py-2">입고예정</th><th className="px-3 py-2">빠른 납품요청일</th><th className="px-3 py-2">판정</th><th className="px-3 py-2"></th>
             </tr></thead>
             <tbody>
               {groups.map((g) => {
                 const open = openG.has(g.k)
                 const v = VERDICT[g.worst] || {}
-                const p0 = g.pos[0]
                 return [
                   <tr key={g.k} data-mp-group={g.std_code} className="border-t border-slate-100 bg-slate-50/50 cursor-pointer hover:bg-slate-100/60" onClick={() => setOpenG((s) => { const n = new Set(s); n.has(g.k) ? n.delete(g.k) : n.add(g.k); return n })}>
                     <td className="px-3 py-2 whitespace-nowrap">{open ? '▾' : '▸'} <ItemLink code={g.std_code} className="font-mono font-bold text-slate-800" /> <span className="text-slate-500">{g.name}</span></td>
@@ -476,8 +495,8 @@ export default function MissingParts() {
                     <td className="px-3 py-2 text-right tabular-nums">{g.hogiN}대</td>
                     <td className="px-3 py-2 text-right tabular-nums font-bold">{g.need}</td>
                     <td className={`px-3 py-2 text-right tabular-nums ${g.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`} title={g.stock < 0 ? '재고가 마이너스 — 입고 처리 누락 확인' : undefined}>{g.stock}{g.stock < 0 && <span className="ml-0.5 text-[10px] font-bold">⚠ 입고 누락?</span>}</td>
-                    <td className="px-3 py-2 whitespace-nowrap">{p0 ? <><span className="font-mono text-slate-700">{p0.po_number}</span>{g.pos.length > 1 && <span className="text-slate-400"> 외 {g.pos.length - 1}</span>} <span className="text-[11px] text-slate-400">{md(p0.order_date) || '—'} · {p0.vendors?.name || '—'} · 잔량 {p0.left}</span></> : <span className="text-slate-300">—</span>}</td>
-                    <td className="px-3 py-2 tabular-nums">{g.eta ? md(g.eta) : g.vc.tbd ? <span className="text-amber-600">미정</span> : <span className="text-slate-300">—</span>}</td>
+                    <td className="px-3 py-2 whitespace-nowrap max-w-[280px]" data-mp-po><PoCell used={g.pos} open={g.openPos} /></td>
+                    <td className="px-3 py-2 tabular-nums">{g.eta ? md(g.eta) : g.vc.tbd ? <span className="text-amber-600">미정</span> : g.openPos[0]?.promise_date ? <span className="text-slate-400">{md(g.openPos[0].promise_date)}</span> : <span className="text-slate-300">—</span>}</td>
                     <td className="px-3 py-2 tabular-nums">{g.due ? md(g.due) : '—'}</td>
                     <td className="px-3 py-2 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${v.cls || ''}`}>{v.label}</span>
                       {Object.keys(g.vc).length > 1 && <span className="ml-1 text-[10.5px] text-slate-400">{Object.entries(g.vc).sort((a, b) => (VERDICT[a[0]]?.order ?? 9) - (VERDICT[b[0]]?.order ?? 9)).map(([k, n]) => `${VERDICT[k]?.label.replace('⚠ ', '')} ${n}`).join(' · ')}</span>}</td>
@@ -496,7 +515,7 @@ export default function MissingParts() {
                           {canEdit && pickable(r) && <input type="checkbox" className="ml-2 align-middle" data-mp-sel checked={sel.has(rid(r))} onChange={() => setSel((v) => { const n = new Set(v); n.has(rid(r)) ? n.delete(rid(r)) : n.add(rid(r)); return n })} />}</td>
                         <td></td><td></td>
                         <td className="px-3 py-1.5 text-right tabular-nums">{r.need}</td><td></td>
-                        <td className="px-3 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">{p ? `${p.po_number} 몫 ${p.q}` : r.verdict === 'nopo' ? `부족 ${r.short}` : '—'}</td>
+                        <td className="px-3 py-1.5 text-[11px] text-slate-500 whitespace-nowrap">{p ? `${p.vendors?.name || '업체 —'} 몫 ${p.q}` : r.verdict === 'nopo' ? `부족 ${r.short}` : r.ready ? '재고' : '—'}</td>
                         <td className={`px-3 py-1.5 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? '미정' : '—'}</td>
                         <td className="px-3 py-1.5 tabular-nums text-slate-600">{ymd(r.reqDate) ? md(r.reqDate) : '—'}</td>
                         <td className="px-3 py-1.5 whitespace-nowrap"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold ${rv.cls || ''}`}>{rv.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : r.verdict === 'overdue' ? ` · ${r.overDays}일 지남` : ''}</span></td>
@@ -524,12 +543,8 @@ export default function MissingParts() {
                   <td className="px-3 py-2 overflow-hidden truncate" title={r.name}><ItemLink code={r.std_code} className="font-mono font-semibold text-slate-700" /> <span className="text-slate-500">{r.name}</span></td>
                   <td className="px-3 py-2 text-right tabular-nums font-semibold">{r.need}</td>
                   <td className={`px-3 py-2 text-right tabular-nums ${r.stock <= 0 ? 'text-red-500' : 'text-slate-600'}`} title={r.stock < 0 ? '재고가 마이너스 — 출고가 입고보다 많습니다. 들어온 자재의 입고 처리가 빠졌는지 확인하세요' : undefined}>{r.stock}{r.stock < 0 && <span className="ml-0.5 text-[10px] font-bold" data-mp-neg>⚠</span>}</td>
-                  <td className="px-3 py-2 overflow-hidden" data-mp-po>{p ? (
-                    <div className="truncate" title={(r.poUsed || []).map((x) => `${x.po_number} · 발주 ${ymd(x.order_date) || '-'} · ${x.vendors?.name || ''} · 이 호기 몫 ${x.q} / 잔량 ${x.left}`).join('\n')}>
-                      <span className="font-mono text-slate-700">{p.po_number}</span>{r.poUsed.length > 1 && <span className="text-slate-400"> 외 {r.poUsed.length - 1}</span>}
-                      <div className="text-[11px] text-slate-400 truncate">{md(p.order_date) || '발주일 —'} · {p.vendors?.name || '업체 —'} · 잔량 {p.left}</div>
-                    </div>) : <span className="text-slate-300">{r.verdict === 'nopo' ? `— 부족 ${r.short}` : '—'}</span>}</td>
-                  <td className={`px-3 py-2 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? <span className="text-amber-600">미정</span> : <span className="text-slate-300">—</span>}</td>
+                  <td className="px-3 py-2 overflow-hidden" data-mp-po><PoCell used={r.poUsed} open={r.openPos} short={r.verdict === 'nopo' ? r.short : 0} /></td>
+                  <td className={`px-3 py-2 tabular-nums ${r.verdict === 'late' ? 'text-rose-600 font-bold' : 'text-slate-600'}`}>{r.eta ? md(r.eta) : r.verdict === 'tbd' ? <span className="text-amber-600">미정</span> : r.openPos?.[0]?.promise_date ? <span className="text-slate-400">{md(r.openPos[0].promise_date)}</span> : <span className="text-slate-300">—</span>}</td>
                   <td className="px-3 py-2"><span className={`px-2 py-0.5 rounded-full text-[11px] font-bold whitespace-nowrap ${v.cls || ''}`}>
                     {v.label}{r.verdict === 'late' ? ` +${-r.gap}일` : r.verdict === 'ok' && r.gap != null ? ` · ${r.gap}일 여유` : r.verdict === 'tbd' && r.waitDays != null ? ` · ${r.waitDays}일째` : r.verdict === 'overdue' ? ` · ${r.overDays}일 지남` : ''}</span></td>
                 </tr>
