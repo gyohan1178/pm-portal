@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { genPoNumber } from './poNumber'
 import { logActivity } from './activityLog'
+import { fillProcRevs } from './bomProc'
 
 // 구매발주 만들기 — 발주를 만드는 화면은 전부 여기를 거친다.
 //   (구매발주 · 부족자재 · 월별 부족 · 소요예측 · 소요량 역산 · 발주 담기함)
@@ -28,6 +29,9 @@ export async function createPurchaseOrders(rows, opt = {}) {
   if (opt.poNumber === 'auto') po = await genPoNumber(opt.orderDate)
   else if (typeof opt.poNumber === 'string' && opt.poNumber.trim()) po = opt.poNumber.trim()
 
+  // 가공물 줄에 BOM 최신 REV 저장 — 발주서 · 발주 목록에 「제조사품번_REV」로 나온다 (v4.251.0)
+  //   REV 를 못 찾아도 발주는 그대로 만든다
+  try { await fillProcRevs(ok) } catch (e) { console.warn('BOM REV 채우기 실패', e) }
   const payload = ok.map(r => ({
     ...r,
     ...(po && !r.po_number ? { po_number: po } : {}),

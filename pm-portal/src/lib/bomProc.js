@@ -4,7 +4,7 @@
 //   이제 부족자재와 같은 규칙(DB pm_bom_explode: 상위 수량을 곱해 내려가고, 0 이면 하위도 0)으로 센다.
 import { supabase } from './supabase'
 import { explodeProjects } from './bomSupply'
-import { catOf } from './utils'
+import { catOf, PROC_CATS } from './utils'
 
 // 판금으로 보는 거래처 — 품목 분류가 판금이 아니어도 이 업체 품목이면 판금 발주 대상 (김교한 차장 2026-10-12)
 export const SHEET_METAL_VENDORS = ['동신', '정금', '뉴엔']
@@ -75,5 +75,42 @@ export async function fetchBomRevs(customerId, itemIds, projectId = null) {
   return out
 }
 
-// 이카운트 발주서 「규격」 — 제조사 · 제조사품번, 가공물은 도면 REV 를 붙인다
-export const ecountSpec = (po, rev) => [po.items?.manufacturer, po.items?.manufacturer_code, rev ? `REV ${rev}` : ''].filter(Boolean).join(' ')
+// 가공물 제조사품번 + 도면 REV — 「170023456_C」 (v4.251.0, 사용자 지정 형식)
+//   제조사품번이 없으면 기준코드(AX- 뺀 것)에 붙인다 · 이미 _REV 가 붙어 있으면 그대로
+export function mpnRev(code, rev, stdCode = '') {
+  const c = String(code || '').trim() || String(stdCode || '').trim().replace(/^AX-/i, '')
+  const r = String(rev || '').trim().toUpperCase()
+  if (!r) return c
+  if (!c) return `_${r}`
+  return c.toUpperCase().endsWith(`_${r}`) ? c : `${c}_${r}`
+}
+// 가공물(판금 · 어셈블리 · 하네스)인지 — 분류 정보를 안 읽어 온 품목은 가공물로 본다(REV 가 저장돼 있으면 붙인다)
+export const isProcItem = (it) => (!it || (!it.js_code && !it.type)) ? true : PROC_CATS.has(catOf(it))
+// 발주 줄의 제조사품번 — 가공물이고 REV 가 저장된 줄은 「제조사품번_REV」
+export const poMpn = (p, rev) => {
+  const r = rev || p?.item_rev
+  return r && isProcItem(p?.items) ? mpnRev(p?.items?.manufacturer_code, r, p?.items?.std_code) : (p?.items?.manufacturer_code || '')
+}
+// 이카운트 발주서 「규격」 — 제조사 · 제조사품번, 가공물은 「제조사품번_REV」
+export const ecountSpec = (po, rev) => [po.items?.manufacturer, poMpn(po, rev || po.item_rev || '')].filter(Boolean).join(' ')
+
+// 발주 저장할 때 가공물(판금 · 어셈블리 · 하네스) 줄에 그때 BOM 의 최신 REV 를 채운다 (v4.251.0)
+//   이미 REV 가 있는 줄(BOM 담기 등)은 그대로 · BOM 에 REV 가 없으면 비워 둔다
+//   rows: purchase_orders insert 줄들 (customer_id · item_id) → 같은 배열에 item_rev 를 채워 돌려준다
+export async function fillProcRevs(rows) {
+  const need = (rows || []).filter(r => r && !r.item_rev && r.item_id && r.customer_id)
+  if (!need.length) return rows
+  const ids = [...new Set(need.map(r => r.item_id))]
+  const proc = new Set()
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data, error } = await supabase.from('items').select('id,js_code,type').in('id', ids.slice(i, i + 200))
+    if (error) throw error
+    ;(data || []).forEach(it => { if (PROC_CATS.has(catOf(it))) proc.add(it.id) })
+  }
+  const target = need.filter(r => proc.has(r.item_id))
+  for (const cid of [...new Set(target.map(r => r.customer_id))]) {
+    const m = await fetchBomRevs(cid, target.filter(r => r.customer_id === cid).map(r => r.item_id))
+    target.filter(r => r.customer_id === cid).forEach(r => { if (m[r.item_id]) r.item_rev = m[r.item_id] })
+  }
+  return rows
+}

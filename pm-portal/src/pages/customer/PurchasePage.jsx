@@ -31,7 +31,7 @@ import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
 import { ilikeAny } from '../../lib/pgFilter'
 import { fetchVendors } from '../../lib/vendorsQuery'
-import { fetchProjectProcRows, procReason, fetchBomRevs, ecountSpec } from '../../lib/bomProc'
+import { fetchProjectProcRows, procReason, fetchBomRevs, ecountSpec, poMpn } from '../../lib/bomProc'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useConfirm } from '../../components/ux/ConfirmDialog'
 import InfoTip from '../../components/ux/InfoTip'
@@ -678,7 +678,7 @@ export default function PurchasePage() {
       const aoa = [header]
       for (const p of rows) {
         aoa.push([
-          p.order_date||'', p.items?.std_code||'', p.items?.name||'', p.items?.manufacturer||'', p.items?.manufacturer_code||'',
+          p.order_date||'', p.items?.std_code||'', p.items?.name||'', p.items?.manufacturer||'', poMpn(p),
           Number(p.qty_ordered)||0, Number(p.qty_remaining)||0, Number(p.unit_price)||0, (Number(p.qty_ordered)||0)*(Number(p.unit_price)||0),
           dueOf(p), p.isDelayed?'지연':'진행중', ''
         ])
@@ -898,7 +898,7 @@ export default function PurchasePage() {
   const propGrand = checkedPOs.reduce((a,p)=>a+Math.round((p.qty_ordered||0)*(p.unit_price||0)),0)
   const PROP_SORT = {
     '발주일자':p=>p.order_date||'', '입고요청일':p=>p.promise_date||'', '공급업체':p=>p.vendors?.name||'',
-    '품목코드':p=>p.items?.std_code||'', '제조사':p=>p.items?.manufacturer||'', '제조사품번':p=>p.items?.manufacturer_code||'',
+    '품목코드':p=>p.items?.std_code||'', '제조사':p=>p.items?.manufacturer||'', '제조사품번':p=>poMpn(p),
     '수량':p=>p.qty_ordered||0, '발주금액':p=>p.unit_price||0, '단위':p=>p.items?.unit||'',
     '합계금액':p=>(p.qty_ordered||0)*(p.unit_price||0), '결제방식':p=>payOf(p.id),
     '프로젝트 이력':p=>(projHist[p.item_id]||[]).join(','), '비고':p=>noteOf(p.id),
@@ -920,7 +920,7 @@ export default function PurchasePage() {
         rows: propSorted.map(p => ({
           order_date: p.order_date || '', promise_date: p.promise_date || '',
           vendor: p.vendors?.name || '', std_code: p.items?.std_code || '',
-          maker: p.items?.manufacturer || '', maker_code: p.items?.manufacturer_code || '',
+          maker: p.items?.manufacturer || '', maker_code: poMpn(p),
           qty: p.qty_ordered || 0, price: p.unit_price || 0,
           unit: p.items?.unit || '',
           amount: Math.round((p.qty_ordered || 0) * (p.unit_price || 0)),
@@ -937,7 +937,7 @@ export default function PurchasePage() {
     const detailRows = propSorted.map(p=>{
       const amt=Math.round((p.qty_ordered||0)*(p.unit_price||0))
       return `<tr><td>${esc(p.order_date)}</td><td>${esc(p.promise_date)}</td><td>${esc(p.vendors?.name)}</td>`
-        +`<td>${esc(p.items?.std_code)}</td><td>${esc(p.items?.manufacturer)}</td><td>${esc(p.items?.manufacturer_code)}</td>`
+        +`<td>${esc(p.items?.std_code)}</td><td>${esc(p.items?.manufacturer)}</td><td>${esc(poMpn(p))}</td>`
         +`<td class="num">${(p.qty_ordered||0).toLocaleString()}</td><td class="num">${p.unit_price?Number(p.unit_price).toLocaleString():''}</td>`
         +`<td>${esc(p.items?.unit)}</td><td class="num">${amt.toLocaleString()}</td>`
         +`<td>${esc(payOf(p.id))}</td><td>${esc((projHist[p.item_id]||[]).join(', '))}</td><td>${esc(noteOf(p.id))}</td></tr>`
@@ -1633,7 +1633,7 @@ export default function PurchasePage() {
                           {done?'✔ 입고 완료':part?`부분 입고 ${p.qty_received}/${p.qty_ordered}`:'미입고'}</span>
                       </div>
                       <div className="text-[13px] text-slate-700 truncate">{p.items?.name||''}</div>
-                      {(p.items?.manufacturer||p.items?.manufacturer_code) && <div className="text-[12px] text-slate-500 truncate">{p.items?.manufacturer||'—'} · <span className="font-mono">{p.items?.manufacturer_code||''}</span></div>}
+                      {(p.items?.manufacturer||poMpn(p)) && <div className="text-[12px] text-slate-500 truncate">{p.items?.manufacturer||'—'} · <span className="font-mono">{poMpn(p)}</span></div>}
                       <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12px] text-slate-500">
                         <span className="font-semibold text-slate-600">{p.vendors?.name||'구매처 미정'}</span>
                         <span className="font-mono">{p.po_number||'번호 없음'}</span>
@@ -1693,7 +1693,7 @@ export default function PurchasePage() {
                           </td>
                           <td className="px-3 py-2 overflow-hidden">
                             <div className="text-xs text-slate-700 truncate">{p.items?.manufacturer||'-'}</div>
-                            <div className="font-mono text-[11px] text-slate-400 truncate">{p.items?.manufacturer_code||''}</div>
+                            <div className="font-mono text-[11px] text-slate-400 truncate">{poMpn(p)}</div>
                           </td>
                           <td className="px-3 py-2"><span className={`inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-bold ${PROC_CATS.has(catOf(p.items))?'bg-violet-50 text-violet-700':'bg-blue-50 text-blue-600'}`}>{catOf(p.items)}</span></td>
                           <td className="px-3 py-2 text-right font-semibold text-slate-700">{p.qty_ordered}</td>
@@ -1857,7 +1857,7 @@ export default function PurchasePage() {
                             <td className="px-2 py-1.5 whitespace-nowrap">{p.vendors?.name||'-'}</td>
                             <td className="px-2 py-1.5 font-mono text-indigo-600 whitespace-nowrap">{p.items?.std_code||'-'}</td>
                             <td className="px-2 py-1.5 whitespace-nowrap">{p.items?.manufacturer||'-'}</td>
-                            <td className="px-2 py-1.5 font-mono text-slate-500 whitespace-nowrap">{p.items?.manufacturer_code||'-'}</td>
+                            <td className="px-2 py-1.5 font-mono text-slate-500 whitespace-nowrap">{poMpn(p)||'-'}</td>
                             <td className="px-2 py-1.5 text-right">{Number(p.qty_ordered||0).toLocaleString()}</td>
                             <td className="px-2 py-1.5 text-right">{p.unit_price?Number(p.unit_price).toLocaleString():'-'}</td>
                             <td className="px-2 py-1.5">{p.items?.unit||'-'}</td>

@@ -83,7 +83,7 @@ async function fetchInboundHistory({ from, to, customerId, vendorId }) {
   let data = [], capped = false
   for (let off = 0; off < CAP; off += PAGE) {
     let q = supabase.from('stock_movements')
-      .select('*, items(std_code,name,unit,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, item_rev, customer_id, vendor_id, fx_currency, vendors(name, ecount_code), projects(code), customers(name,code))')
+      .select('*, items(std_code,name,unit,type,js_code,manufacturer,manufacturer_code), customers(name,code), purchase_orders(po_number, memo, mfr, mfr_code, item_rev, customer_id, vendor_id, fx_currency, vendors(name, ecount_code), projects(code), customers(name,code))')
       .eq('movement_type','입고')
       .gte('movement_date', from)
       .lte('movement_date', to)

@@ -9,16 +9,17 @@ export const PURCHASE_HEAD = ['일자', '순번', '거래처코드', '거래처�
 export const ECOUNT_WH = '00009'
 export const ecountProject = (custCode) => (/^ax$/i.test(String(custCode || '').trim()) ? '00012' : '00005')
 
+import { mpnRev, isProcItem } from './bomProc'
+
 const s = (v) => (v == null ? '' : String(v).trim())
 const clip = (v, n) => { const t = s(v); return t.length > n ? t.slice(0, n) : t }
 
-// 규격 = 제조사 제조사품번 (+ 가공물 REV) — 실제 산 것(발주 줄 값)이 먼저, 없으면 품목 값
+// 규격 = 제조사 제조사품번 — 가공물은 「제조사품번_REV」(170023456_C · v4.251.0) · 실제 산 것(발주 줄 값)이 먼저, 없으면 품목 값
 export function purchaseSpec(r) {
   const po = r.purchase_orders || {}, it = r.items || {}
   const mfr = s(po.mfr) || s(it.manufacturer), mpn = s(po.mfr_code) || s(it.manufacturer_code)
-  const base = [mfr, mpn].filter(Boolean).join(' ')
   const rev = s(po.item_rev)
-  return clip(rev && !/\bREV\b/i.test(base) ? [base, `REV ${rev}`].filter(Boolean).join(' ') : base, 100)
+  return clip([mfr, rev && isProcItem(it) ? mpnRev(mpn, rev, it.std_code) : mpn].filter(Boolean).join(' '), 100)
 }
 
 // rows: 입고 현황 줄 (fetchInboundHistory 결과) · custCodeOf(customer_id) → 'ax' 등
