@@ -864,7 +864,15 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
   )
   if (isAx && mainTab === 'harn') return (
     <>
-      <div className="flex items-center gap-2 flex-wrap mb-3">{mainTabs}</div>
+      {/* 탭 묶음이 왼쪽으로 튀지 않게 — 다른 탭의 검색칸 · 완료 포함 · 호기 추가 자리를 보이지 않게 그대로 둔다 (v4.245.1) */}
+      <div className="flex items-center gap-2 flex-wrap mb-3">
+        <div aria-hidden="true" className="invisible hidden sm:flex items-center gap-2">
+          <span className="block sm:w-64 px-3 py-2 text-sm border rounded-lg">.</span>
+          <span className="flex items-center gap-1.5 text-xs font-semibold"><input type="checkbox" tabIndex={-1} readOnly /> 완료 포함</span>
+          <span className="px-3 py-1.5 text-xs font-bold rounded-lg">+ 호기 추가</span>
+        </div>
+        {mainTabs}
+      </div>
       <Suspense fallback={<div className="p-6 text-center text-sm text-slate-400">불러오는 중…</div>}><HarnAssyTab /></Suspense>
     </>
   )
