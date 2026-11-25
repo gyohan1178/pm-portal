@@ -13,6 +13,7 @@ import { fetchNotes, fetchPoChanges, ackState, cellTag, changeText, atText, addN
 import { KpiCard, KpiRow } from '../../components/ui/Kpi'
 import PlanBadge from '../../components/PlanBadge'
 import TopScroll from '../../components/ui/TopScroll'
+import { useConfirm } from '../../components/ux/ConfirmDialog'
 import { SkeletonRows } from '../../components/ux/Skeleton'
 import { useRemember } from '../../hooks/useRemember'
 
@@ -161,6 +162,7 @@ export default function HarnAssyTab() {
   const qc = useQueryClient()
   const me = useMe()
   const canEdit = useCanEdit()
+  const [ask, askDialog] = useConfirm()
   const { data, isLoading, error } = useQuery({ queryKey: ['harnAssy'], queryFn: loadHarn, staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false, placeholderData: (prev) => prev })
   const ready = !!data?.ready
 
@@ -279,8 +281,18 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
   const hl = (r, f) => (r.ack.cells[f] ? 'bg-amber-100/70 ring-2 ring-inset ring-amber-300' : '')
   const Tag = ({ r, f }) => (r.ack.cells[f] ? <span className="block text-[10px] font-bold text-amber-700 whitespace-nowrap" data-harn-chg={f}>{cellTag(r.ack.cells[f])}</span> : null)
   const refresh = () => qc.invalidateQueries({ queryKey: ['harnAssy'] })
+  // 확인 · 확인 취소 (v4.250.3) — 이미 확인한 버튼을 다시 누르면 취소를 묻는다 · 취소도 이력에 남음
   async function doAck(r, dept) {
+    const done = dept === '영업' ? r.ack.sOk : r.ack.mOk
     try {
+      if (done) {
+        const res = await ask({ title: `${dept} 확인을 취소할까요?`, desc: `${pnOf(r.items?.std_code)} · ${r.po_number} L${N(r.order_line)}-${N(r.del_line) || 1} — 취소하면 노란 음영이 다시 켜지고, 취소 기록이 이력에 남습니다.`,
+          okText: '확인 취소', danger: true, input: { label: '사유 (선택)', required: false, placeholder: '예) 잘못 누름' } })
+        if (!res) return
+        await addNote(supabase, { poId: r.cpo_id, kind: 'unack', dept, body: (res.value || '').trim() || null, me })
+        toastSuccess(`${dept} 확인 취소 — ${pnOf(r.items?.std_code)} ${r.po_number}`)
+        refresh(); return
+      }
       await addNote(supabase, { poId: r.cpo_id, kind: 'ack', dept, me })
       toastSuccess(`${dept} 확인 — ${pnOf(r.items?.std_code)} ${r.po_number}`)
       refresh()
@@ -293,7 +305,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
     if (!list.length) { toastError('내려받을 줄이 없습니다'); return }
     const t = today()
     const histTxt = (r) => [...r.ack.events.map(c => ({ at: c.at, t: changeText(c) + (c.reason ? ` (사유: ${c.reason})` : c.field === 'promise_date' && c.src !== 'portal' ? ' (PO 업로드)' : '') + (c.by ? ` · ${c.by}` : '') })),
-      ...r.notes.map(n => ({ at: n.created_at, t: n.kind === 'ack' ? `${n.dept} 확인 · ${n.by_name || ''}` : `[${n.dept || '-'}] ${n.by_name || ''}: ${n.body || ''}` }))]
+      ...r.notes.map(n => ({ at: n.created_at, t: n.kind === 'ack' ? `${n.dept} 확인 · ${n.by_name || ''}` : n.kind === 'unack' ? `${n.dept} 확인 취소 · ${n.by_name || ''}${n.body ? ` (사유: ${n.body})` : ''}` : `[${n.dept || '-'}] ${n.by_name || ''}: ${n.body || ''}` }))]
       .sort((a, b) => String(a.at).localeCompare(String(b.at))).map(x => `${atText(x.at)} ${x.t}`).join('\n')
     const dt = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`) : '')
     // [머리글, 폭, 값, 정렬, 서식, 강조칸(변경 필드)]
@@ -464,7 +476,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                         {['영업', '제조'].map(dp => {
                           const ok = dp === '영업' ? r.ack.sOk : r.ack.mOk
                           return <button key={dp} disabled={!canEdit || !r.cpo_id || !data?.notesReady} onClick={() => doAck(r, dp)}
-                            title={ok ? `${dp} 확인함 · ${atText(dp === '영업' ? r.ack.ackS : r.ack.ackM)}` : `${dp} 확인 — 누르면 이력에 남습니다`}
+                            title={!canEdit ? '편집 권한이 있어야 누를 수 있습니다' : ok ? `${dp} 확인함 · ${atText(dp === '영업' ? r.ack.ackS : r.ack.ackM)} — 다시 누르면 확인 취소` : `${dp} 확인 — 누르면 이력에 남습니다`}
                             className={`px-1.5 py-0.5 rounded border text-[10.5px] font-bold ${ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : r.ack.open ? 'bg-white border-amber-300 text-amber-700 hover:bg-amber-50' : 'bg-white border-slate-200 text-slate-400'} disabled:opacity-50`}>
                             {dp}{ok ? ' ✓' : ' 확인'}</button>
                         })}
@@ -486,6 +498,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
           영업 · 제조 확인과 코멘트를 저장할 표가 아직 없습니다 — SQL <b>pm_po_notes_261125</b> 를 실행하면 켜집니다. (변경 음영 · promise 바꾸기는 지금도 됩니다)
         </p>
       )}
+      {askDialog}
       {hist && <HistDialog r={rows.find(x => x.id === hist.id) || hist} me={me} canEdit={canEdit} notesReady={!!data?.notesReady} onAck={doAck} onClose={() => setHist(null)} onSaved={refresh} />}
       {promEdit && <PromiseDialog r={promEdit} me={me} onClose={() => setPromEdit(null)} onSaved={refresh} />}
       <p className="mt-2 text-[11px] text-slate-400">보기 전용 — 출도 · 불출은 「하네스 출도」에서 합니다. 출도일 · REV · 공정은 하네스 공정관리 기록(출도 · QR 스캔)을 PO · 라인으로 맞춰 읽습니다 — PO 없이 찍힌 스캔은 안 붙습니다.</p>
@@ -531,6 +544,7 @@ function HistDialog({ r, me, canEdit, notesReady, onAck, onClose, onSaved }) {
                 {x.c.by && <span className="text-slate-500"> · {x.c.by}</span>}{x.c.reason && <span className="text-slate-600"> · 사유: {x.c.reason}</span>}</>}
               {x.k === 'new' && <>📥 PO 줄 등록 (promise {r.prom ? r.prom.slice(5).replace('-', '/') : '—'})</>}
               {x.k === 'ack' && <><span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold mr-1 ${DEPT_CLS[x.n.dept] || 'bg-slate-100 text-slate-600'}`}>{x.n.dept}</span><b>{x.n.by_name}</b> ✓ 확인</>}
+              {x.k === 'unack' && <><span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold mr-1 ${DEPT_CLS[x.n.dept] || 'bg-slate-100 text-slate-600'}`}>{x.n.dept}</span><b>{x.n.by_name}</b> <span className="text-rose-600 font-bold">↺ 확인 취소</span>{x.n.body && <span className="text-slate-600"> · 사유: {x.n.body}</span>}</>}
               {x.k === 'comment' && <><span className={`px-1.5 py-0.5 rounded text-[10px] font-extrabold mr-1 ${DEPT_CLS[x.n.dept] || 'bg-slate-100 text-slate-600'}`}>{x.n.dept || '—'}</span><b>{x.n.by_name}</b> 💬 <span className="text-slate-700 whitespace-pre-wrap">{x.n.body}</span></>}
             </li>
           ))}
@@ -541,7 +555,8 @@ function HistDialog({ r, me, canEdit, notesReady, onAck, onClose, onSaved }) {
             <textarea value={body} onChange={e => setBody(e.target.value)} rows={2} placeholder="예) 자재 11/26 입고 예정" disabled={!canEdit}
               className="mt-1.5 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             <div className="mt-2 flex gap-2 justify-end">
-              {['영업', '제조'].map(dp => <button key={dp} disabled={!canEdit} onClick={() => onAck(r, dp)} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40">{dp} 확인</button>)}
+              {['영업', '제조'].map(dp => { const ok = dp === '영업' ? r.ack.sOk : r.ack.mOk
+                return <button key={dp} disabled={!canEdit} onClick={() => onAck(r, dp)} className={`px-3 py-1.5 text-xs font-bold rounded-lg border disabled:opacity-40 ${ok ? 'border-rose-200 text-rose-600 hover:bg-rose-50' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{dp} {ok ? '확인 취소' : '확인'}</button> })}
               <button disabled={!canEdit || busy || !body.trim()} onClick={save} className="px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">코멘트 저장</button>
             </div>
           </div>

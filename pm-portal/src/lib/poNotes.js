@@ -1,5 +1,6 @@
 // 고객사 PO 줄 확인 · 코멘트 (v4.250.0) — pm_po_notes
 //   kind 'ack'     : 영업 · 제조가 「확인」을 누른 기록 (dept = '영업' | '제조')
+//   kind 'unack'   : 확인 취소 (v4.250.3) — 지우지 않고 취소 기록을 쌓는다 · 부서별로 마지막 기록이 ack 일 때만 확인된 것
 //   kind 'comment' : 제조 · 구매자재 · 영업 코멘트 (dept = 로그인한 사람 부서)
 //   지우지 않고 쌓기만 한다 — 이력 창에서 PO 변경(changes)과 시간순으로 합쳐 보여 준다
 //   표가 없으면(SQL pm_po_notes_261125 전) 읽기는 빈 값, 쓰기는 안내
@@ -56,8 +57,9 @@ export function ackState(chg, notes) {
     evts.push(c)
   }
   if (chg?.created && String(chg.created).slice(0, 10) >= ACK_START) evts.push({ field: 'new', at: chg.created, to: '' })
-  const acks = (notes || []).filter(n => n.kind === 'ack')
-  const last = (d) => acks.filter(a => a.dept === d).map(a => a.created_at).sort().pop() || ''
+  const acks = (notes || []).filter(n => n.kind === 'ack' || n.kind === 'unack')
+  // 부서별 마지막 기록 — ack 면 그 시각, 취소(unack)면 확인 안 된 것
+  const last = (d) => { const l = acks.filter(a => a.dept === d).sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))).pop(); return l && l.kind === 'ack' ? l.created_at : '' }
   const ackS = last('영업'), ackM = last('제조')
   const both = [ackS, ackM].sort()[0] || ''   // 둘 다 확인한 시각 = 더 이른 쪽
   const pend = evts.filter(e => !both || String(e.at) > both)
@@ -87,7 +89,8 @@ export const cellTag = (x) => (x ? `${md(kst(x.at))} ${changeText(x.e)}` : '')
 
 export async function addNote(supabase, { poId, kind, dept, body, me }) {
   const { error } = await supabase.from('pm_po_notes').insert({ po_id: String(poId), kind, dept: dept || null, body: body || null, by_name: me?.name || me?.email || null })
-  if (error) throw notesMissing(error) ? new Error('확인 · 코멘트 표가 아직 없습니다 — SQL pm_po_notes_261125 를 먼저 실행하세요') : error
+  if (error) throw notesMissing(error) ? new Error('확인 · 코멘트 표가 아직 없습니다 — SQL pm_po_notes_261125 를 먼저 실행하세요')
+    : /check constraint|23514/i.test(String(error.message || error.code)) ? new Error('확인 취소는 SQL pm_po_notes_unack_261125 실행 후 쓸 수 있습니다') : error
 }
 
 // promise date 바꾸기 — 사유 필수 · 이력(changes)에 누가 · 언제 · 전→후 · 사유
