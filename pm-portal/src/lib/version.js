@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.250.1'
+export const APP_VERSION = 'v4.250.2'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.250.1'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.250.2',
+    date: '2026-11-25',
+    changes: ['HARN ASSY 「📥 엑셀」 표 서식 — 제목 · 안내 줄 · 회색 머리글 · 얇은 테두리 · 맑은 고딕 10 · 틀 고정 · 자동 필터 · 날짜 칸 · 지난 need 빨간 글씨 · 미확인 변경 노란 칸 · 가로 인쇄'],
+  },
   {
     version: 'v4.250.1',
     date: '2026-11-25',

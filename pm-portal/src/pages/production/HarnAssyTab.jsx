@@ -286,27 +286,77 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
       refresh()
     } catch (e) { toastError(e.message) }
   }
+  // 📥 엑셀 (v4.250.2) — 표 서식: 맑은 고딕 10 · 회색 머리글 · 얇은 회색 테두리 · 제목/안내 줄 · 틀 고정 · 자동 필터
+  //   지난 날짜는 빨간 글씨 · 영업/제조 미확인 변경 칸은 노란 음영 (화면과 같게)
   async function exportAll() {
-    const list = grouped.flatMap(g => g.list)
+    const list = grouped.flatMap(g => g.list.map(r => ({ r, g })))
     if (!list.length) { toastError('내려받을 줄이 없습니다'); return }
-    const XLSX = await import('xlsx')
+    const t = today()
     const histTxt = (r) => [...r.ack.events.map(c => ({ at: c.at, t: changeText(c) + (c.reason ? ` (사유: ${c.reason})` : c.field === 'promise_date' && c.src !== 'portal' ? ' (PO 업로드)' : '') + (c.by ? ` · ${c.by}` : '') })),
       ...r.notes.map(n => ({ at: n.created_at, t: n.kind === 'ack' ? `${n.dept} 확인 · ${n.by_name || ''}` : `[${n.dept || '-'}] ${n.by_name || ''}: ${n.body || ''}` }))]
       .sort((a, b) => String(a.at).localeCompare(String(b.at))).map(x => `${atText(x.at)} ${x.t}`).join('\n')
-    const ws = XLSX.utils.aoa_to_sheet([
-      ['순', '묶음', '출도', '품번', '품명', 'CCN', 'SRev', '수량', 'PO', 'Line', 'Del', '접수', 'need date', 'promise', 'Plan Exc', '불출', '공정(마지막)', '영업 확인', '제조 확인', '미확인 변경', '최근 코멘트', '이력 · 코멘트'],
-      ...grouped.flatMap(g => g.list.map(r => {
-        const lastC = r.ack.comments[r.ack.comments.length - 1]
-        return [r.no, g.label, r.iss ? (String(r.iss.t).slice(0, 10) || (r.iss.byIssue ? '불출' : '출도')) : '미출도', pnOf(r.items?.std_code), r.items?.name || '', r.ccn || '', r.sRev, leftOf(r),
-          r.po_number, N(r.order_line), N(r.del_line) || 1, r.placed || '', (ready && r.need) || '', r.prom || '', r.plan_exc || '', r.material_issued ? 'Y' : '',
-          r.proc?.last ? `${r.proc.last.p} ${r.proc.last.open ? '진행 중' : '끝'} ${atText(r.proc.last.at)}` : '',
-          r.ack.ackS ? atText(r.ack.ackS) : '', r.ack.ackM ? atText(r.ack.ackM) : '',
-          Object.values(r.ack.cells).map(cellTag).join(' / '), lastC ? `[${lastC.dept || '-'}] ${lastC.by_name || ''}: ${lastC.body || ''}` : '', histTxt(r)]
-      })),
-    ])
-    ws['!cols'] = [4, 14, 10, 12, 30, 6, 5, 6, 10, 5, 4, 10, 10, 10, 8, 5, 22, 12, 12, 26, 30, 60].map(w => ({ wch: w }))
-    const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, 'HARN ASSY')
-    XLSX.writeFile(wb, `HARN_ASSY_${today()}.xlsx`)
+    const dt = (v) => (v ? new Date(`${String(v).slice(0, 10)}T00:00:00Z`) : '')
+    // [머리글, 폭, 값, 정렬, 서식, 강조칸(변경 필드)]
+    const COLS = [
+      ['No', 5, (r) => r.no, 'center'],
+      ['묶음', 14, (r, g) => g.label, 'left'],
+      ['CCN', 6, (r) => r.ccn || '', 'center'],
+      ['구분', 8, (r) => r.plan_exc || '', 'center', null, 'plan_exc'],
+      ['Item', 12, (r) => pnOf(r.items?.std_code), 'center'],
+      ['Rev', 6, (r) => r.sRev || '', 'center'],
+      ['Item Desc', 40, (r) => r.items?.name || '', 'left'],
+      ['PO', 12, (r) => r.po_number, 'center', null, 'new'],
+      ['Line', 6, (r) => N(r.order_line), 'center'],
+      ['Del', 5, (r) => N(r.del_line) || 1, 'center'],
+      ['수량', 8, (r) => leftOf(r), 'center', '#,##0', 'qty_ordered'],
+      ['접수', 10, (r) => dt(r.placed), 'center', 'mm/dd'],
+      ['need date', 11, (r) => dt(ready && r.need), 'center', 'mm/dd', 'need_date'],
+      ['promise', 11, (r) => dt(r.prom), 'center', 'mm/dd', 'promise_date'],
+      ['출도일', 10, (r) => (r.iss ? (String(r.iss.t).slice(0, 10) ? dt(r.iss.t) : (r.iss.byIssue ? '불출' : '출도')) : '미출도'), 'center', 'mm/dd'],
+      ['불출', 6, (r) => (r.material_issued ? 'Y' : ''), 'center'],
+      ['진행현황', 22, (r) => (r.proc?.last ? `${r.proc.last.p} ${r.proc.last.open ? '진행 중' : '끝'} ${atText(r.proc.last.at)}` : ''), 'left'],
+      ['영업 확인', 12, (r) => (r.ack.ackS ? atText(r.ack.ackS) : ''), 'center'],
+      ['제조 확인', 12, (r) => (r.ack.ackM ? atText(r.ack.ackM) : ''), 'center'],
+      ['미확인 변경', 26, (r) => Object.values(r.ack.cells).map(cellTag).join(' / '), 'left'],
+      ['최근 코멘트', 32, (r) => { const c = r.ack.comments[r.ack.comments.length - 1]; return c ? `[${c.dept || '-'}] ${c.by_name || ''}: ${c.body || ''}` : '' }, 'left'],
+      ['이력 · 코멘트', 60, (r) => histTxt(r), 'left'],
+    ]
+    const ExcelJS = (await import('exceljs')).default
+    const wb = new ExcelJS.Workbook()
+    const ws = wb.addWorksheet('HARN ASSY', { views: [{ state: 'frozen', ySplit: 4, topLeftCell: 'A5', showGridLines: false }],
+      pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0, paperSize: 9 } })
+    const FONT = { name: '맑은 고딕', size: 10 }
+    const B = { style: 'thin', color: { argb: 'FFA6A6A6' } }
+    const border = { top: B, bottom: B, left: B, right: B }
+    ws.columns = COLS.map(c => ({ width: c[1] }))
+    ws.getCell('A1').value = `Axcelis 하네스 작업 순서 — HARN ASSY (${md(t)})`; ws.getCell('A1').font = { ...FONT, size: 14, bold: true }; ws.getRow(1).height = 21
+    ws.getCell('A2').value = `※ 기준: ${ready ? 'need date' : 'promise date'} · 묶음 HOT → 지남 → 7일 → 14일${range === 'all' ? ' → 그 뒤' : ''}${sort?.k ? ` (정렬: ${SORT_LABEL[sort.k]} ${sort.dir === 'desc' ? '▼' : '▲'})` : ''} · 지난 need date 는 빨간 글씨`
+    ws.getCell('A2').font = { ...FONT, size: 9 }
+    ws.getCell('A3').value = '※ 노란 칸 = 영업 · 제조 둘 다 확인 전인 변경 (신규 HOT · need · promise · 수량 · 새 PO 줄)'
+    ws.getCell('A3').font = { ...FONT, size: 9, color: { argb: 'FFFF0000' } }
+    const hr = ws.getRow(4); hr.height = 22
+    COLS.forEach((c, k) => { const cell = hr.getCell(k + 1); cell.value = c[0]; cell.font = { ...FONT, bold: true }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } }; cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true }; cell.border = border })
+    list.forEach(({ r, g }, n) => {
+      const row = ws.getRow(5 + n)
+      COLS.forEach(([, , fn, al, fmt, fld], k) => {
+        const cell = row.getCell(k + 1)
+        const v = fn(r, g)
+        cell.value = v === '' || v == null ? null : v
+        if (fmt) cell.numFmt = fmt
+        const pastNeed = fld === 'need_date' && v instanceof Date && v.toISOString().slice(0, 10) < t
+        const hot = fld === 'plan_exc' && String(v).toUpperCase() === 'HOT'
+        cell.font = { ...FONT, ...(pastNeed || hot ? { color: { argb: 'FFFF0000' }, bold: hot } : {}) }
+        cell.alignment = { horizontal: al, vertical: 'middle', wrapText: al === 'left' && typeof v === 'string' && v.includes('\n') }
+        cell.border = border
+        if (fld && r.ack.cells[fld]) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } }
+      })
+    })
+    ws.autoFilter = { from: { row: 4, column: 1 }, to: { row: 4 + list.length, column: COLS.length } }
+    const buf = await wb.xlsx.writeBuffer()
+    const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
+    const a = document.createElement('a'); a.href = url; a.download = `Axcelis_하네스_순서_${t}.xlsx`
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(url), 2000)
   }
 
   const chip = (cur, v, set, label) => (
