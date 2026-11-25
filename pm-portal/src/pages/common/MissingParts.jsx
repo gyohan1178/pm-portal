@@ -208,9 +208,9 @@ async function planConsolidate(g) {
   const prods = (must(await supabase.from('production').select('id,pn,hogi,req_date,status,part_issue,missing_parts,changes,customer_code').in('pn', pcs.length ? pcs : [g.pn]), '호기 읽기') || [])
     .filter((p) => p.status !== '완료' && String(p.customer_code || 'AX').toUpperCase() === String(g.cs).toUpperCase())
   const issued = (p) => p.part_issue === true || /^(true|1|y)$/i.test(String(p.part_issue ?? ''))
-  const has = (p) => (Array.isArray(p.missing_parts) ? p.missing_parts : []).some((m) => m && missKey(m) === g.key)
-  const hogis = orderHogis(prods.filter((p) => issued(p) || has(p)))
-  if (hogis.length < 2) return { why: '이 상위품번에 불출한 호기가 1대뿐이라 몰 곳이 없습니다' }
+  // 전장 불출(part_issue) 체크된 호기만 — 불출 전 호기는 아직 자재가 안 나갔으니 몰 대상이 아니다 (v4.248.2)
+  const hogis = orderHogis(prods.filter(issued))
+  if (hogis.length < 2) return { why: '이 상위품번에 전장 불출한 호기가 1대뿐이라 몰 곳이 없습니다' }
   // 대당 수량 — BOM 전개
   const { data: custs } = await supabase.from('customers').select('id,code')
   const custId = (custs || []).find((c) => String(c.code || '').toLowerCase() === String(g.cs || '').toLowerCase())?.id
