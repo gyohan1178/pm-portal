@@ -1,5 +1,6 @@
 import CustOptions from '../../components/CustOptions'
 import { KpiCard } from '../../components/ui/Kpi'
+import TopScroll from '../../components/ui/TopScroll'
 // 📥 견적 접수 현황 — 영업 › 매출견적 첫 탭 (v4.92.0)
 //   고객사 견적 요청을 접수해 두고 BOM 확인 → 단가(구매자재) → 견적 작성 → 📤 발송 완료까지 한 줄로 따라간다 (v4.119.0 — 수주 · 실주는 안 물음)
 //   BOM 이 없는 품목은 영업이 고객 BOM 을 먼저 올린다 (기초자료 › BOM). 단가 없는 부품은 구매자재에 요청한다.
@@ -379,7 +380,8 @@ export default function RfqBoard({ customers = [], onWrite }) {
         </div>
       )}
 
-      <div className="bg-white border border-slate-200 rounded-xl overflow-x-auto">
+      {/* 노트북 폭에 맞춤 + 그래도 넘치면 표 위에도 가로 스크롤 (v4.246.0 — 오른쪽 「다음 할 일」 버튼이 아래 막대까지 내려야만 보였다) */}
+      <TopScroll className="bg-white border border-slate-200 rounded-xl">
         <table className="w-full min-w-[980px] text-xs">
           <thead className="bg-slate-50 text-slate-500 border-b-2 border-slate-200"><tr className="text-left">
             <th className="px-3 py-2.5 font-bold">접수 · 회신 기한</th><th className="px-3 font-bold">고객사 · 건명</th><th className="px-3 font-bold">품목</th>
@@ -421,7 +423,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                   <td className="px-3 py-3">
                     <button type="button" onClick={() => setOpen(open === r.id ? null : r.id)} data-rfq-lines={r.title} className="text-left">
                       <div className="font-mono font-bold text-[#5b6ee8]">{ls[0]?.pn || '—'}{ls.length > 1 ? ` 외 ${ls.length - 1}종` : ''}</div>
-                      <div className="text-[11px] text-slate-500 truncate max-w-[220px]">{ls[0]?.name || ''}{ls[0] ? ` · ${n(ls[0].qty)}EA` : ''} {open === r.id ? '▴' : '▾'}</div>
+                      <div className="text-[11px] text-slate-500 truncate max-w-[180px]">{ls[0]?.name || ''}{ls[0] ? ` · ${n(ls[0].qty)}EA` : ''} {open === r.id ? '▴' : '▾'}</div>
                     </button>
                   </td>
                   <td className="px-3 py-3 whitespace-nowrap">
@@ -439,7 +441,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                       <div className="mt-1 space-y-0.5" data-rfq-nqp title={nqLs.map((l) => `${l.pn}: ${nqSummary(l)}`).join('\n')}>
                         <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">🚫 부품 견적 불가 · {n(nqLs.length)}품목</span>
                         {nqLs.slice(0, 2).map((l) => (
-                          <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[420px]" data-rfq-nqp-line={l.pn}><b className="font-mono">{l.pn}</b> {nqSummary(l)}
+                          <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[320px]" data-rfq-nqp-line={l.pn}><b className="font-mono">{l.pn}</b> {nqSummary(l)}
                             {(() => { const by = [...new Set(nqParts(l).map((x) => x.by).filter(Boolean))].join(', '); return by ? <span className="text-rose-400"> · {by}</span> : null })()}</div>
                         ))}
                         {nqLs.length > 2 && <div className="text-[10.5px] text-rose-400">외 {n(nqLs.length - 2)}품목 — 펼쳐서 보기</div>}
@@ -454,7 +456,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                         <div className="mt-1 space-y-0.5" data-rfq-nq title={nqs.map((l) => `${l.pn}: ${l.noquote}${l.noquote_memo ? ` (${l.noquote_memo})` : ''}${l.noquote_by ? ` · ${l.noquote_by}` : ''}`).join('\n')}>
                           <span className="px-2 py-0.5 rounded-full text-[10.5px] font-bold bg-rose-50 text-rose-600 border border-rose-200">🚫 견적 불가 {n(nqs.length)}품목</span>
                           {nqs.slice(0, 2).map((l) => (
-                            <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[420px]" data-rfq-nq-line={l.pn}>
+                            <div key={l.id} className="text-[10.5px] text-rose-700 truncate max-w-[320px]" data-rfq-nq-line={l.pn}>
                               <b className="font-mono">{l.pn}</b> {l.noquote}{l.noquote_memo ? ` — ${l.noquote_memo}` : ''}{l.noquote_by ? <span className="text-rose-400"> · {l.noquote_by}</span> : null}
                             </div>
                           ))}
@@ -471,7 +473,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
                   </td>
                   <td className="px-3 py-3">
                     {/* 다음 할 일 — 주 동작은 한 줄 전체 · 보조 동작은 같은 폭 3칸 (v4.99.0 · 버튼 길이가 제각각이라 들쭉날쭉했음) */}
-                    <div className="grid grid-cols-3 gap-1.5 w-[300px]" data-rfq-next>
+                    <div className="grid grid-cols-3 gap-1.5 w-[270px]" data-rfq-next>
                       {editable && r.stage === 'new' && <Btn wide tone="primary" onClick={() => check(r)} busy={b} data="check">🔍 점검</Btn>}
                       {r.stage === 'bom' && (isEtc(r.customer_code)
                         ? (refOf(r.customer_code)
@@ -585,7 +587,7 @@ export default function RfqBoard({ customers = [], onWrite }) {
             })}
           </tbody>
         </table>
-      </div>
+      </TopScroll>
       <p className="text-[11px] text-slate-400 px-1">한 줄 = 고객사 견적 요청 한 건. 품목 칸을 누르면 품목마다 점검 결과(BOM · 단가 없는 부품)가 나옵니다. BOM 을 올리거나 단가를 등록한 뒤 「🔍 다시 점검」을 누르세요. 구매자재가 「수급 어려움 · 단가 대기」로 보류한 품목은 빼고 준비된 품목부터 견적 · 발송할 수 있습니다. 고객사에 보냈으면 「📤 발송 완료」 — 견적번호 · 금액은 다시 적지 않습니다. 단종 · 제작 불가처럼 견적을 낼 수 없는 품목은 품목 표의 「견적 불가」에서 사유를 고르세요 — 모든 품목이 불가면 「🚫 견적 불가로 닫기」.</p>
     </div>
   )
