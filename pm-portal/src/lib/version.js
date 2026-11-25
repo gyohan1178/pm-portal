@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.250.3'
+export const APP_VERSION = 'v4.250.4'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.250.3'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.250.4',
+    date: '2026-11-25',
+    changes: ['HARN ASSY — 영업 · 제조 미확인 변경이 있는 줄은 행 전체에 연한 노란 음영 (바뀐 칸은 지금처럼 진하게)'],
+  },
   {
     version: 'v4.250.3',
     date: '2026-11-25',

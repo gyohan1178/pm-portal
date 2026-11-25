@@ -437,7 +437,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                   </td>
                 </tr>,
                 ...(fold ? [] : g.list.map(r => (
-                  <tr key={r.id} data-harn-row className="border-t border-slate-100 hover:bg-slate-50">
+                  <tr key={r.id} data-harn-row data-harn-open={r.ack.open ? '1' : undefined} className={`border-t border-slate-100 ${r.ack.open ? 'bg-amber-50/70 hover:bg-amber-50' : 'hover:bg-slate-50'}`}>
                     <td className="px-2 py-1.5 text-center text-slate-500">{r.no}</td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{r.iss ? <span className="text-slate-600" title="하네스 공정관리 출도 기록">{md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도')}</span>
                       : <span className="px-1.5 py-0.5 rounded border border-dashed border-slate-400 text-slate-500 font-bold text-[10px]">미출도</span>}</td>
