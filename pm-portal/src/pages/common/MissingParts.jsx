@@ -203,7 +203,7 @@ async function reissue(picked, by) {
 // 뒤 호기로 몰기 (v4.248.0) — 같은 상위품번 안에서 부족분은 「불출한 호기 중 가장 뒤(납품요청일 늦은) 호기」부터 진다
 //   앞 호기는 대당 수량을 다 채운 것으로 보고, 모자란 합계를 뒤 호기부터 대당 수량까지 채워 넣는다 (합계는 그대로)
 //   대당 수량은 그 상위품번 BOM 전개(pm_bom_explode)에서 — 못 찾으면 안 바꾼다
-async function planConsolidate(g) {
+async function planConsolidate(g, cache) {
   const pcs = codeCandidates(g.pn, g.cs)
   const prods = (must(await supabase.from('production').select('id,pn,hogi,req_date,status,part_issue,missing_parts,changes,customer_code').in('pn', pcs.length ? pcs : [g.pn]), '호기 읽기') || [])
     .filter((p) => p.status !== '완료' && String(p.customer_code || 'AX').toUpperCase() === String(g.cs).toUpperCase())
@@ -218,7 +218,9 @@ async function planConsolidate(g) {
   const { data: projs } = await supabase.from('projects').select('id,code').eq('customer_id', custId).in('code', pcs.length ? pcs : [g.pn]).limit(1)
   const projId = projs?.[0]?.id
   if (!projId) return { why: `${g.pn} BOM(프로젝트)이 없어 대당 수량을 모릅니다` }
-  const ex = await explodeProjects(custId, [projId])
+  // 일괄 몰기 때 같은 상위품번 BOM 을 여러 번 펼치지 않게 (v4.249.0)
+  let ex = cache?.get(projId)
+  if (!ex) { ex = await explodeProjects(custId, [projId]); cache?.set(projId, ex) }
   const per = (ex || []).filter((r) => r.item_id === g.item_id).reduce((a, r) => a + (Number(r.qty_per_unit) || 0), 0)
   if (!(per > 0)) return { why: `${g.pn} BOM 에 ${g.std_code} 가 없어 대당 수량을 모릅니다` }
   const qtyOf = (p) => (Array.isArray(p.missing_parts) ? p.missing_parts : []).filter((m) => m && missKey(m) === g.key).reduce((a, m) => a + (Number(m.qty) || 0), 0)
@@ -334,6 +336,42 @@ export default function MissingParts() {
       qc.invalidateQueries({ queryKey: ['missingParts'] }); qc.invalidateQueries({ queryKey: ['production'] })
     } catch (e) { toastError('몰기 오류: ' + e.message) } finally { setBusyG(null) }
   }
+  // 일괄 몰기 (v4.249.0) — 지금 보이는(고객사 탭 · 판정 · 검색) 부품 전부를 한 번에 계산해 미리 보고 저장 · 한 번에 되돌리기
+  const batchTargets = useMemo(() => groups.flatMap((g) => g.multi.map((pn) => ({ g, pn }))), [groups])
+  async function consolidateAll() {
+    if (!batchTargets.length) return
+    setBusyG('all')
+    try {
+      const cache = new Map(), plans = [], skip = []
+      for (const { g, pn } of batchTargets) {
+        const gg = { cs: g.cs, pn, key: g.key, std_code: g.std_code, item_id: g.item_id, name: g.name }
+        const plan = await planConsolidate(gg, cache)
+        if (plan.why) skip.push(`${g.std_code} · ${pn} — ${plan.why}`)
+        else if (plan.changed) plans.push({ gg, plan })
+      }
+      if (!plans.length) {
+        await ask({ title: '몰 대상이 없습니다', desc: `${batchTargets.length}건 모두 이미 뒤 호기부터 잡혀 있거나 몰 수 없습니다`, items: skip, okText: '확인', cancelText: null })
+        return
+      }
+      const items = plans.map(({ gg, plan }) => `${gg.std_code} · ${gg.pn} (대당 ${plan.per}) — ` + plan.moves.filter((m) => m.from !== m.to).map((m) => `${m.p.hogi} ${m.from}→${m.to}`).join(' · '))
+      const ok = await ask({ title: `${plans.length}건을 뒤 호기로 몰까요?`,
+        desc: `전장 불출한 호기끼리만, 모자란 수량을 납품요청일 늦은 호기부터 채웁니다. 합계는 그대로입니다.${skip.length ? ` 몰 수 없는 ${skip.length}건은 건너뜁니다 (BOM 없음 · 불출 호기 1대 등).` : ''}`,
+        items: [...items, ...skip.map((t) => '건너뜀 · ' + t)], okText: `${plans.length}건 몰기` })
+      if (!ok) return
+      const before = new Map()
+      let done = 0
+      for (const { gg, plan } of plans) {
+        const b = await applyConsolidate(gg, plan, me?.name)
+        b.forEach((x) => { if (!before.has(x.id)) before.set(x.id, x) })
+        done++
+      }
+      const bl = [...before.values()]
+      toastSuccess(`뒤 호기로 일괄 몰기 — ${done}건`)
+      remember(`뒤 호기로 일괄 몰기 ${done}건`, async () => { await restoreHogis(bl); return `${bl.length}대 미불출을 되돌렸습니다` },
+        { note: '일괄 몰기 전 미불출로 되돌립니다', after: () => { qc.invalidateQueries({ queryKey: ['missingParts'] }); qc.invalidateQueries({ queryKey: ['production'] }) } })
+      qc.invalidateQueries({ queryKey: ['missingParts'] }); qc.invalidateQueries({ queryKey: ['production'] })
+    } catch (e) { toastError('일괄 몰기 오류: ' + e.message); qc.invalidateQueries({ queryKey: ['missingParts'] }) } finally { setBusyG(null) }
+  }
   const readyCnt = inCs.filter(r => r.ready).length
   const hogiCnt = new Set(inCs.map(r => r.prodId)).size
 
@@ -397,6 +435,9 @@ export default function MissingParts() {
         </div>
         {vf !== 'all' && <button onClick={() => setVf('all')} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-indigo-50 text-indigo-700">{VERDICT[vf]?.label} 만 보는 중 ✕</button>}
         <span className="ml-auto flex items-center gap-2">
+          {canEdit && view === 'item' && batchTargets.length > 0 && <button data-mp-consol-all onClick={consolidateAll} disabled={busyG != null}
+            title="지금 보이는 부품 전부 — 같은 상위품번 안에서 전장 불출한 호기끼리 부족분을 납품요청일 늦은 호기부터 잡습니다 (미리 보고 저장 · 되돌리기)"
+            className="text-xs font-bold px-2.5 py-1.5 rounded-lg border border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-40">{busyG === 'all' ? '계산 중…' : `⇉ 뒤 호기로 일괄 몰기 ${batchTargets.length}`}</button>}
           <button data-mp-xlsx onClick={exportXlsx} disabled={!sorted.length} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50 disabled:opacity-40">📥 엑셀</button>
           {canEdit && readyCnt > 0 && <>
             <button data-mp-allready onClick={() => setSel(new Set(inCs.filter(pickable).map(rid)))} className="text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-slate-50">재불출 가능 전체 체크</button>
