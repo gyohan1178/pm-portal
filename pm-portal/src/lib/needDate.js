@@ -14,8 +14,11 @@ export async function needDateReady(supabase) {
 export async function fetchNeedByPo(supabase, poIds) {
   const out = {}
   const list = [...new Set((poIds || []).filter(Boolean))]
-  for (let i = 0; i < list.length; i += 150) {
-    const { data, error } = await supabase.from('purchase_orders').select('id,need_date,changes').in('id', list.slice(i, i + 150))
+  const parts = []
+  for (let i = 0; i < list.length; i += 150) parts.push(list.slice(i, i + 150))
+  // 나눈 묶음을 같이 읽는다 (v4.244.0)
+  const res = await Promise.all(parts.map(part => supabase.from('purchase_orders').select('id,need_date,changes').in('id', part)))
+  for (const { data, error } of res) {
     if (error) throw error
     ;(data || []).forEach(p => {
       const need = p.need_date ? String(p.need_date).slice(0, 10) : null

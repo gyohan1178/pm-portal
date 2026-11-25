@@ -66,8 +66,11 @@ export async function fetchPlanByPo(supabase, poIds) {
   const out = {}
   const list = [...new Set((poIds || []).filter(Boolean))]
   try {
-    for (let i = 0; i < list.length; i += 200) {
-      const { data, error } = await supabase.from('purchase_orders').select('id,plan_exc').in('id', list.slice(i, i + 200)).not('plan_exc', 'is', null)
+    const parts = []
+    for (let i = 0; i < list.length; i += 200) parts.push(list.slice(i, i + 200))
+    // 나눈 묶음을 같이 읽는다 (v4.244.0)
+    const res = await Promise.all(parts.map(part => supabase.from('purchase_orders').select('id,plan_exc').in('id', part).not('plan_exc', 'is', null)))
+    for (const { data, error } of res) {
       if (error) throw error
       ;(data || []).forEach(p => { if (String(p.plan_exc || '').trim()) out[p.id] = p.plan_exc })
     }

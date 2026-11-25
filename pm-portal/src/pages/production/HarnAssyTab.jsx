@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { fetchAll } from '../../lib/paginate'
-import { fetchAxLinesSafe } from '../../lib/axLines'
+import { fetchAxLinesSafe, chunkAll } from '../../lib/axLines'
 import { fetchPlanByPo, isHot } from '../../lib/planExc'
 import { needDateReady, fetchNeedByPo, needTrend } from '../../lib/needDate'
 import { openPrint } from '../../lib/issueSheet'
@@ -107,24 +107,26 @@ async function loadHarn() {
   const base = await fetchAxLinesSafe()
   const lines = base.filter(p => !p.in_prod && pnOf(p.items?.std_code).startsWith('16') && p.status !== '완료' && p.status !== '취소')
   const cpo = lines.map(p => p.cpo_id).filter(Boolean)
-  const plan = cpo.length ? await fetchPlanByPo(supabase, cpo) : {}
-  const ready = await needDateReady(supabase)
-  let need = {}
-  if (ready && cpo.length) { try { need = await fetchNeedByPo(supabase, cpo) } catch (e) { console.warn('need date 조회 실패', e) } }
   const poNos = [...new Set(lines.map(p => String(p.po_number || '').trim()).filter(Boolean))]
-  const ho = [], hh = [], hl = []
-  for (let i = 0; i < poNos.length; i += 150) {
-    const part = poNos.slice(i, i + 150)
-    ho.push(...await fetchAll(() => supabase.from('harness_orders').select('*').in('po', part).order('id')))
-    hh.push(...await fetchAll(() => supabase.from('harness_qr_history').select('*').in('po', part).order('id')))
-    try {   // 공정 스캔 기록 — 못 읽어도 순서표는 보여 준다
-      hl.push(...await fetchAll(() => supabase.from('harness_logs').select('id,dwg_no,po,ord_ln,del_ln,process,started_at,ended_at,worker').in('po', part).order('id')))
-    } catch (e) { console.warn('공정 기록 읽기 실패', e) }
-  }
+  // 줄을 읽은 다음은 서로 기다릴 필요가 없다 — Plan Exc · need date · 출도 · 출도 이력 · 공정 스캔을 한꺼번에 (v4.244.0)
+  //   전에는 하나씩 차례로 + 150개씩 차례로 읽어 수십 번 왕복 → 10초 넘게 걸렸다
+  const byPo = (table, cols) => chunkAll(poNos, 150, (part) => fetchAll(() => supabase.from(table).select(cols).in('po', part).order('id')))
+    .then(parts => parts.flat())
+  const [plan, needRes, ho, hh, hl] = await Promise.all([
+    cpo.length ? fetchPlanByPo(supabase, cpo) : {},
+    // need date 칸이 없으면(SQL 전) 여기서 오류 → promise date 로
+    cpo.length ? fetchNeedByPo(supabase, cpo).then(v => ({ ready: true, v })).catch(() => ({ ready: false, v: {} })) : needDateReady(supabase).then(r => ({ ready: r, v: {} })),
+    byPo('harness_orders', 'id,po,ord_ln,del_ln,dwg_no,rev,qr_printed,qr_printed_at'),
+    byPo('harness_qr_history', 'id,po,ord_ln,del_ln,dwg_no,rev,ts,deleted'),
+    // 공정 스캔 기록 — 못 읽어도 순서표는 보여 준다
+    byPo('harness_logs', 'id,dwg_no,po,ord_ln,del_ln,process,started_at,ended_at,worker').catch(e => { console.warn('공정 기록 읽기 실패', e); return [] }),
+  ])
+  const ready = needRes.ready, need = needRes.v
   const iss = matchIssued(lines, ho, hh)
   const logs = matchLogs(lines, hl)
   return { ready, rows: lines.map(p => ({ ...p, plan_exc: p.plan_exc || (p.cpo_id && plan[p.cpo_id]) || null,
-    need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] || logs[p.id]?.out || null, proc: logs[p.id] || null })) }
+    need: (p.cpo_id && need[p.cpo_id]?.need) || null, needPrev: (p.cpo_id && need[p.cpo_id]?.prev) || null, iss: iss[p.id] || logs[p.id]?.out || (p.material_issued ? { t: '', rev: '', byIssue: true } : null),
+    proc: logs[p.id] || null })) }   // 불출했으면 출도는 이미 된 것 (출도 기록이 없어도)
 }
 
 export default function HarnAssyTab() {
@@ -133,7 +135,7 @@ export default function HarnAssyTab() {
   const [kind, setKind] = useRemember('harnassy.kind', 'all')     // all | hot | miss | rev | late
   const [q, setQ] = useState('')
   const [faOpen, setFaOpen] = useState(false)
-  const { data, isLoading, error } = useQuery({ queryKey: ['harnAssy'], queryFn: loadHarn, staleTime: 60 * 1000, refetchOnWindowFocus: true })
+  const { data, isLoading, error } = useQuery({ queryKey: ['harnAssy'], queryFn: loadHarn, staleTime: 5 * 60 * 1000, refetchOnWindowFocus: false, placeholderData: (prev) => prev })
   const ready = !!data?.ready
 
   const rows = useMemo(() => {
@@ -190,7 +192,7 @@ export default function HarnAssyTab() {
     const groups = grouped.filter(g => g.key !== 'fa')
     if (!groups.length) { toastError('출력할 줄이 없습니다'); return }
     const t = today()
-    const tr = (r) => `<tr><td class="c"><i class="ck"></i></td><td class="c">${r.no}</td><td>${r.iss ? md(String(r.iss.t).slice(0, 10)) || '출도' : '<b class="miss">미출도</b>'}</td>
+    const tr = (r) => `<tr><td class="c"><i class="ck"></i></td><td class="c">${r.no}</td><td>${r.iss ? md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도') : '<b class="miss">미출도</b>'}</td>
 <td class="mono b">${esc(pnOf(r.items?.std_code))}</td><td class="nm">${esc(r.items?.name || '')}</td><td class="c b">${esc(r.sRev)}${r.revChg ? ` <b class="k">재출도 ${esc(r.iRev)}→${esc(r.sRev)}</b>` : ''}</td><td class="r">${leftOf(r)}</td>
 <td class="mono">${esc(r.po_number)} L${esc(N(r.order_line))}-${esc(N(r.del_line) || 1)}</td>
 <td class="b">${md(r.base)}${r.d < 0 ? ` (${-r.d}일 지남)` : ''}${r.trend === 'up' ? ' ▲' : r.trend === 'down' ? ' ▼' : ''}</td>
@@ -293,7 +295,7 @@ td{border-bottom:1px solid #999;padding:3px 5px}tr{page-break-inside:avoid}.c{te
                 ...(fold ? [] : g.list.map(r => (
                   <tr key={r.id} data-harn-row className="border-t border-slate-100 hover:bg-slate-50">
                     <td className="px-2 py-1.5 text-center text-slate-500">{r.no}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">{r.iss ? <span className="text-slate-600" title="하네스 공정관리 출도 기록">{md(String(r.iss.t).slice(0, 10)) || '출도'}</span>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{r.iss ? <span className="text-slate-600" title="하네스 공정관리 출도 기록">{md(String(r.iss.t).slice(0, 10)) || (r.iss.byIssue ? '불출' : '출도')}</span>
                       : <span className="px-1.5 py-0.5 rounded border border-dashed border-slate-400 text-slate-500 font-bold text-[10px]">미출도</span>}</td>
                     <td className="px-2 py-1.5"><div className="font-mono font-bold text-indigo-600">{pnOf(r.items?.std_code)}</div><div className="text-[11px] text-slate-400 truncate max-w-[280px]">{r.items?.name}</div></td>
                     <td className="px-2 py-1.5 text-center font-mono font-bold">{r.revChg
