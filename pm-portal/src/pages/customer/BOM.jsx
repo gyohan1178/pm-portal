@@ -5,7 +5,8 @@ import { DocRequestButton } from '../../components/DocRequestModal'
 import { useVisibleRows, MoreRows } from '../../hooks/useVisibleRows'
 import { toast, toastError, toastSuccess } from '../../lib/toast'
 import { downloadPurchaseHistory } from '../../lib/purchaseHistoryExcel'
-import { useCustomer } from '../../hooks/useCustomers'
+import { useCustomer, useCustomers } from '../../hooks/useCustomers'
+import { moveBomCustomer, dominantPrefix, CS_PREFIX } from '../../lib/bomMove'
 import { useCanEdit } from '../../hooks/useProfile'
 import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
@@ -558,6 +559,13 @@ export default function BOM() {
   const progNum = (() => { const m = String(progress || '').match(/(\d+)\s*\/\s*(\d+)\s*$/); return m ? { done: +m[1], total: +m[2], label: progress.slice(0, m.index).trim() } : null })()
 
   const { data: cs } = useCustomer(csCode)
+  const { data: allCs = [] } = useCustomers()
+  // 고객사 옮기기 (v4.252.0) — 잘못 올린 BOM 을 맞는 고객사로
+  const [moveDlg, setMoveDlg] = useState(null)     // { projects:[{id,code}] }
+  // 올릴 때 등록 고객사 — 기본은 지금 탭 · 파일 접두가 다르면 바꿀 수 있다
+  const [upCs, setUpCs] = useState(null)
+  const [upWarnOff, setUpWarnOff] = useState(false)
+  const saveCs = upCs || cs
   const { data: assemblies = [], isLoading: asmLoading } = useQuery({
     queryKey: ['assemblies', cs?.id],
     queryFn: () => fetchAssemblies(cs?.id),
@@ -855,7 +863,8 @@ export default function BOM() {
 
   const saveMut = useMutation({
     mutationFn: async (rows) => {
-      const res = await saveBOMMulti({ rows, customerId: cs?.id, csCode, onProgress: setProgress })
+      const res = await saveBOMMulti({ rows, customerId: saveCs?.id, csCode: saveCs?.code || csCode, onProgress: setProgress })
+      res.toCs = saveCs?.id !== cs?.id ? saveCs : null
       // 하위 어셈블리 BOM 자동 생성 — 모든 고객사 (v4.94.1). 실패해도 BOM 저장 결과는 그대로
       if (res.codes?.length && !res.failed) {
         setProgress('하위 어셈블리 확인 중...')
@@ -881,8 +890,9 @@ export default function BOM() {
       return res
     },
     onSuccess: (res) => {
-      setResult(res); setPreview(null); setRawRows([]); setProgress(''); setHtmInfo(null)
+      setResult(res); setPreview(null); setRawRows([]); setProgress(''); setHtmInfo(null); setUpCs(null); setUpWarnOff(false)
       qc.invalidateQueries(['assemblies', cs?.id])
+      if (res.toCs) { qc.invalidateQueries({ queryKey: ['assemblies'], exact: false }); toastSuccess(`${res.toCs.name} BOM 에 등록했습니다 — ${res.toCs.name} 탭에서 확인하세요`) }
       qc.invalidateQueries({ queryKey: ['subBomPending'], exact: false })
     },
     onError: (e) => { setProgress(''); toastError('저장 오류: ' + e.message) },
@@ -1210,9 +1220,18 @@ export default function BOM() {
       {preview && (
         <div className="rounded-xl border border-indigo-200 bg-indigo-50/30 p-4 space-y-3">
           <div className="flex items-center justify-between">
-            <p className="text-xs font-bold text-indigo-700">미리보기 — 어셈블리 {preview.groups.length}개 · 품목 {preview.total}개</p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-xs font-bold text-indigo-700">미리보기 — 어셈블리 {preview.groups.length}개 · 품목 {preview.total}개</p>
+              <label data-bom-upcs className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-bold ${saveCs?.id !== cs?.id ? 'border-rose-300 bg-rose-50 text-rose-700' : 'border-slate-200 bg-white text-slate-600'}`}>
+                등록 고객사
+                <select value={saveCs?.id || ''} onChange={e => setUpCs(allCs.find(c => c.id === e.target.value) || null)}
+                  className="bg-transparent font-bold focus:outline-none cursor-pointer">
+                  {allCs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </label>
+            </div>
             <div className="flex gap-2">
-              <button onClick={() => { setPreview(null); setRawRows([]) }}
+              <button onClick={() => { setPreview(null); setRawRows([]); setUpCs(null); setUpWarnOff(false) }}
                 className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50">취소</button>
               <button onClick={() => saveMut.mutate(rawRows)} disabled={saveMut.isPending || !cs?.id || preview.groups.length===0}
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
@@ -1223,6 +1242,21 @@ export default function BOM() {
               )}
             </div>
           </div>
+          {(() => {
+            // 파일 품번 접두가 등록 고객사와 다르면 경고 (예: AXCELIS 탭에 ED- 품번)
+            if (upWarnOff) return null
+            const codes = (preview.rows || rawRows).flatMap(r => [r['상위PN'] ?? r['상위품번'], r['PN'] ?? r['하위품번']])
+            const dom = dominantPrefix(codes)
+            if (!dom || !dom.cs || dom.cs === String(saveCs?.code || '').toLowerCase()) return null
+            const other = allCs.find(c => String(c.code).toLowerCase() === dom.cs)
+            return (
+              <div data-bom-upwarn className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 flex items-center gap-2 flex-wrap">
+                <span>⚠ 파일 품번이 <b>{dom.prefix}-</b> 로 시작합니다 ({dom.total}개 중 {dom.count}개) — {other?.name || dom.cs} BOM 같습니다.</span>
+                {other && <button onClick={() => setUpCs(other)} className="px-2.5 py-1 rounded-lg border border-amber-300 bg-white font-bold hover:bg-amber-100">{other.name} 로 등록</button>}
+                <button onClick={() => setUpWarnOff(true)} className="px-2.5 py-1 rounded-lg border border-slate-200 bg-white font-semibold text-slate-600 hover:bg-slate-50">그대로 {saveCs?.name}</button>
+              </div>
+            )
+          })()}
           {saveMut.isPending && progNum && (
             <div className="max-w-[560px]" data-bom-progress>
               <ProgressBar done={progNum.done} total={progNum.total} label={progNum.label} unit={/하위/.test(progNum.label) ? '개' : '행'} />
@@ -1295,6 +1329,17 @@ export default function BOM() {
           <input value={asmSearch} onChange={e=>setAsmSearch(e.target.value)}
             placeholder="상위품번·어셈블리명 검색"
             className="w-full sm:w-72 px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/>
+          {canEditRaw && asmSearch.trim() && (() => {
+            const q = asmSearch.trim().toLowerCase()
+            const hit = assemblies.filter(a => (a.code||'').toLowerCase().includes(q) || (a.name||'').toLowerCase().includes(q))
+            return hit.length > 0 && (
+              <button data-bom-move onClick={() => setMoveDlg({ projects: hit.map(a => ({ id: a.id, code: a.code, name: a.name })) })}
+                title="검색된 어셈블리를 다른 고객사 BOM 으로 옮깁니다"
+                className="shrink-0 px-3 py-2 text-xs font-bold rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600">
+                🔀 고객사 이동 (검색된 {hit.length}개)
+              </button>
+            )
+          })()}
           <span className="text-xs text-slate-400 font-semibold ml-auto">{assemblies.filter(a=>{
             const q=asmSearch.trim().toLowerCase(); if(!q) return true
             return (a.code||'').toLowerCase().includes(q)||(a.name||'').toLowerCase().includes(q)
@@ -1547,6 +1592,19 @@ export default function BOM() {
         </div>
       )}
       {/* BOM 행 편집 — 대체품 교체·수량 수정 */}
+      {moveDlg && cs && (
+        <MoveCustomerDialog from={cs} customers={allCs} projects={moveDlg.projects} initialTo={moveDlg.to}
+          onClose={() => setMoveDlg(null)}
+          onDone={(sum, to) => {
+            qc.invalidateQueries({ queryKey: ['assemblies'], exact: false })
+            qc.invalidateQueries({ queryKey: ['bomDetail'], exact: false })
+            qc.invalidateQueries({ queryKey: ['items'], exact: false })
+            if (moveDlg.single) { setSelAssembly(null); setTab('list') }
+            setMoveDlg(null); setAsmSearch('')
+            toastSuccess(`${sum.asm}개 어셈블리를 ${to.name} 로 옮겼습니다` + (sum.remapLines ? ` · 하위 ${sum.remapLines}줄 품번 변경` : '') + (sum.newItems ? ` · 새 품번 ${sum.newItems}개` : ''))
+            logActivity('update', 'bom', moveDlg.projects.map(p => p.code).slice(0, 20).join(', '), `BOM 고객사 이동 ${cs.name} → ${to.name} · ${sum.asm}개`)
+          }} />
+      )}
       {/* 상위품번 수정 — 코드·품명·REV */}
       {editAsm && (
         <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
@@ -1571,6 +1629,16 @@ export default function BOM() {
                   className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
               </div>
               <div>
+                <label className="block text-xs font-bold text-slate-500 mb-1">고객사</label>
+                <select data-asm-cs value={editAsm.toCsId || cs?.id || ''} onChange={e => setEditAsm(v => ({ ...v, toCsId: e.target.value }))}
+                  className={`w-48 px-3 py-2 text-sm border rounded-lg ${editAsm.toCsId && editAsm.toCsId !== cs?.id ? 'border-rose-300 bg-rose-50 text-rose-700 font-bold' : 'border-slate-200'}`}>
+                  {allCs.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+                {editAsm.toCsId && editAsm.toCsId !== cs?.id && (
+                  <p className="text-[11px] text-rose-600 mt-1">저장하면 이 BOM 이 {allCs.find(c => c.id === editAsm.toCsId)?.name} 로 옮겨집니다 (하위 품번 접두도 같이 바뀜)</p>
+                )}
+              </div>
+              <div>
                 <label className="block text-xs font-bold text-slate-500 mb-1">REV</label>
                 <input value={editAsm.rev || ''}
                   onChange={e => setEditAsm(v => ({ ...v, rev: e.target.value }))}
@@ -1581,6 +1649,17 @@ export default function BOM() {
                 <button onClick={() => {
                     const code = (editAsm.code || '').trim()
                     if (!code) { toastError('상위품번을 적어 주세요'); return }
+                    const toCs = editAsm.toCsId && editAsm.toCsId !== cs?.id ? allCs.find(c => c.id === editAsm.toCsId) : null
+                    if (toCs) {
+                      // 고객사가 바뀌면 — 코드 · 품명 · REV 먼저 저장하고 고객사 옮기기 창으로
+                      supabase.from('projects').update({ code, name: editAsm.name || null, rev: editAsm.rev || null }).eq('id', editAsm.id)
+                        .then(({ error }) => {
+                          if (error) { toastError('수정 실패: ' + error.message); return }
+                          setEditAsm(null)
+                          setMoveDlg({ projects: [{ id: editAsm.id, code, name: editAsm.name }], to: toCs, single: true })
+                        })
+                      return
+                    }
                     asmMut.mutate({ id: editAsm.id, patch: {
                       code, name: editAsm.name || null, rev: editAsm.rev || null,
                     } })
@@ -1961,6 +2040,80 @@ function BomRowModal({ row, mode, onClose, onSave, onDelete, onLookup, hit, setH
             className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
             {busy ? <span className="inline-flex items-center gap-1.5"><Spin />저장 중…</span> : '저장'}
           </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// BOM 고객사 옮기기 창 (v4.252.0) — 고를 때마다 미리 세어 보여 주고, 확인하면 옮긴다
+function MoveCustomerDialog({ from, customers, projects, initialTo, onClose, onDone }) {
+  const others = customers.filter(c => c.id !== from.id)
+  const [to, setTo] = useState(initialTo || null)
+  const [remap, setRemap] = useState(true)
+  const [sum, setSum] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [prog, setProg] = useState('')
+  const [err, setErr] = useState('')
+  const fp = CS_PREFIX[String(from.code || '').toLowerCase()], tp = to ? CS_PREFIX[String(to.code || '').toLowerCase()] : ''
+  useEffect(() => {
+    if (!to) { setSum(null); return }
+    let live = true
+    setSum(null); setErr('')
+    moveBomCustomer({ projects, from, to, remapItems: remap, dryRun: true })
+      .then(r => { if (live) setSum(r) }).catch(e => { if (live) setErr(e.message) })
+    return () => { live = false }
+  }, [to?.id, remap])   // eslint-disable-line react-hooks/exhaustive-deps
+  async function run() {
+    setBusy(true); setErr('')
+    try {
+      const r = await moveBomCustomer({ projects, from, to, remapItems: remap, onProgress: setProg })
+      onDone(r, to)
+    } catch (e) { setErr(e.message) } finally { setBusy(false); setProg('') }
+  }
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4" data-bom-movedlg>
+      <div className="bg-white w-full max-w-lg rounded-2xl">
+        <div className="px-4 py-3 border-b border-slate-100">
+          <h3 className="text-base font-bold text-slate-800">🔀 BOM 고객사 이동 — {projects.length}개 어셈블리</h3>
+          <p className="text-[11px] text-slate-400 mt-0.5 font-mono truncate">{projects.slice(0, 6).map(p => p.code).join(' · ')}{projects.length > 6 ? ` … 외 ${projects.length - 6}개` : ''}</p>
+        </div>
+        <div className="p-4 space-y-3 text-sm">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-xs font-bold text-slate-500 mr-1">옮길 고객사</span>
+            <span className="px-2.5 py-1 rounded-full border border-slate-200 text-xs font-bold text-slate-400">{from.name}</span>
+            <span className="text-slate-300">→</span>
+            {others.map(c => (
+              <button key={c.id} data-move-to={c.code} onClick={() => setTo(c)} disabled={busy}
+                className={`px-2.5 py-1 rounded-full border text-xs font-bold ${to?.id === c.id ? 'bg-slate-800 border-slate-800 text-white' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{c.name}</button>
+            ))}
+          </div>
+          {to && fp && (
+            <label className="flex items-start gap-2 text-xs text-slate-700">
+              <input type="checkbox" checked={remap} onChange={e => setRemap(e.target.checked)} disabled={busy} className="mt-0.5" />
+              <span>하위 품번 접두도 바꾸기 <b className="font-mono">{fp} → {tp || '(접두 없음)'}</b>
+                <span className="block text-[11px] text-slate-400">{fp} 로 시작하는 하위 품번만 바꿉니다. 원래 품번은 품목 목록에 그대로 남습니다</span></span>
+            </label>
+          )}
+          {to && !sum && !err && <p className="text-xs text-slate-400 inline-flex items-center gap-1.5"><Spin />확인 중…</p>}
+          {sum && (
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600 space-y-0.5" data-move-sum>
+              <p>옮길 어셈블리 <b>{sum.asm}</b>개 · BOM 줄 <b>{sum.lines}</b>줄{sum.renamed ? ` · 상위품번 접두 정리 ${sum.renamed}개` : ''}</p>
+              {remap && fp && <p>하위 품번 바뀌는 줄 <b>{sum.remapLines}</b> · {tp || '새'} 품번 이미 있음 <b>{sum.existItems}</b> · 새로 만들 품번 <b>{sum.newItems}</b></p>}
+              {sum.conflicts.length > 0
+                ? <p className="text-rose-600 font-bold">{to.name} 에 같은 상위품번이 이미 있어 옮기지 않음 {sum.conflicts.length}개: <span className="font-mono">{sum.conflicts.slice(0, 5).join(', ')}{sum.conflicts.length > 5 ? ' …' : ''}</span></p>
+                : <p className="text-emerald-600">{to.name} 에 같은 상위품번 없음</p>}
+            </div>
+          )}
+          {err && <p className="text-xs text-rose-600 font-bold">{err}</p>}
+          {busy && prog && <p className="text-xs text-indigo-500 font-semibold">{prog}</p>}
+          <div className="flex gap-2 pt-1">
+            <button onClick={onClose} disabled={busy} className="flex-1 py-2.5 text-sm font-bold rounded-lg border border-slate-300 text-slate-600 disabled:opacity-40">취소</button>
+            <button onClick={run} disabled={busy || !sum || !sum.asm} data-move-run
+              className="flex-1 py-2.5 text-sm font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+              {busy ? <span className="inline-flex items-center gap-1.5"><Spin />옮기는 중…</span> : `옮기기${sum ? ` (${sum.asm}개)` : ''}`}
+            </button>
+          </div>
         </div>
       </div>
     </div>
