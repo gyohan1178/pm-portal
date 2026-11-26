@@ -82,6 +82,9 @@ function matchIssued(lines, horders, hist) {
 
 // 공정 스캔 기록 → 줄별 { steps:[{p, at, done}], last:{p, at, who, open}, out } (출도 스캔은 out 으로)
 const DONE_STEP = /출하|납품|포장/
+// 하네스 공정 순서 (현황판과 같은 순서): 출도 → 재단 → 납땜 → 제작 → 검사 → 포장 → 납품
+const STEP_ORDER = ['재단', '납땜', '제작', '검사', '포장', '출하', '납품']
+const stepRank = (name) => { const i = STEP_ORDER.indexOf(name); return i < 0 ? STEP_ORDER.length : i }
 function matchLogs(lines, logs) {
   const byLine = new Map(), byDwg = new Map()
   for (const l of logs || []) {
@@ -105,6 +108,8 @@ function matchLogs(lines, logs) {
       const e = steps.find(x => x.p === name)
       if (e) { e.done = e.done || !!l.ended_at; if (String(at) > String(e.at)) e.at = at } else steps.push({ p: name, at, done: !!l.ended_at })
     }
+    // 칩은 찍힌 순서가 아니라 공정 순서로 (일괄 입력하면 순서가 뒤섞여 찍힌다) — 모르는 공정은 맨 뒤, 찍힌 순서 유지
+    steps.sort((a, b) => stepRank(a.p) - stepRank(b.p))
     const lastLog = work[work.length - 1]
     out[p.id] = {
       steps,

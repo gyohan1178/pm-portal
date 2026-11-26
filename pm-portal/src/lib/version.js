@@ -1,4 +1,4 @@
-export const APP_VERSION = 'v4.252.0'
+export const APP_VERSION = 'v4.252.1'
 
 // 변경이력 — 최근 20개만 여기 둔다.
 //   ⚠ 이 파일은 사이드바가 불러오므로 모든 화면 첫 접속에 통째로 받아진다.
@@ -6,6 +6,11 @@ export const APP_VERSION = 'v4.252.0'
 //     「업데이트 이력」 창에서 「이전 기록 더 보기」를 누를 때만 받는다.
 //   ⚠ 새 버전은 맨 위에 넣는다. 30개가 넘으면 아래쪽을 changelogArchive.js 맨 위로 옮긴다.
 export const CHANGELOG = [
+  {
+    version: 'v4.252.1',
+    date: '2026-11-26',
+    changes: ['생산관리 HARN ASSY 공정 칩을 찍힌 순서가 아니라 공정 순서(재단 → 납땜 → 제작 → 검사 → 포장 → 납품)로 표시'],
+  },
   {
     version: 'v4.252.0',
     date: '2026-11-26',
