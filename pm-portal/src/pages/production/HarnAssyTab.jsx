@@ -110,9 +110,22 @@ function matchLogs(lines, logs) {
     }
     // 칩은 찍힌 순서가 아니라 공정 순서로 (일괄 입력하면 순서가 뒤섞여 찍힌다) — 모르는 공정은 맨 뒤, 찍힌 순서 유지
     steps.sort((a, b) => stepRank(a.p) - stepRank(b.p))
-    const lastLog = work[work.length - 1]
+    // 「지금 공정」 = 공정 순서상 가장 뒤까지 간 공정 (그 공정의 가장 최근 기록)
+    //   마지막에 찍힌 스캔으로 보면 일괄 입력 · 뒤늦은 스캔 때 검사까지 끝난 줄이 재단 · 납땜으로 보인다 (v4.252.2)
+    //   순서에 없는 공정명만 있으면 그때는 마지막 스캔으로
+    const known = work.filter(l => stepRank(String(l.process).trim()) < STEP_ORDER.length)
+    const pool = known.length ? known : work
+    let lastLog = null
+    for (const l of pool) {
+      const r = stepRank(String(l.process).trim()), t = String(l.ended_at || l.started_at || '')
+      const lr = lastLog ? stepRank(String(lastLog.process).trim()) : -1, lt = lastLog ? String(lastLog.ended_at || lastLog.started_at || '') : ''
+      if (!lastLog || r > lr || (r === lr && t >= lt)) lastLog = l
+    }
+    // 멈춤 판단은 공정과 상관없이 가장 최근 스캔 시각으로
+    const recent = work.reduce((m, l) => { const t = String(l.ended_at || l.started_at || ''); return t > m ? t : m }, '')
     out[p.id] = {
       steps,
+      recent: recent || null,
       last: lastLog ? { p: String(lastLog.process).trim(), at: lastLog.ended_at || lastLog.started_at, who: lastLog.worker || '', open: !lastLog.ended_at } : null,
       out: issue.length ? { t: issue[issue.length - 1].started_at || '', rev: '' } : null,
     }
@@ -181,7 +194,7 @@ export default function HarnAssyTab() {
       const sRev = P(p.item_rev), iRev = p.iss?.rev || ''
       const revChg = !!(p.iss && iRev && sRev && iRev !== sRev)
       const grp = isFA(p) ? 'fa' : isHot(p) ? 'hot' : d == null ? 'rest' : d < 0 ? 'late' : d <= 7 ? 'w1' : d <= 14 ? 'w2' : 'rest'
-      const lastAt = p.proc?.last?.at
+      const lastAt = p.proc?.recent || p.proc?.last?.at
       const idle = lastAt ? Math.floor((Date.now() - Date.parse(lastAt)) / DAY) : null
       const fin = !!(p.proc?.last && DONE_STEP.test(p.proc.last.p) && !p.proc.last.open)
       const stale = !!(p.proc?.last && !fin && idle != null && idle >= 3)
