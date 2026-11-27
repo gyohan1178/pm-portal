@@ -199,23 +199,32 @@ export default function CellAudit() {
     }, 300)
   }
 
+  // 고른 품목에 이미 재고 줄이 있나 — 있으면 수량은 여기서 안 바꾼다
+  const hasStock = !!picked?.inventory?.length
   // 이 칸에 품목을 넣는다. 다른 칸에 있던 것이면 위치가 옮겨진다.
   async function addItem() {
     if (!picked) return
+    if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return }
     const qty = Number(addQty)
-    if (!(qty >= 0)) { setFerr(p => ({ ...p, addQty: '수량을 0 이상 숫자로 넣어 주세요' })); return }
+    if (!hasStock && !(qty >= 0)) { setFerr(p => ({ ...p, addQty: '수량을 0 이상 숫자로 넣어 주세요' })); return }
     setBusy(true)
     try {
       // 같은품목 묶음 품번이면 대표 품번으로 넣는다 — 재고 · 위치는 대표에 있다 (v4.131.0)
       const target = await repId(picked.id)
-      const { error } = await supabase.from('inventory')
-        .upsert({ item_id: target, qty, location }, { onConflict: 'item_id' })
+      // 이미 재고가 있는 품목은 위치만 옮긴다 (v4.253.4).
+      //   예전엔 이 칸에서 센 수로 전체 재고(보조 칸 수량 포함)를 덮었고 입출고 이력도 안 남았다.
+      //   수량은 아래 실사(세기 → 저장)로 맞춘다 — 차이만큼 이력이 남는다.
+      const { data: cur, error: e0 } = await supabase.from('inventory').select('item_id,qty').eq('item_id', target).maybeSingle()
+      if (e0) throw e0
+      const { error } = cur
+        ? await supabase.from('inventory').update({ location }).eq('item_id', target)
+        : await supabase.from('inventory').insert({ item_id: target, qty, location })
       if (error) throw error
       const prevLoc = picked.inventory?.[0]?.location
       logActivity('update', 'inventory', picked.std_code,
         prevLoc && prevLoc !== location
-          ? `위치 이동 ${prevLoc} → ${location} · 수량 ${qty}`
-          : `${location} 에 등록 · 수량 ${qty}`)
+          ? `위치 이동 ${prevLoc} → ${location}`
+          : `${location} 에 등록${cur ? '' : ` · 수량 ${qty}`}`)
       toastSuccess(`${picked.std_code} → ${location}${picked.repCode ? ` (묶음 대표 ${picked.repCode})` : ''}`)
       setAddOpen(false); setQ(''); setHits([]); setPicked(null); setAddQty('')
       qc.invalidateQueries({ queryKey: ['cellItems'] })
@@ -226,6 +235,7 @@ export default function CellAudit() {
 
   // 이 칸에서 뺀다 (위치만 비우고 재고는 남긴다)
   async function removeFromCell(it) {
+    if (!canEdit) { toastError('열람 전용 계정입니다 — 수정 권한이 없습니다'); return }
     if (!(await ask({ title: `${it.std_code} 를 이 칸에서 뺄까요?`, desc: `재고 수량은 그대로 남고 위치(${location})만 비워집니다.`,
       items: [`${it.std_code} · ${it.name || ''}`], okText: '이 칸에서 빼기', danger: true }))) return
     try {
@@ -482,8 +492,9 @@ export default function CellAudit() {
                   </p>
                 )}
                 <div className="mt-2">
-                  <label className="block text-[11px] font-bold text-slate-500 mb-1">수량</label>
-                  <input type="number" inputMode="decimal" value={addQty} autoFocus
+                  <label className="block text-[11px] font-bold text-slate-500 mb-1">수량{hasStock ? ' (지금 재고 — 위치만 옮김)' : ''}</label>
+                  {hasStock && <p className="text-[11px] text-slate-500 mb-1">수량이 다르면 넣은 뒤 아래 실사에서 세어 저장하세요 — 차이가 이력으로 남습니다</p>}
+                  <input type="number" inputMode="decimal" value={addQty} autoFocus={!hasStock} readOnly={hasStock}
                     onChange={e => { setAddQty(e.target.value); clrErr('addQty') }}
                     className={`w-full px-3 py-2.5 text-lg font-bold text-right border-2 rounded-lg ${ferr.addQty ? 'border-rose-400 bg-rose-50/40' : 'border-slate-200'}`} />
                   {ferr.addQty && <p className="text-[11px] font-bold text-rose-600 mt-1" data-field-error="addQty">{ferr.addQty}</p>}

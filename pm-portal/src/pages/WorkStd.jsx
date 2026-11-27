@@ -300,11 +300,22 @@ function SopView({ row, profile, canSop, onEdit, onDeleted, onChanged }) {
 function SopEditor({ edit, setEdit, me, onSaved }) {
   const { prev, form, photos, figs } = edit
   const [busy, setBusy] = useState(false)
+  const [ask, confirmEl] = useConfirm()
   const set = (k, v) => setEdit((e) => ({ ...e, form: { ...e.form, [k]: v } }))
   const setStep = (i, k, v) => setEdit((e) => ({ ...e, form: { ...e.form, steps: e.form.steps.map((s, j) => (j === i ? { ...s, [k]: v } : s)) } }))
   const move = (i, d) => setEdit((e) => { const st = [...e.form.steps]; const j = i + d; if (j < 0 || j >= st.length) return e; [st[i], st[j]] = [st[j], st[i]]; return { ...e, form: { ...e.form, steps: st } } })
   const addStep = () => setEdit((e) => ({ ...e, form: { ...e.form, steps: [...e.form.steps, { title: '', text: '', warn: '', check: '', ref: '', photos: [] }] } }))
-  const delStep = (i) => setEdit((e) => ({ ...e, form: { ...e.form, steps: e.form.steps.filter((_, j) => j !== i) } }))
+  // 적어 둔 단계 · 쓰던 내용을 한 번에 날리지 않게 묻는다 (v4.253.4)
+  const delStep = async (i) => {
+    const st = form.steps[i]
+    const filled = st && (st.title.trim() || st.text.trim() || st.warn.trim() || st.check.trim() || (st.photos || []).length)
+    if (filled && !(await ask({ title: `${i + 1}단계를 지울까요?`, desc: '적은 글과 사진이 같이 빠집니다 (저장 전이면 취소로 되돌릴 수 없음).', okText: '단계 지우기', danger: true }))) return
+    setEdit((e) => ({ ...e, form: { ...e.form, steps: e.form.steps.filter((_, j) => j !== i) } }))
+  }
+  const cancel = async () => {
+    if (!(await ask({ title: '편집을 그만둘까요?', desc: '저장하지 않은 글 · 사진은 사라집니다.', okText: '그만두기', danger: true }))) return
+    setEdit(null)
+  }
   const src = (k) => photos[k] || figs?.[k]
   useEffect(() => { window.scrollTo?.({ top: 0 }) }, [])
   async function addPhotos(i, files) {
@@ -329,9 +340,10 @@ function SopEditor({ edit, setEdit, me, onSaved }) {
   }
   return (
     <div className="space-y-4" data-sop-editor>
+      {confirmEl}
       <PageHead crumb="현장 · 작업 기준" title={prev ? `SOP 고치기 — ${prev.doc_no}` : 'SOP 등록'}
         desc="단계마다 사진 · 설명 · ⚠ 주의 · ✔ 체크포인트 · 근거 기준(고객사 스펙 번호)을 적습니다. 저장하면 「검토 전」 — 품질 승인 뒤 현장 기준이 됩니다. 승인된 SOP 를 고치면 Rev 가 올라가고 다시 승인 받습니다.">
-        <button type="button" className={BTN} onClick={() => setEdit(null)} disabled={busy}>취소</button>
+        <button type="button" className={BTN} onClick={cancel} disabled={busy}>취소</button>
         <button type="button" onClick={save} disabled={busy} data-sop-save className="h-[38px] px-4 rounded-[9px] bg-violet-600 text-white text-[13px] font-bold hover:bg-violet-700 disabled:opacity-40">{busy ? '저장 중…' : '저장'}</button>
       </PageHead>
       <section className="bg-[#f9fafc] border border-slate-200 rounded-xl p-5 grid grid-cols-1 md:grid-cols-3 gap-4">

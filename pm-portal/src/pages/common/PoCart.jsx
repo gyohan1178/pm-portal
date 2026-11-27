@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../../lib/supabase'
 import { createPurchaseOrders } from '../../lib/createPO'
@@ -142,10 +142,14 @@ export default function PoCart({ open, onClose }) {
       reload()
     } catch (e) { toastError(e.message) }
   }
-  async function remove(ids) {
+  // 발주는 만들었는데 담기함 비우기가 실패한 줄 — 다시 「발주 등록」을 눌러 같은 발주가 또 생기지 않게 막는다 (v4.253.4)
+  const registered = useRef(new Set())
+  async function remove(ids, opt = {}) {
     if (!ids.length) return
+    if (opt.all && !(await ask({ title: `담기함 ${ids.length}줄을 모두 비울까요?`, desc: '구매처 · 단가 · 납기를 채워 둔 것도 같이 지워집니다.', okText: '전부 비우기', danger: true }))) return
     try {
       must(await supabase.from('pm_po_cart').delete().in('id', ids), '담기함 삭제')
+      ids.forEach((id) => registered.current.delete(id))
       reload(); toastSuccess(`${ids.length}줄 뺐습니다`)
     } catch (e) { toastError(e.message) }
   }
@@ -163,12 +167,14 @@ export default function PoCart({ open, onClose }) {
   // 발주 등록 — 구매처별로 발주번호 한 장
   async function register() {
     if (!cart.length) return
+    const again = cart.filter((c) => registered.current.has(c.id))
+    if (again.length) { toastError(`이미 발주로 등록한 줄이 ${again.length}개 남아 있습니다 (담기함 비우기 실패) — 「전부 비우기」로 비운 뒤 다시 담아 주세요`); return }
     const noQty = cart.filter((c) => !(Number(c.qty) > 0))
     if (noQty.length) { toastError(`수량이 없는 줄이 ${noQty.length}개 있습니다`); return }
     const noCs = cart.filter((c) => !c.customer_id)
     if (noCs.length) { toastError(`고객사가 없는 줄이 ${noCs.length}개 있습니다 — 줄마다 빨간 「고객사」 칸에서 고르거나 위 「고객사 없는 줄 일괄」에서 골라 주세요`); return }
     if (!(await ask({ title: `${cart.length}줄을 발주로 등록할까요?`,
-      desc: `구매처별로 발주번호 ${groups.length}장이 만들어지고 담기함은 비워집니다. 자재요청에서 담은 줄은 그 요청이 「처리중 · 발주」로 바뀝니다.`,
+      desc: `구매처별로 ${groups.length}장으로 묶여 등록되고(발주번호는 「⚡ 이카운트로 보내기」 때 들어감) 담기함은 비워집니다. 자재요청에서 담은 줄은 그 요청이 「처리중 · 발주」로 바뀝니다.`,
       items: groups.slice(0, 5).map((g) => `${g.no}장 · ${g.name} · ${g.rows.length}줄`), more: Math.max(0, groups.length - 5),
       okText: '발주 등록' }))) return
     setBusy(true)
@@ -207,7 +213,11 @@ export default function PoCart({ open, onClose }) {
           .eq('id', c.request_id)
         if (error) toastError(`자재요청 상태 반영 실패 (${c.request_id}) — ${error.message}`)
       }
-      must(await supabase.from('pm_po_cart').delete().in('id', cart.map((c) => c.id)), '담기함 비우기')
+      cart.forEach((c) => registered.current.add(c.id))
+      // 발주는 이미 들어갔다 — 비우기가 실패해도 발주 등록은 성공으로 알리고, 남은 줄은 다시 등록 못 하게 막는다
+      const { error: delErr } = await supabase.from('pm_po_cart').delete().in('id', cart.map((c) => c.id))
+      if (delErr) toastError(`발주는 등록됐는데 담기함 비우기 실패 — 같은 발주가 또 생기지 않게 「전부 비우기」로 비워 주세요 (${delErr.message})`)
+      else cart.forEach((c) => registered.current.delete(c.id))
       toastSuccess(`발주 ${rows.length}줄 · 발주서 ${groups.length}장 등록`)
       reload()
       refreshProcurement(qc)
@@ -372,9 +382,9 @@ export default function PoCart({ open, onClose }) {
         {/* 발 */}
         <div className="px-5 py-3 border-t border-slate-100 flex items-center gap-2 flex-wrap">
           <span className="text-xs text-slate-400">
-            등록하면 구매처별로 발주번호가 따로 매겨지고, 담기함은 비워집니다.
+            등록하면 구매처별로 발주서가 나뉘고(번호는 이카운트로 보낼 때), 담기함은 비워집니다.
           </span>
-          <button onClick={() => remove(cart.map((c) => c.id))} disabled={!cart.length || busy}
+          <button onClick={() => remove(cart.map((c) => c.id), { all: true })} disabled={!cart.length || busy}
             className="ml-auto px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500 disabled:opacity-40">전부 비우기</button>
           <button onClick={onClose}
             className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600">닫기</button>

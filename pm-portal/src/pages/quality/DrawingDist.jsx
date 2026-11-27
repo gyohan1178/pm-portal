@@ -209,6 +209,14 @@ function ExternalDist() {
   // 같은 도면을 받아 간 곳 — 설계변경 때 폐기통보 대상
   const sameDrawing = useMemo(
     () => (scrapFor ? rows.filter((r) => r.drawing_no === scrapFor) : []), [rows, scrapFor])
+  // 폐기통보 대상 고르기 (v4.253.4) — 예전엔 같은 도면번호 줄 전부에 찍혀, 새 Rev 를 받아 간 곳까지 「폐기통보」로 남았다.
+  //   기본: 아직 통보 안 한 줄 중 최신 Rev 가 아닌 것만 체크. Rev 를 모르는 줄은 사람이 고른다.
+  const latestRev = useMemo(() => sameDrawing.map((r) => String(r.issue_no || '').trim()).filter(Boolean)
+    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })).at(-1) || '', [sameDrawing])
+  const [scrapSel, setScrapSel] = useState(new Set())
+  useEffect(() => {
+    setScrapSel(new Set(sameDrawing.filter((r) => !r.scrap_notified_at && String(r.issue_no || '').trim() && String(r.issue_no).trim() !== latestRev).map((r) => r.id)))
+  }, [scrapFor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 지침 3항① — 이 협력사에 도면을 보낸 적이 없으면 「신규 협력사 최초 배포」라 사전승인 대상이다.
   //   거래이력이 아니라 「도면을 보낸 적이 있는가」로 본다 (견적만 받은 곳도 협력사로 친다).
@@ -278,6 +286,17 @@ function ExternalDist() {
   /* ---- 전결 승인 ---- */
   async function approve(ids, ok = true) {
     if (!ids.length) return
+    // 이미 승인 · 반려된 줄은 기본으로 건너뛴다 — 전체선택에 섞여 들어가 원래 승인자 · 승인일이 덮이지 않게 (v4.253.4)
+    //   처리된 줄만 골랐을 때는 한 번 더 묻고 바꾼다 (반려 → 승인으로 고치는 경우)
+    const byId = new Map(rows.map((r) => [r.id, r]))
+    const done = ids.filter((id) => byId.get(id)?.status !== '대기')
+    if (done.length && done.length < ids.length) {
+      ids = ids.filter((id) => byId.get(id)?.status === '대기')
+      toastSuccess(`이미 승인 · 반려된 ${n(done.length)}건은 그대로 두고 대기 ${n(ids.length)}건만 처리합니다`)
+    } else if (done.length) {
+      if (!(await ask({ title: `이미 처리된 ${n(done.length)}건을 ${ok ? '승인' : '반려'}으로 바꿀까요?`,
+        desc: '원래 승인자 · 승인일이 지금 사람 · 오늘로 바뀝니다 (↩ 되돌리기로 살릴 수 있음).', okText: '바꾸기' }))) return
+    }
     try {
       const old = snapOf(ids, ['status', 'approved_by', 'approved_name', 'approved_at'])
       setUndo({ label: `${n(ids.length)}건 ${ok ? '승인' : '반려'}`, run: () => restore(old) })
@@ -499,24 +518,30 @@ function ExternalDist() {
             <div>
               <h3 className="text-base font-bold text-slate-900">📐 {scrapFor} — 이 도면을 받아 간 곳</h3>
               <p className="text-[12px] text-slate-400 mt-0.5">
-                설계변경(ECO/CN)이 나면 여기 있는 곳 전체에 구버전 폐기 요청 메일을 보내고, 아래 버튼으로 폐기통보일을 적습니다.
+                설계변경(ECO/CN)이 나면 구버전을 받아 간 곳에 폐기 요청 메일을 보내고, 체크한 줄에 폐기통보일을 적습니다. 최신 Rev 를 받은 곳은 처음부터 체크가 꺼져 있습니다.
                 재배포 건은 새 줄로 추가하세요.
               </p>
             </div>
             <table className="w-full text-xs">
               <thead><tr className="text-slate-400 text-left border-b border-slate-200">
-                <th className="py-1">배포일</th><th className="py-1">협력사 / 수신자</th><th className="py-1">Rev</th>
+                <th className="py-1 w-6"></th><th className="py-1">배포일</th><th className="py-1">협력사 / 수신자</th><th className="py-1">Rev</th>
                 <th className="py-1">형식</th><th className="py-1">폐기통보일</th>
               </tr></thead>
               <tbody>
                 {sameDrawing.map((r) => (
                   <tr key={r.id} className="border-b border-slate-100">
+                    <td className="py-1.5">
+                      {!r.scrap_notified_at && (
+                        <input type="checkbox" checked={scrapSel.has(r.id)} aria-label="폐기통보 대상"
+                          onChange={(e) => setScrapSel((p) => { const x = new Set(p); e.target.checked ? x.add(r.id) : x.delete(r.id); return x })} />
+                      )}
+                    </td>
                     <td className="py-1.5 tabular-nums text-slate-500">{r.dist_date}</td>
                     <td className="py-1.5">
                       <b className="text-slate-700">{r.vendor_name}</b>
                       <div className="text-[10.5px] text-slate-400">{r.contact_name} {r.contact_email ? `· ${r.contact_email}` : ''}</div>
                     </td>
-                    <td className="py-1.5 text-slate-500">{r.issue_no || '-'}</td>
+                    <td className="py-1.5 text-slate-500">{r.issue_no || '-'}{latestRev && String(r.issue_no || '').trim() === latestRev && <span className="ml-1 text-[10px] font-bold text-emerald-600">최신</span>}</td>
                     <td className="py-1.5 text-slate-500">{r.dist_form}</td>
                     <td className={`py-1.5 tabular-nums ${r.scrap_notified_at ? 'text-slate-500' : 'text-rose-500'}`}>
                       {r.scrap_notified_at || '아직'}
@@ -536,8 +561,10 @@ function ExternalDist() {
             <div className="flex justify-end gap-2">
               <button onClick={() => setScrapFor('')} className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-500">닫기</button>
               {canEdit && (
-                <button onClick={() => notifyScrap(sameDrawing.filter((r) => !r.scrap_notified_at).map((r) => r.id))}
-                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white">오늘 날짜로 폐기통보 기재</button>
+                <button onClick={() => notifyScrap(sameDrawing.filter((r) => !r.scrap_notified_at && scrapSel.has(r.id)).map((r) => r.id))}
+                  disabled={!sameDrawing.some((r) => !r.scrap_notified_at && scrapSel.has(r.id))}
+                  className="px-4 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white disabled:opacity-40">
+                  고른 {n(sameDrawing.filter((r) => !r.scrap_notified_at && scrapSel.has(r.id)).length)}곳에 오늘 날짜로 폐기통보 기재</button>
               )}
             </div>
           </div>

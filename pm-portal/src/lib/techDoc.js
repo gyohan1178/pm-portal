@@ -333,6 +333,12 @@ export function photoToJpeg(file, max = 1280, q = 0.8) {
 // 저장 — 새로 쓰면 「검토 전」. 승인(검토 완료)된 SOP 를 고치면 Rev 를 올리고 다시 검토 전으로
 export async function saveSop(f, photos, by, prev) {
   const key = prev?.doc_key || `SOP-${f.doc_no}`
+  // 새 등록인데 같은 번호가 이미 있으면 멈춘다 (v4.253.4) — 예전엔 확인 없이 그 SOP 와 사진을 덮었다
+  if (!prev) {
+    const { data: dup, error: e0 } = await supabase.from('pm_tech_doc').select('doc_key,title_ko').eq('doc_key', key).maybeSingle()
+    if (e0) throw e0
+    if (dup) throw new Error(`${f.doc_no} 는 이미 있는 SOP 입니다 (${dup.title_ko || ''}) — 다른 번호로 등록하거나 그 SOP 를 열어 고쳐 주세요`)
+  }
   const changed = !!prev
   const rev = changed ? String((Number(prev.tr_rev) || 0) + (prev.status === '검토 완료' ? 1 : 0)) : '1'
   const body = { target: f.target || '', tools: f.tools || '', author: f.author || by || '', steps: f.steps, sections: [], summary: (f.steps || []).filter((s) => s.check || s.warn).slice(0, 8).map((s, i) => [`${s.title ? `<b>${String(s.title).replace(/[<>]/g, '')}</b> — ` : ''}${String(s.check || s.warn).replace(/[<>]/g, '')}`, `${i + 1}단계`]) }

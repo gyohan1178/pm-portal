@@ -56,13 +56,13 @@ function Row({ r }) {
 }
 
 // 「문제 있음 — 조건부」 누른 뒤
-function IssueDialog({ o, res, s, live, busy, onCancel, onSave }) {
+function IssueDialog({ o, res, s, live, busy, carted, onCancel, onSave }) {
   const aff = affectedLineIds(s)
   const affN = live.filter((l) => aff.has(l.id)).length
   const [memo, setMemo] = useState(() => reasonText(res, s))
   const [date, setDate] = useState(() => suggestDate(s))
   const [scope, setScope] = useState('all')
-  const [cart, setCart] = useState(s.short.length > 0)
+  const [cart, setCart] = useState(s.short.length > 0 && !carted)   // 이미 「📦 담기」 했으면 기본 꺼짐 (v4.253.4)
   const [err, setErr] = useState('')
   const save = () => {
     if (!memo.trim()) { setErr('「조건부」는 영업이 고객사와 협의해야 해서 사유가 꼭 필요합니다'); return }
@@ -99,7 +99,7 @@ function IssueDialog({ o, res, s, live, busy, onCancel, onSave }) {
           </div>
           {s.short.length > 0 && (
             <label className="flex items-center gap-2 text-[13px] font-bold text-slate-800">
-              <input type="checkbox" checked={cart} onChange={(e) => setCart(e.target.checked)} data-mc-cart className="w-4 h-4" />부족 {s.short.length}품목을 발주 담기함에 같이 넣기
+              <input type="checkbox" checked={cart} onChange={(e) => setCart(e.target.checked)} data-mc-cart className="w-4 h-4" />부족 {s.short.length}품목을 발주 담기함에 같이 넣기{carted ? ' (방금 이미 담았음 — 또 넣으면 두 줄)' : ''}
             </label>
           )}
         </div>
@@ -120,6 +120,7 @@ export default function PoMatCheck({ o, live, meName, onReplyAsync, onClose }) {
   const [showOk, setShowOk] = useState(false)
   const [issue, setIssue] = useState(false)
   const [busy, setBusy] = useState('')
+  const [carted, setCarted] = useState(false)   // 이 창에서 이미 담기함에 넣었나 — 같은 품목이 두 번 들어가지 않게
   const s = splitCheck(res)
   const bad = hasProblem(s)
   const ed = res?.customer === 'ED'
@@ -139,7 +140,8 @@ export default function PoMatCheck({ o, live, meName, onReplyAsync, onClose }) {
   }
   async function cartOnly() {
     setBusy('cart')
-    try { const n = await toCart(s.short); toastSuccess(`${n}품목 발주 담기함에 넣었습니다 — 🛒 담기함에서 구매처 · 납기를 확인하세요`) }
+    if (carted) { toastError('이 점검의 부족 품목은 방금 담기함에 넣었습니다 — 🛒 담기함에서 확인하세요'); setBusy(''); return }
+    try { const n = await toCart(s.short); setCarted(true); toastSuccess(`${n}품목 발주 담기함에 넣었습니다 — 🛒 담기함에서 구매처 · 납기를 확인하세요`) }
     catch (e) { toastError('담기 실패: ' + e.message) } finally { setBusy('') }
   }
   async function okReply() {
@@ -160,7 +162,7 @@ export default function PoMatCheck({ o, live, meName, onReplyAsync, onClose }) {
       if (b.length) await onReplyAsync(b, { reply: '가능', date: '', memo: '자재 점검 이상 없음' })
       await logCheck(scope === 'aff' ? `조건부 ${a.length}줄 · 가능 ${b.length}줄` : '조건부')
       if (cart && s.short.length) {
-        try { await toCart(s.short) } catch (e) { toastError('회신은 저장됐고, 발주 담기는 실패: ' + e.message) }
+        try { await toCart(s.short); setCarted(true) } catch (e) { toastError('회신은 저장됐고, 발주 담기는 실패: ' + e.message) }
       }
       setIssue(false); onClose()
     } catch (e) { toastError(e.message) } finally { setBusy('') }
@@ -217,7 +219,7 @@ export default function PoMatCheck({ o, live, meName, onReplyAsync, onClose }) {
           </div>
         </>}
       </div>
-      {issue && res && <IssueDialog o={o} res={res} s={s} live={live} busy={busy === 'issue'} onCancel={() => setIssue(false)} onSave={issueReply} />}
+      {issue && res && <IssueDialog o={o} res={res} s={s} live={live} busy={busy === 'issue'} onCancel={() => setIssue(false)} carted={carted} onSave={issueReply} />}
     </div>
   )
 }

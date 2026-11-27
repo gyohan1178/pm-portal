@@ -91,9 +91,12 @@ function ResizeHandle({ onMouseDown }) {
 }
 
 // 행 단위 메모이즈 — 제외/체크 클릭 시 바뀐 행만 다시 그림(표 전체 재렌더 방지)
-const ShortageRow = memo(function ShortageRow({ r, isExcluded, isChecked, onExclude, onToggleCheck, timingShort }) {
+const ShortageRow = memo(function ShortageRow({ r, isExcluded, isChecked, onExclude, onToggleCheck, timingShort, rowStart, rowOver }) {
   return (
-    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${isExcluded?'opacity-40':''} ${r.orderNeed>0?'bg-red-50/10':''}`}>
+    <tr className={`border-b border-slate-100 hover:bg-slate-50 ${isExcluded?'opacity-40':''} ${r.orderNeed>0?'bg-red-50/10 select-none cursor-pointer':''}`}
+      // 줄 아무 데나 눌러 고르기 · 끌어서 여러 줄 (v4.253.4 — 예전엔 아래 발주 확인 표에 붙어 있어, 누르면 그 줄이 사라졌다)
+      onMouseDown={r.orderNeed>0 && rowStart ? (e => rowStart(r.item_id, e, isChecked)) : undefined}
+      onMouseEnter={r.orderNeed>0 && rowOver ? (e => rowOver(r.item_id, e)) : undefined}>
       <td className="px-3 py-2">
         {r.orderNeed>0&&<input type="checkbox" checked={isChecked} onChange={e=>onToggleCheck(r.item_id,e.target.checked)} className="w-3.5 h-3.5 accent-indigo-600"/>}
       </td>
@@ -373,10 +376,7 @@ export default function Shortage() {
               <th className="px-3 py-2 text-right font-bold text-slate-400">발주수량</th>
             </tr></thead><tbody>
               {checkedItems.map(r=>(
-                <tr key={r.item_id}
-                  onMouseDown={e => rowSel.start(r.item_id, e, !!checked[r.item_id])}
-                  onMouseEnter={e => rowSel.over(r.item_id, e)}
-                  className={`border-b border-slate-100 select-none cursor-pointer ${checked[r.item_id]?'bg-indigo-50/50':''}`}>
+                <tr key={r.item_id} className="border-b border-slate-100">
                   <td className="px-3 py-2 font-mono text-xs text-indigo-600"><ItemLink code={r.std_code} /></td>
                   <td className="px-3 py-2 text-slate-700">{r.name}</td>
                   <td className="px-3 py-2 text-right font-semibold text-red-600">{r.orderNeed}</td>
@@ -391,7 +391,7 @@ export default function Shortage() {
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div><label className="block text-xs font-bold text-slate-500 mb-1">발주번호</label>
-              <input value={poNumber} onChange={e=>setPoNumber(e.target.value)} placeholder="비우면 자동부여"
+              <input value={poNumber} onChange={e=>setPoNumber(e.target.value)} placeholder="비워 두면 이카운트로 보낼 때 번호가 들어감"
                 className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"/></div>
             <div><label className="block text-xs font-bold text-slate-500 mb-1">구매처</label>
               <VendorPicker value={selVendor} onChange={id=>setSelVendor(id)} />
@@ -459,7 +459,7 @@ export default function Shortage() {
                   <ShortageRow key={r.item_id} r={r}
                     isExcluded={excluded.has(r.item_id)} isChecked={!!checked[r.item_id]}
                     timingShort={timingMap[r.item_id]}
-                    onExclude={handleExclude} onToggleCheck={handleToggleCheck} />
+                    onExclude={handleExclude} onToggleCheck={handleToggleCheck} rowStart={rowSel.start} rowOver={rowSel.over} />
                 ))}
               </tbody>
             </table>

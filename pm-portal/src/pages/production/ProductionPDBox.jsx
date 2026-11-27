@@ -2,7 +2,7 @@ import { codeCandidates, stripPrefix } from '../../lib/custPrefix'
 import PlanBadge from '../../components/PlanBadge'
 import { DocRequestButton } from '../../components/DocRequestModal'
 import { useFillHeight } from '../../hooks/useFillHeight'
-import { useState, useMemo, useRef, useCallback, Fragment, lazy, Suspense } from 'react'
+import { useState, useMemo, useRef, useCallback, useEffect, Fragment, lazy, Suspense } from 'react'
 import { useDebounced } from '../../hooks/useDebounced'
 import { isMainPn, isMainRow, useMainPns, saveMainPn, isOverridden, DEFAULT_MAIN_PNS } from './mainPns'
 import { isTpRow } from '../../lib/thirdParty'
@@ -840,6 +840,16 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
     }
     return out
   }, [rows, showDone, dq, mainTab, isED, isCSK, edF, edRules, mainVer])
+  // 거르기 · 탭 · 검색을 바꾸면 화면에서 안 보이게 된 줄은 선택에서 뺀다 (v4.253.4)
+  //   예전엔 고른 줄이 그대로 남아, 「일괄 적용」이 안 보이는 호기까지 바꿨다.
+  useEffect(() => {
+    setSel(prev => {
+      if (!prev.size) return prev
+      const vis = new Set(filtered.filter(r => !r._month).map(r => String(r.id)))
+      const next = new Set([...prev].filter(id => vis.has(String(id))))
+      return next.size === prev.size ? prev : next
+    })
+  }, [filtered])
 
   // 주간 부하 (주요 품번 · 미완료): 전장 MD 합 / 품질 건수
   const weeklyLoad = useMemo(() => {
@@ -968,7 +978,12 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
                   className={`px-2 py-1 text-xs border rounded-lg bg-white focus:outline-none focus:ring-1 focus:ring-indigo-400 ${bulkDateErr ? 'border-rose-400 ring-2 ring-rose-100' : 'border-slate-200'}`} />
                 {bulkDateErr && <p className="mt-1 whitespace-nowrap text-[11px] font-bold text-rose-600" data-field-error="bulk-date">날짜를 골라 주세요</p>}
               </span>
-              <button onClick={()=>{ if(!bulkDate){ setBulkDateErr(true); return } setBulkDateErr(false); bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
+              <button onClick={async ()=>{ if(!bulkDate){ setBulkDateErr(true); return } setBulkDateErr(false)
+                  // 몇 대를 무엇으로 바꾸는지 한 번 보여 준다 (v4.253.4)
+                  const picked = rows.filter(r => sel.has(r.id))
+                  if (!(await ask({ title: `${sel.size}대의 ${bulkLabel(bulkField, isED)}을(를) ${bulkDate} 로 바꿀까요?`,
+                    items: picked.slice(0, 8).map(r => `${r.hogi || ''} · ${r.pn || ''} · 지금 ${r[bulkField] || '없음'}`), more: Math.max(0, picked.length - 8), okText: '바꾸기' }))) return
+                  bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
                 disabled={bulkMut.isPending} data-bulk-apply
                 className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">
                 {bulkMut.isPending?<><Spin />적용 중...</>:'일괄 적용'}

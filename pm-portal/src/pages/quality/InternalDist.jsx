@@ -55,16 +55,17 @@ export default function InternalDist() {
 
   async function run(key, fn, ok) {
     setBusy(key)
-    try { await fn(); if (ok) toastSuccess(ok); refresh() } catch (e) { toastError(e.message || String(e)) } finally { setBusy(null) }
+    // 성공하면 true — 실패하면 창을 닫지 않아 적은 내용이 남는다 (v4.253.4)
+    try { await fn(); if (ok) toastSuccess(ok); refresh(); return true } catch (e) { toastError(e.message || String(e)); refresh(); return false } finally { setBusy(null) }
   }
 
   async function saveShare() {
     if (!share.drawing_no.trim() || !share.rev.trim()) { toastError('도면번호 · 새 Rev 는 꼭 넣어 주세요'); return }
-    await run('share', async () => {
+    const ok = await run('share', async () => {
       const r = await shareDwg(share, meName)
       logActivity('create', 'pm_dwg_int', r.drawing_no, `도면 공유(영업 → 생산기술) — ${r.drawing_no} Rev ${r.rev}`)
     }, '생산기술에 공유했습니다')
-    setShare(null)
+    if (ok) setShare(null)
   }
 
   const openDist = (r) => {
@@ -81,16 +82,28 @@ export default function InternalDist() {
     if (!items.length) { toastError('도면을 넣어 주세요 (도면번호 · 품명 · Rev)'); return }
     if (!depts.length) { toastError('받을 부서를 하나 이상 골라 주세요'); return }
     if (dist.id && items.length > 1) { toastError('공유된 도면은 한 장씩 배포합니다'); return }
-    await run('dist', async () => {
+    // 여러 장 중간에 실패하면 저장된 장은 입력칸에서 빼고 남은 것만 남긴다 — 다시 눌러도 앞 장이 두 번 배포되지 않게
+    const done = []
+    const ok = await run('dist', async () => {
+      try {
       for (const it of items) {
         const prev = lastRev(rows, it.drawing_no, dist.id)
         const head = { drawing_no: it.drawing_no, item_name: it.item_name || null, rev: it.rev || null, prev_rev: prev && prev !== it.rev ? prev : (dist.id ? rows.find((x) => x.id === dist.id)?.prev_rev || null : null),
           customer_code: dist.customer_code || null, reason: dist.reason, cn_no: dist.cn_no.trim() || null, memo: dist.memo.trim() || null, recall_old: !!dist.recall }
         const r = await distribute({ id: dist.id, head, depts, meName })
         logActivity('create', 'pm_dwg_int', r.drawing_no, `사내 배포 — ${r.drawing_no} Rev ${r.rev || '—'} → ${depts.map((d) => d.dept).join(' · ')}`)
+        done.push(it)
+      }
+      } catch (e) {
+        if (done.length) {
+          const left = items.filter((it) => !done.includes(it)).map((it) => [it.drawing_no, it.item_name || '', it.rev || ''].join('\t')).join('\n')
+          setDist((d) => (d ? { ...d, paste: left } : d))
+          throw new Error(`${done.length}장은 배포했고 ${items.length - done.length}장에서 멈췄습니다 — 남은 도면만 입력칸에 남겨 두었습니다 (${e.message || e})`)
+        }
+        throw e
       }
     }, `사내 배포 ${items.length}건`)
-    setDist(null)
+    if (ok) setDist(null)
   }
 
   // 도면별 현황
