@@ -78,7 +78,7 @@ export default function EcountJobBar({ onDone }) {
                   <td className="py-1 text-slate-600">
                     {(j.slips || []).map((sl, i) => {
                       const r = res.find((x) => String(x.seq) === String(sl.seq))
-                      return <div key={i}>{sl.label} {r ? (r.ok ? <b className="text-emerald-700">→ {r.no}</b> : <span className="text-rose-600">✕ {r.error}</span>) : null}</div>
+                      return <div key={i}>{sl.label} {r ? (r.ok ? <b className="text-emerald-700">→ {r.no}{r.registered?.length ? <span className="font-normal text-slate-500"> (품목 등록함: {r.registered.join(', ')})</span> : null}</b> : <span className="text-rose-600">✕ {r.error}</span>) : null}</div>
                     })}
                     {j.error && <div className="text-rose-600">{j.error}</div>}
                   </td>

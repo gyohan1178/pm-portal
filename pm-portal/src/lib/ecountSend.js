@@ -11,11 +11,20 @@ import { supabase } from './supabase'
 import { ecountSpec } from './bomProc'
 import { isEcountPoNo, ecountOrdOf } from './poNumber'
 import { ECOUNT_WH } from './ecountPurchaseInput'
+import { PROC_CATS, catOf } from './utils'
 
 const s = (v) => (v == null ? '' : String(v).trim())
 // 이카운트가 받는 글자만 (한글 · 영문 · 숫자 · 띄어쓰기 · 흔한 기호)
 export const ecountText = (v, n = 200) => s(v).replace(/[^\p{Script=Hangul}A-Za-z0-9 .,()[\]/#&+_:%'-]/gu, ' ').replace(/\s+/g, ' ').trim().slice(0, n)
 const ymd = (d) => s(d).replace(/-/g, '').slice(0, 8)
+
+// 이카운트에 없는 품목이면 중계가 먼저 등록하고 보낸다 (v4.253.2 · 교한 기준 2026-11-27)
+//   품목구분: 가공물(판금 · 어셈블리 · 하네스) → 반제품 2, 나머지 → 원재료 0 · 규격 = 제조사 제조사품번 (발주서 규격과 같게)
+const itemMeta = (it, spec) => ({
+  PROD_CD: s(it?.std_code), PROD_DES: ecountText(it?.name, 100), SIZE_DES: ecountText(spec, 100),
+  UNIT: ecountText(it?.unit || 'EA', 6), PROD_TYPE: PROC_CATS.has(catOf(it)) ? '2' : '0',
+})
+const uniqItems = (list) => [...new Map(list.filter((x) => x.PROD_CD).map((x) => [x.PROD_CD, x])).values()]
 
 /**
  * 발주서입력 — 체크한 발주 줄을 이카운트 발주서로.
@@ -55,7 +64,8 @@ export function buildPoSlips(items, vendors, staffCode, revOf = {}) {
           QTY: String(qty), PRICE: String(price), SUPPLY_AMT: String(supply), VAT_AMT: String(vat), REMARKS: ecountText(po.memo),
         }
       })
-      return { seq, refs: g.lines.map((po) => po.id), bulk, label: `${g.v?.name || '업체 없음'} · 발주 ${g.date} · 납기 ${g.due || '-'} · ${g.lines.length}줄` }
+      const items = uniqItems(g.lines.map((po) => itemMeta(po.items, ecountSpec(po, po.item_rev || revOf[po.id] || ''))))
+      return { seq, refs: g.lines.map((po) => po.id), bulk, items, label: `${g.v?.name || '업체 없음'} · 발주 ${g.date} · 납기 ${g.due || '-'} · ${g.lines.length}줄` }
     })
   return { slips, skipped, issues }
 }
@@ -79,7 +89,8 @@ export function buildBuySlips(built, staffCode) {
         QTY: String(l.qty), PRICE: String(l.price), SUPPLY_AMT: String(l.supply), VAT_AMT: String(l.vat), REMARKS: ecountText(l.po),
       }
     })
-    return { seq: String(g.seq), refs: g.lines.map((l) => l.r.id), bulk, label: `${g.vendorName || '구매처 없음'} · 입고 ${g.date} · ${g.lines.length}줄` }
+    const items = uniqItems(g.lines.map((l) => itemMeta(l.r.items, l.spec)))
+    return { seq: String(g.seq), refs: g.lines.map((l) => l.r.id), bulk, items, label: `${g.vendorName || '구매처 없음'} · 입고 ${g.date} · ${g.lines.length}줄` }
   })
   return { slips, linked, unlinked }
 }
