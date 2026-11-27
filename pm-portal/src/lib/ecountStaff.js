@@ -3,6 +3,7 @@
 export const ECOUNT_STAFF = {
   '4ansans@jinsuntech.co.kr': '12463',
   'hjh0524@jinsuntech.co.kr': '12544',
+  'tuiniy@jinsuntech.co.kr': '12597',   // 배솔 (v4.253.0)
 }
 export const ECOUNT_STAFF_DEFAULT = '00022'
 export const ecountStaffOf = (email) => ECOUNT_STAFF[String(email || '').toLowerCase()] || ECOUNT_STAFF_DEFAULT

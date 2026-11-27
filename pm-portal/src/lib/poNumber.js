@@ -1,21 +1,25 @@
-import { supabase } from './supabase'
-import { todayISO } from './utils'
-
-// 발주번호 JS-YYMMDD-NN — 발주일 기준(과거 날짜로 등록해도 그날 번호가 나온다).
+// 발주번호 — v4.253.0 부터 포털이 따로 번호(JS-YYMMDD-NN)를 만들지 않는다.
 //
-// ⚠ 원래 발주·부족·요청BOM 세 화면에 같은 함수가 따로 있었다. 여기 하나로 모았다.
-// ⚠ 조회가 실패하면 멈춘다. 전에는 실패해도 「그날 첫 번호(-01)」를 만들어 번호가 겹쳤다.
-// ⚠ 남은 한계: 두 사람이 같은 순간에 누르면 같은 번호가 나올 수 있다
-//   (DB 순번이 아니라 「조회 → +1」 이라서). 한 발주번호에 여러 줄이 묶이는 구조라
-//   DB 에서 중복을 막을 수도 없다.
-export async function genPoNumber(dateStr) {
-  const ymd = /^\d{4}-\d{2}-\d{2}/.test(String(dateStr || '')) ? String(dateStr).slice(0, 10) : todayISO()
-  const [y, m, d] = ymd.split('-')
-  const prefix = `JS-${y.slice(2)}${m}${d}-`
-  const { data, error } = await supabase.from('purchase_orders')
-    .select('po_number').like('po_number', `${prefix}%`)
-  if (error) throw new Error('발주번호 조회 실패 — ' + error.message)
-  const nums = (data || []).map((r) => parseInt(String(r.po_number || '').replace(prefix, ''), 10) || 0)
-  const seq = (nums.length ? Math.max(...nums) : 0) + 1
-  return `${prefix}${String(seq).padStart(2, '0')}`
+//   발주번호 = 이카운트 발주번호(「2026/11/27 -5」). 「⚡ 이카운트로 보내기」를 하면 이카운트가 돌려준 번호가 들어가고,
+//   보내기 전에는 비어 있다 (빈칸 = 아직 이카운트에 없음). 2026-11-27 교한: JS 번호로 관리하는 것이 없어 모두 비움.
+//
+//   ⚠ 예전에는 「같은 업체 · 같은 발주일 · 같은 납기면 기존 번호를 다시 씀」 규칙이 있었다.
+//     이카운트 번호는 이미 보낸 발주서의 번호라, 새 줄에 다시 쓰면 이카운트에 없는 줄이 그 번호를 달게 된다 → 쓰지 않는다.
+//   이 함수는 예전 호출 자리를 위해 남겨 두며, 늘 null(번호 없음)을 돌려준다.
+export async function genPoNumber() {
+  return null
+}
+
+// 이카운트 발주번호 모양인지 (「2026/11/27 -5」 · 「20261127-5」)
+export const isEcountPoNo = (s) => /^\d{4}[/.-]?\d{2}[/.-]?\d{2}\s*-\s*\d+$/.test(String(s || '').trim())
+
+// 이카운트가 돌려준 「20261127-5」 → 포털 표기 「2026/11/27 -5」 (지금까지 손으로 넣어 온 모양과 같게)
+export const portalPoNo = (no) => {
+  const m = String(no || '').match(/(\d{4})[/.-]?(\d{2})[/.-]?(\d{2})\s*-\s*(\d+)/)
+  return m ? `${m[1]}/${m[2]}/${m[3]} -${Number(m[4])}` : null
+}
+// 포털 표기 → 이카운트 발주일자 · 번호 (구매입력 때 발주 연결용)
+export const ecountOrdOf = (s) => {
+  const m = String(s || '').match(/(\d{4})[/.-]?(\d{2})[/.-]?(\d{2})\s*-\s*(\d+)/)
+  return m ? { ORD_DATE: `${m[1]}${m[2]}${m[3]}`, ORD_NO: String(Number(m[4])) } : null
 }

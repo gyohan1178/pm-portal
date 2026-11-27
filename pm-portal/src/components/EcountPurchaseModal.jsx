@@ -8,6 +8,9 @@ import { ecountStaffOf } from '../lib/ecountStaff'
 import { supabase } from '../lib/supabase'
 import { toastError, toastSuccess } from '../lib/toast'
 import { todayISO, kstYmd } from '../lib/utils'
+import { buildBuySlips, enqueueEcount } from '../lib/ecountSend'
+import { useQueryClient } from '@tanstack/react-query'
+import { useConfirm } from './ux/ConfirmDialog'
 
 const won = (n) => Math.round(Number(n) || 0).toLocaleString('ko-KR')
 const KIND_TAG = { nopo: '발주외', nocode: '거래처코드', noprice: '단가 0', noitem: '기준코드', fx: '외화' }
@@ -26,6 +29,31 @@ export default function EcountPurchaseModal({ rows, customers = [], email, onClo
   const issueIds = new Set(built.issues.map((i) => i.id))
   const today = todayISO()
   const futureN = target.filter((r) => String(r.movement_date || '') > today).length
+
+  // ⚡ 이카운트로 바로 입력 (v4.253.0) — 발주번호가 이카운트 번호인 줄은 발주에 연결돼 이카운트 발주 잔량이 줄어든다.
+  //   「이카운트 ✓」 표시는 이카운트에 실제로 들어간 전표만 중계가 남긴다.
+  const qc = useQueryClient()
+  const [ask, confirmEl] = useConfirm()
+  const api = useMemo(() => buildBuySlips(built, staff), [built, staff])
+  async function sendApi() {
+    if (!api.slips.length) return
+    const ok = await ask({
+      title: `이카운트 구매입력 ${api.slips.length}전표 · ${target.length}줄을 바로 보낼까요?`,
+      desc: '사무실 중계가 이카운트로 보내고, 들어간 줄에 「이카운트 ✓」 표시가 남습니다.',
+      items: [`발주 연결 ${api.linked}줄 — 이카운트 발주 잔량이 줄어듦`,
+        ...(api.unlinked ? [`⚠ 연결 없음 ${api.unlinked}줄 — 발주번호가 이카운트 번호가 아님 (미입고현황에 남음)`] : []),
+        ...api.slips.slice(0, 6).map((x) => x.label)],
+      okText: '⚡ 보내기',
+    })
+    if (!ok) return
+    setBusy(true)
+    try {
+      await enqueueEcount('buy', api.slips, email)
+      toastSuccess(`이카운트로 보낼 구매입력 ${api.slips.length}전표를 쌓았습니다 — 들어가면 「이카운트 ✓」 표시가 남습니다`)
+      qc.invalidateQueries({ queryKey: ['ecountJobs'] })
+      onClose()
+    } catch (e) { toastError(e.message) } finally { setBusy(false) }
+  }
 
   async function mark(ids, clear) {
     try {
@@ -82,6 +110,7 @@ export default function EcountPurchaseModal({ rows, customers = [], email, onClo
             const shown = isOpen ? g.lines : g.lines.slice(0, 2)
             return (
               <div key={g.seq} data-ecp-slip={g.seq} className="rounded-xl border border-slate-200 mb-2.5 overflow-hidden">
+      {confirmEl}
                 <div className="bg-slate-50 px-3 py-2 flex flex-wrap items-center gap-2 text-xs font-bold text-slate-700">
                   <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-600">순번 {g.seq}</span>
                   <span>{g.date} · {g.vendorName || <span className="text-rose-600">구매처 없음</span>}</span>
@@ -140,6 +169,9 @@ export default function EcountPurchaseModal({ rows, customers = [], email, onClo
             <button data-ecp-download onClick={download} disabled={busy || !built.slips.length}
               className="flex-1 px-3 py-2 text-xs font-bold rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40">⬇ 엑셀 내려받기</button>
           </div>
+          <button data-ecp-send onClick={sendApi} disabled={busy || !api.slips.length}
+            className="px-3 py-2 text-xs font-bold rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40">⚡ 이카운트로 바로 입력</button>
+          <p className="text-[11px] text-slate-500">발주 연결 <b>{api.linked}</b>줄{api.unlinked ? <> · 연결 없음 <b className="text-amber-700">{api.unlinked}</b>줄 (발주번호가 이카운트 번호가 아님)</> : null}</p>
           <p className="text-[11px] text-slate-400">이카운트 → 구매입력 → 엑셀 업로드에 그대로 올립니다. 내려받으면 그 줄에 「이카운트 ✓」 표시가 남습니다.</p>
         </aside>
       </div>

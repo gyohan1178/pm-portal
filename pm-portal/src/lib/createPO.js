@@ -59,29 +59,6 @@ export function purchaseLink(csCode, made) {
 //   · 이미 번호가 있거나 _autoPo 가 아닌 줄은 건드리지 않는다
 export const poGroupKey = (r) => `${r.vendor_id || ''}|${r.order_date || ''}|${r.promise_date || ''}`
 export async function assignPoNumbers(rows) {
-  const out = rows.map(r => ({ ...r }))
-  // 업체가 비어 있는 줄은 번호를 안 매긴다 — 업체를 정한 뒤 발주번호 일괄 부여로
-  const need = out.filter(r => r._autoPo && r.vendor_id && !String(r.po_number || '').trim())
-  const groups = new Map()
-  need.forEach(r => { const k = poGroupKey(r); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(r) })
-  const nextOfDate = new Map()   // 발주일 → 다음에 쓸 번호
-  for (const [, list] of groups) {
-    const { vendor_id, order_date, promise_date } = list[0]
-    let q = supabase.from('purchase_orders').select('po_number').not('po_number', 'is', null)
-    q = order_date ? q.eq('order_date', order_date) : q.is('order_date', null)
-    q = vendor_id ? q.eq('vendor_id', vendor_id) : q.is('vendor_id', null)
-    q = promise_date ? q.eq('promise_date', promise_date) : q.is('promise_date', null)
-    const { data, error } = await q.limit(1)
-    if (error) throw new Error('같은 발주서 찾기 — ' + error.message)
-    let no = data?.[0]?.po_number
-    if (!no) {
-      const d = order_date || ''
-      if (!nextOfDate.has(d)) nextOfDate.set(d, await genPoNumber(order_date))
-      no = nextOfDate.get(d)
-      const m = String(no).match(/^(.*-)(\d+)$/)
-      nextOfDate.set(d, m ? m[1] + String(Number(m[2]) + 1).padStart(m[2].length, '0') : no)
-    }
-    list.forEach(r => { r.po_number = no })
-  }
-  return out
+  // v4.253.0 — 발주번호는 이카운트 번호. 붙여넣기 발주에도 번호를 매기지 않는다 (보낼 때 이카운트가 줌)
+  return rows.map(r => ({ ...r }))
 }

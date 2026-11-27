@@ -25,7 +25,8 @@ import PoDueDialog from '../../components/PoDueDialog'
 import DueRequestDialog from '../../components/DueRequestDialog'
 import VendorScorecard from '../../components/VendorScorecard'
 import { printForeignPO } from '../../lib/foreignPO'
-import { genPoNumber } from '../../lib/poNumber'
+import { buildPoSlips, enqueueEcount } from '../../lib/ecountSend'
+import EcountJobBar from '../../components/EcountJobBar'
 import { createPurchaseOrders, assignPoNumbers, poGroupKey } from '../../lib/createPO'
 import { parsePoPaste, matchVendor, vkey } from '../../lib/poPaste'
 import { must } from '../../lib/db'
@@ -83,6 +84,19 @@ async function fetchPurchaseHistory(csId, from, to) {
 
 
 // 이카운트 담당자 코드 — 발주서를 내려받은 사람으로 찍힌다 (입고 「구매입력」과 같이 쓰려고 lib/ecountStaff.js 로 옮김)
+
+// 가공물 발주에 REV 가 비었으면 지금 BOM 의 REV 를 찾아 붙인다 (이카운트 규격 「제조사품번_REV」 — 엑셀 · ⚡ 보내기 공통)
+async function fillRevOf(list) {
+  const need = list.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
+  const revOf = {}
+  try {
+    for (const cid of [...new Set(need.map(p => p.customer_id))]) {
+      const m = await fetchBomRevs(cid, need.filter(p => p.customer_id === cid).map(p => p.item_id))
+      need.filter(p => p.customer_id === cid).forEach(p => { if (m[p.item_id]) revOf[p.id] = m[p.item_id] })
+    }
+  } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 진행합니다 (' + e.message + ')') }
+  return revOf
+}
 
 function exportEcount(items, vendors, staffCode, revOf = {}) {
   const vendorMap = Object.fromEntries(vendors.map(v=>[v.id, v]))
@@ -319,19 +333,7 @@ export default function PurchasePage() {
       //   같은 업체·같은 발주일 건이 이미 있으면 그 번호를 재사용해 한 발주서로 묶는다.
       //   (ecount 에 등록할 때 이 번호를 그대로 쓰면 양쪽이 맞춰진다)
       let poNum = data.po_number?.trim() || null
-      if (!poNum && !editId && data.order_date) {
-        // 업체·발주일·납기가 모두 같으면 한 발주서로 보고 기존 번호를 재사용한다.
-        // 납기가 다르면 다른 발주서이므로 새 번호를 받는다.
-        let q = supabase.from('purchase_orders')
-          .select('po_number')
-          .eq('order_date', data.order_date)
-          .not('po_number', 'is', null)
-        // ⚠ 업체가 비었을 때 eq(null) 은 오류가 난다(null 은 is 로 비교). 전에는 그 오류를 삼켜 늘 새 번호가 나왔다.
-        q = selVendor ? q.eq('vendor_id', selVendor) : q.is('vendor_id', null)
-        q = data.promise_date ? q.eq('promise_date', data.promise_date) : q.is('promise_date', null)
-        const same = must(await q.limit(1), '같은 발주서 찾기')
-        poNum = same?.[0]?.po_number || await genPoNumber(data.order_date)
-      }
+      // v4.253.0 — 발주번호는 이카운트 번호. 비워 두면 「⚡ 이카운트로 보내기」 때 이카운트 번호가 들어간다 (자동 번호 · 같은 발주서 번호 재사용 안 함)
       const payload = { vendor_id:selVendor||null, po_number:poNum, type:data.type, qty_ordered:Number(data.qty_ordered), order_date:data.order_date||null, promise_date:data.promise_date||null, unit_price:data.unit_price?Number(data.unit_price):null, memo:data.memo||null,
         unit_price_fx: isForeign && fxPrice ? Number(fxPrice) : null,
         fx_rate: isForeign && fxRate ? Number(fxRate) : null,
@@ -1508,6 +1510,7 @@ export default function PurchasePage() {
             {search&&<button onClick={()=>setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs">✕</button>}
           </div>
             </div>
+            <div className="px-3 pt-2"><EcountJobBar /></div>
             {/* 고른 발주로 할 일 — 늘 같은 자리 · 같은 폭 (v4.151.0). 안 고르면 흐리게 · 개수는 왼쪽에만
                 예전엔 고르면 버튼 8개가 새로 생겨 줄이 늘고 표가 내려갔다 · 「(3)」 개수가 글자에 붙어 폭이 바뀌었다 */}
             {(() => {
@@ -1561,17 +1564,28 @@ export default function PurchasePage() {
 
           <button disabled={!has} style={{ width: 112 }} data-po-ecount onClick={async ()=>{
             // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
-            const need = checkedPOs.filter(p => !p.item_rev && PROC_CATS.has(catOf(p.items)) && p.customer_id && p.item_id)
-            let revOf = {}
-            try {
-              for (const cid of [...new Set(need.map(p => p.customer_id))]) {
-                const m = await fetchBomRevs(cid, need.filter(p => p.customer_id === cid).map(p => p.item_id))
-                need.filter(p => p.customer_id === cid).forEach(p => { if (m[p.item_id]) revOf[p.id] = m[p.item_id] })
-              }
-            } catch (e) { toastError('BOM REV 를 못 찾았습니다 — REV 없이 내려받습니다 (' + e.message + ')') }
-            exportEcount(checkedPOs, vendors, ecountStaff, revOf)
+            exportEcount(checkedPOs, vendors, ecountStaff, await fillRevOf(checkedPOs))
           }}
             className={B(has, 'border-emerald-300 text-emerald-700 bg-white hover:bg-emerald-100')}>📑 이카운트 발주서</button>
+          {/* ⚡ 이카운트로 바로 보내기 (v4.253.0) — 엑셀 대신 API. 받은 이카운트 번호가 발주번호에 들어간다 */}
+          <button disabled={!has} style={{ width: 128 }} data-po-ecount-send onClick={async () => {
+            const b = buildPoSlips(checkedPOs, vendors, ecountStaff, await fillRevOf(checkedPOs))
+            if (!b.slips.length) { toastError(b.skipped.length ? `보낼 줄이 없습니다 — ${b.skipped[0].why}` : '보낼 줄이 없습니다'); return }
+            const ok = await ask({
+              title: `이카운트 발주서 ${b.slips.length}장을 보낼까요?`,
+              desc: '사무실 중계가 이카운트로 보내고, 받은 이카운트 번호가 이 발주들의 발주번호에 들어갑니다. 업체에 메일을 보내려면 이카운트에서 「발송」을 눌러 주세요.',
+              items: [...b.slips.map(x => x.label), ...b.issues.map(t => '⚠ ' + t), ...b.skipped.slice(0, 5).map(x => '건너뜀 — ' + x.why)],
+              okText: '⚡ 보내기',
+            })
+            if (!ok) return
+            try {
+              await enqueueEcount('po', b.slips, me?.name)
+              toastSuccess(`이카운트로 보낼 일 ${b.slips.length}장을 쌓았습니다 — 몇 초 뒤 발주번호가 채워집니다`)
+              qc.invalidateQueries({ queryKey: ['ecountJobs'] })
+              setChecked({})
+            } catch (e) { toastError(e.message) }
+          }}
+            className={B(has, 'border-violet-300 text-violet-700 bg-white hover:bg-violet-100')}>⚡ 이카운트로 보내기</button>
           {/* 해외 업체 건 — 해외 업체가 한 곳만 섞여 있을 때 영문 발주서 (아니면 흐리게) */}
           <button disabled={!fRows.length} style={{ width: 92 }} data-po-foreign
             onClick={() => {
