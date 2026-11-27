@@ -980,7 +980,7 @@ export default function ProductionPDBox({ rows, csCode, isLoading }) {
               </span>
               <button onClick={async ()=>{ if(!bulkDate){ setBulkDateErr(true); return } setBulkDateErr(false)
                   // 몇 대를 무엇으로 바꾸는지 한 번 보여 준다 (v4.253.4)
-                  const picked = rows.filter(r => sel.has(r.id))
+                  const picked = rows.filter(r => sel.has(r.id) || sel.has(String(r.id)))   // 끌어 고른 줄은 id 가 글자로 들어온다
                   if (!(await ask({ title: `${sel.size}대의 ${bulkLabel(bulkField, isED)}을(를) ${bulkDate} 로 바꿀까요?`,
                     items: picked.slice(0, 8).map(r => `${r.hogi || ''} · ${r.pn || ''} · 지금 ${r[bulkField] || '없음'}`), more: Math.max(0, picked.length - 8), okText: '바꾸기' }))) return
                   bulkMut.mutate({ ids:[...sel], field:bulkField, value:bulkDate }) }}
