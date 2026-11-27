@@ -40,7 +40,8 @@ export default function ERPExport() {
           .from('purchase_orders')
           .select('*, items(std_code, name, type), customers(name), vendors(name)')
           .in('customer_id', csIds)
-          .not('status', 'in', '(완료,취소)'))
+          .not('status', 'in', '(완료,취소)')
+          .order('id'))   // v4.253.3 정렬 — 1,000줄 넘으면 쪽 경계에서 줄이 빠지거나 겹치지 않게
         data = (pos || []).map(p => ({
           '고객사': p.customers?.name,
           'PO번호': p.po_number,

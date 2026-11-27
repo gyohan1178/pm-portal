@@ -3,7 +3,7 @@
 //   같은 품번 · 같은 자료 · 같은 고객사가 진행 중이면 새로 만들지 않고 「같이 기다리기」
 //   SQL: 자료요청_반영_261025.sql (표 pm_doc_request · 함수 pm_doc_request_move / cancel / follow / autorecv)
 import { supabase } from './supabase'
-import { ORDER_CUSTOMERS } from './orderIntake'
+import { ORDER_CUSTOMERS } from './orderCustomers'   // v4.253.3 수주대장 코드 전체를 첫 화면에 받지 않게
 import { todayISO } from './utils'
 
 export const DOC_KINDS = ['도면', 'BOM', '사양서', '기타']

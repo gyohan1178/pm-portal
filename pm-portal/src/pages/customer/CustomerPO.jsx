@@ -71,14 +71,17 @@ const hasDrawingCode = (code) => {
 // 품번별 최신 도면 1건 맵
 async function fetchDrawingRevs(codes) {
   const map = {}
-  for (let i = 0; i < codes.length; i += 200) {
-    const chunk = codes.slice(i, i + 200)
-    const rows = await fetchAll(() => supabase
-      .from('pm_drawings')
-      .select('std_code,rev,edition,rev_order,file_path,file_mtime')
-      .in('std_code', chunk)
-      .is('missing_since', null)
-      .eq('is_latest', true))
+  // v4.253.3 — 200품번씩 차례로 기다리지 않고 한꺼번에 묻는다 · 정렬을 붙여 쪽 경계에서 빠지지 않게
+  const chunks = []
+  for (let i = 0; i < codes.length; i += 200) chunks.push(codes.slice(i, i + 200))
+  const pages = await Promise.all(chunks.map((chunk) => fetchAll(() => supabase
+    .from('pm_drawings')
+    .select('std_code,rev,edition,rev_order,file_path,file_mtime')
+    .in('std_code', chunk)
+    .is('missing_since', null)
+    .eq('is_latest', true)
+    .order('id'))))
+  for (const rows of pages) {
     for (const r of rows) {
       const cur = map[r.std_code]
       if (!cur || r.rev_order > cur.rev_order) map[r.std_code] = r

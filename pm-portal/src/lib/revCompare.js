@@ -22,13 +22,17 @@ export const hasDrawingCode = (code) => {
 export async function fetchDrawingRevs(codes) {
   const list = [...new Set((codes || []).filter((c) => c && hasDrawingCode(c)))]
   const map = {}
-  for (let i = 0; i < list.length; i += 200) {
-    const rows = await fetchAll(() => supabase
-      .from('pm_drawings')
-      .select('std_code,rev,edition,rev_order,file_path,file_name,is_conv')
-      .in('std_code', list.slice(i, i + 200))
-      .is('missing_since', null)
-      .eq('is_latest', true))
+  // v4.253.3 — 200품번씩 차례로 기다리지 않고 한꺼번에 묻는다 · 정렬을 붙여 쪽 경계에서 빠지지 않게
+  const chunks = []
+  for (let i = 0; i < list.length; i += 200) chunks.push(list.slice(i, i + 200))
+  const pages = await Promise.all(chunks.map((part) => fetchAll(() => supabase
+    .from('pm_drawings')
+    .select('std_code,rev,edition,rev_order,file_path,file_name,is_conv')
+    .in('std_code', part)
+    .is('missing_since', null)
+    .eq('is_latest', true)
+    .order('id'))))
+  for (const rows of pages) {
     for (const r of rows) {
       const cur = map[r.std_code]
       // 같은 REV면 현장이 쓰는 컨버팅 도면을 대표로

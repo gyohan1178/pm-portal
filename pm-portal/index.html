@@ -27,8 +27,9 @@
     </script>
 <meta name="mobile-web-app-capable" content="yes">
     <!-- Zebra Browser Print SDK (ZM400 라벨 출력용) — public 폴더에 SDK JS 2개 넣어야 동작 -->
-    <script src="/BrowserPrint-3.1.250.min.js"></script>
-    <script src="/BrowserPrint-Zebra-1.1.250.min.js"></script>
+    <!-- v4.253.3 defer: 화면을 먼저 그리고 받는다 (인쇄할 때만 window.BrowserPrint 를 쓰므로 순서만 지키면 됨) -->
+    <script defer src="/BrowserPrint-3.1.250.min.js"></script>
+    <script defer src="/BrowserPrint-Zebra-1.1.250.min.js"></script>
   </head>
   <body>
     <div id="root"></div>

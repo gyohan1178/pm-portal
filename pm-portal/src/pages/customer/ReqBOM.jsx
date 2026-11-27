@@ -127,7 +127,7 @@ async function fetchReqBOM(customerId, projectIds, manualItems) {
     const poRows = await fetchAll(() => supabase
       .from('purchase_orders').select('project_id,qty_remaining')
       .eq('customer_id', customerId).eq('order_type','customer_po').not('status','in','(완료,취소)')
-      .in('project_id', projectIds))
+      .in('project_id', projectIds).order('id'))   // v4.253.3 정렬 — 쪽 경계에서 줄이 빠지거나 겹치지 않게
 
     // ⚠ BOM 은 상위품번 몇 개만 골라도 1,000행을 쉽게 넘는다.
     //   그냥 조회하면 말없이 잘리고 오류도 안 난다 (실제로 1,452행 중 452행이 빠졌다).

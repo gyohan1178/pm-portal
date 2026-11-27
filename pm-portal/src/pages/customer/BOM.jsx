@@ -431,14 +431,17 @@ async function saveBOM({ rows, customerId, projectCode, projectName, rev }) {
             { onConflict: 'std_code' }).select('id').single()
         if (ie || !newItem) { skipped++; continue }
         itemId = newItem.id
-        await supabase.from('customer_item_codes').upsert(
+        // v4.253.3 — 실패를 「저장됨」으로 세지 않게 오류를 받는다
+        const { error: ce } = await supabase.from('customer_item_codes').upsert(
           { item_id: itemId, customer_id: customerId, customer_code: customerCode, customer_name: name },
           { onConflict: 'customer_id,customer_code', ignoreDuplicates: true })
+        if (ce) { skipped++; continue }
       }
-      await supabase.from('bom').insert({
+      const { error: be } = await supabase.from('bom').insert({
         customer_id: customerId, project_id: proj.id,
         item_id: itemId, qty_per_unit: qty, level,
       })
+      if (be) { skipped++; continue }
       saved++
     } catch { skipped++ }
   }
