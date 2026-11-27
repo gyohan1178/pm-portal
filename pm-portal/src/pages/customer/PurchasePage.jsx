@@ -989,7 +989,7 @@ export default function PurchasePage() {
     <div className="space-y-4">
       {confirmEl}{snack.el}
       <PageHead crumb={`${cs?.name || ''} · 구매`} title="구매발주"
-        desc={narrow ? '고객사별로 발주했는지 · 입고됐는지 확인합니다' : "발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · 발주번호 부여 · 이카운트 발주서를 한 번에 처리합니다."}>
+        desc={narrow ? '고객사별로 발주했는지 · 입고됐는지 확인합니다' : "발주 등록부터 입고까지 진행 상태를 봅니다. 납기 지남 · 7일 안 임박 건을 먼저 확인하고, 체크해서 납기 이월 · ⚡ 이카운트로 보내기(발주번호 자동)를 한 번에 처리합니다."}>
         {tab==='po' && !narrow && <>
           <button data-po-excel onClick={exportStatusExcel} title="현재 목록(검색/필터 적용)을 엑셀로 — 구매처 피드백 요청용"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold rounded-lg border border-emerald-300 text-emerald-700 bg-emerald-50 hover:bg-emerald-100">
@@ -1131,7 +1131,7 @@ export default function PurchasePage() {
                     )}
                   </div>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1.5">발주번호는 등록 후 체크 → 상단 "발주번호 부여"로 이카운트 값 일괄 입력</p>
+                <p className="text-[11px] text-slate-400 mt-1.5">발주번호는 비워 두세요 — 등록 후 체크 → 「⚡ 이카운트로 보내기」를 누르면 이카운트 번호가 들어갑니다</p>
               </div>
 
               {/* 품목 담기(신규) / 품목 정보(수정) */}
@@ -1554,14 +1554,7 @@ export default function PurchasePage() {
 
           <div className="w-px h-5 bg-indigo-200"/>
 
-          <div className="inline-flex items-center gap-1">
-            <input value={bulkPo} onChange={e=>setBulkPo(e.target.value)} placeholder="이카운트 발주번호" disabled={!has}
-              className="w-28 px-2 py-1.5 text-xs border border-slate-200 rounded-lg bg-white disabled:bg-slate-50"/>
-            <button onClick={()=>bulkPoMut.mutate({ids:checkedPOs.map(p=>p.id),poNo:bulkPo.trim()})}
-              disabled={!has||!bulkPo.trim()||bulkPoMut.isPending} style={{ width: 104 }}
-              className={B(has && bulkPo.trim() && !bulkPoMut.isPending, 'border-indigo-300 text-indigo-700 bg-white hover:bg-indigo-100')}>🔖 발주번호 부여</button>
-          </div>
-
+          {/* 「이카운트 발주번호 + 🔖 발주번호 부여」는 v4.253.1 에 없앰 — 발주번호는 「⚡ 이카운트로 보내기」로 이카운트가 준다 */}
           <button disabled={!has} style={{ width: 112 }} data-po-ecount onClick={async ()=>{
             // REV 없이 만든 가공물 발주(이번 기능 전 · 수기 등록)는 지금 BOM 의 REV 를 찾아 붙인다
             exportEcount(checkedPOs, vendors, ecountStaff, await fillRevOf(checkedPOs))

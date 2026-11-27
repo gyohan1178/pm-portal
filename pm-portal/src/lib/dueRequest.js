@@ -26,7 +26,7 @@ export function buildDueRequest(pos, vendors = []) {
   const by = new Map(), vm = new Map((vendors || []).map((v) => [v.id, v]))
   for (const p of pos || []) {
     const vendor = p.vendors?.name || vm.get(p.vendor_id)?.name || '(구매처 없음)'
-    const g = by.get(vendor) || { vendor, rows: [] }
+    const g = by.get(vendor) || { vendor, vendorId: p.vendor_id || null, rows: [] }
     g.rows.push({
       code: p.items?.std_code || '', name: p.items?.name || '', maker: p.items?.manufacturer || '', maker_pn: p.items?.manufacturer_code || '',
       order_date: String(p.order_date || '').slice(0, 10), qty: n(p.qty_ordered) || 0, remain: remainOf(p),

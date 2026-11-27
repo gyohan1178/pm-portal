@@ -2,6 +2,8 @@
 //   업체마다 「📋 메일용 복사」(표째로 붙음) · 전체 「엑셀 받기」(업체별 시트)
 //   특이사항은 줄마다 자동 문구(지남 · 임박 · 약속일) — 펼쳐서 고쳐 쓸 수 있고, 고친 문구가 복사 · 엑셀에 들어간다
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { supabase } from '../lib/supabase'
 import { buildDueRequest, copyDue, downloadDueExcel, DUE_COLS } from '../lib/dueRequest'
 import { toastSuccess, toastError } from '../lib/toast'
 
@@ -19,6 +21,24 @@ export default function DueRequestDialog({ pos, vendors, custName, onClose }) {
   }
   async function excel(list) {
     try { await downloadDueExcel(list, { custName }) } catch (e) { toastError('엑셀 오류: ' + e.message) }
+  }
+  // 업체 담당자 메일 (협력사 담당자 — pm_vendor_contact)
+  const vids = [...new Set(base.map((g) => g.vendorId).filter(Boolean))]
+  const { data: contacts = [] } = useQuery({
+    queryKey: ['dueContacts', vids.join(',')], enabled: vids.length > 0, staleTime: 5 * 60_000,
+    queryFn: async () => { const { data, error } = await supabase.from('pm_vendor_contact').select('vendor_id, name, email').in('vendor_id', vids); if (error) throw error; return data || [] },
+  })
+  const mailsOf = (g) => [...new Set(contacts.filter((c) => c.vendor_id === g.vendorId && /@/.test(c.email || '')).map((c) => c.email.trim()))]
+  // ✉️ 메일 쓰기 — 표를 먼저 복사해 두고(본문에 Ctrl+V) 메일 프로그램을 받는 사람 · 제목을 채워 연다
+  async function mail(g) {
+    const ok = await copyDue(g)
+    const to = mailsOf(g)
+    const subject = `[진선테크] 납기 회신 요청의 件 (${g.rows.length}건)`
+    const body = `안녕하세요.\n진선테크 구매자재팀입니다.\n\n아래 발주 건의 납기 회신 부탁드립니다.\n\n${ok ? '(여기에 Ctrl+V — 표가 붙습니다)' : ''}\n\n감사합니다.`
+    window.location.href = `mailto:${to.map(encodeURIComponent).join(',')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+    setCopied((c) => ({ ...c, [g.vendor]: true }))
+    if (ok) toastSuccess(`${g.vendor} — 메일 창에서 본문에 Ctrl+V 하면 표가 들어갑니다${to.length ? '' : ' · 담당자 메일이 없어 받는 사람은 직접 넣어 주세요'}`)
+    else toastError('표 복사를 못 했습니다 — 「📋 메일용 복사」를 눌러 주세요')
   }
   const total = groups.reduce((a, g) => a + g.rows.length, 0)
   const COLS = DUE_COLS
@@ -47,6 +67,8 @@ export default function DueRequestDialog({ pos, vendors, custName, onClose }) {
                     <span className="text-[12px] text-slate-500">{g.rows.length}건{nLate ? <span className="text-red-500 font-semibold"> · 지연 {nLate}</span> : null}</span>
                   </button>
                   <button onClick={() => excel([g])} className="px-2.5 py-1.5 text-xs font-bold rounded-lg border border-slate-200 text-slate-600 bg-white hover:bg-slate-50">📥 엑셀</button>
+                  <button onClick={() => mail(g)} data-due-mail title={mailsOf(g).length ? '받는 사람: ' + mailsOf(g).join(', ') : '협력사 담당자 메일이 없음 — 받는 사람을 직접 넣어 주세요'}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700">✉️ 메일 쓰기{mailsOf(g).length ? ` (${mailsOf(g).length})` : ''}</button>
                   <button onClick={() => copy(g)} data-due-copy
                     className={`px-3 py-1.5 text-xs font-bold rounded-lg border ${copied[g.vendor] ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100'}`}>
                     {copied[g.vendor] ? '✓ 복사됨' : '📋 메일용 복사'}

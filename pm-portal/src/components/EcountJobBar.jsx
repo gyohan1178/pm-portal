@@ -40,6 +40,13 @@ export default function EcountJobBar({ onDone }) {
   const alive = seen && Date.now() - seen < 3 * 60_000
   const pending = jobs.filter((j) => j.status === 'wait' || j.status === 'run').length
   if (!jobs.length && alive) return null
+  // 30분 안에 실패한 가장 최근 것 — 펼치지 않아도 이유를 보여 준다
+  const lastFail = jobs.find((j) => j.status === 'fail' && Date.now() - Date.parse(j.done_at || j.created_at) < 30 * 60_000)
+  const failMsgs = lastFail ? (lastFail.result?.slips || []).filter((x) => !x.ok).map((x) => {
+    const sl = (lastFail.slips || []).find((s) => String(s.seq) === String(x.seq))
+    const m = String(x.error || '').match(/미등록코드\[([^\]]+)\]/)
+    return `${sl?.label || ''} — ${m ? `이카운트에 품목코드 ${m[1]} 가 없음 (이카운트 품목 등록 필요)` : x.error}`
+  }) : []
   return (
     <div className="mb-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs" data-ecount-jobs>
       <div className="flex items-center gap-2 flex-wrap">
@@ -51,6 +58,11 @@ export default function EcountJobBar({ onDone }) {
         {pending > 0 && <span className="text-blue-700 font-bold">보내는 중 {pending}건</span>}
         <button className="ml-auto text-slate-500 hover:text-slate-800" onClick={() => setOpen((o) => !o)}>{open ? '접기' : `최근 ${jobs.length}건 보기`}</button>
       </div>
+      {!open && failMsgs.length > 0 && (
+        <div className="mt-1.5 rounded-lg bg-rose-50 border border-rose-200 px-2 py-1.5 text-rose-700">
+          <b>방금 보낸 것 중 실패 {failMsgs.length}장</b>{failMsgs.slice(0, 3).map((t, i) => <div key={i}>✕ {t}</div>)}
+        </div>
+      )}
       {open && (
         <table className="w-full mt-2">
           <tbody>
