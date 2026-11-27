@@ -52,12 +52,13 @@ export default function ControlTower({ scope = 'ax' }) {
   const isMaster = scope === 'all'
   const { data: me } = useMyProfile()
 
-  // 수시로 열어두는 화면이므로 5분마다 조용히 갱신하고,
-  // 다른 창을 보다 돌아왔을 때도 최신값을 가져온다.
+  // 수시로 열어두는 화면이므로 10분마다 조용히 갱신하고 (v4.253.5 — 5분 · 띄워 둔 사람 수만큼 곱해져 줄임),
+  // 다른 창을 보다 돌아왔을 때는 5분 넘게 지났을 때만 다시 받는다 (staleTime 기본 5분).
   const { data, isLoading } = useQuery({
     queryKey: ['controlTower', scope],
     queryFn: () => fetchControlTowerData(scope),
-    refetchInterval: 5 * 60 * 1000,
+    refetchInterval: 10 * 60 * 1000,
+    refetchIntervalInBackground: false,
     refetchOnWindowFocus: true,
   })
 

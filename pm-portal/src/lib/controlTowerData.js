@@ -52,12 +52,19 @@ async function fetchShortageFor(customerIds) {
   return perCustomer.flat()
 }
 
+// 관제탑 계산(lib/controlTower.js · workflow.js)이 쓰는 칸만 받는다 (v4.253.5)
+//   select('*') 로 받던 때보다 첫 1,000줄 기준 고객사 PO 588KB → 106KB · 생산 795KB → 149KB · 구매발주 1,027KB → 334KB.
+//   ⚠ 계산에 새 칸을 쓰면 여기에도 더한다 (안 더하면 그 칸이 늘 비어 보인다).
+const POS_COLS = 'id,customer_id,status,promise_date,created_at,plan_exc'
+const BUY_COLS = 'id,customer_id,po_number,status,promise_date,vendor_date,qty_remaining,qty_ordered,qty_received, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)'
+const PROD_COLS = 'id,customer_code,status,req_date,machine_recv,harness_recv,elec_recv,pn,name,hogi,po_id,arrival_date,harness_issue'
+
 async function fetchPOsFor(customerIds) {
   // 고객사 PO(파는 쪽). 완료·취소는 뺀다.
   //   취소 건이 남으면 납품 임박이 부풀려진다 — 고객사 PO 화면과 같은 기준.
   //   ⚠ 1,000행 제한이 있어 fetchAll 로 끝까지 받는다.
   const perCustomer = await Promise.all(customerIds.map(cid => fetchAll(() =>
-    supabase.from('purchase_orders').select('*')
+    supabase.from('purchase_orders').select(POS_COLS)
       .eq('customer_id', cid).eq('order_type', 'customer_po')
       .not('status', 'in', '(완료,취소)')
       .order('id')
@@ -69,8 +76,7 @@ async function fetchPOsFor(customerIds) {
 async function fetchBuyPOsFor(customerIds) {
   const per = await Promise.all(customerIds.map(cid => fetchAll(() =>
     supabase.from('purchase_orders')
-      // * — 변경 납기(vendor_date · v4.98.0)는 SQL 전에는 없는 칸이라 이름으로 고르지 않는다
-      .select('*, items!purchase_orders_item_id_fkey(std_code,name), vendors(name)')
+      .select(BUY_COLS)
       .eq('customer_id', cid)
       .eq('order_type', 'purchase')          // neq 는 null 을 걸러내 못 잡는다
       // 지난 것(지연)과 앞으로 2주(예정)를 함께 가져온다
@@ -95,7 +101,7 @@ async function fetchProdFor(codes) {
     const reqs = []
     for (let i = 0; i < pages; i++) {
       reqs.push(
-        supabase.from('production').select('*')
+        supabase.from('production').select(PROD_COLS)
           .eq('customer_code', code.toUpperCase()).or('status.is.null,status.neq.완료')
           .order('id').range(i * 1000, i * 1000 + 999)
           .then(r => must(r, '생산 조회') || [])
